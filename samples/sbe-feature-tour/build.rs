@@ -2,8 +2,8 @@
 //! After `cargo build`, open `src/generated/feature_tour.rs`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let generated_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
+    // ANCHOR: build_rs_example
+    let generated_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
         .enable_domain_objects(ergo_sbe::DomainVarData::LossyStrings)
         .with_domain_type(
@@ -17,5 +17,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
 
     ergo_sbe::generate_to_dir("schemas/feature-tour.xml", config, &generated_dir)?;
+    // ANCHOR_END: build_rs_example
     Ok(())
 }

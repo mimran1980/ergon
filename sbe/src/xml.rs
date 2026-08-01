@@ -31,6 +31,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use roxmltree::{Document, Node, NodeType};
 
@@ -59,25 +60,39 @@ fn source_name() -> String {
         .clone()
 }
 
-/// De-duplicates parser warnings within a process. `xi:include` inlines a
-/// shared schema (e.g. `common-types.xml`) into every consuming file, so a
-/// naive `eprintln!` fires once per consumer parsed in the same `cargo build`
-/// — N sibling schema files sharing one included type multiply the same
-/// warning N times. Keyed on byte offset + message, so distinct warnings are
-/// never suppressed.
+/// Per-invocation warning dedup — no global static, so concurrent parses
+/// never suppress each other's warnings. Wrapped in `RefCell` because the
+/// recursive-descent parser doesn't cross any await point.
+pub(crate) struct WarnState {
+    seen: std::cell::RefCell<HashSet<String>>,
+}
+
+impl WarnState {
+    pub(crate) fn new() -> Self {
+        Self {
+            seen: std::cell::RefCell::new(HashSet::new()),
+        }
+    }
+}
+
+/// De-duplicates parser warnings within a single parse call. `xi:include`
+/// inlines a shared schema (e.g. `common-types.xml`) into every consuming
+/// file, so a naive `eprintln!` fires once per consumer — N sibling schema
+/// files sharing one included type multiply the same warning N times.
+/// Each parse invocation creates its own [`WarnState`], so separate parse
+/// calls do not suppress each other even when concurrent. Keyed on byte
+/// offset + message, so distinct warnings are never suppressed within a
+/// parse.
 ///
 /// When `node` is provided the warning includes the source file, line,
 /// column, and the relevant XML line.
-fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>) {
-    use std::sync::{Mutex, OnceLock};
-    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, state: &WarnState) {
     let dedup_key = if let Some(n) = node {
         format!("{}:{}", n.range().start, message)
     } else {
         message.to_string()
     };
-    if seen.lock().unwrap().insert(dedup_key) {
+    if state.seen.borrow_mut().insert(dedup_key) {
         if let Some(n) = node {
             let pos = n.range().start;
             let text = n.document().input_text();
@@ -463,8 +478,15 @@ fn resolve_type_to_tokens(
 /// attributes/types fail validation.
 #[allow(clippy::result_large_err)]
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
+    let warn_state = WarnState::new();
     set_source_name("<xml>".into());
-    parse_with_context(xml, None, &mut HashSet::new(), TypeRegistry::new())
+    parse_with_context(
+        xml,
+        None,
+        &mut HashSet::new(),
+        TypeRegistry::new(),
+        &warn_state,
+    )
 }
 
 /// [`parse`], resolving type references against an already-parsed shared
@@ -481,11 +503,13 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
 /// Same as [`parse`].
 #[allow(clippy::result_large_err)]
 pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
+    let warn_state = WarnState::new();
     parse_with_context(
         xml,
         None,
         &mut HashSet::new(),
         TypeRegistry::from_parsed_schema(shared),
+        &warn_state,
     )
 }
 
@@ -516,6 +540,7 @@ pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     let path = path.as_ref();
+    let warn_state = WarnState::new();
     set_source_name(path.display().to_string());
     let xml = std::fs::read_to_string(path).map_err(|e| {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
@@ -527,7 +552,7 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     if let Ok(canon) = path.canonicalize() {
         seen.insert(canon);
     }
-    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::new())
+    parse_with_context(&xml, base_dir, &mut seen, TypeRegistry::new(), &warn_state)
 }
 
 /// [`parse_file`], resolving type references against an already-parsed
@@ -539,6 +564,8 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir, ParseError> {
     let path = path.as_ref();
+    let warn_state = WarnState::new();
+    set_source_name(path.display().to_string());
     let xml = std::fs::read_to_string(path).map_err(|e| {
         ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
     })?;
@@ -552,6 +579,7 @@ pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir,
         base_dir,
         &mut seen,
         TypeRegistry::from_parsed_schema(shared),
+        &warn_state,
     )
 }
 
@@ -562,6 +590,7 @@ fn parse_with_context(
     base_dir: Option<&Path>,
     seen: &mut HashSet<PathBuf>,
     initial_registry: TypeRegistry,
+    warn_state: &WarnState,
 ) -> Result<Ir, ParseError> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
@@ -583,7 +612,7 @@ fn parse_with_context(
             input,
         ));
     }
-    let mut ir = parse_schema(root, base_dir, seen, initial_registry)
+    let mut ir = parse_schema(root, base_dir, seen, initial_registry, warn_state)
         .map_err(|fault| ParseError::from_fault(fault, input))?;
     crate::resolve::resolve_schema(&mut ir, Some(input))?;
     Ok(ir)
@@ -666,6 +695,7 @@ fn parse_types_node(
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,
+    warn_state: &WarnState,
 ) -> Result<(), Fault> {
     // Pass 1: typedefs, enums, sets (no composites — so composite `<ref>` can
     // resolve targets that appear later in the same `<types>` block).
@@ -676,7 +706,7 @@ fn parse_types_node(
                 let name = string_attr(type_child, "name", "type @name")?;
                 validate_sbe_name(type_child, &name, "type @name")?;
                 reject_duplicate_type_name(type_child, &name, registry)?;
-                let encoding = parse_type_element(type_child, registry)?;
+                let encoding = parse_type_element(type_child, registry, warn_state)?;
                 // Constant presence must declare a constant value (text body or valueRef).
                 if encoding.presence == Presence::Constant
                     && encoding
@@ -698,10 +728,10 @@ fn parse_types_node(
                 composite_nodes.push(type_child);
             }
             "enum" => {
-                parse_enum(type_child, registry, tokens)?;
+                parse_enum(warn_state, type_child, registry, tokens)?;
             }
             "set" => {
-                parse_set(type_child, registry, tokens)?;
+                parse_set(warn_state, type_child, registry, tokens)?;
             }
             other => {
                 return Err(Fault::invalid(
@@ -723,7 +753,7 @@ fn parse_types_node(
         let mut still = Vec::new();
         for cnode in pending {
             if composite_refs_ready(cnode, registry) {
-                parse_composite(cnode, registry, tokens)?;
+                parse_composite(warn_state, cnode, registry, tokens)?;
             } else {
                 still.push(cnode);
             }
@@ -731,7 +761,7 @@ fn parse_types_node(
         if still.len() == before {
             // No progress: expand remaining to surface cycle/forward-ref errors.
             for cnode in still {
-                parse_composite(cnode, registry, tokens)?;
+                parse_composite(warn_state, cnode, registry, tokens)?;
             }
             break;
         }
@@ -798,6 +828,7 @@ fn parse_schema(
     base_dir: Option<&Path>,
     seen: &mut HashSet<PathBuf>,
     initial_registry: TypeRegistry,
+    warn_state: &WarnState,
 ) -> Result<Ir, Fault> {
     let package = string_attr(root, "package", "messageSchema @package")?;
     let id = u16_attr(root, "id", "messageSchema @id")?;
@@ -832,11 +863,16 @@ fn parse_schema(
                         let included_root = included_doc.root().children().find(Node::is_element);
                         if let Some(inc_node) = included_root {
                             if inc_node.tag_name().name() == "types" {
-                                parse_types_node(inc_node, &mut registry, &mut tokens)?;
+                                parse_types_node(inc_node, &mut registry, &mut tokens, warn_state)?;
                             } else {
                                 for sub_child in element_children(inc_node) {
                                     if sub_child.tag_name().name() == "types" {
-                                        parse_types_node(sub_child, &mut registry, &mut tokens)?;
+                                        parse_types_node(
+                                            sub_child,
+                                            &mut registry,
+                                            &mut tokens,
+                                            warn_state,
+                                        )?;
                                     }
                                 }
                             }
@@ -846,7 +882,7 @@ fn parse_schema(
                 }
             }
         } else if child.tag_name().name() == "types" {
-            parse_types_node(child, &mut registry, &mut tokens)?;
+            parse_types_node(child, &mut registry, &mut tokens, warn_state)?;
         } else if child.tag_name().name() == "message" {
             // messages are parsed in second pass
         } else {
@@ -876,7 +912,7 @@ fn parse_schema(
                     string_attr(child, "name", "message @name")?,
                 ));
             }
-            parse_message(child, &header_type, &registry, &mut tokens)?;
+            parse_message(child, &header_type, &registry, &mut tokens, warn_state)?;
         }
     }
 
@@ -892,7 +928,11 @@ fn parse_schema(
     })
 }
 
-fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<Encoding, Fault> {
+fn parse_type_element(
+    node: Node<'_, '_>,
+    _registry: &TypeRegistry,
+    warn_state: &WarnState,
+) -> Result<Encoding, Fault> {
     let primitive = node
         .attribute("primitiveType")
         .or_else(|| node.attribute("type"));
@@ -925,6 +965,7 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
                  \u{2014} nullValue is only meaningful for optional types"
             ),
             Some(node),
+            warn_state,
         );
     }
     let min_value = node
@@ -983,6 +1024,7 @@ fn parse_type_element(node: Node<'_, '_>, _registry: &TypeRegistry) -> Result<En
 }
 
 fn parse_composite(
+    warn_state: &WarnState,
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,
@@ -1029,7 +1071,7 @@ fn parse_composite(
         if tag == "enum" {
             let enum_name = string_attr(child, "name", "composite nested enum @name")?;
             if !registry.registry.contains_key(&enum_name) {
-                parse_enum(child, registry, tokens)?;
+                parse_enum(warn_state, child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) = resolve_type_to_tokens(
@@ -1047,7 +1089,7 @@ fn parse_composite(
         if tag == "set" {
             let set_name = string_attr(child, "name", "composite nested set @name")?;
             if !registry.registry.contains_key(&set_name) {
-                parse_set(child, registry, tokens)?;
+                parse_set(warn_state, child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) = resolve_type_to_tokens(
@@ -1072,7 +1114,7 @@ fn parse_composite(
                 ));
             }
             if !registry.registry.contains_key(&nested_name) {
-                parse_composite(child, registry, tokens)?;
+                parse_composite(warn_state, child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
@@ -1221,7 +1263,7 @@ fn parse_composite(
                 let is_named_ref = has_ref_attr
                     || (child.attribute("type").is_some() && !is_primitive_name(t_name));
                 if !is_named_ref {
-                    let mut encoding = parse_type_element(child, registry)?;
+                    let mut encoding = parse_type_element(child, registry, warn_state)?;
                     // SBE var-data payload member: never contributes fixed composite
                     // size (length prefix alone is the wire header). Mark even when
                     // `length` is omitted (defaults to 1 in type attrs) so uint8
@@ -1253,7 +1295,7 @@ fn parse_composite(
                 ) {
                     composite_tokens.extend(resolved);
                 } else {
-                    let mut encoding = parse_type_element(child, registry)?;
+                    let mut encoding = parse_type_element(child, registry, warn_state)?;
                     if member_name == "varData" || encoding.length == Some(0) {
                         encoding.is_variable_length = true;
                     }
@@ -1273,7 +1315,7 @@ fn parse_composite(
                     });
                 }
             } else {
-                let mut encoding = parse_type_element(child, registry)?;
+                let mut encoding = parse_type_element(child, registry, warn_state)?;
                 if member_name == "varData" || encoding.length == Some(0) {
                     encoding.is_variable_length = true;
                 }
@@ -1305,6 +1347,7 @@ fn parse_composite(
 }
 
 fn parse_enum(
+    warn_state: &WarnState,
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,
@@ -1473,6 +1516,7 @@ fn parse_enum(
 }
 
 fn parse_set(
+    warn_state: &WarnState,
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,
@@ -1597,6 +1641,7 @@ fn parse_message(
     header_type: &str,
     registry: &TypeRegistry,
     tokens: &mut Vec<Token>,
+    warn_state: &WarnState,
 ) -> Result<(), Fault> {
     let name = string_attr(node, "name", "message @name")?;
     validate_sbe_name(node, &name, "message @name")?;
@@ -1646,7 +1691,7 @@ fn parse_message(
     let mut prev_offset: Option<usize> = None;
 
     for child in element_children(node) {
-        parse_message_child(child, registry, tokens)?;
+        parse_message_child(child, registry, tokens, warn_state)?;
         if child.tag_name().name() == "field"
             || child.tag_name().name() == "group"
             || child.tag_name().name() == "data"
@@ -1722,6 +1767,7 @@ fn parse_message_child(
     node: Node<'_, '_>,
     registry: &TypeRegistry,
     tokens: &mut Vec<Token>,
+    warn_state: &WarnState,
 ) -> Result<(), Fault> {
     match node.tag_name().name() {
         "field" => {
@@ -1760,6 +1806,7 @@ fn parse_message_child(
                          \u{2014} nullValue is only meaningful for optional fields"
                     ),
                     Some(node),
+                    warn_state,
                 );
             }
             let constant_value = if presence == Presence::Constant {
@@ -1793,6 +1840,7 @@ fn parse_message_child(
                                             "warning: valueRef '{s}' references unknown enum '{enum_name}'"
                                         ),
                                         Some(node),
+                                        warn_state,
                                     );
                                 }
                             }
@@ -1883,7 +1931,7 @@ fn parse_message_child(
             }
 
             for child in element_children(node) {
-                parse_message_child(child, registry, tokens)?;
+                parse_message_child(child, registry, tokens, warn_state)?;
             }
 
             tokens.push(structural(

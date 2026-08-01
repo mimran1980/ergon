@@ -483,7 +483,7 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
 
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
         assert_eq!(1234, car2.serial_number(), "rt.serial_number");
@@ -577,7 +577,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         // Full 8-byte header including blockLength=45 matches the sbe-tool/Java fixture.
         assert_eq!(&FIXTE[0..8], &encoded[0..8], "header mismatch");
@@ -677,7 +677,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert!(car2.into_fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
@@ -701,7 +701,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic VTi").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert!(!car2.into_fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
@@ -858,7 +858,7 @@ fn fixed_entry_group_entries_iterator() -> Result<(), Box<dyn std::error::Error>
         let car = car.manufacturer(b"Hon").unwrap();
         let car = car.model(b"Civ").unwrap();
         let car = car.activation_code(b"abc").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let perf: Vec<_> = car2
@@ -907,7 +907,7 @@ fn array_accessor_all_paths_return_same_values() -> Result<(), Box<dyn std::erro
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
@@ -948,7 +948,7 @@ fn display_shows_group_entry_fields_not_just_count() -> Result<(), Box<dyn std::
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let display = format!("{}", car2);
@@ -989,7 +989,7 @@ fn composite_default_is_flyweight_value_is_eager_copy() -> Result<(), Box<dyn st
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"abcdef").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
@@ -1037,7 +1037,7 @@ fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn st
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let mut ff = car2.into_fuel_figures().unwrap();
@@ -1075,7 +1075,7 @@ fn bounds_checks_disabled_with_feature_flag() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"Hon").unwrap();
         let car = car.model(b"Civ").unwrap();
         let car = car.activation_code(b"abc").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // Field accessors work (without bounds checks in fast path)
@@ -1289,7 +1289,7 @@ fn composite_ref_engine_roundtrip_compile() -> Result<(), Box<dyn std::error::Er
         let car = car.manufacturer(b"X").unwrap();
         let car = car.model(b"Y").unwrap();
         let car = car.activation_code(b"Z").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         assert_eq!(CarDecoder::BLOCK_LENGTH, 45);
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let e2 = dec.engine();
@@ -1352,7 +1352,7 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"12345").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let available = car2.available();
@@ -1374,7 +1374,7 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"12345").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let available = car2.available();
@@ -1654,9 +1654,9 @@ fn incomplete_encoder_has_no_complete_bytes() -> Result<(), Box<dyn std::error::
         let mut buf = [0u8; 512];
         let mut encoder = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         encoder.serial_number(1);
-        let _ = encoder.as_bytes();
+        let _ = encoder.as_bytes_with_header();
     "#,
-        &["no method named `as_bytes`"],
+        &["no method named `as_bytes_with_header`"],
     );
     Ok(())
 }
@@ -1717,7 +1717,7 @@ fn forward_compat_v2_decoder_reads_v1_bytes() -> Result<(), Box<dyn std::error::
         e.field_a1(100);
         e.field_b1(200);
         let e = e.string1(b"v1data").unwrap();
-        let encoded = e.as_bytes();
+        let encoded = e.as_bytes_with_header();
 
         let d = versmsg_v2::VersionedMessageV2Decoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
@@ -1760,7 +1760,7 @@ fn backward_compat_v1_decoder_reads_v2_bytes() -> Result<(), Box<dyn std::error:
         e.field_d2(222);
         e.field_e2(333);
         let e = e.string1(b"v2extra").unwrap();
-        let encoded = e.as_bytes();
+        let encoded = e.as_bytes_with_header();
 
         let d = versmsg_v1::VersionedMessageV1Decoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
@@ -1798,7 +1798,7 @@ fn anymessage_decode_dispatches_by_template_id() -> Result<(), Box<dyn std::erro
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let car = car.activation_code(b"abc").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         // decode dispatches on templateId
         let msg = AnyMessage::decode(encoded, 0).unwrap();
@@ -1836,7 +1836,7 @@ fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"Toyo").unwrap();
         let car = car.model(b"Corolla").unwrap();
         let car = car.activation_code(b"xyz").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let total_len = encoded.len();
 
         // decode_frame with correct frame length
@@ -1914,7 +1914,7 @@ fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::erro
         let car1 = car1.manufacturer(b"").unwrap();
         let car1 = car1.model(b"").unwrap();
         let car1 = car1.activation_code(b"").unwrap();
-        let e1 = car1.as_bytes().to_vec();
+        let e1 = car1.as_bytes_with_header().to_vec();
 
         let mut car2 = CarEncoder::wrap_and_apply_header(&mut buf[e1.len()..], 0);
         car2.serial_number(20);
@@ -1930,7 +1930,7 @@ fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::erro
         let car2 = car2.manufacturer(b"BMW").unwrap();
         let car2 = car2.model(b"X5").unwrap();
         let car2 = car2.activation_code(b"").unwrap();
-        let e2 = car2.as_bytes().to_vec();
+        let e2 = car2.as_bytes_with_header().to_vec();
 
         let mut framed = Vec::new();
         framed.extend_from_slice(&(e1.len() as u32).to_le_bytes());
@@ -2029,7 +2029,7 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
             Ok(())
         }).unwrap();
         let complete = after_entries.trailer(b"v1_trailer").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let d = grpvers_v2::GroupMsgDecoder::try_from(encoded).unwrap();
 
@@ -2077,7 +2077,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
             Ok(())
         }).unwrap();
         let complete = after_entries.trailer(b"v2_trailer_data").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let d = grpvers_v1b::GroupMsgDecoder::try_from(encoded).unwrap();
 
@@ -2147,20 +2147,33 @@ fn upstream_issue_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn generated_encoder_has_no_phantomdata_or_state_generic() -> Result<(), Box<dyn std::error::Error>>
-{
+fn generated_encoder_header_typestate_not_wire_stage_generic()
+-> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // Header mode uses a zero-sized marker (HeaderPresent/HeaderAbsent) so
+    // as_bytes_with_header is only available when the header was applied.
+    // Wire-order stages remain named monomorphic structs — not Encoder<State>.
     assert!(
-        !src.contains("core::marker::PhantomData"),
-        "encoder must not use PhantomData (SROA barrier)"
+        src.contains("core::marker::PhantomData"),
+        "encoder stages must carry PhantomData<H> for HeaderState"
+    );
+    assert!(
+        src.contains("HeaderState = sbe_rt::HeaderPresent"),
+        "encoder stages default H = HeaderPresent (no turbofish on happy path)"
     );
     assert!(
         !src.contains("car_encoder_state"),
-        "encoder must not use car_encoder_state module (no generic state)"
+        "encoder must not use car_encoder_state module (no generic wire-stage state)"
+    );
+    // Wire-order stages stay named structs. Reject a generic `State = …`
+    // parameter, but allow `HeaderState = HeaderPresent` (header mode only).
+    assert!(
+        !src.contains("State =") || src.contains("HeaderState ="),
+        "encoder must not use a wire-order State generic (HeaderState default is OK)"
     );
     assert!(
-        !src.contains("State ="),
-        "encoder struct must not have a State generic parameter"
+        !src.contains("car_encoder_state::"),
+        "no car_encoder_state module paths"
     );
     Ok(())
 }
@@ -2175,6 +2188,90 @@ fn generated_encoder_has_concrete_stage_structs() -> Result<(), Box<dyn std::err
     assert!(
         src.contains("pub struct CarComplete"),
         "encoder must generate CarComplete terminal struct"
+    );
+    Ok(())
+}
+
+/// HANDOVER ergonomics acceptance: happy path needs zero turbofish / zero
+/// explicit `H`; Schema constants; body-only wrap cannot take header bytes.
+#[test]
+fn header_typestate_happy_path_and_body_only_ergonomics() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+
+    // (a)(b)(c) — happy path encode, Complete helper, Schema constant access.
+    compile_and_run(
+        "header_ergonomics_ok",
+        &src,
+        r#"
+        // Stack buffer without turbofish on H (default HeaderPresent).
+        let mut buf = [0u8; 512];
+        let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        enc.serial_number(1);
+        enc.model_year(2020);
+        enc.available(BooleanType::T);
+        enc.code(Model::A);
+        enc.some_numbers([1u32, 2, 3, 4]);
+        enc.vehicle_code([b'a', b'b', b'c', b'd', b'e', b'f']);
+        enc.extras(OptionalExtras::default());
+        enc.engine(Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        ));
+        let enc = enc.fuel_figures(0, |_| Ok(())).unwrap();
+        let enc = enc.performance_figures(0, |_| Ok(())).unwrap();
+        let enc = enc.manufacturer(b"X").unwrap();
+        let enc = enc.model(b"Y").unwrap();
+        let complete = enc.activation_code(b"").unwrap();
+
+        // Helper with defaulted H — no turbofish, no HeaderPresent in signature.
+        fn finish(enc: CarComplete<'_>) -> usize {
+            enc.encoded_length_with_header()
+        }
+        assert_eq!(CarSchema::TEMPLATE_ID, CarEncoder::TEMPLATE_ID);
+        assert_eq!(CarSchema::SCHEMA_ID, CarEncoder::SCHEMA_ID);
+        // HeaderPresent slice methods are available on the complete stage.
+        let _ = complete.as_bytes_with_header();
+        let _ = complete.as_body_bytes();
+        let n = finish(complete);
+        assert!(n >= CarEncoder::HEADER_LENGTH);
+        "#,
+    );
+
+    // (d) — body-only wrap yields HeaderAbsent; as_bytes_with_header is absent.
+    compile_fails_with_diagnostics(
+        "header_ergonomics_body_only",
+        &src,
+        r#"
+        let mut buf = [0u8; 512];
+        let mut enc = CarEncoder::wrap(&mut buf, 0);
+        enc.serial_number(1);
+        enc.model_year(2020);
+        enc.available(BooleanType::T);
+        enc.code(Model::A);
+        enc.some_numbers([1u32, 2, 3, 4]);
+        enc.vehicle_code([b'a', b'b', b'c', b'd', b'e', b'f']);
+        enc.extras(OptionalExtras::default());
+        enc.engine(Engine::new(
+            2000,
+            4,
+            [b'1', b'2', b'3'],
+            35,
+            BooleanType::T,
+            Booster::new(BoostType::NITROUS, 200),
+        ));
+        let enc = enc.fuel_figures(0, |_| Ok(())).unwrap();
+        let enc = enc.performance_figures(0, |_| Ok(())).unwrap();
+        let enc = enc.manufacturer(b"X").unwrap();
+        let enc = enc.model(b"Y").unwrap();
+        let complete = enc.activation_code(b"").unwrap();
+        let _ = complete.as_bytes_with_header();
+    "#,
+        &["no method named `as_bytes_with_header`"],
     );
     Ok(())
 }
@@ -2239,7 +2336,7 @@ fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>>
         let mut inner = InnerEncoder::wrap_and_apply_header(&mut inner_buf, 0);
         inner.value(42);
         let inner_complete = inner.label(b"nested").unwrap();
-        let inner_bytes = inner_complete.as_bytes().to_vec();
+        let inner_bytes = inner_complete.as_bytes_with_header().to_vec();
 
         let outer_len = OuterEncoder::compute_encoded_length_with_message_header(
             b"test-app".len(),
@@ -2252,7 +2349,7 @@ fn nested_message_decode_via_vardata() -> Result<(), Box<dyn std::error::Error>>
         outer.trace_id(7);
         let after_name = outer.app_name(b"test-app").unwrap();
         let complete = after_name.payload(&inner_bytes).unwrap();
-        assert_eq!(complete.as_bytes().len(), outer_len);
+        assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
         let outer_decoder = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let (app_name, after_name) = outer_decoder.into_app_name().unwrap();
@@ -2329,7 +2426,7 @@ fn bounded_nested_payload_encode_via_with() -> Result<(), Box<dyn std::error::Er
                 assert_eq!(inner_complete.as_bytes_with_header().len(), payload.len());
                 Ok(())
             }).unwrap();
-        assert_eq!(complete.as_bytes().len(), outer_len);
+        assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let (_app_name, after_name) = dec.into_app_name().unwrap();
@@ -2630,7 +2727,7 @@ fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>
         let car_c = car_c.performance_figures(0, |_| Ok(())).unwrap();
         let car_c = car_c.manufacturer(b"").unwrap();
         let car_c = car_c.model(b"").unwrap();
-        let closure_bytes = car_c.activation_code(b"").unwrap().as_bytes().to_vec();
+        let closure_bytes = car_c.activation_code(b"").unwrap().as_bytes_with_header().to_vec();
 
         let mut car_m = CarEncoder::wrap_and_apply_header(&mut buf_manual, 0);
         car_m.serial_number(42); car_m.model_year(2020);
@@ -2650,7 +2747,7 @@ fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>
         let car_m = car_m.performance_figures(0, |_| Ok(())).unwrap();
         let car_m = car_m.manufacturer(b"").unwrap();
         let car_m = car_m.model(b"").unwrap();
-        let manual_bytes = car_m.activation_code(b"").unwrap().as_bytes().to_vec();
+        let manual_bytes = car_m.activation_code(b"").unwrap().as_bytes_with_header().to_vec();
 
         assert_eq!(closure_bytes, manual_bytes);
     "#,
@@ -2673,7 +2770,7 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
         let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.price(Decimal::new(12345, -2));  // 123.45
         enc.size(Decimal::new(100, 0));       // 100
-        let encoded = enc.as_ref().to_vec();
+        let encoded = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_wrap_and_apply_header(&encoded, 0).unwrap();
         let price = dec.price();
@@ -2771,7 +2868,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.price_wire(Decimal::new(99, -2));
         enc.size_wire(Decimal::new(3, 0));
-        let wire = enc.as_ref().to_vec();
+        let wire = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_wrap_and_apply_header(&wire, 0).unwrap();
         let dto = OrderDomain::from(dec);
@@ -2810,7 +2907,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
         let mut enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0);
         enc_wire.price_wire(Decimal::new(12345, -2));
         enc_wire.size_wire(Decimal::new(100, 0));
-        let wire_bytes = enc_wire.as_ref().to_vec();
+        let wire_bytes = enc_wire.as_bytes_with_header().to_vec();
 
         // Verify wire decode
         let dec_wire = OrderDecoder::try_wrap_and_apply_header(&wire_bytes, 0).unwrap();
@@ -2868,7 +2965,6 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_sym_done");
-    // Task 4: engine_value() is the renamed _as_struct accessor.
     assert!(
         src.contains("fn engine_value("),
         "engine_value() must be generated"
@@ -2920,7 +3016,7 @@ fn fixed_method_manual_equivalence() -> Result<(), Box<dyn std::error::Error>> {
         let d = d.performance_figures(0, |_| Ok(())).unwrap();
         let d = d.manufacturer(b"H").unwrap();
         let d = d.model(b"C").unwrap();
-        let direct = d.activation_code(b"X").unwrap().as_bytes().to_vec();
+        let direct = d.activation_code(b"X").unwrap().as_bytes_with_header().to_vec();
         let ff = CarFixedFields {
             serial_number: 42, model_year: 2020,
             available: BooleanType::T, code: Model::A,
@@ -2934,7 +3030,7 @@ fn fixed_method_manual_equivalence() -> Result<(), Box<dyn std::error::Error>> {
         let f = f.performance_figures(0, |_| Ok(())).unwrap();
         let f = f.manufacturer(b"H").unwrap();
         let f = f.model(b"C").unwrap();
-        let fixed = f.activation_code(b"X").unwrap().as_bytes().to_vec();
+        let fixed = f.activation_code(b"X").unwrap().as_bytes_with_header().to_vec();
         assert_eq!(direct, fixed);
     "#,
     );
@@ -2957,7 +3053,7 @@ fn callback_escape_try_data_is_compile_fail() -> Result<(), Box<dyn std::error::
         let mut outer = OuterEncoder::wrap_and_apply_header(&mut buf, 0);
         outer.trace_id(7);
         let complete = outer.app_name(b"test").unwrap().payload(b"data").unwrap();
-        let _ = complete.as_bytes();
+        let _ = complete.as_bytes_with_header();
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let mut escaped: Option<&[u8]> = None;
         let _ = dec.try_app_name::<sbe_rt::DecodeError, _>(|name| {
@@ -3009,7 +3105,7 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
         let mut encoder = InnerEncoder::wrap_and_apply_header(&mut tmp_inner, 0);
         encoder.value(42);
         let inner_complete = encoder.label(b"").unwrap();
-        let inner_bytes = inner_complete.as_bytes().to_vec();
+        let inner_bytes = inner_complete.as_bytes_with_header().to_vec();
         let inner_len = inner_bytes.len();
 
         let app_name_len = b"t".len();
@@ -3021,7 +3117,7 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
         outer.trace_id(1);
         let complete = outer.app_name(b"t").unwrap()
             .payload(&inner_bytes).unwrap();
-        assert_eq!(complete.as_bytes().len(), outer_len);
+        assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let (_n, after_name) = dec.into_app_name().unwrap();
@@ -3073,10 +3169,10 @@ fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::erro
                 let mut inner = OuterEncoder::try_wrap_and_apply_header(payload, 0)?;
                 inner.trace_id(99);
                 let c = inner.app_name(b"").unwrap().payload(b"").unwrap();
-                assert_eq!(c.as_bytes().len(), inner_outer_len);
+                assert_eq!(c.as_bytes_with_header().len(), inner_outer_len);
                 Ok(())
             }).unwrap();
-        assert_eq!(complete.as_bytes().len(), outer_len);
+        assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
         let dec = OuterDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
         let (_name, after_name) = dec.into_app_name().unwrap();
@@ -3280,6 +3376,170 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
             Ok(_) => panic!("oversized adapter value must not encode"),
         }
     "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn schema_marker_collision_avoided_with_composite_named_schema()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="col" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="MsgSchema">
+          <type name="field" primitiveType="uint32"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="4">
+        <field name="f" id="1" type="uint32" offset="0"/>
+      </message>
+      <message name="MsgMessage" id="2" blockLength="4">
+        <field name="f" id="1" type="uint32" offset="0"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules =
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("col_codec")).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    assert!(
+        src.contains("struct MsgMessageSchema"),
+        "Msg marker: missing MsgMessageSchema"
+    );
+    assert!(
+        src.contains("struct MsgMessageMessageSchema"),
+        "MsgMessage marker: missing MsgMessageMessageSchema"
+    );
+    compile_and_run(
+        "col_codec",
+        src,
+        r#"use col_codec::*;
+        assert_ne!(MsgMessageSchema::TEMPLATE_ID, MsgMessageMessageSchema::TEMPLATE_ID);
+        // Verify both templates decode through AnyMessage (no collision at dispatch).
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let len1 = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { f: 42u32 })
+            .encoded_length_with_header();
+        let msg1 = AnyMessage::decode(&buf[..len1], 0)?;
+        assert!(matches!(msg1, AnyMessage::Msg(_)), "template 1 should decode as Msg");
+
+        let mut buf2 = [0u8; MsgMessageEncoder::compute_length_with_header()];
+        let len2 = MsgMessageEncoder::wrap_and_apply_header(&mut buf2, 0)
+            .fixed(&MsgMessageFixedFields { f: 99u32 })
+            .encoded_length_with_header();
+        let msg2 = AnyMessage::decode(&buf2[..len2], 0)?;
+        assert!(matches!(msg2, AnyMessage::MsgMessage(_)), "template 2 should decode as MsgMessage");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn any_message_encode_rejects_short_buffer() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="eb" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="8">
+        <field name="a" id="1" type="uint32" offset="0"/>
+        <field name="b" id="2" type="uint32" offset="4"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules =
+        ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("eb_codec")).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    compile_and_run(
+        "eb_codec",
+        src,
+        r#"use eb_codec::*;
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { a: 1u32, b: 2u32 })
+            .encoded_length_with_header();
+        let msg = AnyMessage::decode(&buf[..len], 0)?;
+
+        // Exact size: succeeds
+        let mut exact = [0u8; MsgEncoder::compute_length_with_header()];
+        let n = msg.encode(&mut exact)?;
+        assert_eq!(n, len);
+
+        // Oversized: succeeds
+        let mut big = [0u8; 256];
+        let n = msg.encode(&mut big)?;
+        assert_eq!(n, len);
+
+        // One byte short: must fail, not panic
+        let mut short = [0u8; MsgEncoder::compute_length_with_header() - 1];
+        let result = msg.encode(&mut short);
+        assert!(result.is_err(), "encode into short buffer must return Err, not panic");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn auto_bool_domain_works_with_arbitrary_bool_enum_name() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0"?>
+    <messageSchema package="ab" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="YesNo" encodingType="uint8">
+          <validValue name="No">0</validValue>
+          <validValue name="Yes">1</validValue>
+        </enum>
+      </types>
+      <message name="Vote" id="1" blockLength="1">
+        <field name="approved" id="1" type="YesNo" offset="0"/>
+      </message>
+    </messageSchema>"#;
+    let ir = ergo_sbe::parse(xml)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("ab_codec").enable_bool_domain_type();
+    let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    assert!(
+        src.contains("impl TryFromSbe<YesNo> for bool"),
+        "auto_bool must emit TryFromSbe<YesNo> for bool"
+    );
+    assert!(
+        src.contains("impl TryToSbe<YesNo> for bool"),
+        "auto_bool must emit TryToSbe<YesNo> for bool"
+    );
+    compile_and_run(
+        "ab_codec",
+        src,
+        r#"use ab_codec::*;
+        let mut buf = [0u8; VoteEncoder::compute_length_with_header()];
+        let len = VoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&VoteFixedFields { approved: YesNo::Yes })
+            .encoded_length_with_header();
+        let dec = VoteDecoder::try_from(&buf[..len])?;
+        // Wire type accessor returns the enum:
+        assert_eq!(dec.approved(), YesNo::Yes);
+        // auto_bool_domain generates _bool accessor returning bool:
+        let approved: bool = dec.approved_bool();
+        assert!(approved);
+        "#,
     );
     Ok(())
 }

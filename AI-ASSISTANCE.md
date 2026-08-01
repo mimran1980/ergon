@@ -644,8 +644,10 @@ that test-selection bypasses are forbidden.
 **Ignored Rustdoc fences.** Multiple Rust code examples in documentation
 had `rust,ignore` fences. An LLM that could not make an example compile
 added `ignore` rather than fixing the code or using an honest `text` fence.
-These were replaced with compile-checked `rust,no_run` examples or
-explicitly schematic `text` fences.
+These were replaced with compilable `rust` examples (compile-checked by the
+docs-validation harness) or explicitly schematic `text` fences; remaining
+`rust,no_run` fences are non-compiling by design (build scripts, config
+illustrations).
 
 **Phantom regeneration test.** A file named `encoded_length_api.txt`
 advertised a regeneration test that did not exist and was not checked by
@@ -925,7 +927,7 @@ I used GLM-5.2 and GLM-4.7 substantially, particularly early in the project.
 The 30-day screenshot below records approximately 3.28 billion GLM tokens,
 including 2.65 billion on GLM-5.2.
 
-![GLM model usage over 30 days](assets/ai-assistance/glm-30-day-model-usage.jpg)
+![GLM model usage over 30 days](book/src/project/ai-assistance/glm-30-day-model-usage.jpg)
 
 I bought the highest coding-plan tier I was using—about **$114**—and still hit
 limits during the intensive development schedule.
@@ -1077,16 +1079,16 @@ The DeepSeek dashboard for the displayed 30-day window shows:
 - **47,668 API requests**
 - **$77.39**
 
-![DeepSeek 30-day usage summary](assets/ai-assistance/deepseek-30-day-summary.jpg)
+![DeepSeek 30-day usage summary](book/src/project/ai-assistance/deepseek-30-day-summary.jpg)
 
 The model split shown by the dashboard was:
 
 - DeepSeek V4 Flash: 3,392,304,915 tokens across 29,015 requests
 - DeepSeek V4 Pro: 7,130,554,978 tokens across 18,653 requests
 
-![DeepSeek V4 Flash usage](assets/ai-assistance/deepseek-v4-model-usage-upper.jpg)
+![DeepSeek V4 Flash usage](book/src/project/ai-assistance/deepseek-v4-model-usage-upper.jpg)
 
-![DeepSeek V4 Pro usage](assets/ai-assistance/deepseek-v4-model-usage-lower.jpg)
+![DeepSeek V4 Pro usage](book/src/project/ai-assistance/deepseek-v4-model-usage-lower.jpg)
 
 My rounded estimate for the full project period is approximately **14 billion
 tokens** across providers:
@@ -1125,11 +1127,11 @@ that comparison.
 The dashboard screenshots expose the input-cache-hit, input-cache-miss, and
 output split for three selected days:
 
-![DeepSeek V4 Flash cache split on 7 July 2026](assets/ai-assistance/deepseek-v4-flash-cache-2026-07-07.jpg)
+![DeepSeek V4 Flash cache split on 7 July 2026](book/src/project/ai-assistance/deepseek-v4-flash-cache-2026-07-07.jpg)
 
-![DeepSeek V4 Pro cache split on 9 July 2026](assets/ai-assistance/deepseek-v4-pro-cache-2026-07-09.jpg)
+![DeepSeek V4 Pro cache split on 9 July 2026](book/src/project/ai-assistance/deepseek-v4-pro-cache-2026-07-09.jpg)
 
-![DeepSeek V4 Pro cache split on 24 July 2026](assets/ai-assistance/deepseek-v4-pro-cache-2026-07-24.jpg)
+![DeepSeek V4 Pro cache split on 24 July 2026](book/src/project/ai-assistance/deepseek-v4-pro-cache-2026-07-24.jpg)
 
 Combined, those samples contain:
 

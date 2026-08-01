@@ -59,8 +59,6 @@ use sha2::{Digest, Sha256};
 /// One generated Rust source file.
 ///
 /// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
-///
-/// Write `source` to `OUT_DIR.join(path)` from `build.rs`, then:
 /// `mod msgs { include!(concat!(env!("OUT_DIR"), "/msgs.rs")); }`
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedModule {
@@ -72,7 +70,7 @@ pub struct GeneratedModule {
 
 /// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
 ///
-/// ```
+/// ```rust
 /// # use std::path::Path;
 /// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 /// let set = generator.generate(schema)?;
@@ -253,20 +251,56 @@ pub struct Generator {
 
 /// Extract [`crate::FieldInfo`] entries from message fields (constant fields
 /// excluded). Used by context builders and hook dispatch.
-fn message_field_infos(fields: &[MessageField]) -> Vec<crate::FieldInfo> {
+fn message_field_infos(
+    fields: &[MessageField],
+    domain_types: &[(crate::ConversionSelector, String)],
+    elements: Option<&SchemaElements>,
+) -> Vec<crate::FieldInfo> {
     fields
         .iter()
         .filter(|f| f.presence != Presence::Constant)
-        .map(|f| crate::FieldInfo {
-            name: to_snake_case(&f.name),
-            rust_type: f.field_type.rust_type_name(),
-            offset: f.offset,
-            since_version: f.since_version,
-            semantic_type: f.semantic_type.clone(),
-            presence: presence_str(f.presence),
-            null_value: f.null_value,
-            deprecated: f.deprecated,
-            description: f.description.clone(),
+        .map(|f| {
+            // Domain types apply to the DTO field only when the DTO
+            // generation actually uses them: required scalar primitives
+            // and boolean enums (the latter detected via is_bool_enum,
+            // matching the unconditional bool emission in DTO generation).
+            // Optional fields, arrays, composites/enums/sets without a
+            // domain config all keep the wire type.
+            let domain_ty = match &f.field_type {
+                FieldType::Primitive(_, length) => {
+                    if length.is_none() && f.presence == Presence::Required {
+                        find_domain_type(f, domain_types)
+                    } else {
+                        None
+                    }
+                }
+                FieldType::Enum {
+                    name: enum_name, ..
+                } => {
+                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name))
+                    {
+                        Some("bool")
+                    } else {
+                        find_domain_type(f, domain_types)
+                    }
+                }
+                _ => None,
+            };
+            let rust_type = match domain_ty {
+                Some(dt) => dt.to_string(),
+                None => f.field_type.rust_type_name(),
+            };
+            crate::FieldInfo {
+                name: to_snake_case(&f.name),
+                rust_type,
+                offset: Some(f.offset),
+                since_version: f.since_version,
+                semantic_type: f.semantic_type.clone(),
+                presence: presence_str(f.presence),
+                null_value: f.null_value,
+                deprecated: f.deprecated,
+                description: f.description.clone(),
+            }
         })
         .collect()
 }
@@ -526,32 +560,42 @@ impl Generator {
         false
     }
 
+    #[allow(missing_docs)]
+    fn effective_domain_types(
+        &self,
+        schemas: &[(&Schema, &str)],
+    ) -> Vec<(crate::ConversionSelector, String)> {
+        let mut types = self.config.domain_types.clone();
+        if self.config.auto_bool_domain {
+            for (schema, _) in schemas {
+                let elements = partition_tokens(&schema.ir.tokens);
+                for e in &elements.enums {
+                    let name = &e[0].name;
+                    if crate::structured_ir::is_bool_value_enum(&elements, name) {
+                        let sel = crate::ConversionSelector::named_type(name);
+                        if !types.iter().any(|(s, _)| s == &sel) {
+                            types.push((sel, "bool".into()));
+                        }
+                    }
+                }
+            }
+        }
+        types
+    }
+
     /// Generate one Rust module for `schema` (file name from config module name).
     ///
     /// # Errors
     ///
     /// [`GenerateError`] if conversion selectors match nothing or collide.
-    pub fn generate(&mut self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
-        // When enable_bool_domain_type() is set, auto-register bool converters
-        // for all detected boolean enums before any codegen runs.
-        if self.config.auto_bool_domain {
-            let elements = partition_tokens(&schema.ir.tokens);
-            for e in &elements.enums {
-                let name = &e[0].name;
-                if crate::structured_ir::is_bool_value_enum(&elements, name) {
-                    let sel = crate::ConversionSelector::named_type(name);
-                    if !self.config.domain_types.iter().any(|(s, _)| s == &sel) {
-                        self.config.domain_types.push((sel, "bool".into()));
-                    }
-                }
-            }
-        }
+    pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
+        let effective = self.effective_domain_types(&[(schema, "")]);
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
                 self.validate_conversions(schema)?;
                 let mut modules = GeneratedModuleSet::default();
-                let src = self.gen_schema(schema, &HashSet::new(), false, true);
+                let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective);
                 modules.push(GeneratedModule {
                     path: format!("{}.rs", self.config.module_name),
                     source: src,
@@ -576,9 +620,10 @@ impl Generator {
         &self,
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
+        let effective = self.effective_domain_types(schemas);
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
-                self.generate_multi_inner(schemas)
+                self.generate_multi_inner(schemas, &effective)
             })
         })
     }
@@ -586,6 +631,7 @@ impl Generator {
     fn generate_multi_inner(
         &self,
         schemas: &[(&Schema, &str)],
+        domain_types: &[(crate::ConversionSelector, String)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         let mut modules = GeneratedModuleSet::default();
         let mut shared_types: HashSet<String> = HashSet::new();
@@ -625,7 +671,7 @@ impl Generator {
             } else {
                 &empty_set
             };
-            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt);
+            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt, domain_types);
             modules.push(GeneratedModule {
                 path: format!("{}.rs", module_name),
                 source: src,
@@ -650,10 +696,12 @@ impl Generator {
             .filter(|t| t.signal == crate::ir::Signal::Encoding)
             .filter_map(|t| {
                 let val = t.encoding.constant_value.as_ref()?;
-                let value: i64 = if encoding_type == PrimitiveType::Char {
-                    val.as_bytes().first().copied().unwrap_or(0) as i64
+                let value: i128 = if encoding_type == PrimitiveType::Char {
+                    i128::from(val.as_bytes().first().copied().unwrap_or(0))
                 } else {
-                    val.parse::<i64>().ok()?
+                    // i128 covers uint64 discriminants above i64::MAX
+                    // (rare but schema-legal) without wrapping negative.
+                    val.parse::<i128>().ok()?
                 };
                 Some(crate::EnumVariantInfo {
                     name: to_pascal_case(&t.name),
@@ -680,7 +728,7 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields = message_field_infos(&msg.fields);
+        let fields = message_field_infos(&msg.fields, &[], None);
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -706,37 +754,92 @@ impl Generator {
     }
 
     /// Build an [`ItemContext::Composite`] from IR tokens.
+    ///
+    /// Uses the canonical [`parse_composite_members`] so every member is
+    /// reported exactly once with its real Rust type: primitives keep their
+    /// element type (`[T; N]` for arrays), nested composites/enums/sets report
+    /// their type name. Container/ref tokens are never miscounted as fields.
     fn build_composite_ctx<'s>(
         tokens: &[crate::ir::Token],
         schema: &'s crate::Schema,
     ) -> crate::ItemContext<'s> {
+        use crate::structured_ir::MemberType;
         let name = to_pascal_case(&tokens[0].name);
-        let fields: Vec<_> = tokens
-            .iter()
-            .filter(|t| {
-                t.signal == crate::ir::Signal::Encoding
-                    || t.signal == crate::ir::Signal::BeginComposite
-            })
-            .filter(|t| !t.name.is_empty())
-            .map(|t| crate::FieldInfo {
-                name: to_snake_case(&t.name),
-                rust_type: crate::structured_ir::rust_type(
-                    t.encoding
-                        .primitive_type
-                        .unwrap_or(crate::PrimitiveType::UInt8),
+        // Metadata lives on different tokens depending on the member kind:
+        // - primitive: the `BeginField` wrapper carries it (inner token is the
+        //   unnamed `<type>` encoding);
+        // - nested composite/enum/set: the `BeginField` carries only offsets;
+        //   `semanticType`/`nullValue`/`description`/`deprecated` live on the
+        //   inner `BeginComposite`/`BeginEnum`/`BeginSet` token.
+        let member_field_token = |member_name: &str| {
+            tokens
+                .iter()
+                .find(|t| t.signal == crate::ir::Signal::BeginField && t.name == member_name)
+        };
+        let inner_type_token = |field_name: &str| {
+            // Find the BeginField for this member, then peek at the adjacent
+            // non-field token that carries the actual type's encoding metadata.
+            let mut it = tokens.iter().skip_while(|t| {
+                !(t.signal == crate::ir::Signal::BeginField && t.name == field_name)
+            });
+            let _ = it.next(); // skip the BeginField itself
+            it.find(|t| {
+                matches!(
+                    t.signal,
+                    crate::ir::Signal::Encoding
+                        | crate::ir::Signal::BeginComposite
+                        | crate::ir::Signal::BeginEnum
+                        | crate::ir::Signal::BeginSet
                 )
-                .to_string(),
-                offset: t.encoding.offset.unwrap_or(0),
-                since_version: t.encoding.since_version,
-                semantic_type: t.encoding.semantic_type.clone(),
-                presence: if t.encoding.null_value.is_some() {
-                    "optional"
-                } else {
-                    "required"
-                },
-                null_value: t.encoding.null_value,
-                deprecated: t.encoding.deprecated,
-                description: t.encoding.description.clone(),
+            })
+        };
+        let fields: Vec<_> = crate::structured_ir::parse_composite_members(tokens)
+            .into_iter()
+            .map(|m| {
+                let field_tok = member_field_token(&m.name);
+                let inner_tok = inner_type_token(&m.name);
+                // For primitives the field wrapper carries metadata; for
+                // containers the inner token does.
+                let enc = match &m.member_type {
+                    MemberType::Primitive { .. } => field_tok.map(|t| &t.encoding),
+                    MemberType::Composite { .. }
+                    | MemberType::Enum { .. }
+                    | MemberType::Set { .. } => inner_tok.map(|t| &t.encoding),
+                };
+                let (rust_type, presence) = match &m.member_type {
+                    MemberType::Primitive {
+                        prim,
+                        length,
+                        presence,
+                        ..
+                    } => {
+                        let base = crate::structured_ir::rust_type(*prim);
+                        let rt = match length {
+                            Some(len) => format!("[{base}; {len}]"),
+                            None => base.to_string(),
+                        };
+                        let ps = match presence {
+                            crate::ir::Presence::Optional => "optional",
+                            crate::ir::Presence::Constant => "constant",
+                            crate::ir::Presence::Required => "required",
+                        };
+                        (rt, ps)
+                    }
+                    MemberType::Composite { name, .. } => (to_pascal_case(name), "required"),
+                    MemberType::Enum { name, .. } => (to_pascal_case(name), "required"),
+                    MemberType::Set { name, .. } => (to_pascal_case(name), "required"),
+                };
+                crate::FieldInfo {
+                    name: to_snake_case(&m.name),
+                    rust_type,
+                    offset: Some(m.offset),
+                    since_version: m.since_version,
+                    semantic_type: enc.and_then(|e| e.semantic_type.clone()),
+                    presence,
+                    null_value: enc.and_then(|e| e.null_value),
+                    deprecated: enc.is_some_and(|e| e.deprecated),
+                    description: enc.and_then(|e| e.description.clone()),
+                }
             })
             .collect();
         crate::ItemContext::Composite {
@@ -796,6 +899,7 @@ impl Generator {
         shared: &HashSet<String>,
         is_importing: bool,
         emit_sbe_rt: bool,
+        domain_types: &[(crate::ConversionSelector, String)],
     ) -> String {
         let ir = &schema.ir;
 
@@ -897,11 +1001,14 @@ impl Generator {
             .map(|toks| parse_message_structure(toks, &elements))
             .collect();
 
+        let mut schema_markers = occupied_type_names(&elements);
+        let mut message_markers: Vec<(String, String)> = Vec::new();
         for msg in &messages {
             let multi = messages.len() > 1;
-            let decoder_ts = generate_message_decoder(
+            let (decoder_ts, marker) = generate_message_decoder(
                 msg,
                 &elements,
+                &mut schema_markers,
                 ir.byte_order,
                 ir.id,
                 ir.version,
@@ -911,13 +1018,14 @@ impl Generator {
                 self.config.domain_objects,
                 self.config.domain_var_data,
                 &self.config.conversions,
-                &self.config.domain_types,
+                domain_types,
                 self.config.unchecked_companions,
                 &self.config.hooks,
                 schema,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            message_markers.push((to_pascal_case(&msg.name), marker));
             // Hooks for the message decoder
             if self.config.has_hooks() {
                 let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
@@ -932,7 +1040,7 @@ impl Generator {
                 &ir.header_type,
                 multi,
                 &self.config.conversions,
-                &self.config.domain_types,
+                domain_types,
                 self.config.unchecked_companions,
             );
             src.push_str(&encoder_ts.to_string());
@@ -946,12 +1054,8 @@ impl Generator {
             // Decimal composite, emit raw *_wire aliases and generic converted
             // methods. Only emitted when converter mode is active.
             if !&self.config.conversions.is_empty() {
-                let converter_ts = generate_converter_impls(
-                    msg,
-                    &self.config.conversions,
-                    &self.config.domain_types,
-                    multi,
-                );
+                let converter_ts =
+                    generate_converter_impls(msg, &self.config.conversions, domain_types, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -960,11 +1064,8 @@ impl Generator {
 
         // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
         if self.config.has_conversions() {
-            let impl_blocks = generate_conversion_impl_blocks(
-                &elements,
-                &self.config.conversions,
-                &self.config.domain_types,
-            );
+            let impl_blocks =
+                generate_conversion_impl_blocks(&elements, &self.config.conversions, domain_types);
             src.push_str(&impl_blocks);
         }
 
@@ -1074,8 +1175,14 @@ impl Generator {
         src.push('\n');
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
-        let any_msg_ts =
-            generate_any_message(&messages, &elements, ir.id, &ir.header_type, &ir.package);
+        let any_msg_ts = generate_any_message(
+            &messages,
+            &elements,
+            ir.id,
+            &ir.header_type,
+            &ir.package,
+            &message_markers,
+        );
         src.push_str(&any_msg_ts.to_string());
         src.push('\n');
 
@@ -1440,11 +1547,21 @@ fn generate_owner_consuming_stages(
     }
 
     let complete_ident = stage_after_ident(total_tail - 1);
+    // Message complete stages: `pos` is body start; header is `header_size`
+    // bytes before. Entry complete stages pass `header_size == 0`, so the
+    // header-inclusive view equals the body view.
     ts.extend(quote::quote! {
         impl<'a> #complete_ident<'a> {
-            /// Header-inclusive bytes (for an entry, the entry bytes; header_size is 0).
+            /// Body bytes (excluding the message header; for entries this is the
+            /// complete entry bytes).
             #[inline]
-            pub fn as_bytes(&self) -> &'a [u8] {
+            pub fn as_body_bytes(&self) -> &'a [u8] {
+                &self.buf[self.pos..self.tail_start]
+            }
+            /// Complete SBE frame (header + body) for message stages.
+            /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> &'a [u8] {
                 &self.buf[self.pos - #header_size_lit..self.tail_start]
             }
             /// Body length (excluding header).
@@ -1452,10 +1569,16 @@ fn generate_owner_consuming_stages(
             pub fn encoded_length(&self) -> usize {
                 self.tail_start - self.pos
             }
-            /// Header-inclusive length.
+            /// Total message length including the schema-declared header.
+            /// Pure arithmetic: body length + `HEADER_LENGTH`.
             #[inline]
             pub fn encoded_length_with_header(&self) -> usize {
                 self.tail_start - self.pos + #header_size_lit
+            }
+            /// Bytes after this message/entry.
+            #[inline]
+            pub fn remaining(&self) -> &'a [u8] {
+                &self.buf[self.tail_start..]
             }
         }
     });
@@ -1575,6 +1698,7 @@ fn generate_entry_consuming_stages(
 fn generate_message_decoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
+    schema_markers: &mut std::collections::HashSet<String>,
     byte_order: ByteOrder,
     schema_id: u16,
     schema_version: u16,
@@ -1588,7 +1712,7 @@ fn generate_message_decoder(
     _unchecked_companions: bool,
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
-) -> proc_macro2::TokenStream {
+) -> (proc_macro2::TokenStream, String) {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
     let order_suffix = match byte_order {
@@ -1691,9 +1815,24 @@ fn generate_message_decoder(
     let encoded_len_lit =
         syn::LitInt::new(&encoded_length.to_string(), proc_macro2::Span::call_site());
 
-    if let Some(ref desc) = msg.description {
-        ts.extend(doc_attr_tokens(desc));
-    }
+    // Schema constants struct — no turbofish, shared by encoder and decoder.
+    // Disambiguate when a composite/enum/set already claims `{Name}Schema`.
+    // Emitted *before* the decoder so message `description` rustdoc attaches
+    // to the decoder/encoder types, not this marker.
+    let schema_ident = schema_marker_ident(&name, schema_markers);
+    let marker_name = schema_ident.to_string();
+    schema_markers.insert(marker_name.clone());
+    ts.extend(quote::quote! {
+        pub struct #schema_ident;
+        impl #schema_ident {
+            pub const SCHEMA_ID: u16 = #schema_id_lit;
+            pub const SCHEMA_VERSION: u16 = #schema_version_lit;
+            pub const TEMPLATE_ID: u16 = #msg_id_lit;
+            pub const BLOCK_LENGTH: usize = #bl_lit;
+            pub const HEADER_LENGTH: usize = #hdr_size_lit;
+        }
+    });
+
     // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
     // tail cursor, so copying cannot weaken an ordering invariant. Tailed
     // decoders are NOT Copy/Clone — consumption enforces wire order.
@@ -1702,6 +1841,9 @@ fn generate_message_decoder(
     } else {
         quote::quote! {}
     };
+    if let Some(ref desc) = msg.description {
+        ts.extend(doc_attr_tokens(desc));
+    }
     ts.extend(quote::quote! {
         #derive_attr
         pub struct #decoder_ident<'a> {
@@ -1737,20 +1879,22 @@ fn generate_message_decoder(
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
 
-            /// Offset of the message header within [`Self::whole_buffer`].
-            /// `whole_buffer()[message_offset()..]` is the full SBE frame
-            /// (header + body) for this message.
+            /// Absolute offset of this message within the original buffer
+            /// (the `message_offset` argument passed to `wrap`).
             #[inline]
             pub const fn message_offset(&self) -> usize {
-                self.pos - Self::HEADER_LENGTH
+                self.pos.saturating_sub(Self::HEADER_LENGTH)
             }
 
-            /// The complete original buffer that this decoder wraps
-            /// (may include data before this message if `try_wrap_and_apply_header`
-            /// was called with a non-zero `pos`).
-            /// Use [`Self::message_offset`] to locate where this message starts.
+            /// Absolute current read cursor within the original buffer.
             #[inline]
-            pub fn whole_buffer(&self) -> &'a [u8] {
+            pub const fn limit(&self) -> usize {
+                self.pos + self.acting_block_length
+            }
+
+            /// The complete original buffer this decoder wraps.
+            #[inline]
+            pub fn buffer(&self) -> &'a [u8] {
                 self.buf
             }
 
@@ -1795,10 +1939,11 @@ fn generate_message_decoder(
 
     impl_body.extend(quote::quote! {
         #[inline]
-        pub fn wrap(buf: &'a [u8], pos: usize, acting_block_length: usize, acting_version: u16) -> Self {
+        pub fn wrap(buf: &'a [u8], message_offset: usize, acting_block_length: usize, acting_version: u16) -> Self {
+            let body_pos = message_offset + Self::HEADER_LENGTH;
             Self {
                 buf,
-                pos,
+                pos: body_pos,
                 acting_block_length,
                 acting_version,
             }
@@ -1880,7 +2025,8 @@ fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                Ok(Self::wrap(buf, body_pos, acting_block_length, acting_version))
+                let mut dec = Self::wrap(buf, pos, acting_block_length, acting_version);
+                Ok(dec)
             }
         });
     }
@@ -1901,19 +2047,22 @@ fn generate_message_decoder(
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
         const DECODER_RESERVED: &[&str] = &[
             "remaining",
-            "whole_buffer",
             "message_offset",
-            "after_this_message",
+            "limit",
+            "buffer",
             "wrap",
             "try_wrap_and_apply_header",
             "header",
             "encoded_length",
             "encoded_length_with_header",
-            "as_bytes",
+            "as_body_bytes",
+            "as_bytes_with_header",
             "as_ref_opt",
             "verify",
             "acting_version",
             "acting_block_length",
+            // Consuming stage transition (self → Self).
+            "rewind",
         ];
         let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
@@ -1991,8 +2140,7 @@ fn generate_message_decoder(
                         });
                     }
 
-                    let fn_snake_ident =
-                        syn::Ident::new(&fname_snake, proc_macro2::Span::call_site());
+                    let fn_snake_ident = fname_ident.clone();
                     // Fixed-length array accessors are INFALLIBLE: a fixed array that
                     // lies within the message body is guaranteed in-bounds by the
                     // version/block-length check below (and by wrap, which validates the
@@ -2091,7 +2239,7 @@ fn generate_message_decoder(
                                      Some(val)\n\
                                  }}\n\
                              }}\n",
-                            snake = fname_snake,
+                            snake = fname_ident,
                             rt = r_type,
                             version_guard = version_guard,
                             offset = offset,
@@ -2256,7 +2404,7 @@ fn generate_message_decoder(
                             Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
                         }
                     });
-                    if is_bool_enum(elements, enum_name) {
+                    if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -2273,7 +2421,7 @@ fn generate_message_decoder(
                             #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
                         }
                     });
-                    if is_bool_enum(elements, enum_name) {
+                    if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
                             #[inline]
@@ -2631,10 +2779,16 @@ fn generate_message_decoder(
         }
 
         #[inline]
-        pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-            let len = self.encoded_length_with_header()?;
-            let start = self.pos - #hdr_size_lit;
-            Ok(&self.buf[start .. start + len])
+        pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            let end = self.#total_tail_ident()?;
+            Ok(&self.buf[self.pos..end])
+        }
+
+        #[inline]
+        pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+            let end = self.#total_tail_ident()?;
+            let start = self.pos.saturating_sub(Self::HEADER_LENGTH);
+            Ok(&self.buf[start..end])
         }
     });
 
@@ -2823,11 +2977,11 @@ fn generate_message_decoder(
         }
 
         impl<'a> #decoder_ident<'a> {
-            /// Fallible byte view of the message. Returns `None` if the
-            /// buffer is malformed or truncated. Prefer [`Self::as_bytes`]
-            /// for explicit error handling.
+            /// Fallible byte view of the complete SBE frame (header + body).
+            /// Returns `None` if the buffer is malformed or truncated.
+            /// Prefer [`Self::as_bytes_with_header`] for explicit error handling.
             pub fn as_ref_opt(&self) -> Option<&[u8]> {
-                self.as_bytes().ok()
+                self.as_bytes_with_header().ok()
             }
         }
     });
@@ -2881,26 +3035,13 @@ fn generate_message_decoder(
             conversions,
             domain_types,
             domain_var_data,
+            hooks,
+            schema,
         );
         ts.extend(domain_ts);
-        // Run hooks for domain structs
-        if !hooks.is_empty() {
-            let domain_name = format!("{name}Domain");
-            let fields = message_field_infos(&msg.fields);
-            let ctx = crate::ItemContext::DomainStruct {
-                schema: &schema,
-                name: domain_name,
-                fields,
-            };
-            for hook in hooks.iter() {
-                for token_stream in hook(&ctx) {
-                    ts.extend(token_stream);
-                }
-            }
-        }
     }
 
-    ts
+    (ts, marker_name)
 }
 
 /// Generate owned domain structs + From<Decoder> impls for a message and all
@@ -2916,6 +3057,8 @@ fn generate_domain_objects(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
@@ -2934,6 +3077,8 @@ fn generate_domain_objects(
         domain_types,
         domain_var_data,
         false, // is_entry — this is a message, not a group entry
+        hooks,
+        schema,
         &mut ts,
         span,
     );
@@ -2958,7 +3103,7 @@ fn domain_entry_can_bulk_encode(
                     && find_domain_type(f, domain_types).is_none()
                     && !matches!(
                         &f.field_type,
-                        FieldType::Enum { name, .. } if is_bool_enum(elements, name)
+                        FieldType::Enum { name, .. } if crate::structured_ir::is_bool_enum(elements, name)
                     ))
         })
 }
@@ -3112,6 +3257,8 @@ fn generate_domain_recursive(
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
     is_entry: bool,
+    hooks: &crate::config::Hooks,
+    schema: &crate::Schema,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
 ) {
@@ -3253,7 +3400,7 @@ fn generate_domain_recursive(
             FieldType::Enum {
                 name: enum_name, ..
             } => {
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     // bool enums → plain bool in DTO
                     let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if f.since_version > 0 {
@@ -3386,6 +3533,8 @@ fn generate_domain_recursive(
             domain_types,
             domain_var_data,
             true,
+            hooks,
+            schema,
             ts,
             span,
         );
@@ -3433,11 +3582,17 @@ fn generate_domain_recursive(
         match domain_var_data {
             crate::config::DomainVarData::LossyStrings => {
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
-                // Valid UTF-8 → String; invalid → silent empty (not U+FFFD, not an error).
+                // Valid UTF-8 → String; invalid UTF-8 → silent empty
+                // (LossyStrings is doc'd as lossy, not as corrupt-data
+                // rejection). Truncated/missing var-data IS an error:
+                // `unwrap_or(&[])` previously swallowed that silently.
                 from_exprs.push(quote::quote! {
-                    #vd_ident: core::str::from_utf8(dec.#vd_ident().unwrap_or(&[]))
-                        .map(|s| s.to_owned())
-                        .unwrap_or_default()
+                    #vd_ident: match dec.#vd_ident() {
+                        Ok(data) => core::str::from_utf8(data)
+                            .map(|s| s.to_owned())
+                            .unwrap_or_default(),
+                        Err(e) => return Err(e),
+                    }
                 });
                 vardata_encode_stmts.push(quote::quote! {
                     let enc = enc.#vd_ident(self.#vd_ident.as_bytes())?;
@@ -3446,7 +3601,10 @@ fn generate_domain_recursive(
             crate::config::DomainVarData::Bytes => {
                 struct_fields.push(quote::quote! { pub #vd_ident: Vec<u8> });
                 from_exprs.push(quote::quote! {
-                    #vd_ident: dec.#vd_ident().unwrap_or(&[]).to_vec()
+                    #vd_ident: match dec.#vd_ident() {
+                        Ok(data) => data.to_vec(),
+                        Err(e) => return Err(e),
+                    }
                 });
                 vardata_encode_stmts.push(quote::quote! {
                     let enc = enc.#vd_ident(&self.#vd_ident)?;
@@ -3456,6 +3614,26 @@ fn generate_domain_recursive(
     }
 
     let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
+
+    // Only message-level decoders have try_wrap_and_apply_header;
+    // entry decoders use wrap() and don't get try_from_slice_with_header.
+    let try_from_slice_method: proc_macro2::TokenStream = if !is_entry {
+        quote::quote! {
+            /// Decode directly from a byte slice — validates the header
+            /// and materialises the full domain object in one call.
+            pub fn try_from_slice_with_header(
+                buf: &[u8],
+                message_offset: usize,
+            ) -> Result<Self, sbe_rt::DecodeError> {
+                Self::try_from_decoder(
+                    #decoder_ident::try_wrap_and_apply_header(buf, message_offset)?,
+                )
+            }
+        }
+    } else {
+        proc_macro2::TokenStream::new()
+    };
+
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
         /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
@@ -3474,6 +3652,8 @@ fn generate_domain_recursive(
                     #(#from_exprs),*
                 })
             }
+
+            #try_from_slice_method
         }
 
         impl<'a> From<#decoder_ident<'a>> for #domain_ident {
@@ -3483,6 +3663,58 @@ fn generate_domain_recursive(
             }
         }
     });
+
+    // Fire hooks for this domain struct (message DTO or entry DTO).
+    // Build context including group and var-data field info.
+    if !hooks.is_empty() {
+        let mut ctx_fields = message_field_infos(fields, domain_types, Some(elements));
+        // Append synthetic field entries for groups (Vec<EntryDomain>).
+        // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
+        // (see the recursion below), so the reported type must carry the same
+        // prefix — a bare `Vec<{Group}EntryDomain>` names a type that does not
+        // exist.
+        for g in groups {
+            ctx_fields.push(crate::FieldInfo {
+                name: to_snake_case(&g.name),
+                rust_type: format!("Vec<{struct_prefix}{}EntryDomain>", to_pascal_case(&g.name)),
+                offset: None,
+                since_version: g.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated: false,
+                description: g.description.clone(),
+            });
+        }
+        // Append synthetic field entries for var-data
+        for vd in var_data {
+            let vd_ty = match domain_var_data {
+                crate::config::DomainVarData::Bytes => "Vec<u8>",
+                crate::config::DomainVarData::LossyStrings => "String",
+            };
+            ctx_fields.push(crate::FieldInfo {
+                name: to_snake_case(&vd.name),
+                rust_type: vd_ty.to_string(),
+                offset: None,
+                since_version: vd.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated: false,
+                description: vd.description.clone(),
+            });
+        }
+        let ctx = crate::ItemContext::DomainStruct {
+            schema,
+            name: struct_prefix.to_string() + "Domain",
+            fields: ctx_fields,
+        };
+        for hook in hooks.iter() {
+            for token_stream in hook(&ctx) {
+                ts.extend(token_stream);
+            }
+        }
+    }
 
     if is_entry {
         // Entry domains: encode_into for use inside group closures
@@ -3657,7 +3889,7 @@ fn generate_domain_recursive(
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
                 #(#vardata_encode_stmts)*
-                Ok(enc.encoded_length_with_header())
+                Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)
             }
         } else {
             // Fixed-only message: encoder implements AsRef<[u8]>
@@ -3665,7 +3897,7 @@ fn generate_domain_recursive(
                 let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
-                Ok(enc.as_ref().len())
+                Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)
             }
         };
         ts.extend(quote::quote! {
@@ -3709,19 +3941,22 @@ fn generate_decoder_display(
     for f in &msg.fields {
         const DECODER_RESERVED: &[&str] = &[
             "remaining",
-            "whole_buffer",
             "message_offset",
-            "after_this_message",
+            "limit",
+            "buffer",
             "wrap",
             "try_wrap_and_apply_header",
             "header",
             "encoded_length",
             "encoded_length_with_header",
-            "as_bytes",
+            "as_body_bytes",
+            "as_bytes_with_header",
             "as_ref_opt",
             "verify",
             "acting_version",
             "acting_block_length",
+            // Consuming stage transition (self → Self).
+            "rewind",
         ];
         let snake = to_snake_case(&f.name);
         let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
@@ -4705,7 +4940,7 @@ fn generate_group_decoder(
                     });
                 }
 
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let bool_ident = quote::format_ident!("{}_bool", f_name);
                     if f.since_version > 0 {
                         entry_body.extend(quote::quote! {
@@ -5253,7 +5488,10 @@ fn generate_nullification(
         if f.presence == Presence::Optional {
             if let Some(null_val) = f.null_value {
                 let size = f.field_type.size();
-
+                // The null value is stored as a u64 in the IR (matching the
+                // XML unsigned-integer attribute). Always render as _u64 and
+                // slice to the field's wire size — smaller fields take the
+                // low-order bytes, which is correct for little-endian.
                 let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
                 let to_method = syn::Ident::new(
                     &format!("to_{order_suffix}_bytes"),
@@ -5267,7 +5505,8 @@ fn generate_nullification(
                 stmts.extend(quote::quote! {
                     let null_bytes = #null_val_expr.#to_method();
                     let offset = #offset_base_expr + #f_offset;
-                    #buf_expr_ts[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+                    #buf_expr_ts[offset..offset + #size_lit]
+                        .copy_from_slice(&null_bytes[..#size_lit]);
                 });
             }
         }
@@ -5311,23 +5550,16 @@ fn generate_conversion_impl_blocks(
     let span = proc_macro2::Span::call_site();
 
     // Built-ins require an explicit domain-type mapping (not conversion-only).
-    let has_bool_conv = domain_types.iter().any(|(sel, ty)| {
-        ty == "bool" && matches!(sel, crate::ConversionSelector::NamedType(n) if n == "BooleanType")
-    });
-    let has_decimal_conv = domain_types
-        .iter()
-        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
-    let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
-        matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
-    });
-
-    if has_bool_conv {
-        let bt_name = elements
-            .enums
-            .iter()
-            .find(|e| e[0].name == "BooleanType")
-            .map(|e| to_pascal_case(&e[0].name))
-            .unwrap_or_else(|| "BooleanType".to_string());
+    // Emit TryFromSbe / TryToSbe for EVERY boolean enum mapped to "bool",
+    // not just the one literally named BooleanType.
+    for (sel, ty) in domain_types {
+        if ty != "bool" {
+            continue;
+        }
+        let bt_name = match sel {
+            crate::ConversionSelector::NamedType(n) => to_pascal_case(n),
+            _ => continue,
+        };
         let bt_ident = syn::Ident::new(&bt_name, span);
         let ts = quote::quote! {
             impl TryFromSbe<#bt_ident> for bool {
@@ -5347,6 +5579,13 @@ fn generate_conversion_impl_blocks(
         };
         out.push_str(&ts.to_string());
     }
+
+    let has_decimal_conv = domain_types
+        .iter()
+        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
+    let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
+        matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
+    });
 
     if has_decimal_conv {
         let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
@@ -5640,11 +5879,13 @@ fn generate_converter_impls(
     let mut out = if decoder_methods.is_empty() {
         String::new()
     } else {
+        // Generic over H so body-only wrap (`HeaderAbsent`) gets conversion
+        // setters, matching ordinary field setters on `impl<H> Encoder`.
         quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #decoder_methods
             }
-            impl<'a> #encoder_ident<'a> {
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H> {
                 #encoder_methods
             }
         }
@@ -5758,7 +5999,7 @@ fn generate_raw_fixed_impls(
             pub fn finish_unchecked(self) -> &'a mut [u8] {
                 // no validation of fixed block here — caller guarantees validity, add a debug_assert! if callers regress
                 // returns the tail portion of the buffer for manual use.
-                let body_start = self.message_start + #header_size;
+                let body_start = self.msg_offset + #header_size;
                 let tail_start = body_start + #block_length;
                 &mut self.buf[tail_start..]
             }
@@ -6432,19 +6673,20 @@ fn generate_message_encoder(
         let stage_name_lit = syn::LitStr::new(&stage_name, span);
         ts.extend(quote::quote! {
             #[must_use = "encoder must be consumed to write the message"]
-            pub struct #stage<'a> {
+            pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
                 buf: &'a mut [u8],
-                message_start: usize,
+                msg_offset: usize,
                 pos: usize,
+                _header: core::marker::PhantomData<H>,
             }
 
             // Encoder Display + Debug: delegate to the decoder for field-value
             // output (reads the encoded buffer). Safe for partial buffers —
             // decoder try_wrap guards prevent panics; falls back to structural.
-            impl<'a> core::fmt::Display for #stage<'a> {
+            impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for #stage<'a, H> {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match #name_decoder_ident::try_wrap_and_apply_header(
-                        &self.buf[self.message_start..], 0,
+                        self.buf, self.msg_offset,
                     ) {
                         Ok(dec) => core::fmt::Display::fmt(&dec, f),
                         Err(_) => write!(f, "<partial {}>", #stage_name_lit),
@@ -6452,14 +6694,14 @@ fn generate_message_encoder(
                 }
             }
 
-            impl<'a> core::fmt::Debug for #stage<'a> {
+            impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for #stage<'a, H> {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match #name_decoder_ident::try_wrap_and_apply_header(
-                        &self.buf[self.message_start..], 0,
+                        self.buf, self.msg_offset,
                     ) {
                         Ok(dec) => core::fmt::Debug::fmt(&dec, f),
                         Err(_) => f.debug_struct(#stage_name_lit)
-                            .field("message_start", &self.message_start)
+                            .field("msg_offset", &self.msg_offset)
                             .field("pos", &self.pos)
                             .field("buf_len", &self.buf.len())
                             .finish(),
@@ -6469,10 +6711,14 @@ fn generate_message_encoder(
         });
     }
 
+    // Associated constants live on the *defaulted* concrete impl so
+    // `CarEncoder::TEMPLATE_ID` needs no turbofish. Instance methods go on
+    // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
+    let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
 
     if is_fixed {
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
             pub const SCHEMA_VERSION: u16 = #schema_version_lit;
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -6492,33 +6738,28 @@ fn generate_message_encoder(
             pub const fn compute_length_with_header() -> usize {
                 Self::ENCODED_LENGTH
             }
-            /// Slice after one full header-inclusive message of this type.
-            #[inline]
-            pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
-                if frame.len() < Self::ENCODED_LENGTH {
-                    return None;
-                }
-                Some(&frame[Self::ENCODED_LENGTH..])
-            }
-
-            /// Offset of this message within the sub-slice this encoder
-            /// was wrapped on. For `wrap_and_apply_header` this is always 0.
+            pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
+            const _HEADER_TEMPLATE_LEN: () =
+                assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
+        });
+        impl_contents.extend(quote::quote! {
+            /// Absolute offset of this message within the original buffer
+            /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
             pub const fn message_offset(&self) -> usize {
-                self.message_start
+                self.msg_offset
             }
 
-            /// Unwritten region after this message. Chain the next encoder:
-            /// `NextEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)`.
+            /// Absolute current write cursor within the original buffer.
             #[inline]
-            pub fn remaining(&self) -> &[u8] {
-                &self.buf[self.pos..]
+            pub const fn limit(&self) -> usize {
+                self.pos
             }
 
-            /// Mutable unwritten region after this message.
+            /// The complete original buffer this encoder wraps.
             #[inline]
-            pub fn remaining_mut(&mut self) -> &mut [u8] {
-                &mut self.buf[self.pos..]
+            pub fn buffer(&self) -> &[u8] {
+                self.buf
             }
         });
     } else {
@@ -6531,7 +6772,7 @@ fn generate_message_encoder(
                 #[doc = "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"]
             }
         };
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
             pub const SCHEMA_VERSION: u16 = #schema_version_lit;
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -6542,25 +6783,42 @@ fn generate_message_encoder(
             #max_doc_attr
             pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
             const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
+            const _HEADER_TEMPLATE_LEN: () =
+                assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
         });
 
         // compute_length() — convenience factory for the staged length builder
         if !encoded_len_gen.standalone.is_empty() {
             let el_ident = syn::Ident::new(&format!("{name}EncodedLength"), span);
-            impl_contents.extend(quote::quote! {
+            impl_consts.extend(quote::quote! {
                 #[inline]
                 pub const fn compute_length() -> #el_ident {
                     #el_ident::new()
                 }
             });
         }
-    }
+        impl_contents.extend(quote::quote! {
+            /// Absolute offset of this message within the original buffer
+            /// (the `msg_offset` argument passed to `wrap`).
+            #[inline]
+            pub const fn message_offset(&self) -> usize {
+                self.msg_offset
+            }
 
-    // HEADER_TEMPLATE
-    impl_contents.extend(quote::quote! {
-        pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
-        const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
-    });
+            /// Absolute current write cursor within the original buffer.
+            #[inline]
+            pub const fn limit(&self) -> usize {
+                self.pos
+            }
+
+            /// The complete original buffer this encoder wraps.
+            #[inline]
+            pub fn buffer(&self) -> &[u8] {
+                self.buf
+            }
+        });
+    }
 
     // ── Hot-path bounds check: one cmp, cold error construction ──
     // The error path is `#[cold] #[inline(never)]` so the hot path is a single
@@ -6579,25 +6837,34 @@ fn generate_message_encoder(
             }
         }
     };
-    impl_contents.extend(cold_check);
+    // Constructors + cold helper on the concrete (default-H) impl so
+    // `CarEncoder::try_wrap_and_apply_header` needs no turbofish.
+    impl_consts.extend(cold_check);
 
+    // Body-only wrap: HeaderAbsent so as_bytes_with_header is not available.
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with bounds validation.
-        /// Returns an error if the buffer is too short.
+        /// Does **not** write the message header (`HeaderAbsent`).
         /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
+        /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
-        pub fn try_wrap(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
-            if #needed_lit > buf.len().saturating_sub(pos) {
-                return Err(Self::buffer_too_short(buf, pos, #needed_lit));
+        pub fn try_wrap(
+            buf: &'a mut [u8],
+            msg_offset: usize,
+        ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
+            if #needed_lit > buf.len().saturating_sub(msg_offset) {
+                return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
-            Ok(Self {
-                buf: &mut buf[pos..],
-                message_start: 0,
-                pos: #needed_lit,
+            let body_pos = msg_offset + #header_size_lit;
+            Ok(#name_encoder_ident {
+                buf,
+                msg_offset,
+                pos: body_pos + #block_length_lit,
+                _header: core::marker::PhantomData,
             })
         }
     };
-    impl_contents.extend(wrap_fn);
+    impl_consts.extend(wrap_fn);
 
     let wrap_apply_body = quote::quote! {
         // Optional-field nullification is NOT applied by default — call
@@ -6605,29 +6872,41 @@ fn generate_message_encoder(
         if #needed_lit > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, #needed_lit));
         }
-        buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
-        Ok(Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit })
+        buf[pos..pos + #header_size_lit]
+            .copy_from_slice(&Self::HEADER_TEMPLATE);
+        let body_pos = pos + #header_size_lit;
+        Ok(#name_encoder_ident {
+            buf,
+            msg_offset: pos,
+            pos: body_pos + #block_length_lit,
+            _header: core::marker::PhantomData,
+        })
     };
     let wrap_apply_fn = quote::quote! {
         /// Wrap a mutable buffer, write the header, with bounds validation.
         /// Returns an error if the buffer is too short.
         /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
         #[inline]
-        pub fn try_wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Result<Self, sbe_rt::EncodeError> {
+        pub fn try_wrap_and_apply_header(
+            buf: &'a mut [u8],
+            pos: usize,
+        ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
             #wrap_apply_body
         }
     };
-    impl_contents.extend(wrap_apply_fn);
+    impl_consts.extend(wrap_apply_fn);
 
     // Claim-compatible wrap: validates buffer is exactly ENCODED_LENGTH bytes.
     // For use with try_claim / pre-sized claim buffers where the buffer is pre-sized to the message.
     if is_fixed {
-        impl_contents.extend(quote::quote! {
+        impl_consts.extend(quote::quote! {
             /// Wrap a mutable buffer sized exactly to `ENCODED_LENGTH` bytes.
             /// For use with claim buffers (`try_claim`) where the caller has
             /// already allocated exactly the right size.
             #[inline]
-            pub fn wrap_into_claim(buf: &'a mut [u8]) -> Result<Self, sbe_rt::EncodeError> {
+            pub fn wrap_into_claim(
+                buf: &'a mut [u8],
+            ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
                 if buf.len() < Self::ENCODED_LENGTH {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         needed: Self::ENCODED_LENGTH,
@@ -6645,7 +6924,7 @@ fn generate_message_encoder(
     // Not called by default (sbe-tool does not nullify on wrap).
     {
         let mut null_buf = String::new();
-        let offset_base = format!("self.message_start + {header_size}");
+        let offset_base = format!("self.msg_offset + {header_size}");
         generate_nullification(
             &mut null_buf,
             &msg.fields,
@@ -6664,8 +6943,9 @@ fn generate_message_encoder(
                 /// (matching sbe-tool). Call this if you want unset optional fields to
                 /// carry their null value rather than stale buffer contents.
                 #[inline]
-                pub fn apply_nulls(&mut self) {
+                pub fn apply_nulls(&mut self) -> &mut Self {
                     #null_ts
+                    self
                 }
             };
             impl_contents.extend(apply_nulls_fn);
@@ -6673,23 +6953,42 @@ fn generate_message_encoder(
     }
 
     const ENCODER_RESERVED: &[&str] = &[
-        "remaining",
-        "remaining_mut",
-        "whole_buffer",
         "message_offset",
-        "after_this_message",
+        "limit",
+        "buffer",
         "wrap",
+        "wrap_and_apply_header",
         "try_wrap",
         "try_wrap_and_apply_header",
         "wrap_into_claim",
         "compute_length_with_header",
-        "as_ref",
+        // Complete-stage inherent methods emitted on the encoder struct — a
+        // field named after any of these would otherwise collide (matches the
+        // corresponding names in DECODER_RESERVED).
+        "as_body_bytes",
+        "as_bytes_with_header",
+        "into_remaining_mut",
+        "encoded_length",
+        "encoded_length_with_header",
+        // Emitted when the message has optional fields.
+        "apply_nulls",
+        // Stage transitions taking `self` (encoded-length struct wraps into
+        // a stage, so they always exist on the main encoder struct).
+        "fixed",
+        "raw_fixed",
+        // Associated fn (no receiver) — a field-named setter with `&mut self`
+        // collides with this because Rust does not separate associated fns from
+        // methods in the inherent namespace.
+        "buffer_too_short",
     ];
 
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
+        // Offset of this field from the message header start (header + body offset).
         let body_offset = header_size + f.offset;
         let body_offset_lit = syn::LitInt::new(&body_offset.to_string(), span);
+        // Absolute buffer index under the truthful coordinate system.
+        let abs_offset = quote::quote! { self.msg_offset + #body_offset_lit };
         // In converter mode, raw setters are suffixed _wire when a domain
         // Raw setters become *_wire when a conversion is configured so the
         // converted setter takes the original name.
@@ -6713,8 +7012,9 @@ fn generate_message_encoder(
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                let offset = #abs_offset;
                                 unsafe {
-                                    let dst = self.buf.get_unchecked_mut(#body_offset_lit..#body_offset_lit + #len_lit);
+                                    let dst = self.buf.get_unchecked_mut(offset..offset + #len_lit);
                                     let src = core::slice::from_raw_parts(
                                         val.as_ptr() as *const u8,
                                         #len_lit,
@@ -6751,7 +7051,7 @@ fn generate_message_encoder(
                         impl_contents.extend(quote::quote! {
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
-                                let offset = #body_offset_lit;
+                                let offset = #abs_offset;
                                 let mut idx = 0usize;
                                 while idx < #len_lit {
                                     unsafe {
@@ -6782,7 +7082,7 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            *unsafe { self.buf.get_unchecked_mut(#body_offset_lit) } = val as u8;
+                            *unsafe { self.buf.get_unchecked_mut(#abs_offset) } = val as u8;
                             self
                         }
                     });
@@ -6790,9 +7090,9 @@ fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
-                            let offset = #body_offset_lit;
-                            // SAFETY: wrap/try_wrap validates buf.len() >= BLOCK_LENGTH,
-                            // and offset + prim_size <= BLOCK_LENGTH by construction.
+                            let offset = #abs_offset;
+                            // SAFETY: wrap/try_wrap validates buf.len() >= msg_offset + HEADER + BLOCK,
+                            // and field extent is within BLOCK_LENGTH by construction.
                             unsafe {
                                 self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
                                     .copy_from_slice(&val.#to_endian());
@@ -6811,7 +7111,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #comp_size_lit]
                             .copy_from_slice(&val.0);
                         self
@@ -6832,18 +7132,18 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
                 });
                 // Boolean fields get an additional setter that accepts bool directly
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            self.buf[#body_offset_lit] = val as u8;
+                            self.buf[#abs_offset] = val as u8;
                             self
                         }
                     });
@@ -6859,7 +7159,7 @@ fn generate_message_encoder(
                 impl_contents.extend(quote::quote! {
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
-                        let offset = #body_offset_lit;
+                        let offset = #abs_offset;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }
@@ -6867,7 +7167,8 @@ fn generate_message_encoder(
             }
         }
         // Field id / offset / length / MetaAttribute (also on encoder, Java parity).
-        impl_contents.extend(emit_field_consts(f));
+        // Field NULL/MIN/MAX consts on concrete impl — turbofish-free access.
+        impl_consts.extend(emit_field_consts(f));
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length
@@ -6876,7 +7177,9 @@ fn generate_message_encoder(
     // name such as `written_prefix()`."
 
     // Encoded-length support: strategy-classified (computed above).
-    impl_contents.extend(encoded_len_gen.encoder_impl.clone());
+    // Length helpers are associated functions — keep on concrete impl for
+    // turbofish-free `CarEncoder::compute_encoded_length_with_message_header(...)`.
+    impl_consts.extend(encoded_len_gen.encoder_impl.clone());
 
     // A complete, owned, latest-version snapshot of every required fixed
     // field. Optional fields are `Option<T>`; constants are excluded.
@@ -6970,7 +7273,7 @@ fn generate_message_encoder(
             #[must_use = "raw fixed writer must be embedded in FixedFields"]
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
-                message_start: usize,
+                msg_offset: usize,
                 pos: usize,
             }
         });
@@ -6980,29 +7283,31 @@ fn generate_message_encoder(
             /// collect the values into a `#fixed_name` and call `fixed()`.
             #[inline]
             #[must_use]
-            pub fn raw_fixed(mut self) -> #raw_name<'a> {
+            pub fn raw_fixed(self) -> #raw_name<'a> {
+                let body_start = self.msg_offset + #header_size_lit;
                 #raw_name {
-                    buf: self.buf,
-                    message_start: self.message_start,
-                    pos: self.pos,
+                    buf: &mut self.buf[body_start..],
+                    msg_offset: 0,
+                    pos: self.pos - body_start,
                 }
             }
         });
     }
 
-    if total_tail > 0 {
-        ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                #impl_contents
-            }
-        });
-    } else {
-        ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                #impl_contents
-            }
-        });
-    }
+    // Concrete (default H) for associated constants + constructors — no turbofish.
+    ts.extend(quote::quote! {
+        impl<'a> #name_encoder_ident<'a> {
+            #impl_consts
+        }
+    });
+    // Generic over H so body-only wrap (HeaderAbsent) can set fields and run
+    // the same stage chain. Default `H = HeaderPresent` keeps the happy path
+    // inference-friendly.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+            #impl_contents
+        }
+    });
 
     if total_tail > 0 {
         let mut tail_idx = 0;
@@ -7030,7 +7335,7 @@ fn generate_message_encoder(
                 syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
 
             ts.extend(quote::quote! {
-                impl<'a> #current_stage<'a> {
+                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
                     /// Encode this group with a known count up front. Closure may
                     /// return `()` or `Result<(), E>` (via
                     /// Closures return `GroupResult`; `?` just works. a
@@ -7041,7 +7346,7 @@ fn generate_message_encoder(
                         mut self,
                         count: #count_ty,
                         f: F,
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
@@ -7069,8 +7374,9 @@ fn generate_message_encoder(
                         }
                         Ok(#next_stage {
                             buf: group.buf,
-                            message_start: self.message_start,
+                            msg_offset: self.msg_offset,
                             pos: group.pos,
+                            _header: core::marker::PhantomData,
                         })
                     }
 
@@ -7087,7 +7393,7 @@ fn generate_message_encoder(
                     pub fn #g_snake_unknown<F>(
                         mut self,
                         f: F,
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
@@ -7118,8 +7424,9 @@ fn generate_message_encoder(
                             .copy_from_slice(&actual.#to_endian());
                         Ok(#next_stage {
                             buf,
-                            message_start: self.message_start,
+                            msg_offset: self.msg_offset,
                             pos,
+                            _header: core::marker::PhantomData,
                         })
                     }
                 }
@@ -7188,19 +7495,20 @@ fn generate_message_encoder(
                 self.buf[start..start + data.len()].copy_from_slice(data);
                 Ok(#next_stage {
                     buf: self.buf,
-                    message_start: self.message_start,
+                    msg_offset: self.msg_offset,
                     pos: start + data.len(),
+                    _header: core::marker::PhantomData,
                 })
             };
 
             ts.extend(quote::quote! {
-                impl<'a> #current_stage<'a> {
+                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
                     #[inline]
                     #[must_use]
                     pub fn #vd_snake(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError> {
                         #checked_body
                         #shared_body
                     }
@@ -7210,7 +7518,7 @@ fn generate_message_encoder(
                     pub fn #vd_snake_unchecked(
                         mut self,
                         data: &[u8],
-                    ) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
+                    ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError> {
                         #shared_body
                     }
 
@@ -7239,7 +7547,7 @@ fn generate_message_encoder(
                         mut self,
                         exact_len: usize,
                         f: F,
-                    ) -> Result<#next_stage<'a>, E>
+                    ) -> Result<#next_stage<'a, H>, E>
                     where
                         E: From<sbe_rt::EncodeError>,
                         F: FnOnce(&mut [u8]) -> Result<(), E>,
@@ -7266,8 +7574,9 @@ fn generate_message_encoder(
                         f(&mut self.buf[start..start + exact_len])?;
                         Ok(#next_stage {
                             buf: self.buf,
-                            message_start: self.message_start,
+                            msg_offset: self.msg_offset,
                             pos: start + exact_len,
+                            _header: core::marker::PhantomData,
                         })
                     }
                 }
@@ -7275,66 +7584,76 @@ fn generate_message_encoder(
             tail_idx += 1;
         }
 
-        // Complete state: as_bytes() + as_bytes_with_header() + AsRef +
-        // encoded_length on the final stage struct
+        // Complete state: body methods on any H; header bytes only on HeaderPresent.
         let complete_ident = &stage_idents[total_tail];
         ts.extend(quote::quote! {
-            impl<'a> #complete_ident<'a> {
-                /// Returns the complete SBE message bytes (header + body).
+            impl<'a, H: sbe_rt::HeaderState> #complete_ident<'a, H> {
+                /// SBE message body bytes (excluding the message header).
                 #[inline]
-                pub fn as_bytes(&self) -> &[u8] {
-                    &self.buf[self.message_start..self.pos]
+                pub fn as_body_bytes(&self) -> &[u8] {
+                    let body_start = self.msg_offset + #header_size_lit;
+                    &self.buf[body_start..self.pos]
                 }
-                /// Explicit header-inclusive view (alias for `as_bytes()`).
-                /// DECISIONS.md §2: use this when header inclusion must be
-                /// explicit rather than implied by the complete stage.
-                #[inline]
-                pub fn as_bytes_with_header(&self) -> &[u8] {
-                    self.as_bytes()
-                }
+                /// SBE message body length (excluding the message header).
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
-                    self.pos - self.message_start - #header_size_lit
+                    self.pos - self.msg_offset - #header_size_lit
                 }
+                /// Total SBE message length including the header region.
+                /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
-                    self.pos - self.message_start
+                    self.pos - self.msg_offset
+                }
+                /// Unwritten region after this message.
+                #[inline]
+                pub fn into_remaining_mut(self) -> &'a mut [u8] {
+                    &mut self.buf[self.pos..]
                 }
             }
 
-            impl<'a> AsRef<[u8]> for #complete_ident<'a> {
-                fn as_ref(&self) -> &[u8] {
-                    self.as_bytes()
+            impl<'a> #complete_ident<'a, sbe_rt::HeaderPresent> {
+                /// Header-inclusive bytes. Only available when the encoder was
+                /// constructed via `wrap_and_apply_header` (not raw `wrap`).
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    &self.buf[self.msg_offset..self.pos]
                 }
             }
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                /// Returns the complete fixed-length SBE message bytes
-                /// (header + body).
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+                /// SBE message body bytes (excluding the message header).
                 #[inline]
-                pub fn as_bytes(&self) -> &[u8] {
-                    &self.buf[self.message_start..self.pos]
+                pub fn as_body_bytes(&self) -> &[u8] {
+                    let body_start = self.msg_offset + #header_size_lit;
+                    &self.buf[body_start..self.pos]
                 }
-                /// Explicit header-inclusive view (alias for `as_bytes()`).
-                #[inline]
-                pub fn as_bytes_with_header(&self) -> &[u8] {
-                    self.as_bytes()
-                }
+                /// SBE message body length (excluding the message header).
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
-                    self.pos - self.message_start - #header_size_lit
+                    self.pos - self.msg_offset - #header_size_lit
                 }
+                /// Total SBE message length including the header region.
+                /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
-                    self.pos - self.message_start
+                    self.pos - self.msg_offset
+                }
+                /// Unwritten region after this message.
+                #[inline]
+                pub fn into_remaining_mut(self) -> &'a mut [u8] {
+                    &mut self.buf[self.pos..]
                 }
             }
 
-            impl<'a> AsRef<[u8]> for #name_encoder_ident<'a> {
-                fn as_ref(&self) -> &[u8] {
-                    self.as_bytes()
+            impl<'a> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
+                /// Header-inclusive bytes. Only available when the encoder was
+                /// constructed via `wrap_and_apply_header` (not raw `wrap`).
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    &self.buf[self.msg_offset..self.pos]
                 }
             }
         });
@@ -7403,20 +7722,37 @@ fn generate_message_encoder(
         ts.extend(quote::quote! {
             impl<'a> #name_encoder_ident<'a> {
                 /// Wrap a mutable buffer for encoding — no bounds check.
+                /// Does **not** write the message header (`HeaderAbsent`).
                 /// Caller guarantees the buffer is large enough.
-                /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
-                    Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
+                pub fn wrap(
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
+                    #name_encoder_ident {
+                        buf,
+                        msg_offset,
+                        pos: msg_offset + #needed_lit,
+                        _header: core::marker::PhantomData,
+                    }
                 }
 
                 /// Wrap a mutable buffer, write the header, and return the encoder.
                 /// No bounds check — caller guarantees the buffer is large enough.
                 /// This is the default fast path (matching sbe-tool's `wrap`).
                 #[inline]
-                pub fn wrap_and_apply_header(buf: &'a mut [u8], pos: usize) -> Self {
-                    buf[pos..pos + #hs_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
-                    Self { buf: &mut buf[pos..], message_start: 0, pos: #needed_lit }
+                pub fn wrap_and_apply_header(
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
+                    buf[msg_offset..msg_offset + #hs_lit]
+                        .copy_from_slice(&#name_encoder_ident::HEADER_TEMPLATE);
+                    #name_encoder_ident {
+                        buf,
+                        msg_offset,
+                        pos: msg_offset + #needed_lit,
+                        _header: core::marker::PhantomData,
+                    }
                 }
             }
         });
@@ -7878,7 +8214,7 @@ fn generate_group_encoder(
                         self
                     }
                 });
-                if is_bool_enum(elements, enum_name) {
+                if crate::structured_ir::is_bool_enum(elements, enum_name) {
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
                         #[inline]
@@ -8523,7 +8859,7 @@ mod tests {
         // (in separate impl blocks). The field accessor is renamed to
         // `remaining_field` and must not appear as `fn remaining(&self)`.
         assert_eq!(
-            remaining_count, 2,
+            remaining_count, 1,
             "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
         );
         // The field accessor must be renamed.
@@ -8593,15 +8929,24 @@ mod tests {
                             }
                         }]
                     }
-                    ItemContext::Set { name, choices, .. } => {
+                    ItemContext::Set { name, encoding_type, choices, .. } => {
                         let ident = format_ident!("{name}");
-                        let c_names: Vec<_> = choices.iter().map(|c| format_ident!("{}", c.name)).collect();
-                        let c_labels: Vec<_> = choices.iter().map(|c| c.name.clone()).collect();
+                        // Getters are `is_{snake_name}()`; the wire mask is
+                        // `1 << bit_position`. Use u64 as the accumulator so
+                        // bit positions 0-63 work regardless of the schema's
+                        // encodingType (u8/u16/u32/u64).
+                        let c_getters: Vec<_> = choices
+                            .iter()
+                            .map(|c| format_ident!("is_{}", c.snake_name))
+                            .collect();
+                        let c_labels: Vec<_> = choices.iter().map(|c| c.label.clone()).collect();
+                        let c_bits: Vec<_> = choices.iter().map(|c| c.bit_position).collect();
+                        let acc_ty: syn::Type = syn::parse_str(encoding_type).unwrap();
                         vec![quote::quote! {
                             impl serde::Serialize for #ident {
                                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                                     let mut names = Vec::new();
-                                    #(if self.#c_names() { names.push(#c_labels); })*
+                                    #(if self.#c_getters() { names.push(#c_labels); })*
                                     names.serialize(s)
                                 }
                             }
@@ -8609,15 +8954,15 @@ mod tests {
                             impl<'de> serde::Deserialize<'de> for #ident {
                                 fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                                     let names: Vec<String> = Vec::deserialize(d)?;
-                                    let mut value = 0u8;
+                                    let mut value: u64 = 0;
                                     for name in &names {
                                         match name.as_str() {
-                                            #(#c_labels => value |= Self::#c_names.0,)*
+                                            #(#c_labels => value |= 1u64 << #c_bits,)*
                                             other => return Err(serde::de::Error::unknown_variant(
                                                 other, &[#(#c_labels),*])),
                                         }
                                     }
-                                    Ok(Self(value))
+                                    Ok(Self(value as #acc_ty))
                                 }
                             }
                         }]
@@ -8658,6 +9003,73 @@ mod tests {
             "missing Deserialize for set"
         );
 
+        Ok(())
+    }
+
+    /// `enable_bool_domain_type()` must work for multi-schema generation, not
+    /// just single-schema. Each schema's boolean enums are auto-registered, and
+    /// the generated output includes the domain-typed getter.
+    #[test]
+    fn enable_bool_domain_type_works_with_generate_multi() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let xml_a = r#"<?xml version="1.0"?>
+        <messageSchema package="a" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
+          </types>
+          <message name="MsgA" id="1" blockLength="1">
+            <field name="flag" id="1" type="BooleanType" offset="0"/>
+          </message>
+        </messageSchema>"#;
+        let xml_b = r#"<?xml version="1.0"?>
+        <messageSchema package="b" id="2" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <enum name="BooleanType" encodingType="uint8">
+              <validValue name="F">0</validValue>
+              <validValue name="T">1</validValue>
+            </enum>
+          </types>
+          <message name="MsgB" id="1" blockLength="1">
+            <field name="enabled" id="1" type="BooleanType" offset="0"/>
+          </message>
+        </messageSchema>"#;
+
+        let schema_a = Schema::from_ir(crate::parse(xml_a)?);
+        let schema_b = Schema::from_ir(crate::parse(xml_b)?);
+        let mut generator = Generator::new(
+            crate::GenerationConfig::new("common_types")
+                .with_shared_module("common_types")
+                .enable_bool_domain_type(),
+        );
+        let modules =
+            generator.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "consumer")])?;
+        let collected: Vec<_> = modules.modules().collect();
+        assert_eq!(collected.len(), 2);
+
+        // The consumer module should have a bool-typed getter on the field
+        // whose type is BooleanType (auto-registered as bool domain type).
+        // The domain getter is `{field}_bool`, not the bare name — the bare
+        // name stays as the wire-type accessor.
+        let consumer_src = &collected[1].source;
+        assert!(
+            consumer_src.contains("fn enabled_bool(&self) -> bool"),
+            "enable_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
+        );
         Ok(())
     }
 }

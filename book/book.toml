@@ -1,0 +1,18 @@
+[book]
+title = "The Ergon Book"
+authors = ["Mohammed Imran"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../target/book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/mimran1980/ergon"
+edit-url-template = "https://github.com/mimran1980/ergon/edit/main/book/{path}"
+
+[output.html.search]
+enable = true
+limit-results = 30

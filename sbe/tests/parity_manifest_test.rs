@@ -36,7 +36,11 @@ fn test_symbols(tests_dir: &Path) -> Result<BTreeSet<String>, Box<dyn std::error
         let syntax = syn::parse_file(&source)?;
         for item in syntax.items {
             if let syn::Item::Fn(function) = item {
-                symbols.insert(function.sig.ident.to_string());
+                let has_test_attr = function.attrs.iter().any(|a| a.path().is_ident("test"));
+                let name_starts_with_test = function.sig.ident.to_string().starts_with("test_");
+                if has_test_attr || name_starts_with_test {
+                    symbols.insert(function.sig.ident.to_string());
+                }
             }
         }
     }

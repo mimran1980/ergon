@@ -1,0 +1,48 @@
+# with_conversion vs with_domain_type
+
+Do **not** call both for the same selector — domain type already enables conversion.
+
+| | **A** `with_conversion` | **B** `with_domain_type` |
+|--|---------------------------|---------------------------|
+| **Idea** | Generic convert API; **you** plug any app type | Always use **this** Rust path |
+| **build.rs** | `.with_conversion(named_type("Decimal"))` | `.with_domain_type(…, "rust_decimal::Decimal")` |
+| **You write** | `TryFromSbe<Decimal>` / `TryToSbe<Decimal>` for your type | Usually nothing for bool / rust_decimal / chrono |
+| **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.price()` |
+| **Encode** | `enc.price_from(&cents)?` | `enc.price(rust_decimal::Decimal::new(12345, 2))` |
+| **Raw wire** | `price_value()` / `price_wire(...)` | same when conversion is active |
+| **Sample** | [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [demo_conversion_only](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
+
+### Option A — you choose the app type (`Cents`)
+
+```rust,no_run
+{{#include ../../../examples/conversion-config.rs:with_conversion}}
+```
+*(From `book/examples/conversion-config.rs` — a self-contained program that compiles against `ergo-sbe`.)*
+
+```rust,no_run
+{{#include ../../../examples/conversion-app-code.rs:adapter_impl}}
+```
+*(From `book/examples/conversion-app-code.rs` — app adapter pattern, compiles against tour_codec.)*
+
+```rust,ignore
+{{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
+```
+*(Same file — generic `_from`/`_as` encode/decode with `with_conversion`.)*
+
+### Option B — one fixed app type
+
+```rust,no_run
+{{#include ../../../examples/conversion-config.rs:with_domain_type}}
+```
+*(Same source file — `book/examples/conversion-config.rs`.)*
+
+```rust,ignore
+{{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
+```
+
+Both styles on different fields:
+
+```rust,ignore
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_conversion_only}}
+```
+*(This code comes from the `sbe-feature-tour` sample crate.)*

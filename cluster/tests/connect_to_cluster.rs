@@ -32,8 +32,8 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     assert!(dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0, "IPC diag");
 
     // Connect to cluster via its ingress channel
-    let ing_cstr = ergo_aeron_cluster::channel_cstr(&cluster.ingress_channel)?;
-    let egr_cstr = ergo_aeron_cluster::channel_cstr(&cluster.egress_channel)?;
+    let ing_cstr = ergo_aeron_cluster::test_support::channel_cstr(&cluster.ingress_channel)?;
+    let egr_cstr = ergo_aeron_cluster::test_support::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr_cstr,

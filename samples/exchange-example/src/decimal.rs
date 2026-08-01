@@ -7,7 +7,6 @@
 use std::str::FromStr;
 
 /// A wire SBE Decimal value: `mantissa × 10^exponent`.
-/// Renamed from `TryFromSbe` to avoid clashing with the generated trait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WireDecimal {
     pub mantissa: i64,

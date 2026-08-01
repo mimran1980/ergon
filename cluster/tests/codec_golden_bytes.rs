@@ -76,7 +76,7 @@ fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>
     e.leadership_term_id(42);
     e.cluster_session_id(99);
     e.timestamp(1234567890);
-    assert_eq!(e.as_ref(), &GOLDEN_SESSION_MESSAGE_HEADER[..]);
+    assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_MESSAGE_HEADER[..]);
 
     Ok(())
 }
@@ -87,7 +87,7 @@ fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
     let mut e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0);
     e.leadership_term_id(5);
     e.cluster_session_id(10);
-    assert_eq!(e.as_ref(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
+    assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
 
     Ok(())
 }
@@ -98,7 +98,7 @@ fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>>
     let mut e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0);
     e.leadership_term_id(7);
     e.cluster_session_id(42);
-    assert_eq!(e.as_ref(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
+    assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
 
     Ok(())
 }

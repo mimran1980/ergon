@@ -32,7 +32,7 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(car2.available(), BooleanType::T);
@@ -73,7 +73,7 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         let extras = car2.extras();
@@ -107,7 +107,7 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"").unwrap();  // empty var-data
         let car = car.model(b"ABC").unwrap();
         let car = car.activation_code(b"XYZ0123456789").unwrap(); // long var-data
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // Tail in wire order: fuel -> performance -> manufacturer/model/activation
@@ -151,7 +151,7 @@ fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"Hon").unwrap();
         let car = car.model(b"Civ").unwrap();
         let car = car.activation_code(b"abc").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(car2.serial_number(), 1234u64);
@@ -205,7 +205,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert!(dec.available_bool(), "expected true from _bool()");
@@ -223,7 +223,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         let car2 = car2.manufacturer(b"").unwrap();
         let car2 = car2.model(b"").unwrap();
         let car2 = car2.activation_code(b"").unwrap();
-        let encoded2 = car2.as_bytes();
+        let encoded2 = car2.as_bytes_with_header();
 
         let dec2 = CarDecoder::try_wrap_and_apply_header(encoded2, 0).unwrap();
         assert!(!dec2.available_bool(), "expected false from _bool()");
@@ -307,7 +307,7 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         assert_eq!(dec.available(), BooleanType::NullVal);
@@ -381,7 +381,7 @@ fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         // schema_id_from_header is a free function at the module root
         let id = schema_id_from_header(encoded).unwrap();
         assert_eq!(id, 1u16); // Car schema id is 1
@@ -410,7 +410,7 @@ fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Err
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // discountedModel is presence="constant" valueRef="Model.C"
@@ -460,7 +460,7 @@ fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         assert!(CarDecoder::verify(encoded).is_ok());
         assert!(CarDecoder::verify(&encoded[..5]).is_err());
     "#,
@@ -517,7 +517,7 @@ fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> 
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         // Truncate buffer mid-message — field read should fail
         let truncated = &encoded[..10]; // only header + partial block
         assert!(CarDecoder::verify(truncated).is_err());
@@ -549,7 +549,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         let car = car.manufacturer(b"Porsche").unwrap();
         let car = car.model(b"911 GT3 RS").unwrap();
         let car = car.activation_code(b"RACE-XYZ").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // Valid varData reads — traverse the groups first (wire order).
         let after_perf = car2
@@ -600,7 +600,7 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // raw() returns the underlying integer discriminant
         assert_eq!(car2.available().raw(), 1u8);   // T = 1
@@ -634,7 +634,7 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes();
+        let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
         // raw() returns the underlying bitfield
         let raw = car2.extras().raw();

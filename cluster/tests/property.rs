@@ -15,7 +15,7 @@ proptest! {
         let mut buf = [0u8; 128];
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
-        let bytes = enc.as_ref().to_vec();
+        let bytes = enc.as_bytes_with_header().to_vec();
         let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&bytes, 0).unwrap();
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
@@ -30,7 +30,7 @@ proptest! {
         let mut buf = [0u8; 128];
         let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid);
-        let bytes = enc.as_ref();
+        let bytes = enc.as_bytes_with_header();
         prop_assert_eq!(u16::from_le_bytes([bytes[2], bytes[3]]), 5); // KEEP_ALIVE
     }
 

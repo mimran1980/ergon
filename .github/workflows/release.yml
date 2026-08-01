@@ -74,7 +74,8 @@ jobs:
 
       - name: Wait for crates.io index
         run: |
-          VERSION=$(grep '^version' sbe/Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
+          VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
+            | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
           echo "Waiting for ergo-sbe $VERSION to appear on crates.io..."
           for i in $(seq 1 30); do
             if curl -sf "https://crates.io/api/v1/crates/ergo-sbe/$VERSION" >/dev/null 2>&1; then
@@ -84,6 +85,10 @@ jobs:
             echo "  attempt $i/30 — waiting 10s..."
             sleep 10
           done
+          if [ "$i" -eq 30 ]; then
+            echo "ERROR: ergo-sbe $VERSION did not appear on crates.io within 5 minutes"
+            exit 1
+          fi
 
       - name: Publish ergo-aeron-cluster
         env:
@@ -109,7 +114,8 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
+          VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
+            | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub release

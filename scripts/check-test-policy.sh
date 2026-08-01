@@ -104,8 +104,49 @@ if [[ ${#rust_source_files[@]} -gt 0 ]]; then
         '(e?println!\([^\n]*\bSKIP\b|[^\n]*Skipped:)' "${rust_source_files[@]}"
 fi
 if [[ ${#documentation_files[@]} -gt 0 ]]; then
-    report_matches 'ignored Rust documentation fence is forbidden; use compile-checked rust/no_run or honest text' \
-        '```[[:alnum:]_,.:{}=+ -]*\bignore\b' "${documentation_files[@]}"
+    # In .rs files: any `ignore` fence in a doc comment is forbidden (old rule).
+    rs_files=()
+    md_files=()
+    for f in "${documentation_files[@]}"; do
+        case "$f" in
+            *.rs) rs_files+=("$f") ;;
+            *.md) md_files+=("$f") ;;
+        esac
+    done
+    if [[ ${#rs_files[@]} -gt 0 ]]; then
+        # Rust doc comment fences start with `///` — plain regex still covers them.
+        report_matches 'ignored Rust documentation fence is forbidden; use compile-checked rust/no_run or honest text' \
+            '```[[:alnum:]_,.:{}=+ -]*\bignore\b' "${rs_files[@]}"
+    fi
+    if [[ ${#md_files[@]} -gt 0 ]]; then
+        # In .md files: `rust,ignore` is allowed ONLY when the fence body starts
+        # with `{{#include` — the included code is compiled by the project's own
+        # build (sample crate, example, etc.) so we know it's valid Rust; it just
+        # isn't compilable in the book-fence test harness context.
+        # `rust,ignore` without an include is still forbidden — we can't verify
+        # it compiles anywhere.
+        ignored_matches=$(
+            cd "$root"
+            for f in "${md_files[@]}"; do
+                [ -f "$f" ] || continue
+                awk -v file="$f" '
+                    /^```/ && tolower($0) ~ /ignore/ {
+                        fence_line = NR
+                        fence_tag = $0
+                        getline
+                        if ($0 !~ /\{\{#include/) {
+                            printf "%s:%d:%s\n", file, fence_line, fence_tag
+                        }
+                    }
+                ' "$f"
+            done
+        )
+        if [[ -n "$ignored_matches" ]]; then
+            echo "test policy: ignored Rust documentation fence without {{#include}} — use compile-checked rust/no_run or honest text" >&2
+            echo "$ignored_matches" >&2
+            failed=1
+        fi
+    fi
 fi
 if [[ ${#control_files[@]} -gt 0 ]]; then
     report_matches 'test-selection bypass is forbidden in test control files' \

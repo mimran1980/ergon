@@ -165,7 +165,7 @@ fn composite_flyweight_is_zero_copy_value_is_eager_wire_copy()
         let car = car.manufacturer(b"Honda").unwrap();
         let car = car.model(b"Civic").unwrap();
         let complete = car.activation_code(b"abc").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
 
@@ -224,7 +224,7 @@ fn composite_encoder_writes_wire_image_bulk() -> Result<(), Box<dyn std::error::
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let complete = car.activation_code(b"").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         const ENGINE_ABS: usize = 8 + 35;
         assert_eq!(
@@ -272,7 +272,7 @@ fn fixed_scalar_fields_use_explicit_le_loads() -> Result<(), Box<dyn std::error:
         let car = car.manufacturer(b"").unwrap();
         let car = car.model(b"").unwrap();
         let complete = car.activation_code(b"").unwrap();
-        let encoded = complete.as_bytes();
+        let encoded = complete.as_bytes_with_header();
 
         // Body starts after 8-byte LE header.
         let body = &encoded[8..];
