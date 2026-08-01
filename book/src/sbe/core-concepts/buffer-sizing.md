@@ -44,6 +44,6 @@ assert_eq!(actual_len, len);
 ```
 
 Nested books:
-[`book_encoded_length`](../../../../samples/l3-book/src/lib.rs).
+[`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs).
 API matrix:
-[`encoded_length_api_test`](../../../../sbe/tests/encoded_length_api_test.rs).
+[`encoded_length_api_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/encoded_length_api_test.rs).

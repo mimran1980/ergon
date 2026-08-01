@@ -33,7 +33,7 @@ identical (`sbe_tool_wire_parity_test` for deep Car matrices;
 `sbe_tool_multi_schema_wire_parity_test` across example/unit schemas with
 checked-in sbe-tool reference crates under `sbe/tests/sbe_tool_reference/`),
 and a maintained benchmark gate versus sbe-tool-generated codecs (see
-[BENCHMARKS.md](../../../../sbe/BENCHMARKS.md)).
+[Benchmarks](../benchmarks.md)).
 
 > **Early release (0.x).** This is the first published line of the crate. The
 > **experimental banner stays** until the project has been battle-tested in

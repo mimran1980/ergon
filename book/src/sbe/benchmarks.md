@@ -207,7 +207,7 @@ Not a ≤1.00 gate. Compares **flyweight vs wire-image value vs
 `[u8; N]` wire image, and packed overlay alike. Packing does **not** beat the
 wire-image design. Materialising the whole composite just to read one field is
 the expensive path. See README
-[Composite layout & little-endian](README.md#composite-layout--little-endian).
+[Composite layout & little-endian](../core-concepts/composite-layout.md).
 
 ```sh
 cd sbe/benchmarks && cargo bench --bench layout_access_bench
@@ -232,7 +232,7 @@ Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
 **Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
 small engine once the rest of the fixed block is written; BE build is slightly
 slower than LE on an LE host; preheld memcpy is endian-independent. See README
-[Encode — FixedFields vs setters…](README.md#encode--fixedfields-vs-setters-composite-write-le-vs-be).
+[Encode — FixedFields vs setters…](../core-concepts/composite-layout.md).
 
 ```sh
 cd sbe/benchmarks && cargo bench --bench encode_style_bench

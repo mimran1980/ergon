@@ -29,5 +29,5 @@ use messages::*;
 // Or only the include: ergo_sbe::include_sbe!("messages");
 ```
 
-See [Samples](../../samples.md) · [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md)
+See [Samples](../../samples/overview.md)
 for which crates use which pattern.

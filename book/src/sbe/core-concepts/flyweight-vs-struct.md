@@ -87,4 +87,4 @@ let n = dto.encode(&mut out)?; // round-trip back to wire when needed
 **Rule of thumb:** one field on the hot path → **flyweight**. Always fill or
 always consume the whole message → **`FixedFields` / `Domain`** for clarity and
 compile-time breakage on schema growth. More on DTOs in
-[Recipes](../recipes.md#domain-dto-ease-of-use).
+[Recipes — Domain DTOs](../recipes/domain-dtos.md).

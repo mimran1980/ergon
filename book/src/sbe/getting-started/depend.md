@@ -21,4 +21,4 @@ ergo-sbe = "0.1"
 ergo-sbe = "0.1"   # only needed for sbe_mod! / include_sbe!
 ```
 
-See [Samples](../../samples.md) for monorepo crates that use each pattern.
+See [Samples](../../samples/overview.md) for monorepo crates that use each pattern.

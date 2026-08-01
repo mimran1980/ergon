@@ -74,14 +74,14 @@ extra dependency.
 | Hand-rolled `repr(C, packed)` for speed | **Skip it** — same cost as wire-image field access |
 
 Layout contracts:
-[`composite_layout_test`](../../../../sbe/tests/composite_layout_test.rs).
+[`composite_layout_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs).
 Decode microbench:
-[`layout_access_bench`](../../../../sbe/benchmarks/benches/layout_access_bench.rs).
+[`layout_access_bench`](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/layout_access_bench.rs).
 
 #### Encode — FixedFields vs setters, composite write, LE vs BE
 
 Confirmed by
-[`encode_style_bench`](../../../../sbe/benchmarks/benches/encode_style_bench.rs)
+[`encode_style_bench`](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/benches/encode_style_bench.rs)
 (Apple M4, LE host; values prebuilt / seeded so LLVM cannot delete the work):
 
 | Comparison | Result |
