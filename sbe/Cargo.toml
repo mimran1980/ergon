@@ -98,6 +98,9 @@ name = "hft_009_profile_test"
 [[test]]
 name = "hft_005_warning_free_consumer_test"
 
+[[test]]
+name = "fix_sbe_conformance_test"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"

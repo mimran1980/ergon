@@ -47,7 +47,7 @@ documented cross-decode fixture).
 
 | Feature | Qualification |
 |---------|----------------|
-| Official FIX SBE Conformance suite | Run when Java + reference harness available; otherwise release notes record an environment gap. Profile vectors above remain required. |
+| Official FIX SBE Conformance suite | **Wired** — suite tests 1–3 (flat + group, schema evolution inject, var-data). Ergon respond bytes are **byte-identical** to Real Logic UnderTest goldens; official `RLValidator` accepts them when `FIX_SBE_CONFORMANCE_HOME` points at a built [fix-sbe-conformance](https://github.com/FIXTradingCommunity/fix-sbe-conformance) tree. Lane: `cargo test -p ergo-sbe --test fix_sbe_conformance_test` and `scripts/run-fix-sbe-conformance.sh`. |
 | Unknown enum discriminants | Must not transmute invalid tags into enum variants; use validated decode paths. |
 | Custom dimension composites | Supported when they match the documented dimension layout helpers; exotic layouts need fixtures. |
 
@@ -68,8 +68,8 @@ documented cross-decode fixture).
 `try_wrap*` aliases are **removed** in 0.2.
 
 Public `_unchecked` keep decisions: `docs/evidence/unchecked-keep-manifest.json`
-(currently all `keep: false`; twins remain `doc(hidden)` until Criterion multi-run
-instruction evidence passes the pre-registered thresholds).
+(currently all `keep: false`; zero-check cores are **module-private** `unsafe fn`
+until a future keep=true decision).
 
 ## Generation profiles (HFT-009)
 
@@ -93,10 +93,12 @@ cargo test -p ergo-sbe --test sbe_tool_wire_parity_test
 cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test
 cargo test -p ergo-sbe --test hft_001_soundness_test
 cargo test -p ergo-sbe --test java_parity_features_test
+cargo test -p ergo-sbe --test fix_sbe_conformance_test
 cargo test -p ergo-sbe --lib
+# Full FIX suite lane (builds Java injector/validator when needed):
+scripts/run-fix-sbe-conformance.sh
 # When environment allows:
 # just test-all
-# FIX SBE Conformance harness (document command + revision in release notes)
 ```
 
 Archive commit hash, toolchain (`rustc -Vv`), and command outputs under the
