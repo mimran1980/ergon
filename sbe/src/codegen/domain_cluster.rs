@@ -688,7 +688,7 @@ pub(crate) fn generate_domain_recursive(
                 message_offset: usize,
             ) -> Result<Self, sbe_rt::DecodeError> {
                 Self::try_from_decoder(
-                    #decoder_ident::decode(buf, message_offset)?,
+                    #decoder_ident::try_decode(buf, message_offset)?,
                 )
             }
         }
@@ -974,7 +974,7 @@ pub(crate) fn generate_domain_recursive(
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
             quote::quote! {
-                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
@@ -984,7 +984,7 @@ pub(crate) fn generate_domain_recursive(
         } else {
             // Fixed-only message: encoder implements AsRef<[u8]>
             quote::quote! {
-                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)

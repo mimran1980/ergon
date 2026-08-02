@@ -4469,12 +4469,12 @@ impl CarDomain {
         buf: &[u8],
         message_offset: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        Self::try_from_decoder(CarDecoder::decode(buf, message_offset)?)
+        Self::try_from_decoder(CarDecoder::try_decode(buf, message_offset)?)
     }
 }
 impl CarDomain {
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
-        let mut enc = CarEncoder::wrap_and_apply_header(buf, 0)?;
+        let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
         {
             let __v = self.serial_number as i128;
             if __v < 0 || __v > 18446744073709551614 {
