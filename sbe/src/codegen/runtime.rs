@@ -1880,9 +1880,9 @@ pub(crate) fn generate_any_message(
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(unsafe {
+                    Ok(Self::#name(
                         #decoder::wrap_unchecked(buf, pos, block_length, version)
-                    }))
+                    ))
                 }
             });
         }

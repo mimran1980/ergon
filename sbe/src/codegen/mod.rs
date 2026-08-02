@@ -762,10 +762,6 @@ impl Generator {
         // NOTE: In Rust edition 2024, inner attributes (`#![allow(...)])`) are
         // not permitted inside `include!()` files.  All suppression lints are
         // therefore emitted as outer `#[allow(..)]` on `pub mod sbe_rt`.
-        // `#![allow(unused_unsafe)]` is an inner attribute — applies to the entire
-        // generated file so AnyMessage dispatch arms and checked-wrapping calls don't
-        // error under `-D unused-unsafe`.
-        writeln!(src, "#![allow(unused_unsafe)]").unwrap();
         // Outer doc comment (`///`) — syn/prettyplease preserves it; `//` would
         // be silently dropped.
         writeln!(

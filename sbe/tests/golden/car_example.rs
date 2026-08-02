@@ -6,8 +6,7 @@
     clippy::identity_op,
     clippy::unnecessary_cast,
     unused_assignments,
-    unused_comparisons,
-    unused_unsafe
+    unused_comparisons
 )]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
@@ -7617,9 +7616,9 @@ impl<'a> AnyMessage<'a> {
         match template_id {
             CarSchema::TEMPLATE_ID => {
                 Ok(
-                    Self::Car(unsafe {
-                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
-                    }),
+                    Self::Car(
+                        CarDecoder::wrap_unchecked(buf, pos, block_length, version),
+                    ),
                 )
             }
             _ => {
