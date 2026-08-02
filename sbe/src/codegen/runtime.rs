@@ -1930,7 +1930,7 @@ pub(crate) fn generate_any_message(
                 /// Header and the version-readable fixed extent of the selected
                 /// template must be fully in-bounds. Dynamic tails remain checked.
                 #[inline]
-                unsafe fn decode(
+                pub fn decode(
                     buf: &'a [u8],
                     pos: usize,
                 ) -> Result<Self, sbe_rt::DecodeError> {

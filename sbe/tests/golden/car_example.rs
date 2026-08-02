@@ -2112,7 +2112,7 @@ impl<'a> FuelFiguresDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    unsafe fn wrap_trusted(
+    pub fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2251,7 +2251,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     /// Fixed block at `pos` and every dynamic tail extent this entry
     /// will traverse must be fully in-bounds in `buf`.
     #[inline]
-    unsafe fn wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_block_length: usize,
@@ -2702,7 +2702,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    unsafe fn wrap_trusted(
+    pub fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2841,7 +2841,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     /// Fixed block at `pos` and every dynamic tail extent this entry
     /// will traverse must be fully in-bounds in `buf`.
     #[inline]
-    unsafe fn wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_block_length: usize,
@@ -3086,7 +3086,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    unsafe fn wrap_trusted(
+    pub fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -3257,7 +3257,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     /// field offset used by accessors) must not overflow and must be
     /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
     #[inline]
-    unsafe fn wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_block_length: usize,
@@ -5965,7 +5965,7 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             entry_start: pos,
@@ -6136,7 +6136,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             entry_start: pos,
@@ -6454,7 +6454,7 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
         Self {
             buf,
             entry_start: pos,
@@ -7584,7 +7584,7 @@ impl<'a> AnyMessage<'a> {
     /// Header and the version-readable fixed extent of the selected
     /// template must be fully in-bounds. Dynamic tails remain checked.
     #[inline]
-    unsafe fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+    pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         let header_bytes = unsafe { read_bytes_unchecked::<8>(buf, pos) };
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(

@@ -161,7 +161,7 @@ pub(crate) fn generate_group_decoder(
             /// `pos + dim + count * acting_block_length` must also fit. Entry
             /// accessors then use unchecked fixed-field reads under that proof.
             #[inline]
-            unsafe fn wrap_trusted(
+            pub fn wrap_trusted(
                 buf: &'a [u8], pos: usize, acting_version: u16,
                 parent_pos: usize, parent_block_length: usize,
             ) -> Self {
@@ -505,7 +505,7 @@ pub(crate) fn generate_group_decoder(
             /// field offset used by accessors) must not overflow and must be
             /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
             #[inline]
-            unsafe fn wrap(
+            pub fn wrap(
                 buf: &'a [u8],
                 pos: usize,
                 acting_block_length: usize,
@@ -529,7 +529,7 @@ pub(crate) fn generate_group_decoder(
             /// Fixed block at `pos` and every dynamic tail extent this entry
             /// will traverse must be fully in-bounds in `buf`.
             #[inline]
-            unsafe fn wrap(
+            pub fn wrap(
                 buf: &'a [u8],
                 pos: usize,
                 acting_block_length: usize,

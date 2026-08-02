@@ -410,7 +410,7 @@ pub(crate) fn generate_group_encoder(
         /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
         /// for the lifetime of the returned encoder.
         #[inline]
-        unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
             Self {
                 buf,
                 entry_start: pos,
