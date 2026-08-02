@@ -1196,7 +1196,7 @@ impl<'a> CarDecoder<'a> {
             "version",
             header.version() as u64,
         )?;
-        Self::wrap(buf, pos, acting_block_length, acting_version)
+        Self::try_wrap(buf, pos, acting_block_length, acting_version)
     }
     /// Private zero-check framed decode core (HFT-008 keep=false).
     ///
@@ -2052,7 +2052,7 @@ pub struct FuelFiguresDecoder<'a> {
 impl<'a> FuelFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub fn try_wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2642,7 +2642,7 @@ pub struct PerformanceFiguresDecoder<'a> {
 impl<'a> PerformanceFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     #[inline]
-    pub fn try_wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -3012,7 +3012,7 @@ pub struct PerformanceFiguresAccelerationDecoder<'a> {
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub fn try_wrap(
+    pub fn wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -5864,7 +5864,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,
@@ -6033,7 +6033,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,
@@ -6245,7 +6245,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,

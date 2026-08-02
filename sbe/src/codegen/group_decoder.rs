@@ -95,7 +95,7 @@ pub(crate) fn generate_group_decoder(
             pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
             #[inline]
-            pub fn try_wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
+            pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
                 Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
             }
 

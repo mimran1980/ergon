@@ -9,7 +9,7 @@ use super::session::{
 #[test]
 fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = [0u8; 256];
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0);
     enc.leadership_term_id(42).cluster_session_id(99).timestamp(1234567890);
     let bytes = enc.as_bytes_with_header().to_vec();
     let dec = SessionMessageHeaderDecoder::decode(&bytes, 0)?;
@@ -23,7 +23,7 @@ fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn test_session_event_ok_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = [0u8; 256];
-    let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+    let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut data, 0);
     let _ = enc
         .cluster_session_id(1)
         .correlation_id(100)
@@ -44,7 +44,7 @@ fn test_session_event_ok_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_session_connect_request_roundtrip_shape() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = [0u8; 512];
-    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut data, 0);
     enc.correlation_id(42).response_stream_id(102).version(1);
     let complete = enc
         .response_channel(b"aeron:udp?endpoint=localhost:9999")?
@@ -62,13 +62,13 @@ fn test_session_connect_request_roundtrip_shape() -> Result<(), Box<dyn std::err
 #[test]
 fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Error>> {
     let mut data = [0u8; 256];
-    let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0).unwrap();
+    let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut data, 0);
     enc.correlation_id(5).cluster_session_id(2);
     let complete = enc.encoded_challenge(b"chal")?;
     assert!(complete.as_bytes_with_header().len() > 8);
 
     let mut data2 = [0u8; 256];
-    let mut enc2 = NewLeaderEventEncoder::wrap_and_apply_header(&mut data2, 0).unwrap();
+    let mut enc2 = NewLeaderEventEncoder::wrap_and_apply_header(&mut data2, 0);
     enc2.leadership_term_id(1).cluster_session_id(2).leader_member_id(0);
     let complete2 = enc2.ingress_endpoints(b"0=localhost:9000")?;
     assert!(complete2.as_bytes_with_header().len() > 8);
@@ -81,7 +81,6 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
 fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
     SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-        .unwrap()
         .leadership_term_id(7)
         .cluster_session_id(42)
         .timestamp(100);
@@ -107,7 +106,6 @@ fn test_remaining_returns_payload_after_header() -> Result<(), Box<dyn std::erro
     let mut buf = vec![0u8; total];
 
     SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-        .unwrap()
         .leadership_term_id(1)
         .cluster_session_id(2)
         .timestamp(3);
@@ -126,7 +124,6 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
     let mut buf = vec![0u8; total];
 
     SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-        .unwrap()
         .leadership_term_id(1)
         .cluster_session_id(2)
         .timestamp(3);
@@ -149,7 +146,7 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
     // First: SessionMessageHeader
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.leadership_term_id(7).cluster_session_id(99).timestamp(42);
 
     // remaining_mut() gives the unwritten region — chain the next encoder

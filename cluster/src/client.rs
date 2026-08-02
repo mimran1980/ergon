@@ -399,7 +399,7 @@ impl AeronCluster {
             info.len(),
         );
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(0)
             .response_stream_id(builder.egress_stream_id)
             .version(0);
@@ -418,7 +418,7 @@ impl AeronCluster {
     ) -> Result<(), ClusterError> {
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(credentials.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(correlation_id)
             .cluster_session_id(cluster_session_id);
         let _ = enc.encoded_credentials(credentials)?;
@@ -505,7 +505,6 @@ impl AeronCluster {
     pub fn send_keep_alive(&mut self) -> Result<(), ClusterError> {
         let mut buf = [0u8; SessionKeepAliveEncoder::ENCODED_LENGTH];
         SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
@@ -586,7 +585,7 @@ impl AeronCluster {
         }
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
         let mut buf = vec![0u8; len];
-        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id)
             .correlation_id(correlation_id)
@@ -604,7 +603,6 @@ impl AeronCluster {
         }
         let mut buf = [0u8; SessionCloseRequestEncoder::HEADER_LENGTH + SessionCloseRequestEncoder::BLOCK_LENGTH];
         SessionCloseRequestEncoder::wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
             .leadership_term_id(self.leadership_term_id)
             .cluster_session_id(self.cluster_session_id);
         // Local close always proceeds: the SessionCloseRequest is an advisory
@@ -1161,7 +1159,7 @@ impl AsyncClusterConnect {
             info.len(),
         );
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(0)
             .response_stream_id(self.builder.egress_stream_id)
             .version(0);
@@ -1184,7 +1182,7 @@ impl AsyncClusterConnect {
     fn send_challenge_response(&mut self, cid: i64, csid: i64, creds: &[u8]) -> Result<(), ClusterError> {
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(creds.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(cid).cluster_session_id(csid);
         let _ = enc.encoded_credentials(creds)?;
         if let Some(ingress) = &self.ingress {
@@ -1262,7 +1260,7 @@ mod tests {
         let len =
             SessionConnectRequestEncoder::compute_encoded_length_with_message_header(ch.len(), creds.len(), info.len());
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(0).response_stream_id(102).version(0);
         let complete = enc
             .response_channel(ch)?
@@ -1283,7 +1281,7 @@ mod tests {
         let creds = b"challenge-response-bytes";
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(creds.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(1).cluster_session_id(2);
         let complete = enc.encoded_credentials(creds)?;
         assert_eq!(

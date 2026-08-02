@@ -273,7 +273,7 @@ mod tests {
         let detail = b"ok";
         let len = SessionEventEncoder::compute_encoded_length_with_message_header(detail.len());
         let mut buf = vec![0u8; len];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.cluster_session_id(99)
             .correlation_id(1)
             .leadership_term_id(5)
@@ -322,7 +322,6 @@ mod tests {
         use crate::codecs::session::SessionMessageHeaderEncoder;
         let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH + 5];
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
             .leadership_term_id(7)
             .cluster_session_id(42)
             .timestamp(100);
@@ -372,7 +371,7 @@ mod tests {
         let eps = b"0=localhost:9000,1=localhost:9001";
         let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
         let mut buf = vec![0u8; len];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(3).cluster_session_id(42).leader_member_id(1);
         let _ = enc.ingress_endpoints(eps)?;
         struct Rec {
@@ -422,7 +421,7 @@ mod tests {
         let chal = b"server-challenge-data";
         let len = ChallengeEncoder::compute_encoded_length_with_message_header(chal.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.correlation_id(99).cluster_session_id(42);
         let _ = enc.encoded_challenge(chal)?;
         struct Rec {

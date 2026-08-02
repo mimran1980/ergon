@@ -469,8 +469,8 @@ pub(crate) fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                // Shared path with wrap: version-aware min fixed extent.
-                Self::wrap(buf, pos, acting_block_length, acting_version)
+                // Shared path with try_wrap: version-aware min fixed extent.
+                Self::try_wrap(buf, pos, acting_block_length, acting_version)
             }
 
             /// Private zero-check framed decode core (HFT-008 keep=false).
