@@ -501,9 +501,7 @@ pub(crate) fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                Ok(unsafe {
-                    Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
-                })
+                Ok(Self::wrap_unchecked(buf, pos, acting_block_length, acting_version))
             }
         });
     }
