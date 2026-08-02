@@ -4910,7 +4910,13 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
-        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                Self::HEADER_TEMPLATE.as_ptr(),
+                buf.as_mut_ptr().add(pos),
+                8,
+            );
+        }
         let body_pos = pos + 8;
         CarEncoder {
             buf,
