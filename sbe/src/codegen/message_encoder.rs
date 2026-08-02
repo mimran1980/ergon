@@ -431,7 +431,7 @@ pub(crate) fn generate_message_encoder(
                         available: buf.len(),
                     });
                 }
-                Self::wrap_and_apply_header(buf, 0)
+                Ok(Self::wrap_and_apply_header(buf, 0))
             }
         });
     }
