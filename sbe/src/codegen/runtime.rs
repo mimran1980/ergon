@@ -1874,15 +1874,13 @@ pub(crate) fn generate_any_message(
             );
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    // wrap enforces version-aware fixed extent (HFT-001).
-                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)?))
+                    // try_wrap enforces version-aware fixed extent (HFT-001).
+                    Ok(Self::#name(#decoder::try_wrap(buf, pos, block_length, version)?))
                 }
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(unsafe {
-                        #decoder::wrap(buf, pos, block_length, version)
-                    }))
+                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
                 }
             });
         }

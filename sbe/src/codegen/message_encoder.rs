@@ -343,7 +343,7 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(unsafe { Self::wrap(buf, msg_offset) })
+            Ok(Self::wrap(buf, msg_offset))
         }
 
         /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
@@ -382,7 +382,7 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(unsafe { Self::wrap_and_apply_header(buf, pos) })
+            Ok(Self::wrap_and_apply_header(buf, pos))
         }
 
         /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).

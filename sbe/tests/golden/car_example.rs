@@ -1126,9 +1126,7 @@ impl<'a> CarDecoder<'a> {
                 available: buf.len().saturating_sub(message_offset),
             });
         }
-        Ok(unsafe {
-            Self::wrap(buf, message_offset, acting_block_length, acting_version)
-        })
+        Ok(Self::wrap(buf, message_offset, acting_block_length, acting_version))
     }
     /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
     ///
@@ -1237,7 +1235,7 @@ impl<'a> CarDecoder<'a> {
             "version",
             header.version() as u64,
         )?;
-        Ok(unsafe { Self::wrap(buf, pos, acting_block_length, acting_version) })
+        Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
     }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
@@ -4855,7 +4853,7 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(msg_offset) {
             return Err(Self::buffer_too_short(buf, msg_offset, 53));
         }
-        Ok(unsafe { Self::wrap(buf, msg_offset) })
+        Ok(Self::wrap(buf, msg_offset))
     }
     /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
     ///
@@ -4888,7 +4886,7 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
-        Ok(unsafe { Self::wrap_and_apply_header(buf, pos) })
+        Ok(Self::wrap_and_apply_header(buf, pos))
     }
     /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
     ///
@@ -7570,7 +7568,7 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                Ok(Self::Car(CarDecoder::wrap(buf, pos, block_length, version)?))
+                Ok(Self::Car(CarDecoder::try_wrap(buf, pos, block_length, version)?))
             }
             _ => {
                 Err(sbe_rt::DecodeError::UnknownTemplateLength {
@@ -7610,11 +7608,7 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                Ok(
-                    Self::Car(unsafe {
-                        CarDecoder::wrap(buf, pos, block_length, version)
-                    }),
-                )
+                Ok(Self::Car(CarDecoder::wrap(buf, pos, block_length, version)))
             }
             _ => {
                 Err(sbe_rt::DecodeError::UnknownTemplateLength {
