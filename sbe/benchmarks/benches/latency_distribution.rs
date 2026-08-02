@@ -28,7 +28,6 @@ fn decode_batch() -> u64 {
                 header.block_length() as usize,
                 header.version(),
             )
-            .unwrap()
             .serial_number(),
         );
     }

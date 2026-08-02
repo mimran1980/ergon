@@ -164,7 +164,7 @@ fn bench_fixed_vs_setters(c: &mut Criterion) {
         b.iter(|| {
             seed = seed.wrapping_add(1);
             let f = &preheld[(black_box(seed) as usize) & 255];
-            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             write_all_fixed_setters(&mut enc, f);
             black_box(&buf);
         });
@@ -176,9 +176,7 @@ fn bench_fixed_vs_setters(c: &mut Criterion) {
         b.iter(|| {
             seed = seed.wrapping_add(1);
             let f = &preheld[(black_box(seed) as usize) & 255];
-            let _enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                .unwrap()
-                .fixed(f);
+            let _enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).fixed(f);
             black_box(&buf);
         });
     });
@@ -199,7 +197,7 @@ fn bench_composite_write(c: &mut Criterion) {
         b.iter(|| {
             seed = seed.wrapping_add(1);
             let s = black_box(seed);
-            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.serial_number(s);
             enc.model_year(2000);
             enc.available(BooleanType::F);
@@ -222,7 +220,7 @@ fn bench_composite_write(c: &mut Criterion) {
             seed = seed.wrapping_add(1);
             let s = black_box(seed);
             let eng = preheld[(s as usize) & 255];
-            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.serial_number(s);
             enc.model_year(2000);
             enc.available(BooleanType::F);
@@ -255,7 +253,7 @@ fn bench_endian_wide_block(c: &mut Criterion) {
             let s = black_box(seed);
             let block = big_block_le_from_seed(s);
             black_box(block.0);
-            let mut enc = le::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = le::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.seq(s);
             enc.block(block);
             black_box(&buf);
@@ -270,7 +268,7 @@ fn bench_endian_wide_block(c: &mut Criterion) {
             let s = black_box(seed);
             let block = big_block_be_from_seed(s);
             black_box(block.0);
-            let mut enc = be::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = be::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.seq(s);
             enc.block(block);
             black_box(&buf);
@@ -285,7 +283,7 @@ fn bench_endian_wide_block(c: &mut Criterion) {
             seed = seed.wrapping_add(1);
             let s = black_box(seed);
             let block = preheld_le[(s as usize) & 63];
-            let mut enc = le::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = le::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.seq(s);
             enc.block(black_box(block));
             black_box(&buf);
@@ -299,7 +297,7 @@ fn bench_endian_wide_block(c: &mut Criterion) {
             seed = seed.wrapping_add(1);
             let s = black_box(seed);
             let block = preheld_be[(s as usize) & 63];
-            let mut enc = be::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut enc = be::WideEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             enc.seq(s);
             enc.block(black_box(block));
             black_box(&buf);

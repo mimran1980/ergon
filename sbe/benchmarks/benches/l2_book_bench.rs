@@ -57,16 +57,10 @@ fn bench_l2_encode(c: &mut Criterion) {
                 b.iter(|| {
                     let entries = black_box(entries);
                     let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                        .unwrap()
                         .levels(n as u16, |g| {
                             for (price, qty, side) in entries {
                                 g.add(|entry| {
-                                    entry
-                                        .try_price(*price)
-                                        .unwrap()
-                                        .try_qty(*qty)
-                                        .unwrap()
-                                        .side(*side);
+                                    entry.price(*price).qty(*qty).side(*side);
                                     Ok(())
                                 })?;
                             }
@@ -88,7 +82,6 @@ fn bench_l2_encode(c: &mut Criterion) {
                 b.iter(|| {
                     let entries = black_box(entries);
                     let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                        .unwrap()
                         .levels(n as u16, |group| group.bulk_add(entries))
                         .unwrap()
                         .encoded_length_with_header();
@@ -108,7 +101,6 @@ fn bench_l2_decode(c: &mut Criterion) {
         let msg_len = L2BookEncoder::try_compute_encoded_length_with_header(n as u16).unwrap();
         let mut buf = vec![0u8; msg_len];
         let written = L2BookEncoder::wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
             .levels(n as u16, |g| {
                 for e in &entries {
                     g.add_struct(e)?;
@@ -131,9 +123,9 @@ fn bench_l2_decode(c: &mut Criterion) {
                 let levels = dec.into_levels().unwrap();
                 let mut total: i128 = 0;
                 for level in levels {
-                    let price: RustDecimal = black_box(level.try_price().unwrap());
+                    let price: RustDecimal = black_box(level.price());
                     total = total.wrapping_add(price.mantissa() as i128);
-                    let qty: RustDecimal = black_box(level.try_qty().unwrap());
+                    let qty: RustDecimal = black_box(level.qty());
                     total = total.wrapping_add(qty.mantissa() as i128);
                     black_box(level.side());
                 }

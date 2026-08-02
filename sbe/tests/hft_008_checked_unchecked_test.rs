@@ -1,6 +1,6 @@
 //! HFT-008: paired checked/unchecked identity + keep-gate measurement harness.
 //!
-//! Keep rule (pre-registered, from release spec): public `_unchecked` only when
+//! Keep rule (pre-registered, from release spec): public `` only when
 //! instruction evidence + multi-run CI favour the twin. Default product surface
 //! keeps zero-check cores **module-private** (`keep: false`) until that proof
 //! lands. This test:
@@ -23,9 +23,9 @@ use std::time::Instant;
 mod common;
 use common::{Paths, compile_and_run, compile_and_run_capture, generate};
 
-/// Append in-module keep-matrix helpers that can call private `*_unchecked`.
+/// Append in-module keep-matrix helpers that can call private `*`.
 fn with_in_module_probe(src: &str) -> String {
-    // Injected into the generated module so private `unsafe fn *_unchecked`
+    // Injected into the generated module so private `unsafe fn *`
     // cores are in scope. Emits machine-readable HFT008_KEEP_SAMPLE lines.
     let probe = r#"
 
@@ -61,7 +61,7 @@ pub mod hft008_probe {
             let unchecked = time_ns(|| {
                 // SAFETY: 256 >= HEADER+BLOCK for Car.
                 let enc = unsafe {
-                    CarEncoder::wrap_and_apply_header_unchecked(black_box(&mut buf), 0)
+                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                 };
                 black_box(enc);
             });
@@ -80,7 +80,7 @@ pub mod hft008_probe {
             let unchecked = time_ns(|| {
                 // SAFETY: va sized to HEADER+BLOCK+pad.
                 let enc = unsafe {
-                    CarEncoder::wrap_and_apply_header_unchecked(black_box(&mut vb[..]), 0)
+                    CarEncoder::wrap_and_apply_header(black_box(&mut vb[..]), 0)
                 };
                 black_box(enc);
             });
@@ -95,7 +95,7 @@ pub mod hft008_probe {
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) };
+                let enc = unsafe { CarEncoder::wrap(black_box(&mut buf), 0) };
                 black_box(enc);
             });
             emit("wrap", "exact_ctor", checked, unchecked);
@@ -111,7 +111,7 @@ pub mod hft008_probe {
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::wrap_unchecked(black_box(&mut vb[..]), 0) };
+                let enc = unsafe { CarEncoder::wrap(black_box(&mut vb[..]), 0) };
                 black_box(enc);
             });
             emit("wrap", "opaque_ctor", checked, unchecked);
@@ -156,7 +156,7 @@ pub mod hft008_probe {
             });
             let unchecked = time_ns(|| {
                 // SAFETY: frame just produced by encoder with matching length.
-                let d = unsafe { CarDecoder::decode_unchecked(black_box(slice), 0).unwrap() };
+                let d = unsafe { CarDecoder::decode(black_box(slice), 0).unwrap() };
                 black_box(d.serial_number());
             });
             emit("decode", "exact_ctor_plus_scalar", checked, unchecked);
@@ -169,7 +169,7 @@ pub mod hft008_probe {
             });
             let unchecked = time_ns(|| {
                 let d = unsafe {
-                    CarDecoder::decode_unchecked(black_box(owned.as_slice()), 0).unwrap()
+                    CarDecoder::decode(black_box(owned.as_slice()), 0).unwrap()
                 };
                 black_box(d.serial_number());
             });
@@ -214,7 +214,7 @@ pub mod hft008_probe {
                 black_box(core::mem::discriminant(&any));
             });
             let unchecked = time_ns(|| {
-                let any = unsafe { AnyMessage::decode_unchecked(black_box(slice), 0).unwrap() };
+                let any = unsafe { AnyMessage::decode(black_box(slice), 0).unwrap() };
                 black_box(core::mem::discriminant(&any));
             });
             emit("AnyMessage::decode", "exact_dispatch", checked, unchecked);
@@ -226,7 +226,7 @@ pub mod hft008_probe {
             let mut b = [0u8; 256];
             let enc_a = CarEncoder::wrap_and_apply_header(&mut a, 0).unwrap();
             // SAFETY: 256 >= HEADER+BLOCK.
-            let enc_b = unsafe { CarEncoder::wrap_and_apply_header_unchecked(&mut b, 0) };
+            let enc_b = unsafe { CarEncoder::wrap_and_apply_header(&mut b, 0) };
             drop(enc_a);
             drop(enc_b);
             // Header template bytes must match after both constructors.
@@ -238,7 +238,7 @@ pub mod hft008_probe {
         let ratio = checked_ns / unchecked_ns.max(1e-12);
         let improvement_pct = (1.0 - unchecked_ns / checked_ns.max(1e-12)) * 100.0;
         println!(
-            "HFT008_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over_unchecked={ratio:.6} improvement_pct={improvement_pct:.4}"
+            "HFT008_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over={ratio:.6} improvement_pct={improvement_pct:.4}"
         );
     }
 }
@@ -248,28 +248,28 @@ pub mod hft008_probe {
 
 /// Checked constructors call the private unchecked core in generated source.
 #[test]
-fn source_checked_delegates_to_unchecked_core() -> Result<(), Box<dyn Error>> {
+fn source_checked_delegates_to_core() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft8_core");
     // Unchecked cores are public safe — callers choose explicitly.
     assert!(
-        src.contains("pub fn wrap_and_apply_header_unchecked")
-            && !src.contains("pub unsafe fn wrap_and_apply_header_unchecked"),
-        "wrap_and_apply_header_unchecked must be public safe"
+        src.contains("pub fn wrap_and_apply_header")
+            && !src.contains("pub unsafe fn wrap_and_apply_header"),
+        "wrap_and_apply_header must be public safe"
     );
     assert!(
-        src.contains("pub fn wrap_unchecked(") && !src.contains("pub unsafe fn wrap_unchecked("),
-        "wrap_unchecked must be public safe"
+        src.contains("pub fn wrap(") && !src.contains("pub unsafe fn wrap("),
+        "wrap must be public safe"
     );
     assert!(
-        src.contains("pub fn decode_unchecked") && !src.contains("pub unsafe fn decode_unchecked"),
-        "decode_unchecked must be public safe"
+        src.contains("pub fn decode") && !src.contains("pub unsafe fn decode"),
+        "decode must be public safe"
     );
     let idx = src
         .find("pub fn wrap_and_apply_header")
         .ok_or("missing wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(900).min(src.len())];
     assert!(
-        window.contains("wrap_and_apply_header_unchecked"),
+        window.contains("wrap_and_apply_header"),
         "checked encoder must call shared unchecked core"
     );
     Ok(())

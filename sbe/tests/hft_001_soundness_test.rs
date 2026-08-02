@@ -49,19 +49,19 @@ fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), B
 }
 
 #[test]
-fn generated_source_has_no_public_safe_raw_unchecked_helpers() -> Result<(), Box<dyn Error>> {
+fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_raw_vis");
     assert!(
-        !src.contains("pub fn read_bytes_unchecked"),
-        "read_bytes_unchecked must not be public safe"
+        !src.contains("pub fn read_bytes"),
+        "read_bytes must not be public safe"
     );
     assert!(
-        !src.contains("pub fn write_bytes_unchecked"),
-        "write_bytes_unchecked must not be public safe"
+        !src.contains("pub fn write_bytes"),
+        "write_bytes must not be public safe"
     );
     assert!(
-        src.contains("unsafe fn read_bytes_unchecked")
-            || src.contains("unsafe fn read_bytes_unchecked<"),
+        src.contains("unsafe fn read_bytes")
+            || src.contains("unsafe fn read_bytes<"),
         "raw read helper must be private unsafe"
     );
     assert!(
@@ -71,21 +71,20 @@ fn generated_source_has_no_public_safe_raw_unchecked_helpers() -> Result<(), Box
         "checked encoder constructor must return Result"
     );
     assert!(
-        src.contains("pub fn wrap_and_apply_header_unchecked")
-            && !src.contains("pub unsafe fn wrap_and_apply_header_unchecked"),
-        "wrap_and_apply_header_unchecked must be public safe (not unsafe)"
+        src.contains("pub unsafe fn wrap_and_apply_header"),
+        "wrap_and_apply_header must be public unsafe"
     );
     assert!(
         src.contains("pub fn decode(") && !src.contains("pub fn try_wrap_and_apply_header"),
         "decoder framed entry is decode; try_wrap* aliases removed"
     );
     assert!(
-        src.contains("pub fn wrap_unchecked"),
-        "wrap_unchecked must be public"
+        src.contains("pub fn wrap"),
+        "wrap must be public"
     );
     assert!(
-        src.contains("pub fn decode_unchecked"),
-        "decode_unchecked must be public"
+        src.contains("pub fn decode"),
+        "decode must be public"
     );
     Ok(())
 }
@@ -122,7 +121,7 @@ fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn checked_encoder_calls_unchecked_core_in_source() -> Result<(), Box<dyn Error>> {
+fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_core_share");
     // Checked wrap_and_apply_header body must invoke the unsafe twin once.
     let idx = src
@@ -130,7 +129,7 @@ fn checked_encoder_calls_unchecked_core_in_source() -> Result<(), Box<dyn Error>
         .ok_or("missing wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(800).min(src.len())];
     assert!(
-        window.contains("wrap_and_apply_header_unchecked"),
+        window.contains("wrap_and_apply_header"),
         "checked encoder must delegate to unsafe core"
     );
     Ok(())

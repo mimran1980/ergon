@@ -347,7 +347,7 @@ pub(crate) fn generate_message_decoder(
         /// `message_start + 8`). ergo-sbe takes the **message** start so the
         /// same offset works for `wrap`, `decode`, and claim buffers.
         #[inline]
-        pub fn wrap(
+        pub fn try_wrap(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -375,7 +375,7 @@ pub(crate) fn generate_message_decoder(
                 });
             }
             // SAFETY: body_need bytes after header are in-bounds.
-            Ok(unsafe { Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version) })
+            Ok(unsafe { Self::wrap(buf, message_offset, acting_block_length, acting_version) })
         }
 
         /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
@@ -385,7 +385,7 @@ pub(crate) fn generate_message_decoder(
         /// min_readable_fixed_extent(acting_version))` must not overflow and
         /// must be ≤ `buf.len()`.
         #[inline]
-        pub unsafe fn wrap_unchecked(
+        pub fn wrap(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -441,7 +441,7 @@ pub(crate) fn generate_message_decoder(
             /// version-aware fixed body extent. See [`Self::wrap`] for the
             /// message-start vs sbe-tool body-offset migration note.
             #[inline]
-            pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 if #hs > buf.len().saturating_sub(pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
@@ -479,7 +479,7 @@ pub(crate) fn generate_message_decoder(
             /// Header and version-readable fixed body for this template must
             /// be fully in-bounds at `pos`.
             #[inline]
-            pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Still validates schema/template identity (protocol, not memory).
                 let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
                 let header = #hp(header_bytes);
@@ -501,7 +501,7 @@ pub(crate) fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                Ok(unsafe { Self::wrap_unchecked(buf, pos, acting_block_length, acting_version) })
+                Ok(unsafe { Self::wrap(buf, pos, acting_block_length, acting_version) })
             }
         });
     }
@@ -526,9 +526,9 @@ pub(crate) fn generate_message_decoder(
             "limit",
             "buffer",
             "wrap",
-            "wrap_unchecked",
+            "wrap",
             "decode",
-            "decode_unchecked",
+            "decode",
             "min_readable_fixed_extent",
             "header",
             "encoded_length",
@@ -1217,7 +1217,7 @@ pub(crate) fn generate_message_decoder(
             /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
             #[inline]
             pub unsafe fn #str_unchecked(&self) -> &'a str {
-                let bytes = unsafe { self.#vd_snake_ident().unwrap_unchecked() };
+                let bytes = unsafe { self.#vd_snake_ident().unwrap() };
                 // SAFETY: caller guarantees valid UTF-8
                 unsafe { core::str::from_utf8_unchecked(bytes) }
             }

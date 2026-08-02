@@ -1,7 +1,7 @@
 //! Encode benchmarks for ergon-generated Car message codec.
 //!
 //! Measures encode throughput: scalar-only encode, full end-to-end encode
-//! with the checked API (`wrap_and_apply_header`), and the unchecked path
+//! with the checked API (`try_wrap_and_apply_header`), and the unchecked path
 //! (`wrap` + var-data variants).
 
 // Generated code generates lots of diagnostics; suppress across the crate.
@@ -28,7 +28,7 @@ mod common;
 /// Encode a full Car message using the **checked** API.
 /// Returns the total encoded length (header + body).
 fn encode_checked(buf: &mut [u8]) -> usize {
-    let mut car = CarEncoder::wrap_and_apply_header(buf, 0).unwrap();
+    let mut car = CarEncoder::wrap_and_apply_header(buf, 0);
     car.serial_number(1234);
     car.model_year(2013);
     car.available(BooleanType::T);
@@ -105,7 +105,7 @@ fn encode_full(buf: &mut [u8]) -> usize {
     // Write header manually (wrap does not write it)
     buf[0..8].copy_from_slice(&CarEncoder::<'_>::HEADER_TEMPLATE);
 
-    let mut car = CarEncoder::wrap(buf, 0).unwrap();
+    let mut car = CarEncoder::try_wrap(buf, 0).unwrap();
     car.serial_number(1234);
     car.model_year(2013);
     car.available(BooleanType::T);
@@ -208,8 +208,7 @@ fn bench_encode_scalar_only(c: &mut Criterion) {
     group.bench_function("checked", |b| {
         let mut buf = [0u8; 1024];
         b.iter(|| {
-            let mut car: CarEncoder<'_> =
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+            let mut car: CarEncoder<'_> = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);

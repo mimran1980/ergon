@@ -335,7 +335,7 @@ pub(crate) fn generate_message_encoder(
         ///
         /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
-        pub fn wrap(
+        pub fn try_wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
@@ -343,7 +343,7 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
+            Ok(unsafe { Self::wrap(buf, msg_offset) })
         }
 
         /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
@@ -352,7 +352,7 @@ pub(crate) fn generate_message_encoder(
         /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
         /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        pub unsafe fn wrap_unchecked(
+        pub fn wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
@@ -374,7 +374,7 @@ pub(crate) fn generate_message_encoder(
         /// Optional-field nullification is **not** applied by default — call
         /// `apply_nulls()` if you want null sentinels.
         #[inline]
-        pub fn wrap_and_apply_header(
+        pub fn try_wrap_and_apply_header(
             buf: &'a mut [u8],
             pos: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
@@ -382,7 +382,7 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
+            Ok(unsafe { Self::wrap_and_apply_header(buf, pos) })
         }
 
         /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
@@ -391,7 +391,7 @@ pub(crate) fn generate_message_encoder(
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
         /// ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        pub unsafe fn wrap_and_apply_header_unchecked(
+        pub fn wrap_and_apply_header(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
@@ -475,9 +475,9 @@ pub(crate) fn generate_message_encoder(
         "limit",
         "buffer",
         "wrap",
-        "wrap_unchecked",
+        "wrap",
         "wrap_and_apply_header",
-        "wrap_and_apply_header_unchecked",
+        "wrap_and_apply_header",
         "wrap_into_claim",
         "compute_length_with_header",
         // Complete-stage inherent methods emitted on the encoder struct — a

@@ -72,7 +72,7 @@ fn composite_flyweight_accessors_use_trusted_reads() -> Result<(), Box<dyn std::
     let engine_decoder = &decoder_and_rest[..end];
 
     assert!(
-        engine_decoder.contains("read_bytes_unchecked::<"),
+        engine_decoder.contains("read_bytes::<"),
         "fixed-width EngineDecoder accessors must use trusted reads"
     );
     assert!(

@@ -1874,16 +1874,14 @@ pub(crate) fn generate_any_message(
             );
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    // Header + extents already validated above — use unchecked core.
-                    Ok(Self::#name(unsafe {
-                        #decoder::wrap_unchecked(buf, pos, block_length, version)
-                    }))
+                    // wrap enforces version-aware fixed extent (HFT-001).
+                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)?))
                 }
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
                     Ok(Self::#name(unsafe {
-                        #decoder::wrap_unchecked(buf, pos, block_length, version)
+                        #decoder::wrap(buf, pos, block_length, version)
                     }))
                 }
             });
@@ -1893,7 +1891,7 @@ pub(crate) fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
-                pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                     if #header_size_lit > buf.len().saturating_sub(pos) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
@@ -1934,7 +1932,7 @@ pub(crate) fn generate_any_message(
                 /// Header and the version-readable fixed extent of the selected
                 /// template must be fully in-bounds. Dynamic tails remain checked.
                 #[inline]
-                unsafe fn decode_unchecked(
+                unsafe fn decode(
                     buf: &'a [u8],
                     pos: usize,
                 ) -> Result<Self, sbe_rt::DecodeError> {

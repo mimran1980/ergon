@@ -85,7 +85,7 @@ const _: () = assert!(core::mem::size_of::<BigBlock>() == 256);
 
 fn encode_wide_fixture() -> Vec<u8> {
     let mut buf = vec![0u8; WideEncoder::ENCODED_LENGTH];
-    let mut enc = WideEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut enc = WideEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.seq(42);
     let block = BigBlock::new(
         0,
@@ -123,7 +123,7 @@ fn encode_wide_fixture() -> Vec<u8> {
     );
     enc.block(block);
     let _ = enc;
-    let dec = WideDecoder::decode(&buf, 0).unwrap();
+    let dec = WideDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
     assert_eq!(dec.block().f15(), TARGET_FIELD_VALUE);
     assert_eq!(dec.block_value().f15(), TARGET_FIELD_VALUE);
     buf
@@ -147,8 +147,7 @@ fn bench_layout_access(c: &mut Criterion) {
         0,
         WideDecoder::BLOCK_LENGTH,
         WideDecoder::SCHEMA_VERSION,
-    )
-    .unwrap();
+    );
 
     let packed_f15 = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(preheld_packed.f15)) };
     assert_eq!(packed_f15, TARGET_FIELD_VALUE);
@@ -196,8 +195,7 @@ fn bench_layout_access(c: &mut Criterion) {
                 0,
                 WideDecoder::BLOCK_LENGTH,
                 WideDecoder::SCHEMA_VERSION,
-            )
-            .unwrap();
+            );
             black_box(dec.block().f15())
         });
     });

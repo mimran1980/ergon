@@ -53,7 +53,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
         {
             let mut wire_buf = vec![0u8; msg_len];
             let wire_len = L2BookEncoder::wrap_and_apply_header(&mut wire_buf, 0)
-                .unwrap()
                 .levels(n as u16, |g| {
                     for e in &entries {
                         g.add(|entry| {
@@ -69,16 +68,10 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
 
             let mut domain_buf = vec![0u8; msg_len];
             let domain_len = L2BookEncoder::wrap_and_apply_header(&mut domain_buf, 0)
-                .unwrap()
                 .levels(n as u16, |g| {
                     for e in &domain_entries {
                         g.add(|entry| {
-                            entry
-                                .try_price(e.price)
-                                .unwrap()
-                                .try_qty(e.qty)
-                                .unwrap()
-                                .side(e.side);
+                            entry.price(e.price).qty(e.qty).side(e.side);
                             Ok(())
                         })?;
                     }
@@ -91,7 +84,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
 
             let mut bulk_buf = vec![0u8; msg_len];
             let bulk_len = L2BookEncoder::wrap_and_apply_header(&mut bulk_buf, 0)
-                .unwrap()
                 .levels(n as u16, |group| group.bulk_add(&entries))
                 .unwrap()
                 .encoded_length_with_header();
@@ -108,7 +100,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 b.iter(|| {
                     let entries = black_box(entries);
                     let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                        .unwrap()
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
@@ -135,16 +126,10 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 b.iter(|| {
                     let entries = black_box(entries);
                     let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                        .unwrap()
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
-                                    entry
-                                        .try_price(e.price)
-                                        .unwrap()
-                                        .try_qty(e.qty)
-                                        .unwrap()
-                                        .side(e.side);
+                                    entry.price(e.price).qty(e.qty).side(e.side);
                                     Ok(())
                                 })?;
                             }
@@ -164,7 +149,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             b.iter(|| {
                 let entries = black_box(entries);
                 let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                    .unwrap()
                     .levels(n as u16, |g| {
                         for e in entries {
                             g.add_struct(e)?;
@@ -184,7 +168,6 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             b.iter(|| {
                 let entries = black_box(entries);
                 let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
-                    .unwrap()
                     .levels(n as u16, |group| group.bulk_add(entries))
                     .unwrap()
                     .encoded_length_with_header();

@@ -15,8 +15,8 @@ use common::{Paths, generate};
 const STALE_GENERATED: &[&str] = &[
     "pub fn try_wrap(",
     "pub fn try_wrap_and_apply_header(",
-    "pub fn read_bytes_unchecked",
-    "pub fn write_bytes_unchecked",
+    "pub fn read_bytes",
+    "pub fn write_bytes",
 ];
 
 /// Substrings that must not appear in inventory docs (case-sensitive where noted).
@@ -151,9 +151,9 @@ fn car_generated_source_rejects_stale_0_1_names() -> Result<(), Box<dyn Error>> 
     );
     assert!(src.contains("pub fn decode("), "decode missing");
     assert!(
-        src.contains("pub fn wrap_and_apply_header_unchecked")
-            || src.contains("pub unsafe fn wrap_and_apply_header_unchecked")
-            || src.contains("unsafe fn wrap_and_apply_header_unchecked"),
+        src.contains("pub fn wrap_and_apply_header")
+            || src.contains("pub unsafe fn wrap_and_apply_header")
+            || src.contains("unsafe fn wrap_and_apply_header"),
         "unchecked twin missing"
     );
     Ok(())

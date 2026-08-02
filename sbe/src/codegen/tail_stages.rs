@@ -263,7 +263,7 @@ pub(crate) fn generate_owner_consuming_stages(
                         /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
                         #[inline]
                         pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
-                            let (bytes, next) = unsafe { self.#into_ident().unwrap_unchecked() };
+                            let (bytes, next) = unsafe { self.#into_ident().unwrap() };
                             // SAFETY: caller guarantees valid UTF-8
                             let s = unsafe { core::str::from_utf8_unchecked(bytes) };
                             (s, next)

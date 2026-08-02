@@ -163,7 +163,7 @@ pub(crate) fn generate_group_encoder(
             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
 
             #[inline]
-            pub fn wrap(buf: &'a mut [u8], pos: usize, count: #count_ty) -> Self {
+            pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: #count_ty) -> Self {
                 Self { buf, pos, count, written: 0 }
             }
 

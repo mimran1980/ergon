@@ -1099,7 +1099,7 @@ impl<'a> CarDecoder<'a> {
     /// `message_start + 8`). ergo-sbe takes the **message** start so the
     /// same offset works for `wrap`, `decode`, and claim buffers.
     #[inline]
-    pub fn wrap(
+    pub fn try_wrap(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -1127,12 +1127,7 @@ impl<'a> CarDecoder<'a> {
             });
         }
         Ok(unsafe {
-            Self::wrap_unchecked(
-                buf,
-                message_offset,
-                acting_block_length,
-                acting_version,
-            )
+            Self::wrap(buf, message_offset, acting_block_length, acting_version)
         })
     }
     /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
@@ -1142,7 +1137,7 @@ impl<'a> CarDecoder<'a> {
     /// min_readable_fixed_extent(acting_version))` must not overflow and
     /// must be ≤ `buf.len()`.
     #[inline]
-    pub unsafe fn wrap_unchecked(
+    pub fn wrap(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -1161,7 +1156,7 @@ impl<'a> CarDecoder<'a> {
     /// version-aware fixed body extent. See [`Self::wrap`] for the
     /// message-start vs sbe-tool body-offset migration note.
     #[inline]
-    pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+    pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         if 8 > buf.len().saturating_sub(pos) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message header",
@@ -1209,10 +1204,7 @@ impl<'a> CarDecoder<'a> {
     /// Header and version-readable fixed body for this template must
     /// be fully in-bounds at `pos`.
     #[inline]
-    pub unsafe fn decode_unchecked(
-        buf: &'a [u8],
-        pos: usize,
-    ) -> Result<Self, sbe_rt::DecodeError> {
+    pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         let header_bytes: [u8; 8] = unsafe { read_bytes_unchecked::<8>(buf, pos) };
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
@@ -1245,9 +1237,7 @@ impl<'a> CarDecoder<'a> {
             "version",
             header.version() as u64,
         )?;
-        Ok(unsafe {
-            Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
-        })
+        Ok(unsafe { Self::wrap(buf, pos, acting_block_length, acting_version) })
     }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
@@ -1675,7 +1665,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.manufacturer().unwrap_unchecked() };
+        let bytes = unsafe { self.manufacturer().unwrap() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
@@ -1718,7 +1708,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.model().unwrap_unchecked() };
+        let bytes = unsafe { self.model().unwrap() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     #[inline]
@@ -1761,7 +1751,7 @@ impl<'a> CarDecoder<'a> {
     /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
     #[inline]
     pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.activation_code().unwrap_unchecked() };
+        let bytes = unsafe { self.activation_code().unwrap() };
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
     /// Consume this stage and return a fresh decoder at the initial
@@ -2062,7 +2052,7 @@ pub struct FuelFiguresDecoder<'a> {
 impl<'a> FuelFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub fn wrap(
+    pub fn try_wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2556,7 +2546,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub unsafe fn into_usage_description_as_str_unchecked(
         self,
     ) -> (&'a str, FuelFiguresEntryDecoderComplete<'a>) {
-        let (bytes, next) = unsafe { self.into_usage_description().unwrap_unchecked() };
+        let (bytes, next) = unsafe { self.into_usage_description().unwrap() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -2652,7 +2642,7 @@ pub struct PerformanceFiguresDecoder<'a> {
 impl<'a> PerformanceFiguresDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     #[inline]
-    pub fn wrap(
+    pub fn try_wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -3022,7 +3012,7 @@ pub struct PerformanceFiguresAccelerationDecoder<'a> {
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     #[inline]
-    pub fn wrap(
+    pub fn try_wrap(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -3702,7 +3692,7 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     pub unsafe fn into_manufacturer_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderAfterManufacturer<'a>) {
-        let (bytes, next) = unsafe { self.into_manufacturer().unwrap_unchecked() };
+        let (bytes, next) = unsafe { self.into_manufacturer().unwrap() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -3862,7 +3852,7 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     pub unsafe fn into_model_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderAfterModel<'a>) {
-        let (bytes, next) = unsafe { self.into_model().unwrap_unchecked() };
+        let (bytes, next) = unsafe { self.into_model().unwrap() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -4013,7 +4003,7 @@ impl<'a> CarDecoderAfterModel<'a> {
     pub unsafe fn into_activation_code_as_str_unchecked(
         self,
     ) -> (&'a str, CarDecoderComplete<'a>) {
-        let (bytes, next) = unsafe { self.into_activation_code().unwrap_unchecked() };
+        let (bytes, next) = unsafe { self.into_activation_code().unwrap() };
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         (s, next)
     }
@@ -4858,14 +4848,14 @@ impl<'a> CarEncoder<'a> {
     ///
     /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
     #[inline]
-    pub fn wrap(
+    pub fn try_wrap(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> Result<CarEncoder<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
         if 53 > buf.len().saturating_sub(msg_offset) {
             return Err(Self::buffer_too_short(buf, msg_offset, 53));
         }
-        Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
+        Ok(unsafe { Self::wrap(buf, msg_offset) })
     }
     /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
     ///
@@ -4873,7 +4863,7 @@ impl<'a> CarEncoder<'a> {
     /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
     /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
     #[inline]
-    pub unsafe fn wrap_unchecked(
+    pub fn wrap(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
@@ -4891,14 +4881,14 @@ impl<'a> CarEncoder<'a> {
     /// Optional-field nullification is **not** applied by default — call
     /// `apply_nulls()` if you want null sentinels.
     #[inline]
-    pub fn wrap_and_apply_header(
+    pub fn try_wrap_and_apply_header(
         buf: &'a mut [u8],
         pos: usize,
     ) -> Result<CarEncoder<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
         if 53 > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
-        Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
+        Ok(unsafe { Self::wrap_and_apply_header(buf, pos) })
     }
     /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
     ///
@@ -4906,7 +4896,7 @@ impl<'a> CarEncoder<'a> {
     /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
     /// ≤ `buf.len()` for the lifetime of the returned encoder.
     #[inline]
-    pub unsafe fn wrap_and_apply_header_unchecked(
+    pub fn wrap_and_apply_header(
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
@@ -5874,7 +5864,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,
@@ -6043,7 +6033,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,
@@ -6255,7 +6245,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
+    pub fn try_wrap(buf: &'a mut [u8], pos: usize, count: u16) -> Self {
         Self {
             buf,
             pos,
@@ -7548,7 +7538,7 @@ impl<'a> Iterator for FrameCursor<'a> {
 impl<'a> AnyMessage<'a> {
     /// Dispatch a framed message with header + version-aware fixed-extent checks.
     #[inline]
-    pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+    pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         if 8 > buf.len().saturating_sub(pos) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message header",
@@ -7580,11 +7570,7 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                Ok(
-                    Self::Car(unsafe {
-                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
-                    }),
-                )
+                Ok(Self::Car(CarDecoder::wrap(buf, pos, block_length, version)?))
             }
             _ => {
                 Err(sbe_rt::DecodeError::UnknownTemplateLength {
@@ -7599,10 +7585,7 @@ impl<'a> AnyMessage<'a> {
     /// Header and the version-readable fixed extent of the selected
     /// template must be fully in-bounds. Dynamic tails remain checked.
     #[inline]
-    unsafe fn decode_unchecked(
-        buf: &'a [u8],
-        pos: usize,
-    ) -> Result<Self, sbe_rt::DecodeError> {
+    unsafe fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         let header_bytes = unsafe { read_bytes_unchecked::<8>(buf, pos) };
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
@@ -7629,7 +7612,7 @@ impl<'a> AnyMessage<'a> {
             CarSchema::TEMPLATE_ID => {
                 Ok(
                     Self::Car(unsafe {
-                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
+                        CarDecoder::wrap(buf, pos, block_length, version)
                     }),
                 )
             }

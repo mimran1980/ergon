@@ -1536,11 +1536,11 @@ fn static_header_templates_exist() -> Result<(), Box<dyn std::error::Error>> {
         "GROUP_DIM_TEMPLATE must exist as a [u8; 4] constant"
     );
 
-    // wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE without bounds checks
+    // wrap_and_apply_header must copy HEADER_TEMPLATE without bounds checks
     assert!(
         src.contains("HEADER_TEMPLATE.as_ptr()")
             || src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
-        "wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE via ptr::copy_nonoverlapping or copy_from_slice"
+        "wrap_and_apply_header must copy HEADER_TEMPLATE via ptr::copy_nonoverlapping or copy_from_slice"
     );
 
     // Group encoder must use copy_from_slice from its GROUP_DIM_TEMPLATE
@@ -2918,7 +2918,7 @@ fn fixed_fields_struct_exists_and_requires_all_required_fields()
 fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_method_done");
     // Task 4: fixed(), raw_fixed(), and CarFixedFields are generated.
-    // finish_unchecked() is intentionally removed — no bypass of the fixed phase.
+    // finish() is intentionally removed — no bypass of the fixed phase.
     assert!(
         src.contains("pub fn fixed("),
         "fixed() method must be generated"
@@ -2928,8 +2928,8 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
         "raw_fixed() method must be generated"
     );
     assert!(
-        !src.contains("finish_unchecked"),
-        "finish_unchecked() must NOT be generated (no fixed-phase bypass)"
+        !src.contains("finish"),
+        "finish() must NOT be generated (no fixed-phase bypass)"
     );
     assert!(
         src.contains("struct CarFixedFields"),
