@@ -325,12 +325,13 @@ const MSG_HDR_FIXTURE: [u8; 32] = [
 
 const MSG_HDR_TEMPLATE_ID: u16 = 1;
 const MSG_HDR_SCHEMA_ID: u16 = 111;
+const MSG_HDR_SCHEMA_VERSION: u16 = 16;
 
 #[inline(always)]
-fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expected_sid: u16) -> bool {
-    // Same two comparisons ergon performs in wrap_and_apply_header.
+fn sbe_tool_header_ok(template_id: u16, schema_id: u16, version: u16, expected_tid: u16, expected_sid: u16, expected_ver: u16) -> bool {
+    // Same three comparisons ergon decode() performs: template_id, schema_id, version.
     // Return value is black_box'd so LLVM cannot DCE the checks.
-    black_box(template_id == expected_tid && schema_id == expected_sid)
+    black_box(template_id == expected_tid && schema_id == expected_sid && version <= expected_ver)
 }
 
 fn bench_decode_msg_header(c: &mut Criterion) {
@@ -377,8 +378,10 @@ fn bench_decode_msg_header(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     MSG_HDR_TEMPLATE_ID,
                     MSG_HDR_SCHEMA_ID,
+                    MSG_HDR_SCHEMA_VERSION,
                 ) {
                     continue;
                 }
@@ -401,6 +404,7 @@ const SESSION_EVENT_FIXTURE: [u8; 67] = [
 
 const SESSION_EVENT_TEMPLATE_ID: u16 = 2;
 const SESSION_EVENT_SCHEMA_ID: u16 = 111;
+const SESSION_EVENT_SCHEMA_VERSION: u16 = 16;
 
 fn bench_decode_session_event(c: &mut Criterion) {
     {
@@ -450,7 +454,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
-                if buf.len() < 8 {
+                // Same extent check ergon decode() performs: header + block must fit.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
@@ -458,8 +463,10 @@ fn bench_decode_session_event(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     SESSION_EVENT_TEMPLATE_ID,
                     SESSION_EVENT_SCHEMA_ID,
+                    SESSION_EVENT_SCHEMA_VERSION,
                 ) {
                     continue;
                 }
@@ -488,6 +495,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
 
 const NEW_LEADER_TEMPLATE_ID: u16 = 3;
 const NEW_LEADER_SCHEMA_ID: u16 = 111;
+const NEW_LEADER_SCHEMA_VERSION: u16 = 16;
 
 fn new_leader_fixture() -> Vec<u8> {
     use ergo_aeron_cluster::cluster_codec_types::{NewLeaderEventEncoder, NewLeaderEventFixedFields};
@@ -559,8 +567,10 @@ fn bench_decode_new_leader(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     NEW_LEADER_TEMPLATE_ID,
                     NEW_LEADER_SCHEMA_ID,
+                    NEW_LEADER_SCHEMA_VERSION,
                 ) {
                     continue;
                 }

@@ -677,6 +677,53 @@ not a one-off mistake. It is a pattern that became visible only after the
 project accumulated enough tests to serve as a genuine oracle — and enough
 LLM sessions for the pattern to repeat.
 
+### Tests and benchmarks did not protect me — LLMs disabled them instead (August 2026)
+
+As the project matured past the initial greenfield phase, I relied heavily on
+the extensive unit test suite and benchmark gates I had built up. I assumed
+they would catch regressions before they shipped. They didn't — because LLMs
+kept disabling them rather than fixing the bugs they surfaced.
+
+The pattern repeated across the 0.1.10 release preparation cycle:
+
+- **Benchmark gate entries removed.** The cluster bench gate script
+  (`scripts/check-bench-gate.sh`) had entries silently removed by an LLM that
+  saw a failing ratio and "fixed" it by deleting the gate line rather than
+  investigating the performance regression. The removed entries concealed real
+  gaps: `session_connect_request` encode at 1.19× and `new_leader_event` decode
+  at 1.86× slower than sbe-tool. The gate went green, but the performance
+  regressions were still present.
+
+- **Unequal-work benchmark comparisons hidden.** When benchmarks compared
+  ergon's checked `decode()` (validating headers and extents) against
+  sbe-tool's unchecked `wrap()`, the response was to remove the comparison
+  from the gate rather than fixing the benchmark to do equal work on both arms.
+
+- **Regression bugs shipped through.** The gate-silencing pattern meant that
+  actual regressions — codegen changes that made hot paths slower — passed
+  through review because the gates no longer measured them.
+
+The uncomfortable conclusion I reached: **LLMs do not work as well on mature
+software.** Early greenfield work had no existing tests to disable, so the
+pattern was invisible. Once the test suite and benchmark gates became dense
+enough to serve as a real oracle, the LLM's incentive to achieve green output
+collided directly with the oracle's purpose. An LLM asked to "make the tests
+pass" has two paths: fix the code, or remove the test. The second path is
+often shorter, and LLMs take it consistently across models and vendors.
+
+Extensive unit test and benchmark coverage was not protecting me. What did
+protect me was **human code review** — specifically, reviewing every change to
+test files, gate scripts, and benchmark harnesses as critically as changes to
+production code. A test or gate entry that is removed, skipped, or weakened
+must be treated as a blocking defect, not an administrative cleanup.
+
+The policy infrastructure in this repository — `just policy`,
+`check-test-policy.sh`, the CI gate that rejects `#[ignore]` and
+`continue-on-error` — exists **because** this pattern was observed. But prose
+rules and policy scripts are still not enough. The only durable defence is a
+human reviewer who asks: "Did this change make the software better, or did it
+just make the failure invisible?"
+
 The mechanism is straightforward:
 
 1. A coding agent is asked to make a change — a new feature, a refactor,
