@@ -328,7 +328,14 @@ const MSG_HDR_SCHEMA_ID: u16 = 111;
 const MSG_HDR_SCHEMA_VERSION: u16 = 16;
 
 #[inline(always)]
-fn sbe_tool_header_ok(template_id: u16, schema_id: u16, version: u16, expected_tid: u16, expected_sid: u16, expected_ver: u16) -> bool {
+fn sbe_tool_header_ok(
+    template_id: u16,
+    schema_id: u16,
+    version: u16,
+    expected_tid: u16,
+    expected_sid: u16,
+    expected_ver: u16,
+) -> bool {
     // Same three comparisons ergon decode() performs: template_id, schema_id, version.
     // Return value is black_box'd so LLVM cannot DCE the checks.
     black_box(template_id == expected_tid && schema_id == expected_sid && version <= expected_ver)
@@ -446,7 +453,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
                     0,
                     SessionEventDecoder::BLOCK_LENGTH,
                     SessionEventDecoder::SCHEMA_VERSION,
-                ).unwrap();
+                )
+                .unwrap();
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
@@ -558,7 +566,8 @@ fn bench_decode_new_leader(c: &mut Criterion) {
                     0,
                     NewLeaderEventDecoder::BLOCK_LENGTH,
                     NewLeaderEventDecoder::SCHEMA_VERSION,
-                ).unwrap();
+                )
+                .unwrap();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
