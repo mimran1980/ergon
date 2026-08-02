@@ -244,20 +244,20 @@ pub mod hft008_probe {
 #[test]
 fn source_checked_delegates_to_unchecked_core() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft8_core");
-    // Private core (no `pub`).
+    // Unchecked cores are public safe — callers choose explicitly.
     assert!(
-        src.contains("unsafe fn wrap_and_apply_header_unchecked")
+        src.contains("pub fn wrap_and_apply_header_unchecked")
             && !src.contains("pub unsafe fn wrap_and_apply_header_unchecked"),
-        "wrap_and_apply_header_unchecked must be module-private until keep=true"
+        "wrap_and_apply_header_unchecked must be public safe"
     );
     assert!(
-        src.contains("unsafe fn wrap_unchecked") && !src.contains("pub unsafe fn wrap_unchecked("),
-        "wrap_unchecked must be module-private until keep=true"
+        src.contains("pub fn wrap_unchecked(") && !src.contains("pub unsafe fn wrap_unchecked("),
+        "wrap_unchecked must be public safe"
     );
     assert!(
-        src.contains("unsafe fn decode_unchecked")
+        src.contains("pub fn decode_unchecked")
             && !src.contains("pub unsafe fn decode_unchecked"),
-        "decode_unchecked must be module-private until keep=true"
+        "decode_unchecked must be public safe"
     );
     let idx = src
         .find("pub fn wrap_and_apply_header")

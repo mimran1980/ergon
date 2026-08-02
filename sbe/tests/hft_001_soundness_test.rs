@@ -71,13 +71,21 @@ fn generated_source_has_no_public_safe_raw_unchecked_helpers() -> Result<(), Box
         "checked encoder constructor must return Result"
     );
     assert!(
-        src.contains("unsafe fn wrap_and_apply_header_unchecked")
+        src.contains("pub fn wrap_and_apply_header_unchecked")
             && !src.contains("pub unsafe fn wrap_and_apply_header_unchecked"),
-        "zero-check core must be private unsafe until HFT-008 keep=true"
+        "wrap_and_apply_header_unchecked must be public safe (not unsafe)"
     );
     assert!(
         src.contains("pub fn decode(") && !src.contains("pub fn try_wrap_and_apply_header"),
         "decoder framed entry is decode; try_wrap* aliases removed"
+    );
+    assert!(
+        src.contains("pub fn wrap_unchecked"),
+        "wrap_unchecked must be public"
+    );
+    assert!(
+        src.contains("pub fn decode_unchecked"),
+        "decode_unchecked must be public"
     );
     Ok(())
 }
