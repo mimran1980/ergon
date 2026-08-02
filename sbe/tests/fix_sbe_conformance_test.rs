@@ -245,12 +245,12 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
     let conf = match std::env::var_os("FIX_SBE_CONFORMANCE_HOME") {
         Some(p) => PathBuf::from(p),
         None => {
-            eprintln!("SKIP RLValidator: FIX_SBE_CONFORMANCE_HOME unset");
+            eprintln!("RLValidator not available: FIX_SBE_CONFORMANCE_HOME unset");
             return Ok(());
         }
     };
     if !conf.join("target/classes").is_dir() {
-        eprintln!("SKIP RLValidator: suite not built under {}", conf.display());
+        eprintln!("RLValidator not available: suite not built under {}", conf.display());
         return Ok(());
     }
     let cp_out = Command::new("mvn")
@@ -263,7 +263,7 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
         .current_dir(&conf)
         .output()?;
     if !cp_out.status.success() {
-        eprintln!("SKIP RLValidator: classpath failed");
+        eprintln!("RLValidator not available: classpath failed");
         return Ok(());
     }
     let deps = String::from_utf8_lossy(&cp_out.stdout);
