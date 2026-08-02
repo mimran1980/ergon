@@ -7580,7 +7580,11 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                Ok(Self::Car(CarDecoder::wrap(buf, pos, block_length, version)?))
+                Ok(
+                    Self::Car(unsafe {
+                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
+                    }),
+                )
             }
             _ => {
                 Err(sbe_rt::DecodeError::UnknownTemplateLength {
