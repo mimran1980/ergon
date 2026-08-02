@@ -375,7 +375,7 @@ pub(crate) fn generate_message_decoder(
                 });
             }
             // SAFETY: body_need bytes after header are in-bounds.
-            Ok(Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version))
+            Ok(unsafe { Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version) })
         }
 
         /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
@@ -501,7 +501,7 @@ pub(crate) fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                Ok(Self::wrap_unchecked(buf, pos, acting_block_length, acting_version))
+                Ok(unsafe { Self::wrap_unchecked(buf, pos, acting_block_length, acting_version) })
             }
         });
     }
