@@ -773,7 +773,7 @@ impl Generator {
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
                        clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                       unused_assignments, unused_comparisons)]\n",
+                       unused_assignments, unused_comparisons, unused_unsafe)]\n",
         );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
@@ -784,8 +784,7 @@ impl Generator {
         src.push_str("#[allow(unused_imports)]\n");
         src.push_str("#[allow(unused_variables)]\n");
         src.push_str("#[allow(unused_mut)]\n");
-        src.push_str("#[allow(dead_code)]\n");
-        src.push_str("#[allow(unused_unsafe)]\n\n");
+        src.push_str("#[allow(dead_code)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.
