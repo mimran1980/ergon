@@ -352,7 +352,7 @@ pub(crate) fn generate_message_encoder(
         /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
         /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        unsafe fn wrap_unchecked(
+        pub fn wrap_unchecked(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
@@ -391,18 +391,11 @@ pub(crate) fn generate_message_encoder(
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
         /// ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        unsafe fn wrap_and_apply_header_unchecked(
+        pub fn wrap_and_apply_header_unchecked(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            // SAFETY: caller guarantees pos + HEADER_LENGTH ≤ buf.len() (see Safety doc).
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    Self::HEADER_TEMPLATE.as_ptr(),
-                    buf.as_mut_ptr().add(pos),
-                    #header_size_lit,
-                );
-            }
+            buf[pos..pos + #header_size_lit].copy_from_slice(&Self::HEADER_TEMPLATE);
             let body_pos = pos + #header_size_lit;
             #name_encoder_ident {
                 buf,
