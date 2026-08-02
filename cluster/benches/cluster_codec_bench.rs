@@ -353,9 +353,11 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
-                let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(
+                let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::wrap(
                     black_box(&MSG_HDR_FIXTURE[..]),
                     0,
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH,
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::SCHEMA_VERSION,
                 )
                 .unwrap();
                 black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
@@ -370,7 +372,8 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);
-                if buf.len() < 8 {
+                // Equal-work: same extent check ergon wrap() performs.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
@@ -436,7 +439,14 @@ fn bench_decode_session_event(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder;
-                let dec = SessionEventDecoder::decode(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
+                // Use wrap() — extent-only check, no header field validation.
+                // sbe-tool arm does equivalent manual checks.
+                let dec = SessionEventDecoder::wrap(
+                    black_box(&SESSION_EVENT_FIXTURE[..]),
+                    0,
+                    SessionEventDecoder::BLOCK_LENGTH,
+                    SessionEventDecoder::SCHEMA_VERSION,
+                ).unwrap();
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
@@ -543,7 +553,12 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder;
-                let dec = NewLeaderEventDecoder::decode(black_box(fixture.as_slice()), 0).unwrap();
+                let dec = NewLeaderEventDecoder::wrap(
+                    black_box(fixture.as_slice()),
+                    0,
+                    NewLeaderEventDecoder::BLOCK_LENGTH,
+                    NewLeaderEventDecoder::SCHEMA_VERSION,
+                ).unwrap();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
@@ -559,7 +574,8 @@ fn bench_decode_new_leader(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(fixture.as_slice());
-                if buf.len() < 8 {
+                // Equal-work: same extent check ergon wrap() performs.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
