@@ -1,3 +1,4 @@
+#![allow(unused_unsafe)]
 //! Throughput benchmarks for ergon-generated Car message codec.
 //!
 //! Measures decode throughput in millions of messages per second across

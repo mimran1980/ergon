@@ -1,3 +1,4 @@
+#![allow(unused_unsafe)]
 //! Decode benchmarks for ergon-generated Car message codec.
 //!
 //! Measures decode latency for the entry point, individual field accessors
