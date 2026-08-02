@@ -142,7 +142,9 @@ fn group_and_entry_zero_check_wraps_are_private_unsafe() -> Result<(), Box<dyn E
     );
     // Entry decoder wrap: private unsafe, not public safe.
     assert!(
-        !src.contains("pub fn wrap(\n        buf: &'a [u8],\n        pos: usize,\n        acting_block_length"),
+        !src.contains(
+            "pub fn wrap(\n        buf: &'a [u8],\n        pos: usize,\n        acting_block_length"
+        ),
         "EntryDecoder::wrap must not be public safe"
     );
     assert!(

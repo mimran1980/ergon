@@ -68,7 +68,10 @@ fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for ent in rd.flatten() {
         let p = ent.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.starts_with('.') || name == "target" || name == "node_modules" || name == "generated"
+        if name.starts_with('.')
+            || name == "target"
+            || name == "node_modules"
+            || name == "generated"
         {
             continue;
         }

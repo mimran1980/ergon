@@ -250,7 +250,10 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
         }
     };
     if !conf.join("target/classes").is_dir() {
-        eprintln!("RLValidator not available: suite not built under {}", conf.display());
+        eprintln!(
+            "RLValidator not available: suite not built under {}",
+            conf.display()
+        );
         return Ok(());
     }
     let cp_out = Command::new("mvn")
@@ -267,11 +270,7 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
         return Ok(());
     }
     let deps = String::from_utf8_lossy(&cp_out.stdout);
-    let classpath = format!(
-        "{}:{}",
-        conf.join("target/classes").display(),
-        deps.trim()
-    );
+    let classpath = format!("{}:{}", conf.join("target/classes").display(), deps.trim());
     let work = PathBuf::from(std::env::temp_dir()).join("ergo_fix_sbe_rlvalidator");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work)?;

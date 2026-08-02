@@ -1538,7 +1538,8 @@ fn static_header_templates_exist() -> Result<(), Box<dyn std::error::Error>> {
 
     // wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE without bounds checks
     assert!(
-        src.contains("HEADER_TEMPLATE.as_ptr()") || src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
+        src.contains("HEADER_TEMPLATE.as_ptr()")
+            || src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
         "wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE via ptr::copy_nonoverlapping or copy_from_slice"
     );
 
