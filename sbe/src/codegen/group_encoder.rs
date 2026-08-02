@@ -121,17 +121,7 @@ pub(crate) fn generate_group_encoder(
             .into());
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        let end = match self.pos.checked_add(block_len) {
-            Some(e) => e,
-            None => {
-                return Err(sbe_rt::EncodeError::BufferTooShort {
-                    needed: block_len,
-                    available: 0,
-                }
-                .into());
-            }
-        };
-        if end > self.buf.len() {
+        if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),

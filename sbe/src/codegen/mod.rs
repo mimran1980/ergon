@@ -1012,15 +1012,14 @@ impl Generator {
             /// Bounds-checked slice indexing. LLVM elides the check when the
             /// slice length is known (stack buffer with visible size).
             #[inline]
+            #[inline]
             pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-                let end = offset.checked_add(N).expect("read_bytes: offset + N overflow");
-                buf[offset..end].try_into().expect("read_bytes: buffer too short")
+                buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
             }
 
             #[inline]
             pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-                let end = offset.checked_add(N).expect("write_bytes: offset + N overflow");
-                buf[offset..end].copy_from_slice(bytes);
+                buf[offset..offset + N].copy_from_slice(bytes);
             }
 
             /// Unchecked companion to [`read_bytes`] — zero bounds checks.

@@ -5900,19 +5900,7 @@ impl<'a> FuelFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        let end = match self.pos.checked_add(block_len) {
-            Some(e) => e,
-            None => {
-                return Err(
-                    sbe_rt::EncodeError::BufferTooShort {
-                        needed: block_len,
-                        available: 0,
-                    }
-                        .into(),
-                );
-            }
-        };
-        if end > self.buf.len() {
+        if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -6081,19 +6069,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        let end = match self.pos.checked_add(block_len) {
-            Some(e) => e,
-            None => {
-                return Err(
-                    sbe_rt::EncodeError::BufferTooShort {
-                        needed: block_len,
-                        available: 0,
-                    }
-                        .into(),
-                );
-            }
-        };
-        if end > self.buf.len() {
+        if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -6307,19 +6283,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        let end = match self.pos.checked_add(block_len) {
-            Some(e) => e,
-            None => {
-                return Err(
-                    sbe_rt::EncodeError::BufferTooShort {
-                        needed: block_len,
-                        available: 0,
-                    }
-                        .into(),
-                );
-            }
-        };
-        if end > self.buf.len() {
+        if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -7432,14 +7396,13 @@ pub mod prelude {
 /// Bounds-checked slice indexing. LLVM elides the check when the
 /// slice length is known (stack buffer with visible size).
 #[inline]
+#[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-    let end = offset.checked_add(N).expect("read_bytes: offset + N overflow");
-    buf[offset..end].try_into().expect("read_bytes: buffer too short")
+    buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
 }
 #[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-    let end = offset.checked_add(N).expect("write_bytes: offset + N overflow");
-    buf[offset..end].copy_from_slice(bytes);
+    buf[offset..offset + N].copy_from_slice(bytes);
 }
 /// Unchecked companion to [`read_bytes`] — zero bounds checks.
 ///
