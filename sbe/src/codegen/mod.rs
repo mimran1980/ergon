@@ -762,6 +762,10 @@ impl Generator {
         // NOTE: In Rust edition 2024, inner attributes (`#![allow(...)])`) are
         // not permitted inside `include!()` files.  All suppression lints are
         // therefore emitted as outer `#[allow(..)]` on `pub mod sbe_rt`.
+        // `#![allow(unused_unsafe)]` is an inner attribute — applies to the entire
+        // generated file so AnyMessage dispatch arms and checked-wrapping calls don't
+        // error under `-D unused-unsafe`.
+        writeln!(src, "#![allow(unused_unsafe)]").unwrap();
         // Outer doc comment (`///`) — syn/prettyplease preserves it; `//` would
         // be silently dropped.
         writeln!(
@@ -773,7 +777,7 @@ impl Generator {
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
                        clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                       unused_assignments, unused_comparisons, unused_unsafe)]\n",
+                       unused_assignments, unused_comparisons)]\n",
         );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");

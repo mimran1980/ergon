@@ -6,7 +6,8 @@
     clippy::identity_op,
     clippy::unnecessary_cast,
     unused_assignments,
-    unused_comparisons
+    unused_comparisons,
+    unused_unsafe
 )]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
@@ -18,7 +19,6 @@
 #[allow(unused_variables)]
 #[allow(unused_mut)]
 #[allow(dead_code)]
-#[allow(unused_unsafe)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
