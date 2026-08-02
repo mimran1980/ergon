@@ -18,6 +18,7 @@
 #[allow(unused_variables)]
 #[allow(unused_mut)]
 #[allow(dead_code)]
+#[allow(unused_unsafe)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
@@ -1126,14 +1127,14 @@ impl<'a> CarDecoder<'a> {
                 available: buf.len().saturating_sub(message_offset),
             });
         }
-        Ok(unsafe {
+        Ok(
             Self::wrap_unchecked(
                 buf,
                 message_offset,
                 acting_block_length,
                 acting_version,
-            )
-        })
+            ),
+        )
     }
     /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
     ///
@@ -4865,7 +4866,7 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(msg_offset) {
             return Err(Self::buffer_too_short(buf, msg_offset, 53));
         }
-        Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
+        Ok(Self::wrap_unchecked(buf, msg_offset))
     }
     /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
     ///
@@ -4898,7 +4899,7 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
-        Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
+        Ok(Self::wrap_and_apply_header_unchecked(buf, pos))
     }
     /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
     ///

@@ -784,7 +784,8 @@ impl Generator {
         src.push_str("#[allow(unused_imports)]\n");
         src.push_str("#[allow(unused_variables)]\n");
         src.push_str("#[allow(unused_mut)]\n");
-        src.push_str("#[allow(dead_code)]\n\n");
+        src.push_str("#[allow(dead_code)]\n");
+        src.push_str("#[allow(unused_unsafe)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.

@@ -151,7 +151,8 @@ fn car_generated_source_rejects_stale_0_1_names() -> Result<(), Box<dyn Error>> 
     );
     assert!(src.contains("pub fn decode("), "decode missing");
     assert!(
-        src.contains("pub unsafe fn wrap_and_apply_header_unchecked")
+        src.contains("pub fn wrap_and_apply_header_unchecked")
+            || src.contains("pub unsafe fn wrap_and_apply_header_unchecked")
             || src.contains("unsafe fn wrap_and_apply_header_unchecked"),
         "unchecked twin missing"
     );

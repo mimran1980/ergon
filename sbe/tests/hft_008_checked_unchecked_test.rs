@@ -10,7 +10,7 @@
 //! 3. Injects an in-module measurement helper (so private cores are callable)
 //!    and records multi-scenario Instant samples for the keep matrix.
 
-#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, unused_unsafe)]
 use std::error::Error;
 use std::time::Instant;
 
