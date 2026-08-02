@@ -16,6 +16,16 @@
 //! parses those schemas and emits safe, version-aware Rust codecs for
 //! low-latency trading.
 //!
+//! # Documentation
+//!
+//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — getting started,
+//!   feature tour, core concepts, configuration, recipes, design notes
+//! - [Getting started](https://mimran1980.github.io/ergon/sbe/getting-started.html) ·
+//!   [Feature tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) ·
+//!   [Coming from sbe-tool](https://mimran1980.github.io/ergon/sbe/getting-started/from-sbe-tool.html) ·
+//!   [Type-state design](https://mimran1980.github.io/ergon/sbe/design-notes/type-state.html)
+//! - [Crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md)
+//!
 //! ## In a few words
 //!
 //! - **Compile-time wire order** — calling `asks` before `bids` is a type error
@@ -27,10 +37,6 @@
 //! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
 //! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
 //!   line of config
-//!
-//! Full feature walkthrough: [crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md).
-//! Book: [type-state](https://mimran1980.github.io/ergon/sbe/design-notes/type-state.html),
-//! [coming from sbe-tool](https://mimran1980.github.io/ergon/sbe/getting-started/from-sbe-tool.html).
 //!
 //! # Architecture
 //!
@@ -197,7 +203,6 @@
 //! - Version-aware accessors (`sinceVersion` / acting version)
 //! - Unsafe only on explicit `_unchecked` / documented paths
 //!
-//! Book: [ergon book](https://mimran1980.github.io/ergon/).
 //! Benchmarks: [benchmarks chapter](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/

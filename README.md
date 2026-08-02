@@ -84,6 +84,9 @@ build, test, interoperability, and benchmark recipes.
 
 ## Documentation
 
+- **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — guides for ergo-sbe and the cluster client (feature tour, recipes, design notes)
+- [docs.rs/ergo-sbe](https://docs.rs/ergo-sbe/) — API reference for the generator
+- [docs.rs/ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/) — API reference for the cluster client
 - [`sbe/README.md`](sbe/README.md) — generation and generated-code workflow
 - [`cluster/README.md`](cluster/README.md) — Cluster client scope and usage
 - [`samples/README.md`](samples/README.md) — sample inventory and commands

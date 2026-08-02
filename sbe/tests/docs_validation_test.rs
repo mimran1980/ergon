@@ -5,7 +5,7 @@
 //! - Compiles each fence as a tiny crate depending on path `ergo-sbe`
 //! - Generates a representative schema and asserts documented API surfaces
 //! - Smoke-runs encode/decode patterns described in crate docs
-//! - Extracts and compiles every `rust` / `rust,no_run` fence from the Ergon Book
+//! - Extracts and compiles every `rust` / `rust,no_run` fence from the ergo-sbe book
 //!   (resolves `{{#include}}` directives and compiles against generated codecs)
 
 use std::fs;

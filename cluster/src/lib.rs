@@ -4,6 +4,16 @@
 //! on [`rusteron_client`] **0.2** (latest 0.2.x), using **ergo-sbe-generated**
 //! session codecs (schema 111).
 //!
+//! # Documentation
+//!
+//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — cluster client
+//!   guide
+//! - [Overview](https://mimran1980.github.io/ergon/cluster/overview.html) ·
+//!   [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html) ·
+//!   [Egress listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html) ·
+//!   [Chained decoding](https://mimran1980.github.io/ergon/cluster/chained-decoding.html)
+//! - [Crate README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
+//!
 //! ⚠️ **Prototype.** LLM-assisted and less tested than the Java reference.
 //! Bugs in Rusteron pub/sub **or** this reimplementation may cause undefined
 //! behaviour, segfaults, or data loss. Replace when official Cluster C client
@@ -69,7 +79,8 @@
 //! }
 //! ```
 //!
-//! See the crate [README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
+//! See the [book](https://mimran1980.github.io/ergon/cluster/overview.html) and
+//! [crate README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
 //! for recipes, maintained benches, and the HA sample.
 
 // Verify rusteron-client types are accessible across the crate boundary

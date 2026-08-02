@@ -2,25 +2,56 @@
 
 ## [Unreleased]
 
+Work toward **0.1.10** (branch `feat/0.1.10`). Everything below landed **after**
+crates.io / tag `v0.1.9` (`0b008696`).
+
+### Fixed
+- **Size knobs actually take effect.** In 0.1.9, `with_display_debug`,
+  `with_meta_attributes`, and `with_dispatch` only set config fields — codegen
+  ignored them (defaults always applied). Codegen now honors all three; unit
+  tests pin omit-on-`false` behaviour.
+- `deny.toml` allows Apache-2.0 and common Rust-ecosystem licenses; drop unused
+  BSD-2-Clause exception
+- CI thin bench compile-check lane restored
+
+### Added
+- Book: type-state design note, API freeze decisions, Coming from sbe-tool,
+  Road to 1.0, generated-code showcase, benchmarks methodology split
+- Generated rustdoc: `wrap`/`try_wrap*` message-start vs sbe-tool body-offset
+  callout; `*FixedFields` intentionally exhaustive; `MAX_ENCODED_LENGTH`
+  guidance (stack vs EncodedLength builders)
+- Crate READMEs and crate-level rustdoc link the ergo-sbe book (visible on docs.rs)
+
+### Changed
+- `with_unchecked_companions` reframed as supported post-validation opt-in
+  (HFT hot path), not bench-only
+- Crate-root clippy allows burned down to five justified items; remaining
+  noise scoped per module
+- Generation-config book table updated for defaults and size knobs
+
+### Internal
+- XML parser split: `sbe/src/xml.rs` → `sbe/src/xml/` modules
+- `Cargo.lock` left untracked again (library workspace; crates.io ignores it)
+
 ## [0.1.9] — 2026-08-01
+
+Shipped as crates.io `ergo-sbe` / `ergo-aeron-cluster` **0.1.9**, git tag
+`v0.1.9` @ `0b008696`. Section matches that tree (not later `feat-0.1.9`
+commits).
 
 ### Changed
 - **Codegen split:** mod.rs 9,075 → 1,723 lines (-81%), 14 responsibility modules extracted
 - **Config API unified:** `enable_*` renamed to `with_*`; all boolean toggles take `(bool)`
-- **Config knobs:** `with_display_debug(bool)`, `with_meta_attributes(bool)`, `with_dispatch(bool)` — enabled by default; disable to shrink generated output
-- **`MAX_ENCODED_LENGTH` rustdoc** — space after `///`; stack warning only when capped; points at EncodedLength builders (not `Vec::with_capacity`)
-- **`with_unchecked_companions`** reframed as supported post-validation opt-in (HFT hot path), not bench-only
-- **Crate-root clippy allows** burned down to five justified items; remaining noise scoped per module
-- **XML parser split:** `sbe/src/xml.rs` (5.4k) → `sbe/src/xml/` modules (entry, schema, types, message, registry, attr, error, warn)
+- **Config size knobs (API surface only):** `with_display_debug(bool)`,
+  `with_meta_attributes(bool)`, `with_dispatch(bool)` — defaults true in config.
+  **Caveat:** 0.1.9 codegen did not read these flags, so `false` was a no-op;
+  real omit-on-disable behaviour is in Unreleased / 0.1.10.
 - **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
 - **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
 - Nightly CI → weekly schedule
 - `rust,ignore` fences allowed unconditionally in `.md` files for syntax highlighting
 
 ### Added
-- Book: type-state design note, API freeze decisions, Coming from sbe-tool, Road to 1.0
-- Generated `wrap`/`try_wrap*` rustdoc: loud message-start vs sbe-tool body-offset callout
-- `*FixedFields` rustdoc: intentionally exhaustive (schema change forces call-site review)
 - `with_unchecked_companions` safety contract documented in rustdoc
 - `cargo-deny` + `cargo-audit` in CI and justfile (`deny.toml`)
 - Aeron `try_claim` integration recipe page in book
@@ -39,7 +70,7 @@
 - Public facade tightened: `ir`, `resolve`, `xml` modules doc-hidden
 - Dead code removed: `generate_raw_fixed_impls`, `has_nested_dynamic_tail`, `generate_encoded_length_builder`
 - Cluster lockstep mechanized: `version.workspace = true`
-- `Cargo.lock` left untracked (library workspace; crates.io ignores it); per-sample READMEs deleted; stale directories cleaned
+- `Cargo.lock` tracked at release; per-sample READMEs deleted; stale directories cleaned
 - Semver checks extended to cluster crate
 
 ## [0.1.8] — 2026-08-01

@@ -12,6 +12,19 @@ protocol.
 > Hobby project. Do not use it as a production substitute for official Aeron
 > Cluster client support.
 
+## Full documentation
+
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-aeron-cluster/)):
+
+- [Cluster Client overview](https://mimran1980.github.io/ergon/cluster/overview.html)
+- [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html)
+- [Egress Listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html)
+- [Chained Message Decoding](https://mimran1980.github.io/ergon/cluster/chained-decoding.html)
+
+API reference: [docs.rs/ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/).
+
 ## Scope
 
 The crate implements client-side operations:

@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/ergo-sbe)](https://crates.io/crates/ergo-sbe)
 [![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
 `ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
 wire-order enforcement, closure-based groups, exact buffer sizing, and zero
@@ -12,10 +13,11 @@ heap allocation on hot paths.
 > assistance**. Humans directed the work, approved designs, and ran verification.
 > Details: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
 
-## 📖 Full Documentation
+## Full documentation
 
-**[The Ergon Book](https://mimran1980.github.io/ergon/)** is the comprehensive
-guide for ergo-sbe, covering:
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide for ergo-sbe (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-sbe/)):
 
 - [Getting Started](https://mimran1980.github.io/ergon/sbe/getting-started.html) — depend, generate, encode, decode
 - [Feature Tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) — exact sizing, bulk arrays, decode stages, DTOs, trust boundaries
