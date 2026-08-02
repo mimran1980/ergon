@@ -7396,7 +7396,6 @@ pub mod prelude {
 /// Bounds-checked slice indexing. LLVM elides the check when the
 /// slice length is known (stack buffer with visible size).
 #[inline]
-#[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
 }
