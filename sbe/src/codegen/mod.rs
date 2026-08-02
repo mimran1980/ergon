@@ -899,6 +899,7 @@ impl Generator {
                 &self.config.conversions,
                 domain_types,
                 self.config.unchecked_companions,
+                self.config.enable_meta_attributes,
             );
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder
@@ -916,7 +917,9 @@ impl Generator {
                 src.push_str(&converter_ts);
             }
             src.push('\n');
-            generate_message_field_meta(&mut src, msg);
+            if self.config.enable_meta_attributes {
+                generate_message_field_meta(&mut src, msg);
+            }
         }
 
         // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
@@ -1726,6 +1729,94 @@ mod tests {
             consumer_src.contains("fn enabled_bool(&self) -> bool"),
             "with_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
         );
+        Ok(())
+    }
+
+    fn ping_schema_xml() -> &'static str {
+        r#"<?xml version="1.0"?>
+        <messageSchema package="ex" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <message name="Ping" id="1" blockLength="4">
+            <field name="seq" id="1" type="uint32" offset="0"/>
+          </message>
+        </messageSchema>"#
+    }
+
+    fn generate_ping(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
+        let schema = Schema::from_ir(crate::parse(ping_schema_xml())?);
+        let src = Generator::new(config)
+            .generate(&schema)?
+            .modules()
+            .next()
+            .ok_or("no module")?
+            .source
+            .clone();
+        Ok(src)
+    }
+
+    /// Size knobs must omit the corresponding tokens when set to `false`.
+    #[test]
+    fn size_knobs_omit_display_meta_and_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+        let full = generate_ping(GenerationConfig::new("ping"))?;
+        assert!(
+            full.contains("core::fmt::Display for PingDecoder"),
+            "default must emit Display for PingDecoder; got marker search fail in {} chars",
+            full.len()
+        );
+        assert!(
+            full.contains("core::fmt::Debug for PingDecoder"),
+            "default must emit Debug for PingDecoder"
+        );
+        assert!(
+            full.contains("SEQ_ENCODING_OFFSET"),
+            "default must emit field ENCODING_OFFSET constants"
+        );
+        assert!(
+            full.contains("seq_meta_attribute"),
+            "default must emit field meta_attribute fn"
+        );
+        assert!(
+            full.contains("ping_field_meta"),
+            "default must emit per-message field_meta module"
+        );
+        assert!(
+            full.contains("enum AnyMessage"),
+            "default must emit AnyMessage dispatch"
+        );
+
+        let lean = generate_ping(
+            GenerationConfig::new("ping")
+                .with_display_debug(false)
+                .with_meta_attributes(false)
+                .with_dispatch(false),
+        )?;
+        assert!(
+            !lean.contains("core::fmt::Display for PingDecoder")
+                && !lean.contains("core::fmt::Debug for PingDecoder"),
+            "with_display_debug(false) must omit Display/Debug"
+        );
+        assert!(
+            !lean.contains("SEQ_ENCODING_OFFSET") && !lean.contains("seq_meta_attribute"),
+            "with_meta_attributes(false) must omit field meta constants"
+        );
+        assert!(
+            !lean.contains("ping_field_meta"),
+            "with_meta_attributes(false) must omit field_meta module"
+        );
+        assert!(
+            !lean.contains("enum AnyMessage") && !lean.contains("struct FrameCursor"),
+            "with_dispatch(false) must omit AnyMessage/FrameCursor"
+        );
+        // Codec surface still present.
+        assert!(lean.contains("struct PingDecoder"));
+        assert!(lean.contains("struct PingEncoder"));
         Ok(())
     }
 }

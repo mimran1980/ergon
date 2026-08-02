@@ -257,16 +257,6 @@ jobs:
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
       - run: cargo bench -p ergo-aeron-cluster --no-run
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shared-runner-criterion-diagnostics
-          path: |
-            target/criterion
-            target/bench-no-lto/criterion
-            sbe/benchmarks/target/bench-no-lto/criterion
-          if-no-files-found: ignore
-
   package:
     needs: gate
     runs-on: ubuntu-24.04

@@ -321,11 +321,11 @@ pub struct GenerationConfig {
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
     pub(crate) deprecated_attrs: bool,
-    /// Emit `Debug`/`Display` impls (default off to reduce output size).
+    /// Emit `Debug`/`Display` impls (default on; pass `false` to shrink output).
     pub(crate) enable_display_debug: bool,
-    /// Emit meta-attribute constants (default off).
+    /// Emit meta-attribute constants (default on; pass `false` to shrink output).
     pub(crate) enable_meta_attributes: bool,
-    /// Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch (default off).
+    /// Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch (default on).
     pub(crate) enable_dispatch: bool,
     /// Hooks fired after each generated item (enum, set, composite, message).
     /// Returned tokens are appended after the item's definition.
@@ -613,18 +613,18 @@ impl GenerationConfig {
         self
     }
 
-    /// Control generated `Debug` and `Display` impls (disabled by default
-    /// to reduce output size). Pass `true` to opt back in — generated types
-    /// get `fmt::Debug` and `fmt::Display`.
+    /// Control generated `Debug` and `Display` impls (**enabled by default**).
+    /// Pass `false` to omit them and shrink generated output.
     #[must_use]
     pub fn with_display_debug(mut self, enable: bool) -> Self {
         self.enable_display_debug = enable;
         self
     }
 
-    /// Control meta-attribute constants (enabled by default). Pass `false`
-    /// to omit — removes `*_META_ATTRIBUTE`, `*_ENCODING_OFFSET`,
-    /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION` per field.
+    /// Control meta-attribute constants (**enabled by default**). Pass `false`
+    /// to omit — removes `*_meta_attribute`, `*_ENCODING_OFFSET`,
+    /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION`, null/min/max field
+    /// constants, and the per-message `*_field_meta` module.
     #[must_use]
     pub fn with_meta_attributes(mut self, enable: bool) -> Self {
         self.enable_meta_attributes = enable;
@@ -632,8 +632,8 @@ impl GenerationConfig {
     }
 
     /// Control `AnyMessage` / `FrameCursor` / `MessageVisitor` dispatch code
-    /// (enabled by default). Pass `false` to omit — saves ~300 lines;
-    /// only meaningful for single-message schemas.
+    /// (**enabled by default**). Pass `false` to omit — saves ~300 lines;
+    /// only meaningful when you do not need multi-template frame dispatch.
     #[must_use]
     pub fn with_dispatch(mut self, enable: bool) -> Self {
         self.enable_dispatch = enable;
@@ -771,6 +771,9 @@ mod tests {
         assert!(config.conversions.is_empty());
         assert!(config.domain_types.is_empty());
         assert_eq!(config.domain_var_data, DomainVarData::Bytes);
+        assert!(config.enable_display_debug);
+        assert!(config.enable_meta_attributes);
+        assert!(config.enable_dispatch);
         Ok(())
     }
 

@@ -819,8 +819,9 @@ pub(crate) fn generate_message_decoder(
                 }
             }
         }
-        let field_consts_ts = emit_field_consts(f);
-        impl_body.extend(field_consts_ts);
+        if enable_meta_attributes {
+            impl_body.extend(emit_field_consts(f));
+        }
     }
 
     let total_tail = msg.groups.len() + msg.var_data.len();
@@ -1332,6 +1333,7 @@ pub(crate) fn generate_message_decoder(
             unique,
             &conversions,
             domain_types,
+            enable_meta_attributes,
         ));
     }
 

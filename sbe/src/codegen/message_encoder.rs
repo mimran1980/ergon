@@ -31,6 +31,7 @@ pub(crate) fn generate_message_encoder(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     unchecked_companions: bool,
+    enable_meta_attributes: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -642,7 +643,9 @@ pub(crate) fn generate_message_encoder(
         }
         // Field id / offset / length / MetaAttribute (also on encoder, Java parity).
         // Field NULL/MIN/MAX consts on concrete impl — turbofish-free access.
-        impl_consts.extend(emit_field_consts(f));
+        if enable_meta_attributes {
+            impl_consts.extend(emit_field_consts(f));
+        }
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length

@@ -32,7 +32,7 @@
 - Public facade tightened: `ir`, `resolve`, `xml` modules doc-hidden
 - Dead code removed: `generate_raw_fixed_impls`, `has_nested_dynamic_tail`, `generate_encoded_length_builder`
 - Cluster lockstep mechanized: `version.workspace = true`
-- `Cargo.lock` tracked; per-sample READMEs deleted; stale directories cleaned
+- `Cargo.lock` left untracked (library workspace; crates.io ignores it); per-sample READMEs deleted; stale directories cleaned
 - Semver checks extended to cluster crate
 
 ## [0.1.8] — 2026-08-01

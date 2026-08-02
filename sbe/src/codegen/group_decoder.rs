@@ -24,6 +24,7 @@ pub(crate) fn generate_group_decoder(
     scoped_name: &str,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
+    enable_meta_attributes: bool,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let span = proc_macro2::Span::call_site();
@@ -863,8 +864,9 @@ pub(crate) fn generate_group_decoder(
                 }
             }
         }
-        let fconsts_ts = emit_field_consts(f);
-        entry_body.extend(fconsts_ts);
+        if enable_meta_attributes {
+            entry_body.extend(emit_field_consts(f));
+        }
     }
 
     entry_body.extend(quote::quote! {
@@ -1295,6 +1297,7 @@ pub(crate) fn generate_group_decoder(
             &nested_name,
             &conversions,
             domain_types,
+            enable_meta_attributes,
         ));
     }
 
