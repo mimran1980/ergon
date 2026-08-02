@@ -1,3 +1,4 @@
+#![allow(unused_unsafe)]
 //! Allocation-count tests using a counting global allocator.
 //!
 //! Proves zero heap allocation for core encode/decode operations.
