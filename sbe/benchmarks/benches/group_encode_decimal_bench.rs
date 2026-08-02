@@ -52,7 +52,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
         // ── wire parity across all ergon entry APIs ──
         {
             let mut wire_buf = vec![0u8; msg_len];
-            let wire_len = L2BookEncoder::try_wrap_and_apply_header(&mut wire_buf, 0)
+            let wire_len = L2BookEncoder::wrap_and_apply_header(&mut wire_buf, 0)
                 .levels(n as u16, |g| {
                     for e in &entries {
                         g.add(|entry| {
@@ -67,7 +67,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             assert_eq!(wire_len, msg_len, "wire length mismatch at n={n}");
 
             let mut domain_buf = vec![0u8; msg_len];
-            let domain_len = L2BookEncoder::try_wrap_and_apply_header(&mut domain_buf, 0)
+            let domain_len = L2BookEncoder::wrap_and_apply_header(&mut domain_buf, 0)
                 .levels(n as u16, |g| {
                     for e in &domain_entries {
                         g.add(|entry| {
@@ -83,7 +83,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             assert_eq!(domain_buf, wire_buf, "domain bytes mismatch at n={n}");
 
             let mut bulk_buf = vec![0u8; msg_len];
-            let bulk_len = L2BookEncoder::try_wrap_and_apply_header(&mut bulk_buf, 0)
+            let bulk_len = L2BookEncoder::wrap_and_apply_header(&mut bulk_buf, 0)
                 .levels(n as u16, |group| group.bulk_add(&entries))
                 .unwrap()
                 .encoded_length_with_header();
@@ -99,7 +99,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 let mut buf = vec![0u8; msg_len];
                 b.iter(|| {
                     let entries = black_box(entries);
-                    let len = L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                    let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
@@ -125,7 +125,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 let mut buf = vec![0u8; msg_len];
                 b.iter(|| {
                     let entries = black_box(entries);
-                    let len = L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                    let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
@@ -148,7 +148,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| {
                 let entries = black_box(entries);
-                let len = L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |g| {
                         for e in entries {
                             g.add_struct(e)?;
@@ -167,7 +167,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| {
                 let entries = black_box(entries);
-                let len = L2BookEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                let len = L2BookEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |group| group.bulk_add(entries))
                     .unwrap()
                     .encoded_length_with_header();

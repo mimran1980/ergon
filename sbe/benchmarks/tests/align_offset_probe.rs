@@ -18,7 +18,7 @@ fn encode_decode_all_offsets_0_to_63() {
         let mut storage = [0u8; 512];
         let len = encode_at(&mut storage, offset);
         assert_eq!(len, Fixed64Encoder::ENCODED_LENGTH, "offset={offset}");
-        let dec = Fixed64Decoder::try_decode(&storage[..offset + len], offset)
+        let dec = Fixed64Decoder::try_wrap_and_apply_header(&storage[..offset + len], offset)
             .unwrap_or_else(|e| panic!("offset={offset} decode: {e:?}"));
         assert_eq!(
             dec.value(),

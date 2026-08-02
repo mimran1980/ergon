@@ -85,7 +85,7 @@ const _: () = assert!(core::mem::size_of::<BigBlock>() == 256);
 
 fn encode_wide_fixture() -> Vec<u8> {
     let mut buf = vec![0u8; WideEncoder::ENCODED_LENGTH];
-    let mut enc = WideEncoder::try_wrap_and_apply_header(&mut buf, 0);
+    let mut enc = WideEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.seq(42);
     let block = BigBlock::new(
         0,
@@ -123,7 +123,7 @@ fn encode_wide_fixture() -> Vec<u8> {
     );
     enc.block(block);
     let _ = enc;
-    let dec = WideDecoder::wrap_and_apply_header(&buf, 0).unwrap();
+    let dec = WideDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
     assert_eq!(dec.block().f15(), TARGET_FIELD_VALUE);
     assert_eq!(dec.block_value().f15(), TARGET_FIELD_VALUE);
     buf
@@ -142,7 +142,7 @@ fn bench_layout_access(c: &mut Criterion) {
         unsafe { core::ptr::read_unaligned(block_bytes.as_ptr().cast::<PackedBigBlock>()) };
     // Absolute coordinates: wrap takes message_offset (header start), not body offset.
     // Message begins at 0; body is at HEADER_LENGTH inside wrap.
-    let preheld_dec = WideDecoder::try_wrap(
+    let preheld_dec = WideDecoder::wrap(
         fixture.as_slice(),
         0,
         WideDecoder::BLOCK_LENGTH,
@@ -190,7 +190,7 @@ fn bench_layout_access(c: &mut Criterion) {
 
     group.bench_function("wrap_plus_flyweight_f15", |b| {
         b.iter(|| {
-            let dec = WideDecoder::try_wrap(
+            let dec = WideDecoder::wrap(
                 black_box(fixture.as_slice()),
                 0,
                 WideDecoder::BLOCK_LENGTH,

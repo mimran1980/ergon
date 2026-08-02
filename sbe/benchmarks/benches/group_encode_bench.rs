@@ -77,7 +77,7 @@ fn bench_group_encode(c: &mut Criterion) {
         // ── wire parity: ergon and sbe-tool must produce byte-identical output ──
         {
             let mut ebuf = vec![0u8; msg_len];
-            let elen = BookSnapshotEncoder::try_wrap_and_apply_header(&mut ebuf, 0)
+            let elen = BookSnapshotEncoder::wrap_and_apply_header(&mut ebuf, 0)
                 .levels(n as u16, |g| {
                     for e in &entries {
                         g.add(|entry| {
@@ -120,7 +120,7 @@ fn bench_group_encode(c: &mut Criterion) {
             );
 
             let mut bulk_buf = vec![0u8; msg_len];
-            let bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut bulk_buf, 0)
+            let bulk_len = BookSnapshotEncoder::wrap_and_apply_header(&mut bulk_buf, 0)
                 .levels(n as u16, |group| group.bulk_add(&entries))
                 .unwrap()
                 .encoded_length_with_header();
@@ -141,7 +141,7 @@ fn bench_group_encode(c: &mut Criterion) {
             );
 
             let mut dto_add_buf = vec![0u8; msg_len];
-            let dto_add_len = BookSnapshotEncoder::wrap_and_apply_header(&mut dto_add_buf, 0)
+            let dto_add_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut dto_add_buf, 0)
                 .unwrap()
                 .levels(n as u16, |group| {
                     for entry in &domain.levels {
@@ -169,7 +169,7 @@ fn bench_group_encode(c: &mut Criterion) {
                 let mut buf = vec![0u8; msg_len];
                 b.iter(|| {
                     let entries = black_box(entries);
-                    let len = BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                    let len = BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
@@ -191,7 +191,7 @@ fn bench_group_encode(c: &mut Criterion) {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| {
                 let entries = black_box(entries);
-                let len = BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                let len = BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |g| {
                         for e in entries {
                             g.add_struct(e)?;
@@ -209,7 +209,7 @@ fn bench_group_encode(c: &mut Criterion) {
             let mut buf = vec![0u8; msg_len];
             b.iter(|| {
                 let entries = black_box(entries);
-                let len = BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                let len = BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
                     .levels(n as u16, |group| group.bulk_add(entries))
                     .unwrap()
                     .encoded_length_with_header();
@@ -229,7 +229,7 @@ fn bench_group_encode(c: &mut Criterion) {
                 b.iter(|| {
                     let dto = black_box(dto);
                     let len =
-                        BookSnapshotEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                        BookSnapshotEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                             .unwrap()
                             .levels(dto.levels.len() as u16, |group| {
                                 for entry in &dto.levels {
