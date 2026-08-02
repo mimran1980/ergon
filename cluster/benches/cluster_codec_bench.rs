@@ -344,8 +344,7 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             ReadBuf, message_header_codec::MessageHeaderDecoder,
             session_message_header_codec::SessionMessageHeaderDecoder,
         };
-        let ergo =
-            ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(&MSG_HDR_FIXTURE, 0);
+        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(&MSG_HDR_FIXTURE, 0);
         let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(&MSG_HDR_FIXTURE), 0);
         let tool = SessionMessageHeaderDecoder::default().header(header, 0);
         assert_eq!(ergo.leadership_term_id(), tool.leadership_term_id());
@@ -418,8 +417,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
         use reference_sbe::{
             ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
         };
-        let ergo =
-            ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(&SESSION_EVENT_FIXTURE, 0);
+        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(&SESSION_EVENT_FIXTURE, 0);
         let ergo_correlation_id = ergo.correlation_id();
         let ergo_cluster_session_id = ergo.cluster_session_id();
         let ergo_leadership_term_id = ergo.leadership_term_id();

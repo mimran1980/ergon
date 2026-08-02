@@ -60,8 +60,7 @@ fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error
         "write_bytes must not be public safe"
     );
     assert!(
-        src.contains("unsafe fn read_bytes")
-            || src.contains("unsafe fn read_bytes<"),
+        src.contains("unsafe fn read_bytes") || src.contains("unsafe fn read_bytes<"),
         "raw read helper must be private unsafe"
     );
     assert!(
@@ -78,14 +77,8 @@ fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error
         src.contains("pub fn decode(") && !src.contains("pub fn try_wrap_and_apply_header"),
         "decoder framed entry is decode; try_wrap* aliases removed"
     );
-    assert!(
-        src.contains("pub fn wrap"),
-        "wrap must be public"
-    );
-    assert!(
-        src.contains("pub fn decode"),
-        "decode must be public"
-    );
+    assert!(src.contains("pub fn wrap"), "wrap must be public");
+    assert!(src.contains("pub fn decode"), "decode must be public");
     Ok(())
 }
 
