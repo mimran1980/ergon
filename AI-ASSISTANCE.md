@@ -927,14 +927,16 @@ the generator, and benchmark again.
 The unsafe strategy came from me, not from an LLM spontaneously “optimising”
 the project.
 
-Official-style codecs often separate checked setup from a trusted hot path. I
-wanted:
+Official-style codecs often separate checked setup from a trusted hot path. For
+**0.2** I wanted (and the product now ships):
 
-- `try_wrap` for untrusted data, where buffer bounds and framing are checked;
-- `wrap` for data whose contract has already been established, analogous to the
-  official fast path; and
+- unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
+  lane — they return `Result`, validate extents once, then enter a private
+  zero-check core (`try_wrap*` aliases are removed);
+- public constructor `*_unchecked` twins only if measured HFT-008 keep rules
+  pass (currently **keep=false** — cores stay module-private); and
 - no repeated dynamic bounds check for every constant schema offset after the
-  required block length has already been proved.
+  required block length has already been proved on the checked entry path.
 
 I asked the agents to try several unsafe optimisations and measure them. Many
 did not materially help, so I removed them. Unsafe is retained only where it is

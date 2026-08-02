@@ -13,7 +13,7 @@
 //! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
-//! | [`demo_try_vs_trusted`] | `try_from` / checked wrap vs `verify` |
+//! | [`demo_try_vs_trusted`] | `decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
@@ -316,20 +316,21 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
 }
 // ANCHOR_END: demo_any_message
 
-// ─── 6. try_* vs trusted wrap ──────────────────────────────────────────────
+// ─── 6. Checked constructors + verify ───────────────────────────────────────
 
 /// Trust-boundary constructors reject short / wrong-schema buffers.
 // ANCHOR: demo_try_vs_trusted
 pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    // `wrap_and_apply_header` validates template_id, schema_id, version,
-    // block_length, and buffer bounds at the given offset. The `_dec` binding
-    // holds the decoder alive until dropped (showing both paths).
+    // `decode` validates template_id, schema_id, version, and the
+    // version-aware fixed body extent at message start (offset 0).
     let _dec = CarDecoder::decode(valid_car, 0)?;
 
-    // `verify` is a cheaper header-only check — no decoder constructed.
+    // `verify` walks the complete dynamic tail (groups + var-data), not a
+    // header-only peek — use it when you need full structural acceptance
+    // without materialising a long-lived decoder stage chain.
     CarDecoder::verify(valid_car)?;
 
-    // Truncated buffer must fail try_from / verify.
+    // Truncated buffers fail checked entry points with Result errors.
     assert!(
         CarDecoder::try_from(&valid_car[..8.min(valid_car.len())]).is_err(),
         "truncated buffer should fail try_from"
@@ -337,17 +338,22 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     if valid_car.len() > 16 {
         assert!(
             CarDecoder::verify(&valid_car[..16]).is_err(),
-            "truncated buffer should fail verify"
+            "truncated buffer should fail verify (incomplete tail)"
         );
     }
 
-    // Trusted wrap is only for already-validated buffers (header already checked
-    // by try_*). Signature: wrap(buf, body_pos, acting_block_length, version).
+    // `wrap` still returns Result and validates the body extent given acting
+    // block_length + version (message start, not sbe-tool body offset).
     let mut hdr_bytes = [0u8; 8];
     hdr_bytes.copy_from_slice(&valid_car[..8]);
     let hdr = MessageHeader(hdr_bytes);
-    let trusted = CarDecoder::wrap(valid_car, 0, hdr.block_length() as usize, hdr.version()).unwrap();
-    assert_eq!(trusted.serial_number(), 1234);
+    let dec = CarDecoder::wrap(
+        valid_car,
+        0,
+        hdr.block_length() as usize,
+        hdr.version(),
+    )?;
+    assert_eq!(dec.serial_number(), 1234);
     Ok(())
 }
 // ANCHOR_END: demo_try_vs_trusted
