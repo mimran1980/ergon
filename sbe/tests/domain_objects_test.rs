@@ -70,7 +70,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         assert_eq!(dto_len, expected_len);
 
         let mut domain_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
-        let domain_bulk_len = BookSnapshotEncoder::wrap_and_apply_header(&mut domain_bulk_buf, 0).unwrap()
+        let domain_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut domain_bulk_buf, 0).unwrap()
             .levels(levels.len() as u16, |group| group.bulk_add_domain(&levels))?
             .encoded_length_with_header();
         assert_eq!(domain_bulk_len, expected_len);
@@ -88,7 +88,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
             },
         ];
         let mut wire_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
-        let wire_bulk_len = BookSnapshotEncoder::wrap_and_apply_header(&mut wire_bulk_buf, 0).unwrap()
+        let wire_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut wire_bulk_buf, 0).unwrap()
             .levels(wire_levels.len() as u16, |group| group.bulk_add(&wire_levels))?
             .encoded_length_with_header();
         assert_eq!(wire_bulk_len, expected_len);
@@ -111,7 +111,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
             num_orders: u32::MAX,
         }];
         let mut invalid_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
-        let err = BookSnapshotEncoder::wrap_and_apply_header(&mut invalid_buf, 0).unwrap()
+        let err = BookSnapshotEncoder::try_wrap_and_apply_header(&mut invalid_buf, 0).unwrap()
             .levels(1, |group| group.bulk_add_domain(&invalid_levels))
             .unwrap_err();
         assert!(matches!(
@@ -178,7 +178,7 @@ fn big_endian_nested_domain_bulk_matches_wire_bulk_and_automatic_dto_encode()
             .encoded_length_with_header();
 
         let mut domain_storage = [0u8; 512];
-        let domain_len = CarEncoder::wrap_and_apply_header(
+        let domain_len = CarEncoder::try_wrap_and_apply_header(
             &mut domain_storage[..expected_len],
             0,
         )?
@@ -200,7 +200,7 @@ fn big_endian_nested_domain_bulk_matches_wire_bulk_and_automatic_dto_encode()
         assert_eq!(domain_len, expected_len);
 
         let mut wire_storage = [0u8; 512];
-        let wire_len = CarEncoder::wrap_and_apply_header(
+        let wire_len = CarEncoder::try_wrap_and_apply_header(
             &mut wire_storage[..expected_len],
             0,
         )?
@@ -246,7 +246,7 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 2048];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
@@ -321,7 +321,7 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(42).model_year(2021).available(BooleanType::F).code(Model::B);
         car.some_numbers([5; 4]).vehicle_code([b'Z'; 6]);
         car.extras(OptionalExtras::default());
@@ -354,7 +354,7 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1).model_year(2000).available(BooleanType::T).code(Model::A);
         car.some_numbers([0; 4]).vehicle_code([0; 6]);
         car.extras(OptionalExtras::default());
@@ -386,7 +386,7 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 8192];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(111).sequence(222);
         let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
             bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
@@ -462,7 +462,7 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 32768];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(333).sequence(444);
         let complete = book.bids(1, |bids| -> Result<(), sbe_rt::EncodeError> {
             bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
@@ -504,7 +504,7 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(0).sequence(0);
         let complete = book.bids(2, |bids| {
             bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
@@ -530,7 +530,7 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut d = DepthResponseEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut d = DepthResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         d.last_update_id(123456).price_exponent(-8).qty_exponent(-8);
         let complete = d.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
             bids.add(|l| { l.price(50001).qty(150); Ok(()) })?;
@@ -588,9 +588,9 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = VersionedEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = VersionedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.active_bool(true).extra(Extra::new(7, 99)).count(42);
-        let dec = VersionedDecoder::decode(&buf, 0).unwrap();
+        let dec = VersionedDecoder::try_decode(&buf, 0).unwrap();
         let d: VersionedDomain = VersionedDomain::try_from_decoder(dec)?;
         assert_eq!(d.active, Some(true));
         assert!(d.extra.is_some());
@@ -613,7 +613,7 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = [0u8; 2048];
 
         // Flyweight encode
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234).model_year(2013).available_bool(true).code(Model::A);
         car.some_numbers([10u32, 20, 30, 40]);
         car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
@@ -691,7 +691,7 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1).model_year(2000).available_bool(false).code(Model::A);
         car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         car.extras(OptionalExtras::default());
@@ -736,7 +736,7 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
         &src,
         r#"
         let mut buf = [0u8; 2048];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1).model_year(2020).available(BooleanType::T).code(Model::A);
         car.some_numbers([0; 4]).vehicle_code([b'A'; 6]);
         car.extras(OptionalExtras::default());

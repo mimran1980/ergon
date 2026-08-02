@@ -109,7 +109,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         const LEN: usize = OrderEncoder::compute_length_with_header();
         let mut buf = [0u8; LEN];
         dto.encode(&mut buf)?;
-        let dec = OrderDecoder::decode(&buf, 0)?;
+        let dec = OrderDecoder::try_decode(&buf, 0)?;
         assert_eq!(dec.price(), 999);
         assert_eq!(dec.qty(), 50);
         assert_eq!(dec.code(), EventCode::Error);

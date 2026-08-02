@@ -72,7 +72,7 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields {
                 remaining: Some(7),
                 buffer: [10, 20, 30, 40],
@@ -175,7 +175,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields {
                 encoded_length: 11,
                 encoded_length_with_header: 22,
@@ -254,7 +254,7 @@ fn rewind_field_vs_consuming_method() -> Result<(), Box<dyn std::error::Error>> 
         let payload = b"hello";
         let len = MsgEncoder::compute_length_with_header(payload.len());
         let mut buf = vec![0u8; len];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { rewind: 42, normal: 99 })
             .payload(payload)?
             .encoded_length_with_header();
@@ -302,7 +302,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { x: 1, maybe: Some(2) })
             .encoded_length_with_header();
         let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
@@ -310,7 +310,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(dec.maybe(), Some(2));
 
         // apply_nulls() nullifies ALL optional fields (by design).
-        let n2 = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n2 = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { x: 99, maybe: None })
             .apply_nulls()
             .encoded_length_with_header();

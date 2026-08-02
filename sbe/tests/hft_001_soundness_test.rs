@@ -22,10 +22,10 @@ fn public_safe_api_rejects_header_only_car_frame() -> Result<(), Box<dyn Error>>
         hdr[2..4].copy_from_slice(&1u16.to_le_bytes()); // templateId Car
         hdr[4..6].copy_from_slice(&CarDecoder::SCHEMA_ID.to_le_bytes());
         hdr[6..8].copy_from_slice(&0u16.to_le_bytes()); // version
-        assert!(CarDecoder::decode(&hdr, 0).is_err());
-        assert!(AnyMessage::decode(&hdr, 0).is_err());
+        assert!(CarDecoder::try_decode(&hdr, 0).is_err());
+        assert!(AnyMessage::try_decode(&hdr, 0).is_err());
         // wrap with acting_block_length=0 also fails min-readable extent
-        assert!(CarDecoder::wrap(&hdr, 0, 0, 0).is_err());
+        assert!(CarDecoder::try_wrap(&hdr, 0, 0, 0).is_err());
     "#,
     );
     Ok(())
@@ -39,10 +39,10 @@ fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), B
         &src,
         r#"
         let mut empty = [];
-        assert!(CarEncoder::wrap_and_apply_header(&mut empty, 0).is_err());
-        assert!(CarEncoder::wrap(&mut empty, 0).is_err());
+        assert!(CarEncoder::try_wrap_and_apply_header(&mut empty, 0).is_err());
+        assert!(CarEncoder::try_wrap(&mut empty, 0).is_err());
         let mut tiny = [0u8; 1];
-        assert!(CarEncoder::wrap_and_apply_header(&mut tiny, 0).is_err());
+        assert!(CarEncoder::try_wrap_and_apply_header(&mut tiny, 0).is_err());
     "#,
     );
     Ok(())
@@ -94,17 +94,17 @@ fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
         for len in 0..16usize {
             let buf = vec![0u8; len];
             let r = panic::catch_unwind(AssertUnwindSafe(|| {
-                let _ = CarDecoder::decode(&buf, 0);
-                let _ = AnyMessage::decode(&buf, 0);
-                let _ = CarDecoder::wrap(&buf, 0, 0, 0);
+                let _ = CarDecoder::try_decode(&buf, 0);
+                let _ = AnyMessage::try_decode(&buf, 0);
+                let _ = CarDecoder::try_wrap(&buf, 0, 0, 0);
             }));
             assert!(r.is_ok(), "safe decode panicked at len={len}");
         }
         for len in 0..16usize {
             let mut buf = vec![0u8; len];
             let r = panic::catch_unwind(AssertUnwindSafe(|| {
-                let _ = CarEncoder::wrap_and_apply_header(&mut buf, 0);
-                let _ = CarEncoder::wrap(&mut buf, 0);
+                let _ = CarEncoder::try_wrap_and_apply_header(&mut buf, 0);
+                let _ = CarEncoder::try_wrap(&mut buf, 0);
             }));
             assert!(r.is_ok(), "safe encode wrap panicked at len={len}");
         }
@@ -174,7 +174,7 @@ fn start_entry_rejects_short_buffer_before_mutation() -> Result<(), Box<dyn Erro
         let bl = PerformanceFiguresAccelerationEncoder::ENTRY_BLOCK_LENGTH as u16;
         dim_only[0..2].copy_from_slice(&bl.to_le_bytes());
         dim_only[2..4].copy_from_slice(&1u16.to_le_bytes());
-        let mut g = PerformanceFiguresAccelerationEncoder::wrap(&mut dim_only, 4, 1);
+        let mut g = PerformanceFiguresAccelerationEncoder::try_wrap(&mut dim_only, 4, 1);
         assert!(
             g.start_entry().is_err(),
             "start_entry must fail when fixed entry does not fit"
@@ -200,24 +200,24 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
         dim[0..2].copy_from_slice(&bl.to_le_bytes());
         dim[2..4].copy_from_slice(&2u16.to_le_bytes());
         assert!(
-            PerformanceFiguresAccelerationDecoder::wrap(&dim, 0, 0).is_err(),
+            PerformanceFiguresAccelerationDecoder::try_wrap(&dim, 0, 0).is_err(),
             "fixed group wrap must reject missing entry region"
         );
         let mut one = [0u8; 4 + PerformanceFiguresAccelerationDecoder::ENTRY_BLOCK_LENGTH];
         one[0..2].copy_from_slice(&bl.to_le_bytes());
         one[2..4].copy_from_slice(&2u16.to_le_bytes());
-        assert!(PerformanceFiguresAccelerationDecoder::wrap(&one, 0, 0).is_err());
+        assert!(PerformanceFiguresAccelerationDecoder::try_wrap(&one, 0, 0).is_err());
         let mut full = [0u8; 4 + 2 * PerformanceFiguresAccelerationDecoder::ENTRY_BLOCK_LENGTH];
         full[0..2].copy_from_slice(&bl.to_le_bytes());
         full[2..4].copy_from_slice(&2u16.to_le_bytes());
         full[4..6].copy_from_slice(&30u16.to_le_bytes()); // mph entry0
-        let g = PerformanceFiguresAccelerationDecoder::wrap(&full, 0, 0).expect("full group");
+        let g = PerformanceFiguresAccelerationDecoder::try_wrap(&full, 0, 0).expect("full group");
         let e0 = g.nth(0).expect("nth 0");
         assert_eq!(e0.mph(), 30);
         for len in 0..20usize {
             let buf = vec![0xAAu8; len];
             let r = panic::catch_unwind(AssertUnwindSafe(|| {
-                let _ = PerformanceFiguresAccelerationDecoder::wrap(&buf, 0, 0);
+                let _ = PerformanceFiguresAccelerationDecoder::try_wrap(&buf, 0, 0);
             }));
             assert!(r.is_ok(), "fixed group wrap panicked at len={len}");
         }
@@ -226,7 +226,7 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
         let mut ff = [0u8; 4];
         ff[0..2].copy_from_slice(&6u16.to_le_bytes());
         ff[2..4].copy_from_slice(&1u16.to_le_bytes());
-        if let Ok(mut g) = FuelFiguresDecoder::wrap(&ff, 0, 0) {
+        if let Ok(mut g) = FuelFiguresDecoder::try_wrap(&ff, 0, 0) {
             if let Some(item) = Iterator::next(&mut g) {
                 assert!(item.is_err(), "dynamic entry on dim-only must Err");
             }

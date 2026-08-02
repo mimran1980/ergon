@@ -37,7 +37,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
 
         fn encode_car_vec() -> Vec<u8> {
             let mut buf = [0u8; 512];
-            let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
             car.serial_number(1234);
             car.model_year(2013);
             car.available(BooleanType::T);
@@ -86,7 +86,7 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
 
         let decode_start = std::time::Instant::now();
         for _ in 0..50 {
-            let car2 = CarDecoder::decode(&encoded, 0).unwrap();
+            let car2 = CarDecoder::try_decode(&encoded, 0).unwrap();
             assert_eq!(1234, car2.serial_number());
             assert_eq!(2013, car2.model_year());
             assert_eq!(BooleanType::T, car2.available());

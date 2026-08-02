@@ -27,7 +27,7 @@ impl TryToSbe<Decimal> for FixedPrice {
 // Encode using the generic conversion API:
 let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
 let price = Rd::new(12345, 2); // 123.45
-let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
+let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .price_from(&price)?
     .size_from(&Rd::new(10, 0))?
     .encoded_length_with_header();

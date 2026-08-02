@@ -101,7 +101,7 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         &out,
         r#"
         let mut buf = [0u8; MEncoder::compute_length_with_header()];
-        let len = MEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MFixedFields {
                 some_numbers: [1, 2, 3, 4],
                 vehicle_code: *b"ABCDEF",
@@ -118,7 +118,7 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         // vehicle_code_str: pass a short string, auto-padded with zeros.
         // Use individual setters — no fixed() struct needed.
         let mut buf2 = [0u8; MEncoder::compute_length_with_header()];
-        let len2 = MEncoder::wrap_and_apply_header(&mut buf2, 0)?
+        let len2 = MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
             .put_some_numbers(0, 0, 0, 0)
             .vehicle_code_str("XYZ")?
             .encoded_length_with_header();
@@ -381,7 +381,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
         entry_flags.b(true);
 
         let mut buf = [0u8; 256];
-        let complete = MEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let complete = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MFixedFields {
                 top_flags,
                 ver_flags,
@@ -404,7 +404,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
         // Older-version decode (acting_version 0): the sinceVersion=1 field
         // must be cleanly omitted, not panic, not print garbage.
         // wrap takes message start (absolute coordinates), not body offset.
-        let old_dec = MDecoder::wrap(&buf[..len], 0, 2, 0).unwrap();
+        let old_dec = MDecoder::try_wrap(&buf[..len], 0, 2, 0).unwrap();
         let old_text = format!("{old_dec:?}");
         assert!(old_text.contains("topFlags"), "{old_text}");
         assert!(!old_text.contains("verFlags"), "{old_text}");
@@ -553,7 +553,7 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
         let mut inst = ExecInst::default(); inst.aon(true);
         let price = Price::new(12345, -2);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
-        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { qty: 100, side: Side::Sell, inst, algo: BoolFlag::True, price })
             .legs(1, |g| { g.add(|e| { e.ratio(50); Ok(()) })?; Ok(()) })?
             .note(b"abc")?
@@ -595,7 +595,7 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
         let mut inst = ExecInst::default(); inst.ioc(true);
         let price = Price::new(1, 0);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 0)];
-        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::False, price })
             .legs(0, |_| Ok(()))?.note(b"")?
             .encoded_length_with_header();
@@ -672,7 +672,7 @@ fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Erro
         let mut inst = ExecInst::default(); inst.aon(true);
         let price = Price::new(99, -1);
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(0, 3)];
-        let enc = MsgEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let enc = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::True, price })
             .legs(0, |_| Ok(()))?.note(b"xyz")?;
         // Encoder Display delegates to the decoder — shows the message.
@@ -720,7 +720,7 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
         let mut flags = Flags::default(); flags.b(true);
         let price = Price::new(777, -1);
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
-        let len = MEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .rows(1, |g| { g.add(|e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;
@@ -765,7 +765,7 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
         &out,
         r#"
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
-        let len = MEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .rows(1, |g| { g.add(|e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;

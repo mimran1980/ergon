@@ -189,7 +189,7 @@ fn bench_decode_entry_point(c: &mut Criterion) {
     group.bench_function("ergo-sbe_wrap", |b| {
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
+                let car = CarDecoder::try_wrap(black_box(BASELINE), 0, bl_e, ver_e);
                 black_box(car);
             }
         });
@@ -290,7 +290,7 @@ fn bench_decode_composite(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
-    let ergo_car = CarDecoder::wrap(&buf, 0, bl_e, ver_e);
+    let ergo_car = CarDecoder::try_wrap(&buf, 0, bl_e, ver_e);
     let ergo_engine = ergo_car.engine();
     let tool_engine = sbe_tool_car_body_decoder(&buf, 0, bl, ver).engine_decoder();
     assert_eq!(ergo_engine.capacity(), tool_engine.capacity());
@@ -308,7 +308,7 @@ fn bench_decode_composite(c: &mut Criterion) {
             let mut total_cylinders = 0_u64;
             let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(buf, off, bl_e, ver_e);
+                let car = CarDecoder::try_wrap(buf, off, bl_e, ver_e);
                 let engine = car.engine();
                 total_capacity += u64::from(engine.capacity());
                 total_cylinders += u64::from(engine.num_cylinders());
@@ -365,7 +365,7 @@ fn bench_throughput_batch(c: &mut Criterion) {
             let mut total_year: u64 = 0;
             let mut off = 0;
             for _ in 0..BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(buf.as_slice()), off, bl_e, ver_e);
+                let car = CarDecoder::try_wrap(black_box(buf.as_slice()), off, bl_e, ver_e);
                 total += car.serial_number();
                 total_year += car.model_year() as u64;
                 off += msg_len;
@@ -411,7 +411,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         };
         // Encode a complete Car message with both codecs, verify lengths match.
         let mut ebuf = [0u8; 512];
-        let ergo_len = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+        let ergo_len = CarEncoder::try_wrap_and_apply_header(&mut ebuf, 0)
             .fixed(&CarFixedFields {
                 serial_number: 42,
                 model_year: 2020,
@@ -485,7 +485,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
 
         let mut ergon = [0u8; 18];
         black_box(
-            CarEncoder::wrap_and_apply_header(&mut ergon, 0)
+            CarEncoder::try_wrap_and_apply_header(&mut ergon, 0)
                 .serial_number(1234)
                 .model_year(2013),
         );
@@ -507,7 +507,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         let mut buf = [0u8; 512];
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                     .serial_number(black_box(1234))
                     .model_year(black_box(2013));
             }
@@ -539,7 +539,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         let mut buf = [0u8; 512];
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+                CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0);
             }
             black_box(&buf[..8]);
         });
@@ -567,7 +567,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
         let mut buf = [0u8; 512];
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                CarEncoder::wrap(black_box(&mut buf), 0)
+                CarEncoder::try_wrap(black_box(&mut buf), 0)
                     .serial_number(black_box(1234))
                     .model_year(black_box(2013));
             }
@@ -608,7 +608,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
             for i in 0..BATCH_SIZE {
                 let off = i * 64;
                 black_box(
-                    CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0)
+                    CarEncoder::try_wrap_and_apply_header(&mut buf[off..off + 64], 0)
                         .serial_number(i as u64)
                         .model_year(2013),
                 );
@@ -661,7 +661,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe_consuming", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
+            let car = CarDecoder::try_wrap(black_box(BASELINE), 0, bl_e, ver_e);
             black_box((
                 car.serial_number(),
                 car.model_year(),
@@ -765,7 +765,7 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
     group.bench_function("ergo-sbe", |b| {
         let mut buf = [0u8; 512];
         b.iter(|| {
-            let len = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+            let len = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                 .fixed(&CarFixedFields {
                     serial_number: 1234,
                     model_year: 2013,
@@ -831,7 +831,7 @@ fn assert_full_message_encode_wire_parity() {
     };
 
     let mut ebuf = [0u8; 512];
-    let ergo_len = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+    let ergo_len = CarEncoder::try_wrap_and_apply_header(&mut ebuf, 0)
         .fixed(&CarFixedFields {
             serial_number: 99,
             model_year: 2020,
@@ -925,7 +925,7 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
         let mut buf = [0u8; 512];
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                let len = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                let len = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                     .fixed(&CarFixedFields {
                         serial_number: 99,
                         model_year: 2020,

@@ -38,7 +38,7 @@ use {label}::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     enc.serial_number(1)
         .model_year(2020)
         .available(BooleanType::T)
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         .model(b"y")?
         .activation_code(b"")?;
     let len = done.encoded_length_with_header();
-    let dec = CarDecoder::decode(&buf[..len], 0)?;
+    let dec = CarDecoder::try_decode(&buf[..len], 0)?;
     assert_eq!(dec.serial_number(), 1);
     Ok(())
 }}

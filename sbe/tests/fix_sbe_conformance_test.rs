@@ -93,13 +93,13 @@ fn respond_schema1_body() -> String {
             trade_date: u16,
             fills: &[(i64, i32)],
         ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-            let order = NewOrderSingleDecoder::decode(inject, 0)?;
+            let order = NewOrderSingleDecoder::try_decode(inject, 0)?;
             let symbol = order.symbol();
             let side = order.side();
             let fills_n = fills.len();
             let need = ExecutionReportEncoder::compute_length_with_header(fills_n);
             let mut buf = vec![0u8; need];
-            let complete = ExecutionReportEncoder::wrap_and_apply_header(&mut buf, 0)?
+            let complete = ExecutionReportEncoder::try_wrap_and_apply_header(&mut buf, 0)?
                 .fixed(&ExecutionReportFixedFields {
                     order_id: id8(order_id),
                     exec_id: id8(exec_id),
@@ -172,13 +172,13 @@ fn respond_schema3_body() -> String {
             out
         }
 
-        let order = NewOrderSingleDecoder::decode(inject3, 0)?;
+        let order = NewOrderSingleDecoder::try_decode(inject3, 0)?;
         let symbol = order.symbol();
         let side = order.side();
         let reject = b"Market is closed";
         let need = ExecutionReportEncoder::compute_length_with_header(0, reject.len());
         let mut buf = vec![0u8; need];
-        let complete = ExecutionReportEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let complete = ExecutionReportEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&ExecutionReportFixedFields {
                 order_id: id8("        "),
                 exec_id: id8("        "),

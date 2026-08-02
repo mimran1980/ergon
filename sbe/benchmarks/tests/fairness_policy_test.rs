@@ -72,7 +72,7 @@ fn composite_decode_streams_equal_fields_from_equal_message_offsets()
         "composite decode must traverse a prebuilt contiguous message stream"
     );
     assert!(
-        ergo.contains("CarDecoder::wrap(buf, off, bl_e, ver_e)"),
+        ergo.contains("CarDecoder::try_wrap(buf, off, bl_e, ver_e)"),
         "Ergo composite decode must wrap each message at its absolute message_offset"
     );
     assert!(
@@ -214,10 +214,10 @@ fn arm_writes_message_header(arm: &str) -> bool {
 
 fn arm_is_body_only_encode(arm: &str) -> bool {
     // Body-only: wraps without applying/writing the MessageHeader.
-    let has_wrap = arm.contains("::wrap(")
+    let has_wrap = arm.contains("::try_wrap(")
         || arm.contains("::wrap_unchecked(")
         || arm.contains(".wrap(")
-        || arm.contains("Encoder::wrap(");
+        || arm.contains("Encoder::try_wrap(");
     has_wrap && !arm_writes_message_header(arm)
 }
 

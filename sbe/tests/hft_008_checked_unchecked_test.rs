@@ -55,13 +55,13 @@ pub mod hft008_probe {
         {
             let mut buf = [0u8; 256];
             let checked = time_ns(|| {
-                let enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
+                let enc = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
                 // SAFETY: 256 >= HEADER+BLOCK for Car.
                 let enc = unsafe {
-                    CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0)
+                    CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
                 };
                 black_box(enc);
             });
@@ -74,13 +74,13 @@ pub mod hft008_probe {
             let mut va = vec![0u8; need];
             let mut vb = vec![0u8; need];
             let checked = time_ns(|| {
-                let enc = CarEncoder::wrap_and_apply_header(black_box(&mut va[..]), 0).unwrap();
+                let enc = CarEncoder::try_wrap_and_apply_header(black_box(&mut va[..]), 0).unwrap();
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
                 // SAFETY: va sized to HEADER+BLOCK+pad.
                 let enc = unsafe {
-                    CarEncoder::wrap_and_apply_header(black_box(&mut vb[..]), 0)
+                    CarEncoder::try_wrap_and_apply_header(black_box(&mut vb[..]), 0)
                 };
                 black_box(enc);
             });
@@ -91,11 +91,11 @@ pub mod hft008_probe {
         {
             let mut buf = [0u8; 256];
             let checked = time_ns(|| {
-                let enc = CarEncoder::wrap(black_box(&mut buf), 0).unwrap();
+                let enc = CarEncoder::try_wrap(black_box(&mut buf), 0).unwrap();
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::wrap(black_box(&mut buf), 0) };
+                let enc = unsafe { CarEncoder::try_wrap(black_box(&mut buf), 0) };
                 black_box(enc);
             });
             emit("wrap", "exact_ctor", checked, unchecked);
@@ -107,11 +107,11 @@ pub mod hft008_probe {
             let mut va = vec![0u8; need];
             let mut vb = vec![0u8; need];
             let checked = time_ns(|| {
-                let enc = CarEncoder::wrap(black_box(&mut va[..]), 0).unwrap();
+                let enc = CarEncoder::try_wrap(black_box(&mut va[..]), 0).unwrap();
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::wrap(black_box(&mut vb[..]), 0) };
+                let enc = unsafe { CarEncoder::try_wrap(black_box(&mut vb[..]), 0) };
                 black_box(enc);
             });
             emit("wrap", "opaque_ctor", checked, unchecked);
@@ -121,7 +121,7 @@ pub mod hft008_probe {
         {
             let mut frame = [0u8; 512];
             let n = {
-                let mut enc = CarEncoder::wrap_and_apply_header(&mut frame, 0).unwrap();
+                let mut enc = CarEncoder::try_wrap_and_apply_header(&mut frame, 0).unwrap();
                 enc.serial_number(1)
                     .model_year(2001)
                     .available(BooleanType::T)
@@ -151,12 +151,12 @@ pub mod hft008_probe {
             };
             let slice = &frame[..n];
             let checked = time_ns(|| {
-                let d = CarDecoder::decode(black_box(slice), 0).unwrap();
+                let d = CarDecoder::try_decode(black_box(slice), 0).unwrap();
                 black_box(d.serial_number());
             });
             let unchecked = time_ns(|| {
                 // SAFETY: frame just produced by encoder with matching length.
-                let d = unsafe { CarDecoder::decode(black_box(slice), 0).unwrap() };
+                let d = unsafe { CarDecoder::try_decode(black_box(slice), 0).unwrap() };
                 black_box(d.serial_number());
             });
             emit("decode", "exact_ctor_plus_scalar", checked, unchecked);
@@ -164,12 +164,12 @@ pub mod hft008_probe {
             // Opaque Vec copy of the same frame.
             let owned = slice.to_vec();
             let checked = time_ns(|| {
-                let d = CarDecoder::decode(black_box(owned.as_slice()), 0).unwrap();
+                let d = CarDecoder::try_decode(black_box(owned.as_slice()), 0).unwrap();
                 black_box(d.serial_number());
             });
             let unchecked = time_ns(|| {
                 let d = unsafe {
-                    CarDecoder::decode(black_box(owned.as_slice()), 0).unwrap()
+                    CarDecoder::try_decode(black_box(owned.as_slice()), 0).unwrap()
                 };
                 black_box(d.serial_number());
             });
@@ -180,7 +180,7 @@ pub mod hft008_probe {
         {
             let mut frame = [0u8; 512];
             let n = {
-                let mut enc = CarEncoder::wrap_and_apply_header(&mut frame, 0).unwrap();
+                let mut enc = CarEncoder::try_wrap_and_apply_header(&mut frame, 0).unwrap();
                 enc.serial_number(2)
                     .model_year(2002)
                     .available(BooleanType::F)
@@ -210,11 +210,11 @@ pub mod hft008_probe {
             };
             let slice = &frame[..n];
             let checked = time_ns(|| {
-                let any = AnyMessage::decode(black_box(slice), 0).unwrap();
+                let any = AnyMessage::try_decode(black_box(slice), 0).unwrap();
                 black_box(core::mem::discriminant(&any));
             });
             let unchecked = time_ns(|| {
-                let any = unsafe { AnyMessage::decode(black_box(slice), 0).unwrap() };
+                let any = unsafe { AnyMessage::try_decode(black_box(slice), 0).unwrap() };
                 black_box(core::mem::discriminant(&any));
             });
             emit("AnyMessage::decode", "exact_dispatch", checked, unchecked);
@@ -224,9 +224,9 @@ pub mod hft008_probe {
         {
             let mut a = [0u8; 256];
             let mut b = [0u8; 256];
-            let enc_a = CarEncoder::wrap_and_apply_header(&mut a, 0).unwrap();
+            let enc_a = CarEncoder::try_wrap_and_apply_header(&mut a, 0).unwrap();
             // SAFETY: 256 >= HEADER+BLOCK.
-            let enc_b = unsafe { CarEncoder::wrap_and_apply_header(&mut b, 0) };
+            let enc_b = unsafe { CarEncoder::try_wrap_and_apply_header(&mut b, 0) };
             drop(enc_a);
             drop(enc_b);
             // Header template bytes must match after both constructors.
@@ -311,12 +311,12 @@ fn checked_encode_byte_identity() -> Result<(), Box<dyn Error>> {
 
         let mut a = [0u8; 512];
         let mut b = [0u8; 512];
-        let len_a = finish(CarEncoder::wrap_and_apply_header(&mut a, 0).unwrap());
-        let len_b = finish(CarEncoder::wrap_and_apply_header(&mut b, 0).unwrap());
+        let len_a = finish(CarEncoder::try_wrap_and_apply_header(&mut a, 0).unwrap());
+        let len_b = finish(CarEncoder::try_wrap_and_apply_header(&mut b, 0).unwrap());
         assert_eq!(len_a, len_b);
         assert_eq!(&a[..len_a], &b[..len_b]);
-        let d1 = CarDecoder::decode(&a[..len_a], 0).unwrap();
-        let d2 = CarDecoder::decode(&b[..len_b], 0).unwrap();
+        let d1 = CarDecoder::try_decode(&a[..len_a], 0).unwrap();
+        let d2 = CarDecoder::try_decode(&b[..len_b], 0).unwrap();
         assert_eq!(d1.serial_number(), d2.serial_number());
         assert_eq!(d1.model_year(), d2.model_year());
     "#,
@@ -357,7 +357,7 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         fn encode(buf: &mut [u8]) -> usize {
-            let mut enc = CarEncoder::wrap_and_apply_header(buf, 0).unwrap();
+            let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
             enc.serial_number(1)
                 .model_year(2001)
                 .available(BooleanType::F)

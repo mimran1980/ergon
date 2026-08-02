@@ -13,7 +13,7 @@ fuzz_target!(|data: &[u8]| {
         .unwrap_or(available)
         .min(available);
 
-    let _ = AnyMessage::decode(data, pos);
+    let _ = AnyMessage::try_decode(data, pos);
     let _ = AnyMessage::decode_frame(data, pos, frame_len);
 
     for policy in [

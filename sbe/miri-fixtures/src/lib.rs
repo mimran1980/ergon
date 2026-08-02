@@ -23,7 +23,7 @@ mod tests {
     #[test]
     fn little_endian_fixed_codec() -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = [0u8; little_endian::ProbeEncoder::compute_length_with_header()];
-        let len = little_endian::ProbeEncoder::wrap_and_apply_header(&mut buffer, 0)?
+        let len = little_endian::ProbeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
             .fixed(&little_endian::ProbeFixedFields { value: 0x0102_0304 })
             .encoded_length_with_header();
         assert_eq!(&buffer[8..len], &[4, 3, 2, 1]);
@@ -37,7 +37,7 @@ mod tests {
     #[test]
     fn big_endian_fixed_codec() -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = [0u8; big_endian::ProbeEncoder::compute_length_with_header()];
-        let len = big_endian::ProbeEncoder::wrap_and_apply_header(&mut buffer, 0)?
+        let len = big_endian::ProbeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
             .fixed(&big_endian::ProbeFixedFields { value: 0x0102_0304 })
             .encoded_length_with_header();
         assert_eq!(&buffer[8..len], &[1, 2, 3, 4]);
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn nested_group_codec() -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = [0u8; 256];
-        let len = nested::TreeEncoder::wrap_and_apply_header(&mut buffer, 0)?
+        let len = nested::TreeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
             .outer(1, |outer| {
                 outer.add(|entry| {
                     entry.value(7).inner(1, |inner| {

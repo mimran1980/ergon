@@ -94,7 +94,7 @@ fn hft_lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.serial_number(42)
             .model_year(2018)
             .available(BooleanType::T)
@@ -118,7 +118,7 @@ fn hft_lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
             .activation_code(b"")
             .unwrap();
         let len = done.encoded_length_with_header();
-        let dec = CarDecoder::decode(&buf[..len], 0).unwrap();
+        let dec = CarDecoder::try_decode(&buf[..len], 0).unwrap();
         assert_eq!(dec.serial_number(), 42);
         assert_eq!(dec.model_year(), 2018);
         // AnyMessage must not exist in HftLean — ensure we didn't need it.

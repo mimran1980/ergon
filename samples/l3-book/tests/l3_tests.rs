@@ -24,7 +24,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
-    let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -65,7 +65,7 @@ fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
-    let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 0,
             sequence: 0,
@@ -97,7 +97,7 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
     let mut buf_storage = [0u8; 8192];
     assert!(expected <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..expected];
-    let complete = L3BookVarDataEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -272,7 +272,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
-    let complete = L3BookVarDataEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -337,7 +337,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
-    let complete = L3BookVarDataEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 0,
             sequence: 0,
@@ -434,7 +434,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     );
 
     // 2. Encoder Display + Debug — delegates to decoder for field values.
-    let enc = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?;
+    let enc = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     let enc_display = format!("{}", enc);
     eprintln!("encoder Display: {enc_display}");
     assert!(
@@ -499,7 +499,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         assert!(dec_display.contains("BTC"));
         assert!(dec_display.contains("50000"));
 
-        let enc = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?;
+        let enc = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
         let enc_display = format!("{enc}");
         eprintln!("[L3Book] encoder Display: {enc_display}");
         assert!(enc_display.contains("BTC"));
@@ -604,7 +604,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let mut buf_storage = [0u8; 8192];
         assert!(len <= buf_storage.len(), "len exceeds stack pad");
         let mut buf = &mut buf_storage[..len];
-        let complete = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&L3BookFixedFields {
                 exchange_timestamp: 0,
                 sequence: 0,
@@ -729,7 +729,7 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..len];
-    let complete = Depth3TestEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let complete = Depth3TestEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&Depth3TestFixedFields { id: 42 })
         .levels(levels.len() as u16, |g| {
             for (name, items) in levels {
@@ -813,7 +813,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
 
     // 2. Encode using rust_decimal domain type (the l3-book config uses with_domain_type).
     let mut buf = vec![0u8; len];
-    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let actual = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000,
             sequence: 1,
@@ -848,7 +848,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
     assert_eq!(len, actual, "EncodedLength must match actual encoded length");
 
     // 3. Decode and spot-check.
-    let book = L3BookDecoder::decode(&buf[..actual], 0)?;
+    let book = L3BookDecoder::try_decode(&buf[..actual], 0)?;
     assert_eq!(
         book.try_exchange_timestamp()?.timestamp_nanos_opt(),
         Some(1_720_000_000_000_000_000)

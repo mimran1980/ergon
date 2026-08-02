@@ -165,9 +165,9 @@ fn cross_schema_messages_decode_with_correct_schema_id() -> Result<(), Box<dyn s
             // Encode + decode in schema A — verifies the message round-trips
             // within its own module (shared types work intra-module).
             let mut buf = [0u8; 64];
-            let mut enc = common_types::CommonMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut enc = common_types::CommonMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
             enc.price(common_types::Decimal::new(100, -2)).side(common_types::Side::Buy);
-            let dec = common_types::CommonMessageDecoder::decode(&buf, 0)?;
+            let dec = common_types::CommonMessageDecoder::try_decode(&buf, 0)?;
             let side = dec.side();
             assert_eq!(side, common_types::Side::Buy);
         "#,
@@ -213,24 +213,24 @@ fn shared_composite_fields_are_public() -> Result<(), Box<dyn std::error::Error>
 
             // ── CommonMessage (in common_types module) ──
             let mut buf = [0u8; 64];
-            let mut enc = common_types::CommonMessageEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut enc = common_types::CommonMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
             enc.price(common_types::Decimal::new(200, -1)).side(common_types::Side::Sell);
-            let dec = common_types::CommonMessageDecoder::decode(&buf, 0)?;
+            let dec = common_types::CommonMessageDecoder::try_decode(&buf, 0)?;
             assert_eq!(dec.price().mantissa(), 200);
             assert_eq!(dec.side(), common_types::Side::Sell);
 
             // ── Quote message (in importing market_data module) ──
             let mut buf2 = [0u8; 64];
-            let mut enc2 = market_data::QuoteEncoder::wrap_and_apply_header(&mut buf2, 0).unwrap();
+            let mut enc2 = market_data::QuoteEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
             enc2.bid_mantissa(100).ask_mantissa(200).bid_side(market_data::Side::Buy);
-            let dec2 = market_data::QuoteDecoder::decode(&buf2, 0)?;
+            let dec2 = market_data::QuoteDecoder::try_decode(&buf2, 0)?;
             assert_eq!(dec2.bid_mantissa(), 100);
             assert_eq!(dec2.ask_mantissa(), 200);
             assert_eq!(dec2.bid_side(), market_data::Side::Buy);
 
             // ── Decoder accessors (flyweight) ──
             // groupSizeEncoding composite (shared) must support decode
-            let dec3 = common_types::CommonMessageDecoder::decode(&buf, 0)?;
+            let dec3 = common_types::CommonMessageDecoder::try_decode(&buf, 0)?;
             let _price_val = dec3.price();
             assert_eq!(_price_val.mantissa(), 200);
         "#,
@@ -362,12 +362,12 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut sf = shared_types::OrderFlags::default();
             sf.aggressive(true);
             let mut buf = [0u8; 128];
-            let mut enc = shared_types::OrderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+            let mut enc = shared_types::OrderEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
             enc.price(shared_types::InnerValue::new(10, 20));
             enc.side(shared_types::OrderSide::Ask);
             enc.flags(sf);
             let enc = enc.note(b"hello")?;
-            let dec = shared_types::OrderDecoder::decode(&buf, 0)?;
+            let dec = shared_types::OrderDecoder::try_decode(&buf, 0)?;
             assert_eq!(dec.price().x(), 10);
             assert_eq!(dec.side(), shared_types::OrderSide::Ask);
             assert!(dec.flags().is_aggressive());
@@ -377,13 +377,13 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut cf = consumer::OrderFlags::default();
             cf.conditional(true);
             let mut buf2 = [0u8; 128];
-            let mut enc2 = consumer::TradeEncoder::wrap_and_apply_header(&mut buf2, 0).unwrap();
+            let mut enc2 = consumer::TradeEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
             enc2.qty(500);
             enc2.side(consumer::OrderSide::Bid);
             enc2.flags(cf);
             enc2.value(consumer::InnerValue::new(7, 8));
             let enc2 = enc2.note(b"world")?;
-            let dec2 = consumer::TradeDecoder::decode(&buf2, 0)?;
+            let dec2 = consumer::TradeDecoder::try_decode(&buf2, 0)?;
             assert_eq!(dec2.qty(), 500);
             assert_eq!(dec2.side(), consumer::OrderSide::Bid);
             assert!(dec2.flags().is_conditional());

@@ -15,7 +15,7 @@ fn cf_encode_asks_before_bids() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1).sequence(1);
         // ILLEGAL: asks is not on the initial encoder stage
         let _ = e.asks(0, |_| Ok(()));
@@ -34,7 +34,7 @@ fn cf_header_absent_no_as_bytes_with_header() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::wrap(&mut buf, 0).unwrap();
+        let mut enc = CarEncoder::try_wrap(&mut buf, 0).unwrap();
         enc.serial_number(1)
             .model_year(2020)
             .available(BooleanType::T)
@@ -72,7 +72,7 @@ fn cf_consumed_encoder_stage_reuse() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+        let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.serial_number(1)
             .model_year(2020)
             .available(BooleanType::T)

@@ -59,7 +59,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
     // Buffer is exact size from const compute_length_with_header — no bounds check needed.
-    let written = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
+    let written = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 7,
             timestamp: nanos as u64,
@@ -122,7 +122,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     extras.cruise_control(true).sports_pack(true);
 
     // Buffer is pre-sized from compute_length — no bounds check needed.
-    let len = CarEncoder::wrap_and_apply_header(buf, 0).unwrap()
+    let len = CarEncoder::try_wrap_and_apply_header(buf, 0).unwrap()
         .fixed(&CarFixedFields {
             serial_number: 1234,
             model_year: 2013,
@@ -264,7 +264,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let hb_len = HeartbeatEncoder::compute_length_with_header();
     let nanos: u64 = 1_700_000_000_000_000_000;
-    HeartbeatEncoder::wrap_and_apply_header(&mut hb, 0).unwrap()
+    HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0).unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 1,
             timestamp: nanos,
@@ -276,7 +276,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     assert!(note_len <= NOTE_PAD);
     let mut note_storage = [0u8; NOTE_PAD];
     let note = &mut note_storage[..note_len];
-    let note_written = NoteEncoder::wrap_and_apply_header(note, 0)?
+    let note_written = NoteEncoder::try_wrap_and_apply_header(note, 0)?
         .fixed(&NoteFixedFields { note_id: 99 })
         .body(note_body)?
         .encoded_length_with_header();
@@ -291,7 +291,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut saw_heartbeat = false;
     let mut saw_note = false;
     while offset < stream.len() {
-        match AnyMessage::decode(&stream, offset)? {
+        match AnyMessage::try_decode(&stream, offset)? {
             AnyMessage::Heartbeat(d) => {
                 assert_eq!(d.sequence(), 1);
                 offset += d.encoded_length_with_header()?;
@@ -323,7 +323,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
 pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // `decode` validates template_id, schema_id, version, and the
     // version-aware fixed body extent at message start (offset 0).
-    let _dec = CarDecoder::decode(valid_car, 0)?;
+    let _dec = CarDecoder::try_decode(valid_car, 0)?;
 
     // `verify` walks the complete dynamic tail (groups + var-data), not a
     // header-only peek — use it when you need full structural acceptance
@@ -347,7 +347,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let mut hdr_bytes = [0u8; 8];
     hdr_bytes.copy_from_slice(&valid_car[..8]);
     let hdr = MessageHeader(hdr_bytes);
-    let dec = CarDecoder::wrap(
+    let dec = CarDecoder::try_wrap(
         valid_car,
         0,
         hdr.block_length() as usize,
@@ -489,7 +489,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
-    let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .price_from(&price)?
         .size_from(&size)?
         .encoded_length_with_header();
@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(fixed.exponent, -2);
         // Wire setter path still works without any adapter:
         let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
-        QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
+        QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .price_wire(Decimal::new(1, -2))
             .size_wire(Decimal::new(2, 0));
         let d2 = QuoteDecoder::try_from(buf.as_slice())?;

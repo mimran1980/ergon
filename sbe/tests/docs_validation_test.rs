@@ -451,7 +451,7 @@ use gen::*;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
     let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-    let heartbeat_len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)?
+    let heartbeat_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
         .seq(7)
         .encoded_length_with_header();
     let dec = HeartbeatDecoder::try_from(&buf[..heartbeat_len])?;
@@ -464,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bulk array helpers + group/var-data tail (docs)
     let mut qbuf = [0u8; 512];
-    let written = QuoteEncoder::wrap_and_apply_header(&mut qbuf, 0)?
+    let written = QuoteEncoder::try_wrap_and_apply_header(&mut qbuf, 0)?
         .fixed(&QuoteFixedFields {
             seq: 1,
             some_numbers: [1, 2, 3, 4],
@@ -494,7 +494,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(n > 0);
 
     // AnyMessage dispatch (crate docs)
-    match AnyMessage::decode(buf.as_slice(), 0)? {
+    match AnyMessage::try_decode(buf.as_slice(), 0)? {
         AnyMessage::Heartbeat(h) => assert_eq!(h.seq(), 7),
         AnyMessage::Quote(_) | AnyMessage::FixedString(_) | AnyMessage::Unknown { .. } => {
             panic!("expected Heartbeat")

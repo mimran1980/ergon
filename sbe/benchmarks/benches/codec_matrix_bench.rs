@@ -12,7 +12,7 @@ use ergo_sbe_benchmarks::codec_matrix::*;
 
 fn fixed_frames() -> ([u8; 24], [u8; 72], [u8; 264]) {
     let mut fixed16 = [0u8; Fixed16Encoder::ENCODED_LENGTH];
-    let fixed16_len = Fixed16Encoder::try_wrap_and_apply_header(&mut fixed16, 0)
+    let fixed16_len = Fixed16Encoder::wrap_and_apply_header(&mut fixed16, 0)
         .unwrap()
         .fixed(&Fixed16FixedFields {
             value: 7,
@@ -22,7 +22,7 @@ fn fixed_frames() -> ([u8; 24], [u8; 72], [u8; 264]) {
     assert_eq!(fixed16_len, fixed16.len());
 
     let mut fixed64 = [0u8; Fixed64Encoder::ENCODED_LENGTH];
-    let fixed64_len = Fixed64Encoder::try_wrap_and_apply_header(&mut fixed64, 0)
+    let fixed64_len = Fixed64Encoder::wrap_and_apply_header(&mut fixed64, 0)
         .unwrap()
         .fixed(&Fixed64FixedFields {
             value: 7,
@@ -32,7 +32,7 @@ fn fixed_frames() -> ([u8; 24], [u8; 72], [u8; 264]) {
     assert_eq!(fixed64_len, fixed64.len());
 
     let mut fixed256 = [0u8; Fixed256Encoder::ENCODED_LENGTH];
-    let fixed256_len = Fixed256Encoder::try_wrap_and_apply_header(&mut fixed256, 0)
+    let fixed256_len = Fixed256Encoder::wrap_and_apply_header(&mut fixed256, 0)
         .unwrap()
         .fixed(&Fixed256FixedFields {
             value: 7,
@@ -73,7 +73,7 @@ fn bench_fixed_blocks(c: &mut Criterion) {
     group.bench_function("trusted_entry_64", |b| {
         b.iter(|| {
             // wrap takes message_offset (absolute header start), not body offset.
-            black_box(Fixed64Decoder::wrap(
+            black_box(Fixed64Decoder::try_wrap(
                 black_box(&fixed64),
                 0,
                 Fixed64Encoder::BLOCK_LENGTH,
@@ -90,7 +90,7 @@ fn bench_fixed_blocks(c: &mut Criterion) {
 fn grouped_frame(count: u16) -> Vec<u8> {
     let expected = GroupedEncoder::try_compute_encoded_length_with_header(count).unwrap();
     let mut buffer = vec![0u8; expected];
-    let len = GroupedEncoder::try_wrap_and_apply_header(&mut buffer, 0)
+    let len = GroupedEncoder::wrap_and_apply_header(&mut buffer, 0)
         .unwrap()
         .fixed(&GroupedFixedFields { sequence: 1 })
         .rows(count, |rows| {
@@ -155,7 +155,7 @@ fn bench_groups(c: &mut Criterion) {
             let expected = GroupedEncoder::try_compute_encoded_length_with_header(*count).unwrap();
             let mut buffer = vec![0u8; expected];
             b.iter(|| {
-                let len = GroupedEncoder::try_wrap_and_apply_header(black_box(&mut buffer), 0)
+                let len = GroupedEncoder::wrap_and_apply_header(black_box(&mut buffer), 0)
                     .unwrap()
                     .fixed(&GroupedFixedFields { sequence: 1 })
                     .rows(*count, |rows| {
@@ -181,7 +181,7 @@ fn data_frame(length: usize) -> Vec<u8> {
     let expected = WithDataEncoder::try_compute_encoded_length_with_header(length).unwrap();
     let payload = vec![0x5a; length];
     let mut buffer = vec![0u8; expected];
-    let len = WithDataEncoder::try_wrap_and_apply_header(&mut buffer, 0)
+    let len = WithDataEncoder::wrap_and_apply_header(&mut buffer, 0)
         .unwrap()
         .fixed(&WithDataFixedFields { sequence: 1 })
         .payload(&payload)
@@ -219,7 +219,7 @@ fn bench_var_data(c: &mut Criterion) {
                         .unwrap()
                         .into_payload()
                         .unwrap();
-                    let len = WithDataEncoder::try_wrap_and_apply_header(black_box(&mut output), 0)
+                    let len = WithDataEncoder::wrap_and_apply_header(black_box(&mut output), 0)
                         .unwrap()
                         .fixed(&WithDataFixedFields { sequence: 1 })
                         .payload(payload)
@@ -237,7 +237,7 @@ fn bench_var_data(c: &mut Criterion) {
 fn nested_frame() -> Vec<u8> {
     let mut buffer = vec![0u8; 4096];
     let len =
-        NestedEncoder::try_wrap_and_apply_header(&mut buffer, 0)
+        NestedEncoder::wrap_and_apply_header(&mut buffer, 0)
             .unwrap()
             .fixed(&NestedFixedFields { sequence: 1 })
             .outer(5, |outer| {
@@ -271,7 +271,7 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
     let nested = nested_frame();
     let mut group = c.benchmark_group("matrix/operations");
     group.bench_function("any_message", |b| {
-        b.iter(|| black_box(AnyMessage::decode(black_box(&fixed16), 0).unwrap()));
+        b.iter(|| black_box(AnyMessage::try_decode(black_box(&fixed16), 0).unwrap()));
     });
     group.bench_function("dto_conversion", |b| {
         b.iter(|| {
@@ -312,7 +312,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
     use ergo_sbe_benchmarks::{codec_matrix_be as be, codec_matrix_custom_header as custom};
 
     let mut le = [0u8; Fixed64Encoder::ENCODED_LENGTH];
-    let le_len = Fixed64Encoder::try_wrap_and_apply_header(&mut le, 0)
+    let le_len = Fixed64Encoder::wrap_and_apply_header(&mut le, 0)
         .unwrap()
         .fixed(&Fixed64FixedFields {
             value: 7,
@@ -320,7 +320,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
         })
         .encoded_length_with_header();
     let mut be = [0u8; be::ProbeEncoder::ENCODED_LENGTH];
-    let be_len = be::ProbeEncoder::try_wrap_and_apply_header(&mut be, 0)
+    let be_len = be::ProbeEncoder::wrap_and_apply_header(&mut be, 0)
         .unwrap()
         .fixed(&be::ProbeFixedFields {
             value: 7,
@@ -328,7 +328,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
         })
         .encoded_length_with_header();
     let mut custom = [0u8; custom::ProbeEncoder::ENCODED_LENGTH];
-    let custom_len = custom::ProbeEncoder::try_wrap_and_apply_header(&mut custom, 0)
+    let custom_len = custom::ProbeEncoder::wrap_and_apply_header(&mut custom, 0)
         .unwrap()
         .fixed(&custom::ProbeFixedFields {
             value: 7,
@@ -337,7 +337,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
         .encoded_length_with_header();
 
     let mut versioned = [0u8; VersionedEncoder::ENCODED_LENGTH];
-    let versioned_len = VersionedEncoder::try_wrap_and_apply_header(&mut versioned, 0)
+    let versioned_len = VersionedEncoder::wrap_and_apply_header(&mut versioned, 0)
         .unwrap()
         .fixed(&VersionedFixedFields {
             old_value: 7,
@@ -380,7 +380,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
     group.bench_function("old_acting_version", |b| {
         b.iter(|| {
             black_box(
-                VersionedDecoder::wrap(
+                VersionedDecoder::try_wrap(
                     black_box(&versioned),
                     0, // message_offset (absolute coords)
                     8,
@@ -393,7 +393,7 @@ fn bench_endian_header_and_version(c: &mut Criterion) {
     group.bench_function("new_acting_version", |b| {
         b.iter(|| {
             black_box(
-                VersionedDecoder::wrap(
+                VersionedDecoder::try_wrap(
                     black_box(&versioned),
                     0, // message_offset (absolute coords)
                     VersionedEncoder::BLOCK_LENGTH,

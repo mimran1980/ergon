@@ -82,7 +82,7 @@ fn float_wire_bits_match_sbe_tool_for_all_ieee_classes() {
             let double = f64::from_bits(double_bits);
 
             let mut ergo_buf = [0u8; Issue895Encoder::ENCODED_LENGTH];
-            let ergo_len = Issue895Encoder::wrap_and_apply_header(&mut ergo_buf, 0).unwrap()
+            let ergo_len = Issue895Encoder::try_wrap_and_apply_header(&mut ergo_buf, 0).unwrap()
                 .fixed(&Issue895FixedFields {
                     optional_float: Some(single),
                     optional_double: Some(double),
@@ -209,7 +209,7 @@ fn dimension_composites_are_byte_exact_for_u8_u16_u32_and_both_endians()
                     let frame_len =
                         DimsEncoder::try_compute_encoded_length_with_header(1)?;
                     let mut storage = vec![0u8; frame_len];
-                    let len = DimsEncoder::wrap_and_apply_header(&mut storage, 0)?
+                    let len = DimsEncoder::try_wrap_and_apply_header(&mut storage, 0)?
                         .rows(1, |rows| {{
                             rows.add(|row| {{
                                 row.value(0x0102_0304);
@@ -295,7 +295,7 @@ fn message_offsets_0_through_63_preserve_prefix_and_suffix_canaries()
             for offset in 0usize..=63 {
                 let total = offset + frame_len + 64;
                 let mut storage = vec![CANARY; total];
-                let len = ProbeEncoder::wrap_and_apply_header(&mut storage, offset)?
+                let len = ProbeEncoder::try_wrap_and_apply_header(&mut storage, offset)?
                     .fixed(&ProbeFixedFields { value: 0x1020_3040 })
                     .rows(2, |rows| {
                         rows.add(|row| {
@@ -317,7 +317,7 @@ fn message_offsets_0_through_63_preserve_prefix_and_suffix_canaries()
                         .iter()
                         .all(|&byte| byte == CANARY)
                 );
-                let decoder = ProbeDecoder::decode(&storage, offset)?;
+                let decoder = ProbeDecoder::try_decode(&storage, offset)?;
                 assert_eq!(decoder.value(), 0x1020_3040);
                 ProbeDecoder::verify(&storage[offset..offset + len])?;
             }
@@ -388,7 +388,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
         }
 
         let mut fixed = [0u8; FixedEncoder::ENCODED_LENGTH];
-        let fixed_len = FixedEncoder::wrap_and_apply_header(&mut fixed, 0)?
+        let fixed_len = FixedEncoder::try_wrap_and_apply_header(&mut fixed, 0)?
             .fixed(&FixedFixedFields { value: 7 })
             .encoded_length_with_header();
         assert_all_cuts("fixed", &fixed[..fixed_len], FixedDecoder::verify);
@@ -396,7 +396,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
         let grouped_expected =
             GroupedEncoder::try_compute_encoded_length_with_header(2u16)?;
         let mut grouped = vec![0u8; grouped_expected];
-        let grouped_len = GroupedEncoder::wrap_and_apply_header(&mut grouped, 0)?
+        let grouped_len = GroupedEncoder::try_wrap_and_apply_header(&mut grouped, 0)?
             .fixed(&GroupedFixedFields { seq: 1 })
             .rows(2, |rows| {
                 rows.add(|row| {
@@ -427,7 +427,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
             .inner(1u16)?
             .encoded_length_with_header();
         let mut nested = vec![0u8; nested_expected];
-        let nested_len = NestedEncoder::wrap_and_apply_header(&mut nested, 0)?
+        let nested_len = NestedEncoder::try_wrap_and_apply_header(&mut nested, 0)?
             .fixed(&NestedFixedFields { seq: 2 })
             .outer(1, |outer| {
                 outer.add(|entry| {
@@ -450,7 +450,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
         let data_expected =
             WithDataEncoder::try_compute_encoded_length_with_header(5)?;
         let mut data = vec![0u8; data_expected];
-        let data_len = WithDataEncoder::wrap_and_apply_header(&mut data, 0)?
+        let data_len = WithDataEncoder::try_wrap_and_apply_header(&mut data, 0)?
             .fixed(&WithDataFixedFields { seq: 3 })
             .payload(b"hello")?
             .encoded_length_with_header();
@@ -458,7 +458,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
         assert!(WithDataEncoder::try_compute_encoded_length_with_header(4097).is_err());
         let max_len = WithDataEncoder::try_compute_encoded_length_with_header(4096)?;
         let mut oversized_storage = vec![0u8; max_len];
-        let oversized = WithDataEncoder::wrap_and_apply_header(&mut oversized_storage, 0)?
+        let oversized = WithDataEncoder::try_wrap_and_apply_header(&mut oversized_storage, 0)?
             .fixed(&WithDataFixedFields { seq: 4 })
             .payload(&[0u8; 4097]);
         assert!(matches!(
@@ -490,7 +490,7 @@ fn name_collisions_compile_execute_and_preserve_wire_bytes() {
             .payload(3)?
             .encoded_length_with_header();
         let mut storage = vec![0u8; expected];
-        let len = CollisionMsgEncoder::wrap_and_apply_header(&mut storage, 0)?
+        let len = CollisionMsgEncoder::try_wrap_and_apply_header(&mut storage, 0)?
             .fixed(&CollisionMsgFixedFields { id: 9 })
             .outer(0, |_| Ok(()))?
             .items(1, |items| {
@@ -525,7 +525,7 @@ fn explicit_implicit_offsets_and_derived_block_lengths_are_byte_exact() {
         assert_eq!(TestMessage2Encoder::HEADER_LENGTH, 12);
         assert_eq!(TestMessage2Encoder::BLOCK_LENGTH, 32);
         let mut storage = [0u8; TestMessage2Encoder::ENCODED_LENGTH];
-        let len = TestMessage2Encoder::wrap_and_apply_header(&mut storage, 0)?
+        let len = TestMessage2Encoder::try_wrap_and_apply_header(&mut storage, 0)?
             .fixed(&TestMessage2FixedFields {
                 field_one: 0x0102_0304,
                 field_two: TestComposite::new(0x7f, 0x0102_0304_0506_0708),

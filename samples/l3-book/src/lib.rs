@@ -128,7 +128,7 @@ pub fn encode_book(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = L3BookEncoder::wrap_and_apply_header(buf, 0)?
+    let complete = L3BookEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -195,7 +195,7 @@ pub fn encode_vardata_book(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = L3BookVarDataEncoder::wrap_and_apply_header(buf, 0)?
+    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -250,7 +250,7 @@ pub fn encode_depth3(
     levels: &[(u32, &[(u64, &[u8])])],
     description: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = Depth3TestEncoder::wrap_and_apply_header(buf, 0)?
+    let complete = Depth3TestEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&Depth3TestFixedFields { id })
         .levels(levels.len() as u16, |g| {
             for (name, items) in levels {
