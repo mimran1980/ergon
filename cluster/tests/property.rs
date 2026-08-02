@@ -16,7 +16,7 @@ proptest! {
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
         let bytes = enc.as_bytes_with_header().to_vec();
-        let dec = SessionMessageHeaderDecoder::decode(&bytes, 0);
+        let dec = SessionMessageHeaderDecoder::decode(&bytes, 0).expect("decode");
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.timestamp(), ts);
@@ -47,7 +47,7 @@ proptest! {
         let bytes = complete.as_bytes_with_header();
 
         // Decode: skip header bytes (8), decode the body
-        let dec = ergo_aeron_cluster::cluster_codec_types::ChallengeDecoder::decode(bytes, 0);
+        let dec = ergo_aeron_cluster::cluster_codec_types::ChallengeDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         let (chal, _) = dec.into_encoded_challenge().unwrap();
@@ -67,7 +67,7 @@ proptest! {
         let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(bytes, 0);
+        let dec = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.leader_member_id(), mid);
@@ -90,7 +90,7 @@ proptest! {
         let complete = enc.detail(detail.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(bytes, 0);
+        let dec = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.leadership_term_id(), ltid);

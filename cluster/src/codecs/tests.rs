@@ -151,7 +151,6 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
 
     // remaining_mut() gives the unwritten region — chain the next encoder
     SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
-        .unwrap()
         .leadership_term_id(7)
         .cluster_session_id(99);
 

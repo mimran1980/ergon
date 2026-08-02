@@ -27,7 +27,7 @@ the encoder. `.fixed(...)` consumes `self` and returns `Self` by value:
 ```text
 // Each `let` breaks the chain and splays the pipeline across the screen.
 // The `.unwrap()` calls are a code smell — the fallible chain should use `?`.
-let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
+let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).fixed(&fields);
 let enc = enc.fuel_figures(2, |g| { ... }).unwrap();
 let enc = enc.manufacturer(b"Honda").unwrap();
 let len = enc.encoded_length_with_header();

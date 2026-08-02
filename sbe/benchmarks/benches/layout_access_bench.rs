@@ -123,7 +123,7 @@ fn encode_wide_fixture() -> Vec<u8> {
     );
     enc.block(block);
     let _ = enc;
-    let dec = WideDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
+    let dec = WideDecoder::try_decode(&buf, 0).unwrap();
     assert_eq!(dec.block().f15(), TARGET_FIELD_VALUE);
     assert_eq!(dec.block_value().f15(), TARGET_FIELD_VALUE);
     buf

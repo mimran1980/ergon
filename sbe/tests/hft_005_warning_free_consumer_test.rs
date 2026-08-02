@@ -95,9 +95,9 @@ edition = "2024"
 #[test]
 fn generated_full_car_has_no_try_wrap_aliases() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "wf_stale");
-    assert!(!src.contains("pub fn try_wrap("));
-    assert!(!src.contains("pub fn try_wrap_and_apply_header("));
+    // try_wrap / try_wrap_and_apply_header are the checked constructors.
+    assert!(src.contains("pub fn try_wrap_and_apply_header("));
     assert!(src.contains("pub fn wrap_and_apply_header("));
-    assert!(src.contains("pub fn decode("));
+    assert!(src.contains("pub fn try_decode("));
     Ok(())
 }

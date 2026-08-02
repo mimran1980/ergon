@@ -48,7 +48,7 @@ impl QuoteDomain {
 ```rust,no_run
   // Encode a message first (the usual flyweight path)
   let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
-  let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
+  let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
       .fixed(&QuoteFixedFields {
           seq: 1,
           some_numbers: [1, 2, 3, 4],

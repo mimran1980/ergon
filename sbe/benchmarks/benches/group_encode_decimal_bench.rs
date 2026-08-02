@@ -56,7 +56,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 .levels(n as u16, |g| {
                     for e in &entries {
                         g.add(|entry| {
-                            entry.price_wire(e.price).qty_wire(e.qty).side(e.side);
+                            entry.price_wire(e.price).qty_wire(e.qty).try_side(e.side);
                             Ok(())
                         })?;
                     }
@@ -71,7 +71,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 .levels(n as u16, |g| {
                     for e in &domain_entries {
                         g.add(|entry| {
-                            entry.price(e.price).qty(e.qty).side(e.side);
+                            entry.try_price(e.price).try_qty(e.qty).try_side(e.side);
                             Ok(())
                         })?;
                     }
@@ -103,7 +103,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
-                                    entry.price_wire(e.price).qty_wire(e.qty).side(e.side);
+                                    entry.price_wire(e.price).qty_wire(e.qty).try_side(e.side);
                                     Ok(())
                                 })?;
                             }
@@ -129,7 +129,7 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
-                                    entry.price(e.price).qty(e.qty).side(e.side);
+                                    entry.try_price(e.price).try_qty(e.qty).try_side(e.side);
                                     Ok(())
                                 })?;
                             }

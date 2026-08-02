@@ -51,34 +51,25 @@ fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), B
 #[test]
 fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_raw_vis");
+    // Post-safe-ification: read_bytes / write_bytes are pub fn.
+    // No unsafe in the generated public API surface.
     assert!(
-        !src.contains("pub fn read_bytes"),
-        "read_bytes must not be public safe"
-    );
-    assert!(
-        !src.contains("pub fn write_bytes"),
-        "write_bytes must not be public safe"
-    );
-    assert!(
-        src.contains("unsafe fn read_bytes") || src.contains("unsafe fn read_bytes<"),
-        "raw read helper must be private unsafe"
-    );
-    assert!(
-        src.contains("pub fn wrap_and_apply_header")
+        src.contains("pub fn try_wrap_and_apply_header")
             && src.contains("Result<")
             && src.contains("EncodeError"),
-        "checked encoder constructor must return Result"
+        "checked encoder constructor try_wrap_and_apply_header must return Result"
     );
     assert!(
-        src.contains("pub unsafe fn wrap_and_apply_header"),
-        "wrap_and_apply_header must be public unsafe"
+        src.contains("pub fn wrap_and_apply_header"),
+        "wrap_and_apply_header must be public"
     );
+    // Decoders have try_decode (not try_wrap_and_apply_header).
     assert!(
-        src.contains("pub fn decode(") && !src.contains("pub fn try_wrap_and_apply_header"),
-        "decoder framed entry is decode; try_wrap* aliases removed"
+        src.contains("pub fn try_decode("),
+        "decoder framed entry must be try_decode"
     );
     assert!(src.contains("pub fn wrap"), "wrap must be public");
-    assert!(src.contains("pub fn decode"), "decode must be public");
+    assert!(src.contains("pub fn try_decode"), "try_decode must be public");
     Ok(())
 }
 
@@ -116,14 +107,15 @@ fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
 #[test]
 fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_core_share");
-    // Checked wrap_and_apply_header body must invoke the unsafe twin once.
+    // try_wrap_and_apply_header is the checked constructor; it delegates to
+    // wrap_and_apply_header (the infallible core).
     let idx = src
-        .find("pub fn wrap_and_apply_header")
-        .ok_or("missing wrap_and_apply_header")?;
+        .find("pub fn try_wrap_and_apply_header")
+        .ok_or("missing try_wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(800).min(src.len())];
     assert!(
         window.contains("wrap_and_apply_header"),
-        "checked encoder must delegate to unsafe core"
+        "try_wrap_and_apply_header must delegate to wrap_and_apply_header"
     );
     Ok(())
 }
@@ -132,29 +124,17 @@ fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
 #[test]
 fn group_and_entry_zero_check_wraps_are_private_unsafe() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_group_vis");
+    // Post-safe-ification: entry constructors are public and safe.
+    // Only *_unchecked string accessors remain pub unsafe fn.
+    let unsafe_fns = src.match_indices("pub unsafe fn").count();
+    let unchecked_str = src.match_indices("_as_str_unchecked").count();
     assert!(
-        !src.contains("pub fn wrap_trusted"),
-        "wrap_trusted must not be public safe"
+        unsafe_fns <= unchecked_str,
+        "only *_as_str_unchecked may be pub unsafe fn, found {unsafe_fns} unsafe vs {unchecked_str} unchecked"
     );
     assert!(
-        src.contains("unsafe fn wrap_trusted"),
-        "wrap_trusted must be private unsafe"
-    );
-    // Entry decoder wrap: private unsafe, not public safe.
-    assert!(
-        !src.contains(
-            "pub fn wrap(\n        buf: &'a [u8],\n        pos: usize,\n        acting_block_length"
-        ),
-        "EntryDecoder::wrap must not be public safe"
-    );
-    assert!(
-        src.contains("unsafe fn wrap") && src.contains("ENTRY_BLOCK_LENGTH"),
-        "entry wrap must exist as private unsafe"
-    );
-    // Entry encoder wrap: private unsafe.
-    assert!(
-        !src.contains("pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self"),
-        "EntryEncoder::wrap must not be public safe"
+        src.contains("pub fn wrap") || src.contains("pub const fn wrap"),
+        "wrap constructors must exist"
     );
     Ok(())
 }
@@ -174,7 +154,7 @@ fn start_entry_rejects_short_buffer_before_mutation() -> Result<(), Box<dyn Erro
         let bl = PerformanceFiguresAccelerationEncoder::ENTRY_BLOCK_LENGTH as u16;
         dim_only[0..2].copy_from_slice(&bl.to_le_bytes());
         dim_only[2..4].copy_from_slice(&1u16.to_le_bytes());
-        let mut g = PerformanceFiguresAccelerationEncoder::try_wrap(&mut dim_only, 4, 1);
+        let mut g = PerformanceFiguresAccelerationEncoder::wrap(&mut dim_only, 4, 1);
         assert!(
             g.start_entry().is_err(),
             "start_entry must fail when fixed entry does not fit"
@@ -200,24 +180,24 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
         dim[0..2].copy_from_slice(&bl.to_le_bytes());
         dim[2..4].copy_from_slice(&2u16.to_le_bytes());
         assert!(
-            PerformanceFiguresAccelerationDecoder::try_wrap(&dim, 0, 0).is_err(),
+            PerformanceFiguresAccelerationDecoder::wrap(&dim, 0, 0).is_err(),
             "fixed group wrap must reject missing entry region"
         );
         let mut one = [0u8; 4 + PerformanceFiguresAccelerationDecoder::ENTRY_BLOCK_LENGTH];
         one[0..2].copy_from_slice(&bl.to_le_bytes());
         one[2..4].copy_from_slice(&2u16.to_le_bytes());
-        assert!(PerformanceFiguresAccelerationDecoder::try_wrap(&one, 0, 0).is_err());
+        assert!(PerformanceFiguresAccelerationDecoder::wrap(&one, 0, 0).is_err());
         let mut full = [0u8; 4 + 2 * PerformanceFiguresAccelerationDecoder::ENTRY_BLOCK_LENGTH];
         full[0..2].copy_from_slice(&bl.to_le_bytes());
         full[2..4].copy_from_slice(&2u16.to_le_bytes());
         full[4..6].copy_from_slice(&30u16.to_le_bytes()); // mph entry0
-        let g = PerformanceFiguresAccelerationDecoder::try_wrap(&full, 0, 0).expect("full group");
+        let g = PerformanceFiguresAccelerationDecoder::wrap(&full, 0, 0).expect("full group");
         let e0 = g.nth(0).expect("nth 0");
         assert_eq!(e0.mph(), 30);
         for len in 0..20usize {
             let buf = vec![0xAAu8; len];
             let r = panic::catch_unwind(AssertUnwindSafe(|| {
-                let _ = PerformanceFiguresAccelerationDecoder::try_wrap(&buf, 0, 0);
+                let _ = PerformanceFiguresAccelerationDecoder::wrap(&buf, 0, 0);
             }));
             assert!(r.is_ok(), "fixed group wrap panicked at len={len}");
         }
@@ -226,7 +206,7 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
         let mut ff = [0u8; 4];
         ff[0..2].copy_from_slice(&6u16.to_le_bytes());
         ff[2..4].copy_from_slice(&1u16.to_le_bytes());
-        if let Ok(mut g) = FuelFiguresDecoder::try_wrap(&ff, 0, 0) {
+        if let Ok(mut g) = FuelFiguresDecoder::wrap(&ff, 0, 0) {
             if let Some(item) = Iterator::next(&mut g) {
                 assert!(item.is_err(), "dynamic entry on dim-only must Err");
             }

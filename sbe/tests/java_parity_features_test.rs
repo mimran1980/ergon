@@ -599,12 +599,12 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
             .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::False, price })
             .legs(0, |_| Ok(()))?.note(b"")?
             .encoded_length_with_header();
-        let _ = MsgDecoder::try_from(&buf[..len])?;
+        let _ = MsgDecoder::try_decode(&buf[..len], 0)?;
         // Truncated: 12 bytes is past header (8) but shorter than full
-        // fixed block (16). try_from returns an error — must not panic.
-        assert!(MsgDecoder::try_from(&buf[..12]).is_err());
+        // fixed block (16). try_decode returns an error — must not panic.
+        assert!(MsgDecoder::try_decode(&buf[..12], 0).is_err());
         // Below header — error, not panic.
-        assert!(MsgDecoder::try_from(&buf[..3]).is_err());
+        assert!(MsgDecoder::try_decode(&buf[..3], 0).is_err());
     "#,
     );
     Ok(())

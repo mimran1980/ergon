@@ -275,7 +275,7 @@ impl CarPayload {
     }
 
     fn encode_ergo(&self, buf: &mut [u8]) -> usize {
-        let mut car = ErgoEnc::try_wrap_and_apply_header(buf, 0).unwrap();
+        let mut car = ErgoEnc::wrap_and_apply_header(buf, 0);
         car.serial_number(self.serial);
         car.model_year(self.year);
         car.available(Self::ergo_bool(self.available));
