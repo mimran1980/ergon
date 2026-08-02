@@ -220,6 +220,9 @@ pub(crate) struct GenerationContext {
     pub unchecked_companions: bool,
     pub domain_objects: bool,
     pub domain_var_data: crate::config::DomainVarData,
+    pub enable_display_debug: bool,
+    pub enable_meta_attributes: bool,
+    pub enable_dispatch: bool,
 }
 
 impl GenerationContext {
@@ -245,6 +248,9 @@ impl GenerationContext {
             unchecked_companions: config.unchecked_companions,
             domain_objects: config.domain_objects,
             domain_var_data: config.domain_var_data,
+            enable_display_debug: config.enable_display_debug,
+            enable_meta_attributes: config.enable_meta_attributes,
+            enable_dispatch: config.enable_dispatch,
         }
     }
 }
@@ -864,6 +870,8 @@ impl Generator {
                 &ir.header_type,
                 &ir.package,
                 multi,
+                self.config.enable_display_debug,
+                self.config.enable_meta_attributes,
                 self.config.domain_objects,
                 self.config.domain_var_data,
                 &self.config.conversions,
@@ -1024,16 +1032,18 @@ impl Generator {
         src.push('\n');
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
-        let any_msg_ts = generate_any_message(
-            &messages,
-            &elements,
-            ir.id,
-            &ir.header_type,
-            &ir.package,
-            &message_markers,
-        );
-        src.push_str(&any_msg_ts.to_string());
-        src.push('\n');
+        if self.config.enable_dispatch {
+            let any_msg_ts = generate_any_message(
+                &messages,
+                &elements,
+                ir.id,
+                &ir.header_type,
+                &ir.package,
+                &message_markers,
+            );
+            src.push_str(&any_msg_ts.to_string());
+            src.push('\n');
+        }
 
         let file =
             syn::parse_str::<syn::File>(&src).expect("generated code must be valid Rust syntax");

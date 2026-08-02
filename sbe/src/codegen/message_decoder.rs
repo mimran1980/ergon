@@ -33,6 +33,8 @@ pub(crate) fn generate_message_decoder(
     header_type: &str,
     schema_name: &str,
     multi_message: bool,
+    enable_display_debug: bool,
+    enable_meta_attributes: bool,
     domain_objects: bool,
     domain_var_data: crate::config::DomainVarData,
     conversions: &[crate::ConversionSelector],
@@ -1314,7 +1316,11 @@ pub(crate) fn generate_message_decoder(
         }
     });
 
-    let display_ts = generate_decoder_display(msg, domain_types);
+    let display_ts = if enable_display_debug {
+        generate_decoder_display(msg, domain_types)
+    } else {
+        proc_macro2::TokenStream::new()
+    };
     ts.extend(display_ts);
 
     for (gi, g) in msg.groups.iter().enumerate() {
