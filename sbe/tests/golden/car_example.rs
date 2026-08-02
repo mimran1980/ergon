@@ -1142,7 +1142,7 @@ impl<'a> CarDecoder<'a> {
     /// min_readable_fixed_extent(acting_version))` must not overflow and
     /// must be ≤ `buf.len()`.
     #[inline]
-    pub fn wrap_unchecked(
+    pub unsafe fn wrap_unchecked(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -1209,7 +1209,7 @@ impl<'a> CarDecoder<'a> {
     /// Header and version-readable fixed body for this template must
     /// be fully in-bounds at `pos`.
     #[inline]
-    pub fn decode_unchecked(
+    pub unsafe fn decode_unchecked(
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4871,7 +4871,7 @@ impl<'a> CarEncoder<'a> {
     /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
     /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
     #[inline]
-    pub fn wrap_unchecked(
+    pub unsafe fn wrap_unchecked(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
@@ -4904,7 +4904,7 @@ impl<'a> CarEncoder<'a> {
     /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
     /// ≤ `buf.len()` for the lifetime of the returned encoder.
     #[inline]
-    pub fn wrap_and_apply_header_unchecked(
+    pub unsafe fn wrap_and_apply_header_unchecked(
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
@@ -7616,9 +7616,9 @@ impl<'a> AnyMessage<'a> {
         match template_id {
             CarSchema::TEMPLATE_ID => {
                 Ok(
-                    Self::Car(
-                        CarDecoder::wrap_unchecked(buf, pos, block_length, version),
-                    ),
+                    Self::Car(unsafe {
+                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
+                    }),
                 )
             }
             _ => {

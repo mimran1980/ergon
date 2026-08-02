@@ -385,7 +385,7 @@ pub(crate) fn generate_message_decoder(
         /// min_readable_fixed_extent(acting_version))` must not overflow and
         /// must be ≤ `buf.len()`.
         #[inline]
-        pub fn wrap_unchecked(
+        pub unsafe fn wrap_unchecked(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -479,7 +479,7 @@ pub(crate) fn generate_message_decoder(
             /// Header and version-readable fixed body for this template must
             /// be fully in-bounds at `pos`.
             #[inline]
-            pub fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Still validates schema/template identity (protocol, not memory).
                 let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
                 let header = #hp(header_bytes);

@@ -352,7 +352,7 @@ pub(crate) fn generate_message_encoder(
         /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
         /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        pub fn wrap_unchecked(
+        pub unsafe fn wrap_unchecked(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
@@ -391,7 +391,7 @@ pub(crate) fn generate_message_encoder(
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
         /// ≤ `buf.len()` for the lifetime of the returned encoder.
         #[inline]
-        pub fn wrap_and_apply_header_unchecked(
+        pub unsafe fn wrap_and_apply_header_unchecked(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
