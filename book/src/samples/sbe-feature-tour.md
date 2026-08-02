@@ -17,8 +17,8 @@ no `sbe_mod!` needed. See [Build Patterns](../build-patterns.md).
 
 | Selector | Config | Decode API | Encode API |
 |----------|--------|------------|------------|
-| `BooleanType` | `with_bool_domain_type()` → `bool` | `dec.available()` | `enc.available(true)` |
-| `UTCTimestamp` | `with_domain_type` → chrono | `dec.timestamp()` | `enc.timestamp(t)` |
+| `BooleanType` | `with_bool_domain_type()` → `bool` | `dec.try_available()?` | `enc.try_available(true)?` |
+| `UTCTimestamp` | `with_domain_type` → chrono | `dec.try_timestamp()?` | `enc.try_timestamp(t)?` |
 | `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
 
 Runnable proof for the Decimal row: **`demo_conversion_only`** in

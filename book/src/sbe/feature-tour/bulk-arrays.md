@@ -5,7 +5,7 @@ Generated bulk helpers avoid per-element boilerplate, while constants and
 
 ```rust,no_run
   let mut buf = [0u8; QuoteEncoder::compute_length_with_header(0, 0)];
-  let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+  let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
       .fixed(&QuoteFixedFields {
           seq: 7,
           some_numbers: [1, 2, 3, 4],

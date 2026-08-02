@@ -31,7 +31,7 @@ fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FixedOnlyEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.id(42).price(10000).qty(10).side(Side::Buy);
         let encoded = enc.as_bytes_with_header();
 
@@ -63,7 +63,7 @@ fn conformance_flat_group_known_known() -> Result<(), Box<dyn std::error::Error>
         let mut buf_storage = [0u8; 8192];
 assert!(body_len <= buf_storage.len());
 let mut buf = &mut buf_storage[..body_len];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(42);
         let complete = enc.bids(2, |bids| {
             bids.add(|e| { e.price(100i64).qty(10i32); Ok(()) })?;
@@ -114,7 +114,7 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(99);
         let complete = enc.bids(1, |bids| {
             bids.add(|e| { e.price(10i64).qty(5i32); Ok(()) })?;
@@ -155,7 +155,7 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(7);
         let complete = enc.bids_unknown_size(|bids| {
             bids.add(|e| { e.price(1i64).qty(2i32); Ok(()) })?;
@@ -207,7 +207,7 @@ fn conformance_length_builder_invariants() -> Result<(), Box<dyn std::error::Err
         let mut buf_storage = [0u8; 8192];
 assert!(body_len <= buf_storage.len());
 let mut buf = &mut buf_storage[..body_len];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(42);
         let complete = enc.bids(2, |b| {
             b.add(|e| { e.price(1).qty(2); Ok(()) })?;
@@ -227,7 +227,7 @@ let mut buf = &mut buf_storage[..body_len];
             "with_header > body");
 
         let mut buf2 = [0u8; 4096];
-        let mut enc2 = NestedGroupEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
+        let mut enc2 = NestedGroupEncoder::wrap_and_apply_header(&mut buf2, 0)?;
         enc2.exchange_id(0);
         let complete2 = enc2.bids(1, |bids| {
             bids.add(|entry| {
@@ -258,7 +258,7 @@ let mut buf = &mut buf_storage[..body_len];
         assert!(complete2.encoded_length_with_header() > 0, "NestedGroup length > 0");
 
         let mut buf3 = [0u8; 4096];
-        let mut enc3 = PureFixedNestedEncoder::try_wrap_and_apply_header(&mut buf3, 0)?;
+        let mut enc3 = PureFixedNestedEncoder::wrap_and_apply_header(&mut buf3, 0)?;
         enc3.id(0);
         let complete3 = enc3.records(1, |records| {
             records.add(|entry| {
@@ -288,7 +288,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut enc = NestedGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = NestedGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.exchange_id(8888);
         let complete = enc.bids(2, |bids| {
             bids.add(|entry| {
@@ -385,7 +385,7 @@ fn conformance_all_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf_storage = [0u8; 8192];
 assert!(body_len <= buf_storage.len());
 let mut buf = &mut buf_storage[..body_len];
-        let mut enc = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = AllTypesEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.char_field(b'A')
             .int8_field(-7i8)
             .uint16_field(300u16)
@@ -447,7 +447,7 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut enc = PureFixedNestedEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = PureFixedNestedEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.id(42u64);
         let complete = enc.records(2, |records| {
             records.add(|entry| {
@@ -524,7 +524,7 @@ fn conformance_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf_storage = [0u8; 8192];
 assert!(body_len <= buf_storage.len());
 let mut buf = &mut buf_storage[..body_len];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.symbol(0);
         let complete = enc.bids(0, |_| Ok(()))?
             .asks(0, |_| Ok(()))?
@@ -557,7 +557,7 @@ fn conformance_var_data_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf1_storage = [0u8; 8192];
 assert!(body_len_0 <= buf1_storage.len());
 let mut buf1 = &mut buf1_storage[..body_len_0];
-        let mut enc1 = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf1, 0)?;
+        let mut enc1 = FlatGroupEncoder::wrap_and_apply_header(&mut buf1, 0)?;
         enc1.symbol(1);
         let complete1 = enc1.bids(0, |_| Ok(()))?
             .asks(0, |_| Ok(()))?
@@ -576,7 +576,7 @@ let mut buf1 = &mut buf1_storage[..body_len_0];
         let mut buf2_storage = [0u8; 8192];
 assert!(body_len_2 <= buf2_storage.len());
 let mut buf2 = &mut buf2_storage[..body_len_2];
-        let mut enc2 = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
+        let mut enc2 = FlatGroupEncoder::wrap_and_apply_header(&mut buf2, 0)?;
         enc2.symbol(2);
         let complete2 = enc2.bids(0, |_| Ok(()))?
             .asks(0, |_| Ok(()))?
@@ -614,12 +614,12 @@ fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf1 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc1 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf1, 0)?;
+        let mut enc1 = FixedOnlyEncoder::wrap_and_apply_header(&mut buf1, 0)?;
         enc1.id(42).price(10000).qty(10).side(Side::Buy);
         let bytes1 = enc1.as_bytes_with_header();
 
         let mut buf2 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc2 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
+        let mut enc2 = FixedOnlyEncoder::wrap_and_apply_header(&mut buf2, 0)?;
         enc2.id(42).price(10000).qty(10).side(Side::Buy);
         let bytes2 = enc2.as_bytes_with_header();
 
@@ -644,7 +644,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
         &src,
         r#"
         let mut tiny = [0u8; 4];
-        let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);
+        let result = FlatGroupEncoder::wrap_and_apply_header(&mut tiny, 0);
         assert!(result.is_err(), "expected BufferTooShort");
         match result.unwrap_err() {
             sbe_rt::EncodeError::BufferTooShort { needed, .. } => {
@@ -690,7 +690,7 @@ fn conformance_error_group_full() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(42);
         let result = enc.bids(1, |bids| {
             bids.add(|e| { e.price(1).qty(2); Ok(()) })?;
@@ -721,7 +721,7 @@ fn conformance_error_group_count_mismatch() -> Result<(), Box<dyn std::error::Er
         // Encode a PureFixedNested with mismatched group count
         // (declared 1 record with 2 tags, only provide 1)
         let mut buf = [0u8; 4096];
-        let mut enc = PureFixedNestedEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let mut enc = PureFixedNestedEncoder::wrap_and_apply_header(&mut buf, 0)?;
         enc.id(0);
         let result = enc.records(1, |records| {
             records.add(|entry| {
@@ -758,7 +758,7 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(1);
         let complete = enc.bids(0, |_| Ok(())).unwrap()
             .asks(0, |_| Ok(())).unwrap()

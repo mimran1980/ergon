@@ -85,19 +85,31 @@ pub(crate) fn generate_group_encoder(
 
     let mut null_stmts = proc_macro2::TokenStream::new();
     for f in &g.fields {
-        if f.presence == Presence::Optional {
-            if let Some(null_val) = f.null_value {
-                let size = f.field_type.size();
-                let null_val_expr: syn::Expr = syn::parse_str(&format!("{null_val}_u64")).unwrap();
-                let f_offset = syn::Index::from(f.offset);
-                let size_lit = syn::LitInt::new(&size.to_string(), span);
-                null_stmts.extend(quote::quote! {
-                    let null_bytes = #null_val_expr.#to_endian();
-                    let offset = self.pos + #f_offset;
-                    self.buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
-                });
-            }
+        if f.presence != Presence::Optional {
+            continue;
         }
+        let Some(null_val) = f.null_value else {
+            continue;
+        };
+        let size = f.field_type.size();
+        if size == 0 || size > 8 {
+            continue;
+        }
+        // Exact width in schema endianness (HFT-002) — not a full u64 array.
+        let null_bytes = super::nullification::null_sentinel_bytes(null_val, size, byte_order);
+        let f_offset = syn::Index::from(f.offset);
+        let size_lit = syn::LitInt::new(&size.to_string(), span);
+        let lits: Vec<syn::LitInt> = null_bytes[..size]
+            .iter()
+            .map(|b| syn::LitInt::new(&b.to_string(), span))
+            .collect();
+        null_stmts.extend(quote::quote! {
+            {
+                let null_bytes: [u8; #size_lit] = [#(#lits),*];
+                let offset = self.pos + #f_offset;
+                self.buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+            }
+        });
     }
 
     let mut add_body = quote::quote! {
@@ -126,7 +138,8 @@ pub(crate) fn generate_group_encoder(
         // on `self`. The block scope drops __buf before `self.pos` is written.
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
+            // SAFETY: capacity check above proved pos+block_len ≤ buf.len().
+            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }
@@ -179,10 +192,26 @@ pub(crate) fn generate_group_encoder(
                         attempted: (self.written as u32) + 1,
                     });
                 }
+                let block_len = Self::ENTRY_BLOCK_LENGTH;
+                if self
+                    .pos
+                    .checked_add(block_len)
+                    .map(|end| end > self.buf.len())
+                    .unwrap_or(true)
+                {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        needed: block_len,
+                        available: self.buf.len().saturating_sub(self.pos),
+                    });
+                }
                 let entry_pos = self.pos;
-                self.pos += #block_len_lit;
+                self.pos += block_len;
                 self.written += 1;
-                Ok(#entry_enc_ident::wrap(&mut self.buf[entry_pos..], 0))
+                // SAFETY: capacity check above proved entry_pos..entry_pos+block_len
+                // is in-bounds; entry wrap only writes fixed fields in that region.
+                Ok(unsafe {
+                    #entry_enc_ident::wrap(&mut self.buf[entry_pos..self.pos], 0)
+                })
             }
         }
     });
@@ -374,8 +403,14 @@ pub(crate) fn generate_group_encoder(
     entry_methods.extend(quote::quote! {
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
+        /// Private entry wrap after the group encoder proved the fixed block
+        /// region fits (via `add` / `start_entry` capacity checks).
+        ///
+        /// # Safety
+        /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
+        /// for the lifetime of the returned encoder.
         #[inline]
-        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+        unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
             Self {
                 buf,
                 entry_start: pos,
@@ -586,11 +621,26 @@ pub(crate) fn generate_group_encoder(
         let pfx = syn::LitInt::new(&prefix_sz.to_string(), span);
         let len_ty = syn::Ident::new(&rust_type(len_type), span);
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
+        let schema_max_check = if let Some(max) = vd.max_length {
+            let max_lit = syn::LitInt::new(&max.to_string(), span);
+            quote::quote! {
+                if data.len() > #max_lit {
+                    return Err(sbe_rt::EncodeError::VarDataTooLong {
+                        field: #vd_name_lit,
+                        max_length: #max_lit,
+                        actual: data.len(),
+                    });
+                }
+            }
+        } else {
+            quote::quote! {}
+        };
 
         entry_methods.extend(quote::quote! {
             #[inline]
             #[must_use]
             pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
+                #schema_max_check
                 let needed = #pfx + data.len();
                 if self.pos + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len().saturating_sub(self.pos) });

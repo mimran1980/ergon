@@ -7,7 +7,7 @@ makes this explicit in the type system with two entry-point families:
 
 - `try_from(&[u8])` — validates the message header and fixed block length
   against the schema before giving you a decoder.
-- `try_wrap_and_apply_header(&mut [u8], offset)` — validates and writes the
+- `wrap_and_apply_header(&mut [u8], offset)` — validates and writes the
   SBE message header before giving you an encoder.
 - `verify()` — walks the complete dynamic tail (groups, var-data) and returns
   an error if any offset or length is out of bounds.

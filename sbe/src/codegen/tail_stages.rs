@@ -20,6 +20,7 @@ pub(crate) fn generate_owner_consuming_stages(
     byte_order: ByteOrder,
     groups: &[OwnerTailGroup],
     vardata: &[OwnerTailVarData],
+    enable_dispatch: bool,
 ) -> proc_macro2::TokenStream {
     let total_tail = groups.len() + vardata.len();
     if total_tail == 0 {
@@ -272,28 +273,8 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         }
 
-        // Nested-message decode convenience: into_<field>_as_message()
-        // delegates to into_<field>() then AnyMessage::decode_frame.
-        let as_msg_ident = syn::Ident::new(&format!("into_{}_as_message", vd.accessor_snake), span);
-        ts.extend(quote::quote! {
-            impl<'a> #current_stage<'a> {
-                /// Consume this stage, decode the var-data field as a nested
-                /// SBE message via `AnyMessage::decode_frame`, and advance
-                /// to the next stage.
-                #[inline]
-                pub fn #as_msg_ident(self) -> Result<(DecodedFrame<'a>, #next_stage<'a>), sbe_rt::DecodeError> {
-                    let (data, next) = self.#into_ident()?;
-                    let frame = AnyMessage::decode_frame(data, 0, data.len())?;
-                    Ok((frame, next))
-                }
-            }
-        });
-
-        // Scoped fallible combinators: try_<data> and try_<data>_as_message
-        // delegate to the manual consuming methods and propagate caller errors.
+        // Scoped fallible combinator: try_<data> always available.
         let try_data_ident = syn::Ident::new(&format!("try_{}", vd.accessor_snake), span);
-        let try_data_as_msg_ident =
-            syn::Ident::new(&format!("try_{}_as_message", vd.accessor_snake), span);
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Fallible scoped var-data accessor. Calls the closure with
@@ -311,25 +292,44 @@ pub(crate) fn generate_owner_consuming_stages(
                     f(data)?;
                     Ok(next)
                 }
-
-                /// Fallible scoped nested-message accessor. Decodes the
-                /// var-data as an SBE message, calls the closure with the
-                /// decoded frame, and returns the next stage on success.
-                #[inline]
-                pub fn #try_data_as_msg_ident<E, F>(
-                    self,
-                    f: F,
-                ) -> Result<#next_stage<'a>, E>
-                where
-                    E: From<sbe_rt::DecodeError>,
-                    F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
-                {
-                    let (frame, next) = self.#as_msg_ident()?;
-                    f(frame)?;
-                    Ok(next)
-                }
             }
         });
+
+        // Nested-message helpers need AnyMessage/DecodedFrame (dispatch surface).
+        if enable_dispatch {
+            let as_msg_ident =
+                syn::Ident::new(&format!("into_{}_as_message", vd.accessor_snake), span);
+            let try_data_as_msg_ident =
+                syn::Ident::new(&format!("try_{}_as_message", vd.accessor_snake), span);
+            ts.extend(quote::quote! {
+                impl<'a> #current_stage<'a> {
+                    /// Consume this stage, decode the var-data field as a nested
+                    /// SBE message via `AnyMessage::decode_frame`, and advance
+                    /// to the next stage.
+                    #[inline]
+                    pub fn #as_msg_ident(self) -> Result<(DecodedFrame<'a>, #next_stage<'a>), sbe_rt::DecodeError> {
+                        let (data, next) = self.#into_ident()?;
+                        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+                        Ok((frame, next))
+                    }
+
+                    /// Fallible scoped nested-message accessor.
+                    #[inline]
+                    pub fn #try_data_as_msg_ident<E, F>(
+                        self,
+                        f: F,
+                    ) -> Result<#next_stage<'a>, E>
+                    where
+                        E: From<sbe_rt::DecodeError>,
+                        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
+                    {
+                        let (frame, next) = self.#as_msg_ident()?;
+                        f(frame)?;
+                        Ok(next)
+                    }
+                }
+            });
+        }
     }
 
     for (gi, tg) in groups.iter().enumerate() {
@@ -418,6 +418,7 @@ pub(crate) fn generate_decoder_consuming_stages(
     byte_order: ByteOrder,
     _multi_message: bool,
     group_unique_names: &[String],
+    enable_dispatch: bool,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let stage_prefix = format!("{name}Decoder");
@@ -459,6 +460,7 @@ pub(crate) fn generate_decoder_consuming_stages(
         byte_order,
         &groups,
         &vardata,
+        enable_dispatch,
     )
 }
 
@@ -470,6 +472,7 @@ pub(crate) fn generate_entry_consuming_stages(
     elements: &SchemaElements,
     name: &str,
     byte_order: ByteOrder,
+    enable_dispatch: bool,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let entry_prefix = format!("{name}EntryDecoder");
@@ -513,5 +516,6 @@ pub(crate) fn generate_entry_consuming_stages(
         byte_order,
         &groups,
         &vardata,
+        enable_dispatch,
     )
 }

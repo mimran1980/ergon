@@ -14,7 +14,7 @@ let fields = CarFixedFields {
     extras: OptionalExtras::default(),
     engine: Engine::new(2000, 4, *b"123", 0i8, false.into(), Booster::new(BoostType::TURBO, 210)),
 };
-let n = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+let n = CarEncoder::wrap_and_apply_header(&mut buf, 0)?
     .fixed(&fields)
     .fuel_figures(0, |_| Ok(()))?
     .performance_figures(0, |_| Ok(()))?

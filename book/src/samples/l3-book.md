@@ -12,8 +12,8 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 **Generated API (concrete):**
 
 ```text
-enc.price(rust_decimal::Decimal::new(100, 0));
-let p: rust_decimal::Decimal = dec.price();
+enc.try_price(rust_decimal::Decimal::new(100, 0))?;
+let p: rust_decimal::Decimal = dec.try_price()?;
 let ts: DateTime<Utc> = dec.exchange_timestamp();
 ```
 

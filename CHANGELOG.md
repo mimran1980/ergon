@@ -2,36 +2,42 @@
 
 ## [Unreleased]
 
-Work toward **0.1.10** (branch `feat/0.1.10`). Everything below landed **after**
-crates.io / tag `v0.1.9` (`0b008696`).
+## [0.2.0] — unreleased
+
+Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_2.md` and
+`docs/SBE_COMPATIBILITY.md`.
+
+### Breaking
+- Safe constructors are fallible: `wrap` / `wrap_and_apply_header` / `decode` return `Result`; `try_wrap*` removed
+- Zero-check twins are `unsafe fn *_unchecked` (doc-hidden until keep gate)
+- Public safe `read_bytes_unchecked` / `write_bytes_unchecked` removed (private unsafe only)
+- Domain DTOs: no panicking `From`; use `try_from_decoder`; domain converters are `try_*`
+- `LossyStrings` no longer invents empty strings for invalid UTF-8 (`InvalidUtf8`)
 
 ### Fixed
-- **Size knobs actually take effect.** In 0.1.9, `with_display_debug`,
-  `with_meta_attributes`, and `with_dispatch` only set config fields — codegen
-  ignored them (defaults always applied). Codegen now honors all three; unit
-  tests pin omit-on-`false` behaviour.
-- `deny.toml` allows Apache-2.0 and common Rust-ecosystem licenses; drop unused
-  BSD-2-Clause exception
-- CI thin bench compile-check lane restored
+- Version-aware decoder min fixed extent (header-only / blockLength=0 no longer UB)
+- Optional null sentinels: exact width + endian for message and group fields
+- Group var-data schema `maxLength` enforced; domain group counts use `try_from`
 
 ### Added
+- `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_2.md`
+- `hft_001_soundness_test` hostile/safe-constructor gates
+- `GenerationProfile::{Full, HftLean}` preset (`GenerationConfig::profile`)
+- HFT-006 typestate compile-fail + size_of/Send budgets; HFT-008 checked/unchecked
+  identity + keep-sample harness; HFT-009 lean profile matrix tests
 - Book: type-state design note, API freeze decisions, Coming from sbe-tool,
   Road to 1.0, generated-code showcase, benchmarks methodology split
-- Generated rustdoc: `wrap`/`try_wrap*` message-start vs sbe-tool body-offset
-  callout; `*FixedFields` intentionally exhaustive; `MAX_ENCODED_LENGTH`
-  guidance (stack vs EncodedLength builders)
 - Crate READMEs and crate-level rustdoc link the ergo-sbe book (visible on docs.rs)
 
 ### Changed
+- Size knobs `with_display_debug` / `with_meta_attributes` / `with_dispatch` now
+  honored by codegen (were API-only no-ops in 0.1.9)
 - `with_unchecked_companions` reframed as supported post-validation opt-in
-  (HFT hot path), not bench-only
-- Crate-root clippy allows burned down to five justified items; remaining
-  noise scoped per module
-- Generation-config book table updated for defaults and size knobs
+- Crate-root clippy allows burned down; XML parser split to modules
+- `Cargo.lock` untracked (library workspace)
 
 ### Internal
-- XML parser split: `sbe/src/xml.rs` → `sbe/src/xml/` modules
-- `Cargo.lock` left untracked again (library workspace; crates.io ignores it)
+- `deny.toml` Apache-2.0 / ecosystem licenses; CI thin bench lane restored
 
 ## [0.1.9] — 2026-08-01
 
@@ -45,7 +51,7 @@ commits).
 - **Config size knobs (API surface only):** `with_display_debug(bool)`,
   `with_meta_attributes(bool)`, `with_dispatch(bool)` — defaults true in config.
   **Caveat:** 0.1.9 codegen did not read these flags, so `false` was a no-op;
-  real omit-on-disable behaviour is in Unreleased / 0.1.10.
+  real omit-on-disable behaviour ships in 0.2.0.
 - **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
 - **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
 - Nightly CI → weekly schedule
@@ -110,7 +116,7 @@ commits).
 - **Code style sweep** across samples, examples, and book:
   `EncodedLength::new()` → `Encoder::compute_length()`,
   `BooleanType::True`/`False` → `true.into()`/`false.into()`,
-  `try_wrap_and_apply_header` → `wrap_and_apply_header` on known-size buffers.
+  `wrap_and_apply_header` → `wrap_and_apply_header` on known-size buffers.
 
 ## [0.1.7] — 2026-07-30
 
@@ -289,7 +295,7 @@ commits).
   using noisy nanosecond ratios as merge gates. Strict ratio gates remain local
   and dedicated-stable-runner checks.
 - Benchmarks use `wrap_and_apply_header` (infallible) instead of
-  `try_wrap_and_apply_header` — sbe-tool's `header()` does no validation,
+  `wrap_and_apply_header` — sbe-tool's `header()` does no validation,
   so ergon's validation was extra work.
 - Every maintained ergon/sbe-tool benchmark now has a strict `1.00` ceiling
   under both LTO and no LTO. A repeatable sbe-tool win blocks the change until

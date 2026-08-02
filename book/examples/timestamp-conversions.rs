@@ -28,11 +28,11 @@ fn _nanos_to_dt(wire_nanos: u64) -> Option<DateTime<Utc>> {
 // Encode a timestamp (field configured with UTCTimestamp domain type):
 let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 let now = DateTime::from_timestamp(1_720_000_000, 0).unwrap();
-let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)?
     .fixed(&HeartbeatFixedFields { sequence: 7, timestamp: 1_720_000_000_000_000_000 })
     .encoded_length_with_header();
-// Decode — domain type gives DateTime<Utc> directly:
+// Decode — domain type via fallible try_* (0.2 / HFT-003):
 let dec = HeartbeatDecoder::try_from(&buf[..len])?;
-let ts: DateTime<Utc> = dec.timestamp();
+let ts: DateTime<Utc> = dec.try_timestamp()?;
 assert!(ts.timestamp_nanos_opt().is_some());
 // ANCHOR_END: timestamp_encode_decode

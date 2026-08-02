@@ -80,6 +80,24 @@ name = "sbe_tool_wire_parity_test"
 [[test]]
 name = "sbe_tool_multi_schema_wire_parity_test"
 
+[[test]]
+name = "hft_001_soundness_test"
+
+[[test]]
+name = "hft_stale_interface_test"
+
+[[test]]
+name = "hft_006_typestate_budgets_test"
+
+[[test]]
+name = "hft_008_checked_unchecked_test"
+
+[[test]]
+name = "hft_009_profile_test"
+
+[[test]]
+name = "hft_005_warning_free_consumer_test"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"

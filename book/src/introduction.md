@@ -1,7 +1,9 @@
 # Introduction
 
-`ergo-sbe` generates **binary-compatible**, zero-allocation Rust codecs from
-[Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE) schemas.
+`ergo-sbe` generates zero-allocation Rust codecs from
+[Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/) (SBE)
+schemas with **official-SBE wire fidelity** inside the published profile
+([compatibility](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)).
 Wire-order safety is enforced at **compile time** — calling methods out of schema
 order is a type error. All 15 maintained parity benchmarks pass at or below the
 `1.00×` sbe-tool ceiling under both LTO profiles (0.1.8 release).
@@ -29,7 +31,7 @@ working codec. All API surfaces are covered in the
 | **Wire-order safety** | Compile-time type-state stages — calling `asks` before `bids` is a type error, not a runtime bug |
 | **Exact buffer sizing** | `compute_length_with_header(…)` gives the exact byte count before you encode — no oversize scratch buffers, works directly with Aeron `try_claim` |
 | **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
-| **Trust boundary** | `try_from` / `try_wrap` for untrusted input; `wrap` for trusted — explicit in the type system |
+| **Trust boundary** | `decode` / `try_from` / `wrap` return `Result` and validate extents; private zero-check cores only after HFT-008 keep |
 | **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
 | **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
 | **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 22-23% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles |
@@ -42,8 +44,9 @@ wire compatibility, failure handling, and performance for your own schemas.
 Exit criteria: [Road to 1.0](project/road-to-1.0.md).
 
 ergo-sbe parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
-(SBE) schemas and generates **Rust codecs that are binary-compatible with the
-official SBE wire format** (header, field layout, groups, var-data, byte order).
+(SBE) schemas and generates Rust codecs that match the **official SBE wire
+layout** for the features listed in the compatibility profile (header, field
+layout, groups, var-data, byte order — see `docs/SBE_COMPATIBILITY.md`).
 
 It is **not** a line-for-line port of the java/rust sbe-tool stubs. The
 goals for the generated API are:
@@ -54,7 +57,7 @@ goals for the generated API are:
 3. **Easier to read** — nested structure looks like the schema, not a pile of
    temporary handles
 
-Still built for **low-latency** and **binary-compatible** SBE. The style uses
+Still built for **low-latency** official-SBE wire work. The style uses
 **named stage structs** (not `Encoder<State>` generics), **closures + method
 chaining** for groups, checked entry points, version-aware accessors, and
 optional domain/conversion helpers.

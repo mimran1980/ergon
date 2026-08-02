@@ -15,9 +15,9 @@ is the artifact for API shape review.
 **Decision: keep ergon semantics.** One offset works for encode wrap,
 `wrap_and_apply_header`, and claim buffers. sbe-tool refugees who pass `8`
 for a frame at zero will mis-align every field — that is the #1 migration
-trap. Loud rustdoc on every generated `wrap` / `try_wrap*` documents this;
-the book chapter [Coming from sbe-tool](../getting-started/from-sbe-tool.md)
-is the full mapping.
+trap. Loud rustdoc on every generated `wrap` / `wrap_and_apply_header` /
+`decode` documents this; the book chapter
+[Coming from sbe-tool](../getting-started/from-sbe-tool.md) is the full mapping.
 
 ## 2. `*FixedFields` is intentionally exhaustive
 
@@ -48,8 +48,9 @@ Rationale: [Type-state design note](type-state.md).
 - Default generation can enable companions via
   `GenerationConfig::with_unchecked_companions(true)`.
 - Safety contract lives on that method and in generated docs: validate with
-  `try_from` / `try_wrap` / `verify` first; do not carry unchecked access
-  across stage transitions; garbage-in still yields garbage values (not UB).
+  `decode` / `try_from` / `wrap` / `verify` first; do not carry unchecked
+  access across stage transitions; calling field `_unchecked` without a
+  proven extent is UB (not “safe garbage”).
 - HFT hot loops after validation are an **intended** use case. Checked
   accessors remain the default API.
 

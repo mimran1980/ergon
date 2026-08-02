@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn test_controlled_session_message_dispatch() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.cluster_session_id(42).leadership_term_id(1).timestamp(100);
         let payload = b"hello";
         let data = &buf[..SessionMessageHeaderEncoder::ENCODED_LENGTH];
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn test_controlled_session_filter_drops_foreign_session() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.cluster_session_id(99).leadership_term_id(1).timestamp(0);
         let mut full = Vec::from(&buf[..SessionMessageHeaderEncoder::ENCODED_LENGTH]);
         full.extend_from_slice(b"x");
@@ -325,7 +325,7 @@ mod tests {
         let eps = b"0=localhost:9000";
         let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
         let mut buf = vec![0u8; len];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.leadership_term_id(1).cluster_session_id(99).leader_member_id(0);
         let _ = enc.ingress_endpoints(eps)?;
         struct Rec {

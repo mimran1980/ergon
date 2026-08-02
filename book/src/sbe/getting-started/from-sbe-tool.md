@@ -1,8 +1,12 @@
 # Coming from sbe-tool
 
 Side-by-side mapping for teams migrating from the official Simple Binary
-Encoding Rust generator (`sbe-tool`). ergo-sbe is wire-compatible with
-sbe-tool; the **API shape** is intentionally different.
+Encoding Rust generator (`sbe-tool`). Within the [published SBE profile]
+(../design-notes/feature-matrix.md) and
+[`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md),
+ergo-sbe aims for official-SBE wire fidelity with sbe-tool; the **API shape**
+is intentionally different. Do not read this as unqualified “binary
+compatible with every SBE feature.”
 
 ## The #1 trap: wrap offset
 
@@ -19,7 +23,8 @@ sbe-tool; the **API shape** is intentionally different.
 ```
 
 Passing sbe-tool’s `8` into ergo-sbe for a frame at zero **mis-aligns every
-field**. Generated rustdoc on `wrap` / `try_wrap*` repeats this callout.
+field**. Generated rustdoc on `wrap` / `wrap_and_apply_header` / `decode`
+repeats this callout.
 
 ## Header modes (fair comparison table)
 
@@ -69,10 +74,9 @@ truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
 ## Decode entry
 
 Both ecosystems typically wrap decoders at the **body** for direct field
-access after the header is known. ergon’s
-`try_wrap_and_apply_header(buf, message_start)` validates template/schema at
-**message start**. Prefer `try_from` / `try_wrap*` for untrusted input;
-infallible `wrap` only after a trust boundary. See
+access after the header is known. ergon’s `decode` / `try_from` /
+`wrap(buf, message_start, …)` validate at **message start** and return
+`Result`. There is no public `try_wrap*` alias. See
 [Trust boundaries](../feature-tour/trust-boundaries.md).
 
 ## Version handling
@@ -94,9 +98,10 @@ reading mixed-version streams.
 ## `_unchecked` accessors
 
 Optional via `with_unchecked_companions(true)`. Supported **after**
-`try_from` / `try_wrap` / `verify` (or equivalent). Not a bench-only secret;
-HFT hot loops after validation are intended. Safety contract is on
-`GenerationConfig::with_unchecked_companions`.
+`decode` / `try_from` / `wrap` / `verify` (or equivalent). Not a bench-only
+secret; HFT hot loops after validation are intended. Calling field
+`_unchecked` without a proven extent is a programmer bug (UB on OOB). Safety
+contract is on `GenerationConfig::with_unchecked_companions`.
 
 ## Further reading
 

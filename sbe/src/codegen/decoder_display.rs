@@ -29,7 +29,7 @@ pub(crate) fn generate_decoder_display(
             "limit",
             "buffer",
             "wrap",
-            "try_wrap_and_apply_header",
+            "decode",
             "header",
             "encoded_length",
             "encoded_length_with_header",
@@ -43,7 +43,12 @@ pub(crate) fn generate_decoder_display(
             "rewind",
         ];
         let snake = to_snake_case(&f.name);
-        let f_ident = resolve_field_ident(&snake, &None, DECODER_RESERVED);
+        // Domain-converted fields use `try_<name>` (HFT-003); Display must not
+        // call the old infallible name.
+        let wire_name = find_domain_type(f, domain_types).map(|_| format!("{snake}_wire"));
+        let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
+        let domain_try = find_domain_type(f, domain_types)
+            .map(|_| syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site()));
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
@@ -59,20 +64,36 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {{:?}}");
-                // {:?} renders Option<T> without T: Display bound, switch to {} if all field types gain Display
-                body.extend(quote::quote! {
-                    if #in_bounds {
-                        let v = self.#f_ident();
-                        write!(f, #fmt_str, v)?;
-                    }
-                });
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                debug_body.extend(quote::quote! {
-                    if #in_bounds {
-                        let v = self.#f_ident();
-                        d.field(#name_lit, &v);
-                    }
-                });
+                if let Some(try_ident) = &domain_try {
+                    body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Ok(v) = self.#try_ident() {
+                                write!(f, #fmt_str, v)?;
+                            }
+                        }
+                    });
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Ok(v) = self.#try_ident() {
+                                d.field(#name_lit, &v);
+                            }
+                        }
+                    });
+                } else {
+                    body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            write!(f, #fmt_str, v)?;
+                        }
+                    });
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            d.field(#name_lit, &v);
+                        }
+                    });
+                }
                 out_idx += 1;
             }
             FieldType::Enum {
@@ -82,12 +103,36 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
-                if f.since_version > 0 {
+                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                if let Some(try_ident) = &domain_try {
+                    // Domain enum (e.g. bool) — fallible try_*; show value only on Ok.
+                    let fmt_dom = format!("{sep}{snake}: {{:?}}");
+                    body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Ok(v) = self.#try_ident() {
+                                write!(f, #fmt_dom, v)?;
+                            }
+                        }
+                    });
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Ok(v) = self.#try_ident() {
+                                d.field(#name_lit, &v);
+                            }
+                        }
+                    });
+                } else if f.since_version > 0 {
                     body.extend(quote::quote! {
                         if #in_bounds {
                             if let Some(e) = self.#f_ident() {
                                 write!(f, #fmt_str)?;
                             }
+                        }
+                    });
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            d.field(#name_lit, &v);
                         }
                     });
                 } else {
@@ -97,14 +142,13 @@ pub(crate) fn generate_decoder_display(
                             write!(f, #fmt_str)?;
                         }
                     });
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            let v = self.#f_ident();
+                            d.field(#name_lit, &v);
+                        }
+                    });
                 }
-                let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                debug_body.extend(quote::quote! {
-                    if #in_bounds {
-                        let v = self.#f_ident();
-                        d.field(#name_lit, &v);
-                    }
-                });
                 out_idx += 1;
             }
             FieldType::Set { .. } => {
@@ -138,14 +182,16 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                // Domain-converted composites use the domain-typed
-                // accessor which returns the app type (Display).
-                // Wire-only composites use the *_value() accessor
-                // which returns the owned value type (Debug derived).
+                // Domain-converted composites use fallible `try_*` (HFT-003).
+                // Wire-only composites use the *_value() accessor.
                 if find_domain_type(f, domain_types).is_some() {
+                    let try_ident =
+                        syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site());
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
-                            d.field(#name_lit, &format_args!("{}", self.#f_ident()));
+                            if let Ok(v) = self.#try_ident() {
+                                d.field(#name_lit, &format_args!("{}", v));
+                            }
                         }
                     });
                 } else {

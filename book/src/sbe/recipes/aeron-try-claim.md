@@ -41,7 +41,7 @@ let len = CarEncoder::compute_length()
     .encoded_length_with_header();
 
 let claim = publication.try_claim(header_len + len as i32)?;
-CarEncoder::try_wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)?
+CarEncoder::wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)?
     .fixed(&fields)
     // ...
     .manufacturer(b"Honda")?

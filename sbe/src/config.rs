@@ -91,21 +91,34 @@ impl ConversionSelector {
 /// | Variant | DTO field | Invalid UTF-8 on materialise |
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **silent empty `""`** (not U+FFFD, not an error) |
+/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **`InvalidUtf8` error** (0.2; never invents empty) |
 ///
-/// **`LossyStrings` is not lossless on re-encode** of invalid UTF-8: materialise
-/// clears the field to `""`, and `dto.encode` writes empty var-data.
+/// Name historical; 0.2 materialisation is strict (HFT-003).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
     #[default]
     Bytes,
-    /// Text-friendly var-data (`String`). Invalid UTF-8 becomes `""` (empty).
-    ///
-    /// Re-encode writes `as_bytes()`, so a field that was invalid on the wire
-    /// becomes empty var-data (not a copy of the bad bytes). Prefer
-    /// [`DomainVarData::Bytes`] for audit/replay fidelity of non-UTF-8 tails.
+    /// Text-friendly var-data (`String`). Invalid UTF-8 returns
+    /// `DecodeError::InvalidUtf8` (strict; HFT-003). Prefer
+    /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
     LossyStrings,
+}
+
+/// Generated-code surface presets (HFT-009).
+///
+/// Individual knobs (`with_display_debug`, …) still override after
+/// [`GenerationConfig::profile`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum GenerationProfile {
+    /// Display/Debug, field meta, multi-template dispatch, and all conveniences
+    /// that the boolean knobs enable by default.
+    #[default]
+    Full,
+    /// Byte codec + typed stages + exact sizing only. Omits Display/Debug,
+    /// meta-attribute constants, and `AnyMessage`/`FrameCursor` dispatch.
+    /// Domain DTOs and conversions stay off unless re-enabled explicitly.
+    HftLean,
 }
 
 // ── Hook types ────────────────────────────────────────────────────────────
@@ -550,21 +563,20 @@ impl GenerationConfig {
     ///
     /// Each field accessor `dec.serial_number()` gains a companion
     /// `dec.serial_number_unchecked()` that skips the redundant per-field
-    /// bounds check. After `try_from` / `try_wrap` / `verify` has accepted the
-    /// buffer, that check is pure overhead on the critical path.
+    /// bounds check. After `decode` / `try_from` / `wrap` / `verify` has
+    /// accepted the buffer, that check is pure overhead on the critical path.
     ///
     /// # Safety contract (caller's responsibility)
     ///
-    /// - The buffer must have been validated by `try_from` / `try_wrap` /
-    ///   `verify` (or an equivalent application check) before any
+    /// - The buffer must have been validated by `decode` / `try_from` /
+    ///   `wrap` / `verify` (or an equivalent application check) before any
     ///   `_unchecked` accessor is called.
     /// - After any stage transition (`into_fuel_figures()`, etc.), the
     ///   decoder's position advances and the unchecked guard is lost —
     ///   do not carry an unchecked reference across a stage boundary.
-    /// - On a truncated or malformed buffer, `_unchecked` accessors read
-    ///   whatever bytes are at the expected offset without trapping. This
-    ///   is **not** undefined behaviour (the buffer is still a valid
-    ///   `&[u8]` slice), but the values returned are garbage.
+    /// - Calling `_unchecked` without a proven extent is a **programmer bug**:
+    ///   out-of-bounds raw reads are **undefined behaviour**, not “safe
+    ///   garbage”. Prefer checked accessors at every untrusted seam.
     ///
     /// Checked accessors remain the default API surface; `_unchecked` is
     /// opt-in via this config flag. HFT production use after a proven
@@ -642,6 +654,41 @@ impl GenerationConfig {
         self
     }
 
+    /// Apply a product profile that sets the size knobs together (HFT-009).
+    ///
+    /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
+    /// |---------|---------------|------------|----------|----------------|
+    /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
+    /// | [`GenerationProfile::HftLean`] | off | off | off | forced off |
+    ///
+    /// Chain further `with_*` calls after `profile` to override individual
+    /// knobs. Example:
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, GenerationProfile};
+    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::HftLean);
+    /// ```
+    #[must_use]
+    pub fn profile(mut self, profile: GenerationProfile) -> Self {
+        match profile {
+            GenerationProfile::Full => {
+                self.enable_display_debug = true;
+                self.enable_meta_attributes = true;
+                self.enable_dispatch = true;
+            }
+            GenerationProfile::HftLean => {
+                self.enable_display_debug = false;
+                self.enable_meta_attributes = false;
+                self.enable_dispatch = false;
+                self.domain_objects = false;
+                self.conversions.clear();
+                self.domain_types.clear();
+                self.auto_bool_domain = false;
+            }
+        }
+        self
+    }
+
     /// Register a code-generation hook. The closure receives an
     /// [`ItemContext`] for each generated item (enum, set, composite,
     /// message decoder/encoder, domain struct) and returns token streams
@@ -702,7 +749,7 @@ impl Default for GenerationConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConversionSelector, DomainVarData, GenerationConfig};
+    use super::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
 
     #[test]
     fn default_config_is_clean() -> Result<(), Box<dyn std::error::Error>> {
@@ -719,6 +766,33 @@ mod tests {
             .with_conversion(ConversionSelector::named_type("Decimal"));
         assert!(config.has_conversions());
         assert_eq!(config.conversions.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_hft_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
+        assert!(full.enable_display_debug);
+        assert!(full.enable_meta_attributes);
+        assert!(full.enable_dispatch);
+
+        let lean = GenerationConfig::new("m")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_conversion(ConversionSelector::named_type("Decimal"))
+            .profile(GenerationProfile::HftLean);
+        assert!(!lean.enable_display_debug);
+        assert!(!lean.enable_meta_attributes);
+        assert!(!lean.enable_dispatch);
+        assert!(!lean.domain_objects);
+        assert!(!lean.has_conversions());
+        assert!(lean.domain_types.is_empty());
+
+        // Later overrides still win.
+        let override_dispatch = GenerationConfig::new("m")
+            .profile(GenerationProfile::HftLean)
+            .with_dispatch(true);
+        assert!(override_dispatch.enable_dispatch);
         Ok(())
     }
 

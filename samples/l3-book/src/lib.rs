@@ -128,7 +128,7 @@ pub fn encode_book(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = L3BookEncoder::try_wrap_and_apply_header(buf, 0)?
+    let complete = L3BookEncoder::wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -137,8 +137,8 @@ pub fn encode_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (oid, qty) in *orders {
                                 let raw_qty =
@@ -158,8 +158,8 @@ pub fn encode_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (oid, qty) in *orders {
                                 let raw_qty =
@@ -195,7 +195,7 @@ pub fn encode_vardata_book(
     )],
     symbol: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(buf, 0)?
+    let complete = L3BookVarDataEncoder::wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
             exchange_timestamp: 1_720_000_000_000_000_000u64,
             sequence: 42,
@@ -204,12 +204,12 @@ pub fn encode_vardata_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (qty, oid) in *orders {
                                 og.add(|o| {
-                                    o.quantity(*qty).order_id(oid)?;
+                                    o.try_quantity(*qty).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                     Ok(())
                                 })?;
                             }
@@ -223,12 +223,12 @@ pub fn encode_vardata_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (qty, oid) in *orders {
                                 og.add(|o| {
-                                    o.quantity(*qty).order_id(oid)?;
+                                    o.try_quantity(*qty).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                     Ok(())
                                 })?;
                             }
@@ -250,7 +250,7 @@ pub fn encode_depth3(
     levels: &[(u32, &[(u64, &[u8])])],
     description: &[u8],
 ) -> Result<usize, sbe_rt::EncodeError> {
-    let complete = Depth3TestEncoder::try_wrap_and_apply_header(buf, 0)?
+    let complete = Depth3TestEncoder::wrap_and_apply_header(buf, 0)?
         .fixed(&Depth3TestFixedFields { id })
         .levels(levels.len() as u16, |g| {
             for (name, items) in levels {

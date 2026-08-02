@@ -51,6 +51,4 @@ pub use error::ParseError;
 pub(crate) use error::{Fault, FaultKind};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use registry::{
-    TypeRegistry, compute_type_size, parse_u64_val, resolve_type_to_tokens,
-};
+pub(crate) use registry::{TypeRegistry, compute_type_size, parse_u64_val, resolve_type_to_tokens};

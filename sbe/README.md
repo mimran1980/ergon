@@ -26,6 +26,14 @@ guide for ergo-sbe (also linked from this crate on
 - [Recipes](https://mimran1980.github.io/ergon/sbe/recipes.html) — Display/Debug, schema→rustdoc, domain DTOs, timestamps
 - [Benchmarks](https://mimran1980.github.io/ergon/sbe/benchmarks.html) — parity methodology and gates
 
+**Compatibility profile (normative):**
+[`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— do not claim unqualified “SBE binary compatibility.”
+
+**0.1 → 0.2 migration:**
+[`docs/MIGRATION_0_1_TO_0_2.md`](https://github.com/mimran1980/ergon/blob/main/docs/MIGRATION_0_1_TO_0_2.md)
+— fallible `wrap` / `decode`, `try_wrap*` removed; private `*_unchecked` cores until HFT-008 keep.
+
 ## Quick Example
 
 ```rust
@@ -53,6 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .generate(&schema)?;
     // In a real project you'd use a build script.
     // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
+    // Checked encode (0.2): MessageEncoder::wrap_and_apply_header(buf, 0)?
+    // Public zero-check twins ship only after HFT-008 keep=true evidence.
     let _ = modules;
     Ok(())
 }

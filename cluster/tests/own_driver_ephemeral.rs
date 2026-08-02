@@ -45,7 +45,7 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     // SessionConnectRequest with response_channel = client's egress URI
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
     let mut buf = [0u8; 512];
-    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     enc.correlation_id(1).response_stream_id(102).version(0);
     let complete = enc
         .response_channel(resp.as_bytes())?

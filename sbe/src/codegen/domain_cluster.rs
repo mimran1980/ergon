@@ -283,41 +283,74 @@ pub(crate) fn generate_domain_recursive(
                         }
                     });
                 } else {
-                    // Domain-typed scalars use the concrete converted getter.
+                    // Domain-typed scalars use fallible `try_*` (HFT-003).
                     // Conversion-only renames the raw flyweight getter to *_wire.
-                    let from_getter =
-                        if field_has_conversion_free(f, conversions) && scalar_domain.is_none() {
-                            syn::Ident::new(&format!("{f_snake}_wire"), span)
-                        } else {
-                            f_ident.clone()
-                        };
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#scalar_ty> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
-                        let range_check = if scalar_domain.is_none() {
-                            dto_range_check_tokens(f, *prim, quote::quote! { v }, span)
+                        if scalar_domain.is_some() {
+                            let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
+                            let field_lit = syn::LitStr::new(&f_snake, span);
+                            from_exprs.push(quote::quote! {
+                                #f_ident: Some(dec.#try_g().map_err(|_| {
+                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                })?)
+                            });
+                            encode_stmts.push(quote::quote! {
+                                if let Some(v) = self.#f_ident {
+                                    enc.#enc_setter(v).map_err(|_| {
+                                        sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                    })?;
+                                }
+                            });
                         } else {
-                            quote::quote! {}
-                        };
-                        encode_stmts.push(quote::quote! {
-                            if let Some(v) = self.#f_ident {
-                                #range_check
-                                enc.#enc_setter(v);
-                            }
-                        });
+                            let from_getter = if field_has_conversion_free(f, conversions) {
+                                syn::Ident::new(&format!("{f_snake}_wire"), span)
+                            } else {
+                                f_ident.clone()
+                            };
+                            from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
+                            let range_check =
+                                dto_range_check_tokens(f, *prim, quote::quote! { v }, span);
+                            encode_stmts.push(quote::quote! {
+                                if let Some(v) = self.#f_ident {
+                                    #range_check
+                                    enc.#enc_setter(v);
+                                }
+                            });
+                        }
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: #scalar_ty });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
-                        // Range-check wire-typed DTOs only (converted domain types are app-side).
-                        let range_check = if scalar_domain.is_none() {
-                            dto_range_check_tokens(f, *prim, quote::quote! { self.#f_ident }, span)
+                        if scalar_domain.is_some() {
+                            let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
+                            let field_lit = syn::LitStr::new(&f_snake, span);
+                            from_exprs.push(quote::quote! {
+                                #f_ident: dec.#try_g().map_err(|_| {
+                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                })?
+                            });
+                            encode_stmts.push(quote::quote! {
+                                enc.#enc_setter(self.#f_ident).map_err(|_| {
+                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                })?;
+                            });
                         } else {
-                            quote::quote! {}
-                        };
-                        encode_stmts.push(quote::quote! {
-                            #range_check
-                            enc.#enc_setter(self.#f_ident);
-                        });
+                            let from_getter = if field_has_conversion_free(f, conversions) {
+                                syn::Ident::new(&format!("{f_snake}_wire"), span)
+                            } else {
+                                f_ident.clone()
+                            };
+                            from_exprs.push(quote::quote! { #f_ident: dec.#from_getter() });
+                            let range_check = dto_range_check_tokens(
+                                f,
+                                *prim,
+                                quote::quote! { self.#f_ident },
+                                span,
+                            );
+                            encode_stmts.push(quote::quote! {
+                                #range_check
+                                enc.#enc_setter(self.#f_ident);
+                            });
+                        }
                     }
                 }
             }
@@ -347,10 +380,20 @@ pub(crate) fn generate_domain_recursive(
                 if f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#field_ty> });
                     if domain_ty.is_some() {
-                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                        encode_stmts.push(
-                            quote::quote! { if let Some(v) = self.#f_ident { enc.#enc_setter(v); } },
-                        );
+                        let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
+                        let field_lit = syn::LitStr::new(&f_snake, span);
+                        from_exprs.push(quote::quote! {
+                            #f_ident: Some(dec.#try_g().map_err(|_| {
+                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                            })?)
+                        });
+                        encode_stmts.push(quote::quote! {
+                            if let Some(v) = self.#f_ident {
+                                enc.#enc_setter(v).map_err(|_| {
+                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                })?;
+                            }
+                        });
                     } else {
                         from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
                         encode_stmts
@@ -359,11 +402,22 @@ pub(crate) fn generate_domain_recursive(
                 } else {
                     struct_fields.push(quote::quote! { pub #f_ident: #field_ty });
                     if domain_ty.is_some() {
-                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                        let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
+                        let field_lit = syn::LitStr::new(&f_snake, span);
+                        from_exprs.push(quote::quote! {
+                            #f_ident: dec.#try_g().map_err(|_| {
+                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                            })?
+                        });
+                        encode_stmts.push(quote::quote! {
+                            enc.#enc_setter(self.#f_ident).map_err(|_| {
+                                sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                            })?;
+                        });
                     } else {
                         from_exprs.push(quote::quote! { #f_ident: dec.#as_struct_ident() });
+                        encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                     }
-                    encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                 }
             }
             FieldType::Enum {
@@ -440,15 +494,20 @@ pub(crate) fn generate_domain_recursive(
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()
                     .map(|g| {
-                        g.map(|r| r.map(#entry_domain_ident::from))
-                            .collect::<Result<Vec<_>, _>>()
+                        g.map(|r| {
+                            r.and_then(|entry| #entry_domain_ident::try_from_decoder(entry))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
                     })
                     .unwrap_or_else(|e| Err(e))?
             });
         } else {
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()
-                    .map(|g| Ok(g.map(#entry_domain_ident::from).collect()))
+                    .map(|g| {
+                        g.map(#entry_domain_ident::try_from_decoder)
+                            .collect::<Result<Vec<_>, _>>()
+                    })
                     .unwrap_or_else(|e| Err(e))?
             });
         }
@@ -465,15 +524,31 @@ pub(crate) fn generate_domain_recursive(
         );
         if can_bulk_encode {
             group_encode_stmts.push(quote::quote! {
+                let count = <#count_ty>::try_from(self.#g_field_ident.len()).map_err(|_| {
+                    sbe_rt::EncodeError::ValueOutOfRange {
+                        field: "group count",
+                        min: 0,
+                        max: #count_ty::MAX as i128,
+                        actual: self.#g_field_ident.len() as i128,
+                    }
+                })?;
                 let enc = enc.#g_field_ident(
-                    self.#g_field_ident.len() as #count_ty,
+                    count,
                     |g| g.bulk_add_domain(&self.#g_field_ident),
                 )?;
             });
         } else {
             group_encode_stmts.push(quote::quote! {
+                let count = <#count_ty>::try_from(self.#g_field_ident.len()).map_err(|_| {
+                    sbe_rt::EncodeError::ValueOutOfRange {
+                        field: "group count",
+                        min: 0,
+                        max: #count_ty::MAX as i128,
+                        actual: self.#g_field_ident.len() as i128,
+                    }
+                })?;
                 let enc = enc.#g_field_ident(
-                    self.#g_field_ident.len() as #count_ty,
+                    count,
                     |g| -> Result<(), sbe_rt::EncodeError> {
                         for e in &self.#g_field_ident {
                             g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
@@ -550,16 +625,21 @@ pub(crate) fn generate_domain_recursive(
         let vd_ident = syn::Ident::new(&vd_snake, span);
         match domain_var_data {
             crate::config::DomainVarData::LossyStrings => {
+                // HFT-003: never manufacture empty/default for invalid UTF-8.
+                // Name retained for API stability; behaviour is strict.
+                let field_name_lit = syn::LitStr::new(&vd_snake, span);
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
-                // Valid UTF-8 → String; invalid UTF-8 → silent empty
-                // (LossyStrings is doc'd as lossy, not as corrupt-data
-                // rejection). Truncated/missing var-data IS an error:
-                // `unwrap_or(&[])` previously swallowed that silently.
                 from_exprs.push(quote::quote! {
                     #vd_ident: match dec.#vd_ident() {
-                        Ok(data) => core::str::from_utf8(data)
-                            .map(|s| s.to_owned())
-                            .unwrap_or_default(),
+                        Ok(data) => match core::str::from_utf8(data) {
+                            Ok(s) => s.to_owned(),
+                            Err(error) => {
+                                return Err(sbe_rt::DecodeError::InvalidUtf8 {
+                                    field: #field_name_lit,
+                                    error,
+                                });
+                            }
+                        },
                         Err(e) => return Err(e),
                     }
                 });
@@ -584,7 +664,7 @@ pub(crate) fn generate_domain_recursive(
 
     let encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
 
-    // Only message-level decoders have try_wrap_and_apply_header;
+    // Only message-level decoders have decode;
     // entry decoders use wrap() and don't get try_from_slice_with_header.
     let try_from_slice_method: proc_macro2::TokenStream = if !is_entry {
         quote::quote! {
@@ -595,7 +675,7 @@ pub(crate) fn generate_domain_recursive(
                 message_offset: usize,
             ) -> Result<Self, sbe_rt::DecodeError> {
                 Self::try_from_decoder(
-                    #decoder_ident::try_wrap_and_apply_header(buf, message_offset)?,
+                    #decoder_ident::decode(buf, message_offset)?,
                 )
             }
         }
@@ -625,12 +705,8 @@ pub(crate) fn generate_domain_recursive(
             #try_from_slice_method
         }
 
-        impl<'a> From<#decoder_ident<'a>> for #domain_ident {
-            fn from(dec: #decoder_ident<'a>) -> Self {
-                Self::try_from_decoder(dec)
-                    .expect("domain conversion failed — use try_from_decoder for fallible conversion")
-            }
-        }
+        // HFT-003: no panicking `From` — checked materialisation is
+        // `try_from_decoder` / `try_from_slice_with_header` only.
     });
 
     // Fire hooks for this domain struct (message DTO or entry DTO).
@@ -853,7 +929,7 @@ pub(crate) fn generate_domain_recursive(
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
             quote::quote! {
-                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
@@ -863,7 +939,7 @@ pub(crate) fn generate_domain_recursive(
         } else {
             // Fixed-only message: encoder implements AsRef<[u8]>
             quote::quote! {
-                let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
+                let mut enc = #encoder_ident::wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
                 Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)

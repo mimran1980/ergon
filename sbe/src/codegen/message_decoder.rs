@@ -35,6 +35,7 @@ pub(crate) fn generate_message_decoder(
     multi_message: bool,
     enable_display_debug: bool,
     enable_meta_attributes: bool,
+    enable_dispatch: bool,
     domain_objects: bool,
     domain_var_data: crate::config::DomainVarData,
     conversions: &[crate::ConversionSelector],
@@ -278,20 +279,122 @@ pub(crate) fn generate_message_decoder(
         });
     }
 
+    // Version-aware minimum fixed extent: every field readable at
+    // `acting_version` must fit in the body buffer (HFT-001).
+    let mut min_extent_arms = proc_macro2::TokenStream::new();
+    {
+        // Collect unique since_version thresholds and the max end offset
+        // of fields at that version.
+        let mut by_version: Vec<(u16, usize)> = Vec::new();
+        for f in &msg.fields {
+            let end = f.offset.saturating_add(f.field_type.size());
+            by_version.push((f.since_version, end));
+        }
+        by_version.sort_by_key(|(v, _)| *v);
+        // Build a stepwise max: for each distinct version V, extent is max of
+        // all fields with since_version <= V.
+        let mut versions: Vec<u16> = by_version.iter().map(|(v, _)| *v).collect();
+        versions.sort_unstable();
+        versions.dedup();
+        // Seed with v0 extent (always present for acting_version in range).
+        let mut m0 = 0usize;
+        for f in &msg.fields {
+            if f.since_version == 0 {
+                m0 = m0.max(f.offset.saturating_add(f.field_type.size()));
+            }
+        }
+        let m0_lit = syn::LitInt::new(&m0.to_string(), proc_macro2::Span::call_site());
+        min_extent_arms.extend(quote::quote! {
+            let mut m = #m0_lit;
+        });
+        for &v in &versions {
+            if v == 0 {
+                continue; // already seeded; avoid `acting_version >= 0` (always true)
+            }
+            let mut m = 0usize;
+            for f in &msg.fields {
+                if f.since_version <= v {
+                    m = m.max(f.offset.saturating_add(f.field_type.size()));
+                }
+            }
+            let v_lit = syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site());
+            let m_lit = syn::LitInt::new(&m.to_string(), proc_macro2::Span::call_site());
+            min_extent_arms.extend(quote::quote! {
+                if acting_version >= #v_lit {
+                    m = #m_lit;
+                }
+            });
+        }
+    }
+
     impl_body.extend(quote::quote! {
-        /// Wrap a buffer for decoding at **message start** (byte 0 of the
-        /// SBE frame — header then body). Fields are at
-        /// `message_offset + HEADER_LENGTH + field_offset`.
+        /// Minimum body bytes needed to safely read every fixed field present
+        /// at `acting_version` (version-aware; not always full `BLOCK_LENGTH`).
+        #[inline]
+        pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
+            #min_extent_arms
+            m
+        }
+
+        /// Wrap a buffer for decoding at **message start** with bounds checks.
+        /// Fields are at `message_offset + HEADER_LENGTH + field_offset`.
+        ///
+        /// Validates that the body holds `max(acting_block_length,
+        /// min_readable_fixed_extent(acting_version))` bytes so required
+        /// accessors never read out of bounds from safe code.
         ///
         /// # Migration from sbe-tool
         ///
         /// sbe-tool Rust `wrap` takes the **body** offset (usually
         /// `message_start + 8`). ergo-sbe takes the **message** start so the
-        /// same offset works for `wrap`, `try_wrap_and_apply_header`, and
-        /// claim buffers. Passing `8` here for a frame at zero mis-aligns
-        /// every field.
+        /// same offset works for `wrap`, `decode`, and claim buffers.
         #[inline]
-        pub fn wrap(buf: &'a [u8], message_offset: usize, acting_block_length: usize, acting_version: u16) -> Self {
+        pub fn wrap(
+            buf: &'a [u8],
+            message_offset: usize,
+            acting_block_length: usize,
+            acting_version: u16,
+        ) -> Result<Self, sbe_rt::DecodeError> {
+            let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "message header",
+                    needed: Self::HEADER_LENGTH,
+                    available: buf.len().saturating_sub(message_offset),
+                });
+            };
+            let available_body = buf.len().saturating_sub(body_pos);
+            let min_fixed = Self::min_readable_fixed_extent(acting_version);
+            let body_need = if acting_block_length > min_fixed {
+                acting_block_length
+            } else {
+                min_fixed
+            };
+            if body_need > available_body {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "message body",
+                    needed: Self::HEADER_LENGTH.saturating_add(body_need),
+                    available: buf.len().saturating_sub(message_offset),
+                });
+            }
+            // SAFETY: body_need bytes after header are in-bounds.
+            Ok(unsafe {
+                Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version)
+            })
+        }
+
+        /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
+        ///
+        /// # Safety
+        /// `message_offset + HEADER_LENGTH + max(acting_block_length,
+        /// min_readable_fixed_extent(acting_version))` must not overflow and
+        /// must be ≤ `buf.len()`.
+        #[inline]
+        unsafe fn wrap_unchecked(
+            buf: &'a [u8],
+            message_offset: usize,
+            acting_block_length: usize,
+            acting_version: u16,
+        ) -> Self {
             let body_pos = message_offset + Self::HEADER_LENGTH;
             Self {
                 buf,
@@ -337,15 +440,12 @@ pub(crate) fn generate_message_decoder(
             }
         };
         impl_body.extend(quote::quote! {
-            /// Fallible wrap at **message start** (`pos` = first byte of the
-            /// header). Validates header fields (template_id, schema_id,
-            /// block length bounds). See [`Self::wrap`] for the message-start
-            /// vs sbe-tool body-offset migration note.
+            /// Decode a framed message at **message start** (`pos` = first
+            /// byte of the header). Validates header fields and the
+            /// version-aware fixed body extent. See [`Self::wrap`] for the
+            /// message-start vs sbe-tool body-offset migration note.
             #[inline]
-            pub fn try_wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                // Decoder trust boundary: validate buffer bounds + schema_id + template_id.
-                // This is the one place the decoder checks — all field accessors
-                // after this are infallible (offsets are within the validated block).
+            pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 if #hs > buf.len().saturating_sub(pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
@@ -369,20 +469,45 @@ pub(crate) fn generate_message_decoder(
                     "blockLength",
                     header.#hbl() as u64,
                 )?;
-                let body_pos = pos + #hs;
-                if acting_block_length > buf.len().saturating_sub(body_pos) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "message body",
-                        needed: (#hs as usize).saturating_add(acting_block_length),
-                        available: buf.len().saturating_sub(pos),
-                    });
-                }
                 let acting_version = sbe_rt::checked_header_u16(
                     "version",
                     header.#hvr() as u64,
                 )?;
-                let mut dec = Self::wrap(buf, pos, acting_block_length, acting_version);
-                Ok(dec)
+                // Shared path with wrap: version-aware min fixed extent.
+                Self::wrap(buf, pos, acting_block_length, acting_version)
+            }
+
+            /// Private zero-check framed decode core (HFT-008 keep=false).
+            ///
+            /// # Safety
+            /// Header and version-readable fixed body for this template must
+            /// be fully in-bounds at `pos`.
+            #[inline]
+            unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                // Still validates schema/template identity (protocol, not memory).
+                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
+                let header = #hp(header_bytes);
+                let template_id = sbe_rt::checked_header_u16(
+                    "templateId",
+                    header.#hti() as u64,
+                )?;
+                #template_id_validation
+                let schema_id = sbe_rt::checked_header_u16(
+                    "schemaId",
+                    header.#hsi() as u64,
+                )?;
+                #schema_id_validation
+                let acting_block_length = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#hbl() as u64,
+                )?;
+                let acting_version = sbe_rt::checked_header_u16(
+                    "version",
+                    header.#hvr() as u64,
+                )?;
+                Ok(unsafe {
+                    Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
+                })
             }
         });
     }
@@ -407,7 +532,10 @@ pub(crate) fn generate_message_decoder(
             "limit",
             "buffer",
             "wrap",
-            "try_wrap_and_apply_header",
+            "wrap_unchecked",
+            "decode",
+            "decode_unchecked",
+            "min_readable_fixed_extent",
             "header",
             "encoded_length",
             "encoded_length_with_header",
@@ -525,7 +653,7 @@ pub(crate) fn generate_message_decoder(
                         pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             #version_guard
                             let offset = self.pos + #offset_lit;
-                            let all: [u8; #total_size_lit] = read_bytes_unchecked::<#total_size_lit>(self.buf, offset);
+                            let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, offset) };
                             [#(#elements),*]
                         }
                     });
@@ -588,7 +716,7 @@ pub(crate) fn generate_message_decoder(
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
                                  {version_guard}\
                                  let offset = self.pos + {offset};\n\
-                                 let val = {rt}::{order}(read_bytes_unchecked::<{ps}>(self.buf, offset));\n\
+                                 let val = {rt}::{order}(unsafe {{ read_bytes_unchecked::<{ps}>(self.buf, offset) }});\n\
                                  if {null_check} {{\n\
                                      None\n\
                                  }} else {{\n\
@@ -624,7 +752,7 @@ pub(crate) fn generate_message_decoder(
                                     return None;
                                 }
                                 let offset = self.pos + #offset_lit;
-                                Some(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                                Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                             }
                         });
                     } else {
@@ -636,7 +764,7 @@ pub(crate) fn generate_message_decoder(
                             #[inline]
                             pub fn #fname_ident(&self) -> #r_type_ty {
                                 let offset = self.pos + #offset_lit;
-                                #r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
+                                #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
                             }
                         });
                     }
@@ -701,7 +829,7 @@ pub(crate) fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset)))
+                            Some(#target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) }))
                         }
                     });
                 } else {
@@ -709,7 +837,7 @@ pub(crate) fn generate_message_decoder(
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
+                            #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
                         }
                     });
                 }
@@ -757,7 +885,7 @@ pub(crate) fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })))
                         }
                     });
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
@@ -774,7 +902,7 @@ pub(crate) fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident::from_raw(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                            #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                         }
                     });
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
@@ -831,7 +959,7 @@ pub(crate) fn generate_message_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))))
+                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })))
                         }
                     });
                 } else {
@@ -839,7 +967,7 @@ pub(crate) fn generate_message_decoder(
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             let offset = self.pos + #offset_lit;
-                            #target_ident(#r_type_ty::#order_fn(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                            #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                         }
                     });
                 }
@@ -1320,7 +1448,7 @@ pub(crate) fn generate_message_decoder(
             type Error = sbe_rt::DecodeError;
 
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-                Self::try_wrap_and_apply_header(buf, 0)
+                Self::decode(buf, 0)
             }
         }
 
@@ -1360,6 +1488,7 @@ pub(crate) fn generate_message_decoder(
             &conversions,
             domain_types,
             enable_meta_attributes,
+            enable_dispatch,
         ));
     }
 
@@ -1375,6 +1504,7 @@ pub(crate) fn generate_message_decoder(
         byte_order,
         multi_message,
         &group_unique_names,
+        enable_dispatch,
     ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)

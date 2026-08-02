@@ -61,23 +61,28 @@ pub(crate) fn generate_converter_impls(
                 syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
             let domain_ident = syn::Ident::new(&field_snake, span);
 
+            // HFT-003: checked domain accessors are fallible — no `.expect`.
+            let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
             decoder_methods.extend(quote::quote! {
                 #[inline]
-                #[must_use]
-                pub fn #domain_ident(&self) -> #dt_ty {
+                pub fn #try_ident(
+                    &self,
+                ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
                     <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
                         self.#raw_decoder_getter()
-                    ).expect(concat!("conversion of ", stringify!(#domain_ident)))
+                    )
                 }
             });
 
             encoder_methods.extend(quote::quote! {
                 #[inline]
-                #[must_use]
-                pub fn #domain_ident(&mut self, value: #dt_ty) -> &mut Self {
-                    let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)
-                        .expect(concat!("conversion of ", stringify!(#domain_ident)));
-                    self.#wire_setter(wire)
+                pub fn #try_ident(
+                    &mut self,
+                    value: #dt_ty,
+                ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
+                    let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                    self.#wire_setter(wire);
+                    Ok(self)
                 }
             });
         } else {
@@ -141,22 +146,26 @@ pub(crate) fn generate_converter_impls(
                 let dt_ty: syn::Type =
                     syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
                 let domain_ident = syn::Ident::new(&field_snake, span);
+                let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
                 dec_methods.extend(quote::quote! {
                     #[inline]
-                    #[must_use]
-                    pub fn #domain_ident(&self) -> #dt_ty {
+                    pub fn #try_ident(
+                        &self,
+                    ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
                         <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
                             self.#raw_decoder_getter()
-                        ).expect(concat!("conversion of ", stringify!(#domain_ident)))
+                        )
                     }
                 });
                 enc_methods.extend(quote::quote! {
                     #[inline]
-                    #[must_use]
-                    pub fn #domain_ident(&mut self, value: #dt_ty) -> &mut Self {
-                        let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)
-                            .expect(concat!("conversion of ", stringify!(#domain_ident)));
-                        self.#wire_setter(wire)
+                    pub fn #try_ident(
+                        &mut self,
+                        value: #dt_ty,
+                    ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
+                        let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                        self.#wire_setter(wire);
+                        Ok(self)
                     }
                 });
             } else {

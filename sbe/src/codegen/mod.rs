@@ -856,6 +856,15 @@ impl Generator {
             .map(|toks| parse_message_structure(toks, &elements))
             .collect();
 
+        // Selectors for conversion/domain accessors: explicit list + domain_types
+        // (covers with_domain_type and auto_bool without a separate with_conversion).
+        let mut conv_sels = self.config.conversions.clone();
+        for (sel, _) in domain_types {
+            if !conv_sels.iter().any(|s| s == sel) {
+                conv_sels.push(sel.clone());
+            }
+        }
+
         let mut schema_markers = occupied_type_names(&elements);
         let mut message_markers: Vec<(String, String)> = Vec::new();
         for msg in &messages {
@@ -872,9 +881,10 @@ impl Generator {
                 multi,
                 self.config.enable_display_debug,
                 self.config.enable_meta_attributes,
+                self.config.enable_dispatch,
                 self.config.domain_objects,
                 self.config.domain_var_data,
-                &self.config.conversions,
+                &conv_sels,
                 domain_types,
                 self.config.unchecked_companions,
                 &self.config.hooks,
@@ -896,10 +906,11 @@ impl Generator {
                 ir.version,
                 &ir.header_type,
                 multi,
-                &self.config.conversions,
+                &conv_sels,
                 domain_types,
                 self.config.unchecked_companions,
                 self.config.enable_meta_attributes,
+                self.config.enable_display_debug,
             );
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder
@@ -908,12 +919,9 @@ impl Generator {
                 self.run_hooks(&ctx, &mut src);
             }
 
-            // Decimal converter seam: for each field backed by a registered
-            // Decimal composite, emit raw *_wire aliases and generic converted
-            // methods. Only emitted when converter mode is active.
-            if !&self.config.conversions.is_empty() {
-                let converter_ts =
-                    generate_converter_impls(msg, &self.config.conversions, domain_types, multi);
+            // Converter seam: domain-type / with_conversion / auto_bool (HFT-003).
+            if !conv_sels.is_empty() {
+                let converter_ts = generate_converter_impls(msg, &conv_sels, domain_types, multi);
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -966,7 +974,14 @@ impl Generator {
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
         // 7.6. Generate prelude module — single import surface for users
-        generate_prelude(&mut src, &elements, &messages, ir.id, ir.version);
+        generate_prelude(
+            &mut src,
+            &elements,
+            &messages,
+            ir.id,
+            ir.version,
+            self.config.enable_dispatch,
+        );
         // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
         if let Some(ref err_path) = self.config.error_from_path {
             let err_ty: syn::Type = syn::parse_str(err_path).expect("invalid error_from_path");
@@ -988,14 +1003,14 @@ impl Generator {
             src.push_str(&impls.to_string());
             src.push('\n');
         }
-        // 7.7. Generate const-compatible byte-read helper (avoids per-accessor loop bloat)
+        // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
+        // private + unsafe (HFT-001) — never a safe public memory-safety
+        // precondition for callers.
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
             ///
             /// Bounds-checked slice indexing. LLVM elides the check when the
             /// slice length is known (stack buffer with visible size).
-            /// Prefer [`read_bytes_unchecked`] when the caller has already
-            /// validated bounds.
             #[inline]
             pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
@@ -1005,16 +1020,15 @@ impl Generator {
             pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
                 buf[offset..offset + N].copy_from_slice(bytes);
             }
-        };
-        src.push_str(&read_bytes_ts.to_string());
 
-        // Unchecked byte I/O — always generated for zero-validation fast paths.
-        // Caller guarantees offset + N <= buf.len().
-        let uc = quote::quote! {
             /// Unchecked companion to [`read_bytes`] — zero bounds checks.
-            /// Caller guarantees `offset + N <= buf.len()`.
+            ///
+            /// # Safety
+            /// Caller guarantees `offset + N` does not overflow and
+            /// `offset + N <= buf.len()`.
             #[inline]
-            pub fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
+            #[allow(dead_code)] // used from generated accessors in this module
+            unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 // SAFETY: caller guarantees offset + N <= buf.len().
                 unsafe {
                     core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
@@ -1022,16 +1036,24 @@ impl Generator {
             }
 
             /// Unchecked companion to [`write_bytes`] — zero bounds checks.
-            /// Caller guarantees `offset + N <= buf.len()`.
+            ///
+            /// # Safety
+            /// Caller guarantees `offset + N` does not overflow and
+            /// `offset + N <= buf.len()`.
             #[inline]
-            pub fn write_bytes_unchecked<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
+            #[allow(dead_code)]
+            unsafe fn write_bytes_unchecked<const N: usize>(
+                buf: &mut [u8],
+                offset: usize,
+                bytes: &[u8; N],
+            ) {
                 // SAFETY: caller guarantees offset + N <= buf.len().
                 unsafe {
                     core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
                 }
             }
         };
-        src.push_str(&uc.to_string());
+        src.push_str(&read_bytes_ts.to_string());
         src.push('\n');
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
@@ -1435,8 +1457,8 @@ mod tests {
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
         assert!(
-            src.contains("fn ts(&self) -> chrono::DateTime"),
-            "should generate concrete DateTime accessor for UTCTimestamp field"
+            src.contains("fn try_ts(") && src.contains("chrono::DateTime"),
+            "should generate fallible concrete DateTime accessor for UTCTimestamp field"
         );
         assert!(
             src.contains("fn ts_wire"),

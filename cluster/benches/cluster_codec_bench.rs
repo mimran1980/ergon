@@ -74,6 +74,7 @@ fn assert_session_message_header_encode_parity() {
 
     let mut ergo = vec![0u8; slot];
     let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
+        .unwrap()
         .leadership_term_id(5)
         .cluster_session_id(42)
         .timestamp(0)
@@ -100,6 +101,7 @@ fn assert_session_keep_alive_encode_parity() {
 
     let mut ergo = vec![0u8; slot];
     let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
+        .unwrap()
         .leadership_term_id(5)
         .cluster_session_id(42)
         .encoded_length();
@@ -131,6 +133,7 @@ fn assert_session_connect_request_encode_parity(channel: &[u8], credentials: &[u
 
     let mut ergo = vec![0u8; frame_len];
     let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
+        .unwrap()
         .fixed(&fixed)
         .response_channel(channel)
         .unwrap()
@@ -174,6 +177,7 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
                     black_box(&mut buf[off..off + slot]),
                     0,
                 )
+                .unwrap()
                 .leadership_term_id((i % 1000) as i64)
                 .cluster_session_id(42)
                 .timestamp(0);
@@ -214,6 +218,7 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
                     black_box(&mut buf[off..off + slot]),
                     0,
                 )
+                .unwrap()
                 .leadership_term_id(5)
                 .cluster_session_id((i % 100) as i64);
             }
@@ -267,6 +272,7 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
                     black_box(&mut buf[off..off + frame_len]),
                     0,
                 )
+                .unwrap()
                 .fixed(black_box(&fixed))
                 .response_channel(channel)
                 .unwrap()
@@ -333,11 +339,8 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             ReadBuf, message_header_codec::MessageHeaderDecoder,
             session_message_header_codec::SessionMessageHeaderDecoder,
         };
-        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::try_wrap_and_apply_header(
-            &MSG_HDR_FIXTURE,
-            0,
-        )
-        .unwrap();
+        let ergo =
+            ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(&MSG_HDR_FIXTURE, 0).unwrap();
         let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(&MSG_HDR_FIXTURE), 0);
         let tool = SessionMessageHeaderDecoder::default().header(header, 0);
         assert_eq!(ergo.leadership_term_id(), tool.leadership_term_id());
@@ -349,12 +352,11 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
-                let d =
-                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::try_wrap_and_apply_header(
-                        black_box(&MSG_HDR_FIXTURE[..]),
-                        0,
-                    )
-                    .unwrap();
+                let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(
+                    black_box(&MSG_HDR_FIXTURE[..]),
+                    0,
+                )
+                .unwrap();
                 black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
             }
         });
@@ -405,11 +407,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
         use reference_sbe::{
             ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
         };
-        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::try_wrap_and_apply_header(
-            &SESSION_EVENT_FIXTURE,
-            0,
-        )
-        .unwrap();
+        let ergo =
+            ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(&SESSION_EVENT_FIXTURE, 0).unwrap();
         let ergo_correlation_id = ergo.correlation_id();
         let ergo_cluster_session_id = ergo.cluster_session_id();
         let ergo_leadership_term_id = ergo.leadership_term_id();
@@ -433,8 +432,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder;
-                let dec =
-                    SessionEventDecoder::try_wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
+                let dec = SessionEventDecoder::decode(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
@@ -498,6 +496,7 @@ fn new_leader_fixture() -> Vec<u8> {
     let expected_len = NewLeaderEventEncoder::compute_length_with_header(ENDPOINTS.len());
     let mut buf = vec![0u8; expected_len];
     let len = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
         .fixed(&NewLeaderEventFixedFields {
             cluster_session_id: 2,
             leadership_term_id: 9,
@@ -516,9 +515,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         use reference_sbe::{
             ReadBuf, message_header_codec::MessageHeaderDecoder, new_leader_event_codec::NewLeaderEventDecoder,
         };
-        let ergo =
-            ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::try_wrap_and_apply_header(&fixture, 0)
-                .unwrap();
+        let ergo = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(&fixture, 0).unwrap();
         let ergo_cluster_session_id = ergo.cluster_session_id();
         let ergo_leadership_term_id = ergo.leadership_term_id();
         let ergo_leader_member_id = ergo.leader_member_id();
@@ -538,7 +535,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder;
-                let dec = NewLeaderEventDecoder::try_wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
+                let dec = NewLeaderEventDecoder::decode(black_box(fixture.as_slice()), 0).unwrap();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
@@ -601,6 +598,7 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
 
         let mut ergo = vec![0u8; total];
         let ergo_body = ErgoEncoder::wrap(&mut ergo[..hdr_slot], 0)
+            .unwrap()
             .leadership_term_id(5)
             .cluster_session_id(42)
             .timestamp(0)
@@ -634,6 +632,7 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
                     black_box(&mut slot[..hdr_slot]),
                     0,
                 )
+                .unwrap()
                 .leadership_term_id(5)
                 .cluster_session_id(42)
                 .timestamp(0);

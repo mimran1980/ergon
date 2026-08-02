@@ -2,7 +2,7 @@
 //!
 //! `generate_message_encoder` emits the encoder flyweight for a message: the
 //! schema marker struct, fixed-field setters (primitives, arrays, composites,
-//! enums, sets), `wrap`/`wrap_and_apply_header`/`try_wrap` entry points,
+//! enums, sets), `wrap`/`wrap_and_apply_header`/`*_unchecked` entry points,
 //! encoded-length support, group/var-data tail setters, consuming tail
 //! stages, unchecked companions, and optional `apply_nulls`. Depends on
 //! [`super::group_encoder`], [`super::message_header_template`],
@@ -32,6 +32,7 @@ pub(crate) fn generate_message_encoder(
     domain_types: &[(crate::ConversionSelector, String)],
     unchecked_companions: bool,
     enable_meta_attributes: bool,
+    enable_display_debug: bool,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -155,35 +156,37 @@ pub(crate) fn generate_message_encoder(
                 _header: core::marker::PhantomData<H>,
             }
 
-            // Encoder Display + Debug: delegate to the decoder for field-value
-            // output (reads the encoded buffer). Safe for partial buffers —
-            // decoder try_wrap guards prevent panics; falls back to structural.
-            impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for #stage<'a, H> {
-                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                    match #name_decoder_ident::try_wrap_and_apply_header(
-                        self.buf, self.msg_offset,
-                    ) {
-                        Ok(dec) => core::fmt::Display::fmt(&dec, f),
-                        Err(_) => write!(f, "<partial {}>", #stage_name_lit),
-                    }
-                }
-            }
-
-            impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for #stage<'a, H> {
-                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                    match #name_decoder_ident::try_wrap_and_apply_header(
-                        self.buf, self.msg_offset,
-                    ) {
-                        Ok(dec) => core::fmt::Debug::fmt(&dec, f),
-                        Err(_) => f.debug_struct(#stage_name_lit)
-                            .field("msg_offset", &self.msg_offset)
-                            .field("pos", &self.pos)
-                            .field("buf_len", &self.buf.len())
-                            .finish(),
-                    }
-                }
-            }
         });
+        // Encoder Display + Debug: only when the decoder has Display/Debug.
+        if enable_display_debug {
+            ts.extend(quote::quote! {
+                impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for #stage<'a, H> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        match #name_decoder_ident::decode(
+                            self.buf, self.msg_offset,
+                        ) {
+                            Ok(dec) => core::fmt::Display::fmt(&dec, f),
+                            Err(_) => write!(f, "<partial {}>", #stage_name_lit),
+                        }
+                    }
+                }
+
+                impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for #stage<'a, H> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        match #name_decoder_ident::decode(
+                            self.buf, self.msg_offset,
+                        ) {
+                            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+                            Err(_) => f.debug_struct(#stage_name_lit)
+                                .field("msg_offset", &self.msg_offset)
+                                .field("pos", &self.pos)
+                                .field("buf_len", &self.buf.len())
+                                .finish(),
+                        }
+                    }
+                }
+            });
+        }
     }
 
     // Associated constants live on the *defaulted* concrete impl so
@@ -323,66 +326,90 @@ pub(crate) fn generate_message_encoder(
         }
     };
     // Constructors + cold helper on the concrete (default-H) impl so
-    // `CarEncoder::try_wrap_and_apply_header` needs no turbofish.
+    // `CarEncoder::wrap_and_apply_header` needs no turbofish (HFT-001).
     impl_consts.extend(cold_check);
 
-    // Body-only wrap: HeaderAbsent so as_bytes_with_header is not available.
+    // Unsuffixed names are the safe checked `Result` lane. Zero-check cores are
+    // module-private `unsafe fn *_unchecked` until an HFT-008 keep=true decision
+    // re-publishes them (docs/evidence/unchecked-keep-manifest.json).
     let wrap_fn = quote::quote! {
-        /// Wrap a mutable buffer for encoding with bounds validation.
+        /// Wrap a mutable buffer for encoding with one bounds/overflow check.
         /// Does **not** write the message header (`HeaderAbsent`).
         ///
         /// `msg_offset` is the **message start** (first byte of the SBE frame),
-        /// not the body. sbe-tool Rust `wrap` takes the body offset instead —
-        /// see [`Self::wrap`].
+        /// not the body. sbe-tool Rust `wrap` takes the body offset instead.
         ///
-        /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
         /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
-        pub fn try_wrap(
+        pub fn wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
             if #needed_lit > buf.len().saturating_sub(msg_offset) {
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
+            // SAFETY: extent check above proved header + fixed body fit.
+            Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
+        }
+
+        /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
+        ///
+        /// # Safety
+        /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
+        /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
+        #[inline]
+        unsafe fn wrap_unchecked(
+            buf: &'a mut [u8],
+            msg_offset: usize,
+        ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
             let body_pos = msg_offset + #header_size_lit;
-            Ok(#name_encoder_ident {
+            #name_encoder_ident {
                 buf,
                 msg_offset,
                 pos: body_pos + #block_length_lit,
                 _header: core::marker::PhantomData,
-            })
+            }
         }
     };
     impl_consts.extend(wrap_fn);
 
-    let wrap_apply_body = quote::quote! {
-        // Optional-field nullification is NOT applied by default — call
-        // `apply_nulls()` if you want null sentinels.
-        if #needed_lit > buf.len().saturating_sub(pos) {
-            return Err(Self::buffer_too_short(buf, pos, #needed_lit));
-        }
-        buf[pos..pos + #header_size_lit]
-            .copy_from_slice(&Self::HEADER_TEMPLATE);
-        let body_pos = pos + #header_size_lit;
-        Ok(#name_encoder_ident {
-            buf,
-            msg_offset: pos,
-            pos: body_pos + #block_length_lit,
-            _header: core::marker::PhantomData,
-        })
-    };
     let wrap_apply_fn = quote::quote! {
-        /// Wrap a mutable buffer, write the header, with bounds validation.
+        /// Wrap a mutable buffer, write the header, with one bounds/overflow check.
         /// `pos` is the **message start** (see [`Self::wrap`]).
-        /// Returns an error if the buffer is too short.
-        /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
+        ///
+        /// Optional-field nullification is **not** applied by default — call
+        /// `apply_nulls()` if you want null sentinels.
         #[inline]
-        pub fn try_wrap_and_apply_header(
+        pub fn wrap_and_apply_header(
             buf: &'a mut [u8],
             pos: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
-            #wrap_apply_body
+            if #needed_lit > buf.len().saturating_sub(pos) {
+                return Err(Self::buffer_too_short(buf, pos, #needed_lit));
+            }
+            // SAFETY: extent check above proved header + fixed body fit.
+            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
+        }
+
+        /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
+        ///
+        /// # Safety
+        /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
+        /// ≤ `buf.len()` for the lifetime of the returned encoder.
+        #[inline]
+        unsafe fn wrap_and_apply_header_unchecked(
+            buf: &'a mut [u8],
+            pos: usize,
+        ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
+            buf[pos..pos + #header_size_lit]
+                .copy_from_slice(&Self::HEADER_TEMPLATE);
+            let body_pos = pos + #header_size_lit;
+            #name_encoder_ident {
+                buf,
+                msg_offset: pos,
+                pos: body_pos + #block_length_lit,
+                _header: core::marker::PhantomData,
+            }
         }
     };
     impl_consts.extend(wrap_apply_fn);
@@ -404,7 +431,7 @@ pub(crate) fn generate_message_encoder(
                         available: buf.len(),
                     });
                 }
-                Self::try_wrap_and_apply_header(buf, 0)
+                Self::wrap_and_apply_header(buf, 0)
             }
         });
     }
@@ -448,9 +475,9 @@ pub(crate) fn generate_message_encoder(
         "limit",
         "buffer",
         "wrap",
+        "wrap_unchecked",
         "wrap_and_apply_header",
-        "try_wrap",
-        "try_wrap_and_apply_header",
+        "wrap_and_apply_header_unchecked",
         "wrap_into_claim",
         "compute_length_with_header",
         // Complete-stage inherent methods emitted on the encoder struct — a
@@ -582,7 +609,7 @@ pub(crate) fn generate_message_encoder(
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = #abs_offset;
-                            // SAFETY: wrap/try_wrap validates buf.len() >= msg_offset + HEADER + BLOCK,
+                            // SAFETY: wrap/wrap_and_apply_header validates buf.len() >= msg_offset + HEADER + BLOCK,
                             // and field extent is within BLOCK_LENGTH by construction.
                             unsafe {
                                 self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
@@ -1028,7 +1055,7 @@ pub(crate) fn generate_message_encoder(
                     /// ```text
                     /// let inner_len = InnerEncoder::compute_length_with_header(...);
                     /// after.payload_with(inner_len, |payload| {
-                    ///     let len = InnerEncoder::try_wrap_and_apply_header(payload, 0)?
+                    ///     let len = InnerEncoder::wrap_and_apply_header(payload, 0)?
                     ///         .field(value)
                     ///         // continue the single encoder chain through all tail stages
                     ///         .encoded_length_with_header();
@@ -1212,60 +1239,9 @@ pub(crate) fn generate_message_encoder(
         ts.extend(group_ts);
     }
 
-    // ── Unchecked companions — always generated for zero-validation fast path ──
-    {
-        let needed: usize = header_size + block_length;
-        let needed_lit = syn::LitInt::new(&needed.to_string(), span);
-        let hs_lit = syn::LitInt::new(&header_size.to_string(), span);
-        ts.extend(quote::quote! {
-            impl<'a> #name_encoder_ident<'a> {
-                /// Wrap a mutable buffer for encoding — no bounds check.
-                /// Does **not** write the message header (`HeaderAbsent`).
-                /// Caller guarantees the buffer is large enough.
-                ///
-                /// # Message start, not body offset
-                ///
-                /// `msg_offset` is the first byte of the SBE frame (header + body).
-                /// sbe-tool Rust `wrap` takes the **body** offset (typically
-                /// `message_start + 8`). Passing sbe-tool's body offset here
-                /// mis-aligns every field. Prefer `0` for a frame at the start
-                /// of `buf`.
-                #[inline]
-                pub fn wrap(
-                    buf: &'a mut [u8],
-                    msg_offset: usize,
-                ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-                    #name_encoder_ident {
-                        buf,
-                        msg_offset,
-                        pos: msg_offset + #needed_lit,
-                        _header: core::marker::PhantomData,
-                    }
-                }
-
-                /// Wrap a mutable buffer, write the header, and return the encoder.
-                /// No bounds check — caller guarantees the buffer is large enough.
-                /// This is the default fast path.
-                ///
-                /// `msg_offset` is **message start** (see [`Self::wrap`]), not the
-                /// sbe-tool body offset.
-                #[inline]
-                pub fn wrap_and_apply_header(
-                    buf: &'a mut [u8],
-                    msg_offset: usize,
-                ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-                    buf[msg_offset..msg_offset + #hs_lit]
-                        .copy_from_slice(&#name_encoder_ident::HEADER_TEMPLATE);
-                    #name_encoder_ident {
-                        buf,
-                        msg_offset,
-                        pos: msg_offset + #needed_lit,
-                        _header: core::marker::PhantomData,
-                    }
-                }
-            }
-        });
-    }
+    // Checked + unsafe unchecked constructors are emitted once on the
+    // concrete impl above (HFT-001). Do not re-emit a second safe zero-check
+    // pair here — that reintroduced UB from safe Rust.
 
     ts.extend(encoded_len_gen.standalone);
 

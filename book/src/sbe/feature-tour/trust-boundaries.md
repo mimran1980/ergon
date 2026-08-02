@@ -8,33 +8,36 @@ walks the complete dynamic tail before trusted access:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
-## `try_*` vs trusted `wrap`
+## Checked constructors (0.2)
 
 | Entry | When |
 |-------|------|
-| `try_from` / `try_wrap` / `try_wrap_and_apply_header` | Untrusted or network input — validate template_id, schema_id, bounds |
-| `wrap` / `wrap_and_apply_header` | After a trust boundary (you already validated, or you own the buffer) |
+| `Decoder::decode` / `try_from` / `wrap` | Untrusted or network input — validate template/schema ids and version-aware extents; returns `Result` |
+| `Encoder::wrap` / `wrap_and_apply_header` | Same: one cold capacity check then shared private zero-check core |
 
-Both families take **message start** as the offset (not sbe-tool’s body
+There is **no** public `try_wrap*` alias and **no** public `*_unchecked`
+constructor twin unless HFT-008 records `keep=true` (currently all keep=false:
+cores are module-private). Offsets are **message start** (not sbe-tool body
 offset). See [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
 
 ## `_unchecked` field accessors (supported opt-in)
 
 With `GenerationConfig::with_unchecked_companions(true)`, each field getter
-gains a `*_unchecked` companion that skips the per-field bounds check.
+gains a `*_unchecked` companion that skips a *redundant* per-field bounds
+check **after** a checked constructor / `verify` has accepted the buffer.
 
-**Intended use:** production HFT hot loops **after** `try_from` / `try_wrap`
-/ `verify` (or an equivalent application check) has accepted the buffer.
-This is not a bench-only secret API.
+**Intended use:** production HFT hot loops only on a proven extent.
 
 **Contract (caller’s responsibility):**
 
-1. Validate before any `_unchecked` call.
+1. Validate with `decode` / `try_from` / `wrap` / `verify` before any
+   field-level `_unchecked` call.
 2. Do not carry unchecked access across a consuming stage transition
    (`into_fuel_figures()`, etc.) — position advances and the prior guard
    no longer applies.
-3. Malformed buffers yield garbage values, not undefined behaviour (still a
-   valid `&[u8]`).
+3. Calling field `_unchecked` without a proven extent is a programmer bug:
+   out-of-bounds raw reads are **undefined behaviour**, not “garbage but
+   safe”. Prefer checked accessors at every untrusted seam.
 
 Checked accessors remain the default surface. Full wording:
 `GenerationConfig::with_unchecked_companions` rustdoc.

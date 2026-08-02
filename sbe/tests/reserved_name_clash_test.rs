@@ -72,7 +72,7 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields {
                 remaining: Some(7),
                 buffer: [10, 20, 30, 40],
@@ -134,14 +134,9 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         .source
         .clone();
 
-    // All eight setters are renamed to _field on the encoder side.
-    // On the decoder side, only names shared with DECODER_RESERVED are
-    // renamed; `wrap_and_apply_header`, `as_bytes_with_header`,
-    // `buffer_too_short`, `fixed`, and `raw_fixed` are encoder-only
-    // inherent methods, so their decoder accessors keep the raw snake_case
-    // name (the decoder struct doesn't have those methods).
-    // `apply_nulls` is only emitted when the message has optional fields,
-    // tested separately in `optional_fixed_field_runtime`.
+    // Encoder reserved names always take `_field` on the encoder.
+    // Decoder reserved now includes wrap/decode (0.2 dual-lane), so those
+    // names are also `_field` on the decoder.
     for renamed in [
         "encoded_length_field",
         "encoded_length_with_header_field",
@@ -180,7 +175,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields {
                 encoded_length: 11,
                 encoded_length_with_header: 22,
@@ -198,8 +193,8 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         // as_body_bytes / as_bytes_with_header are on DECODER_RESERVED too.
         assert_eq!(dec.as_body_bytes_field(), 33);
         assert_eq!(dec.as_bytes_with_header_field(), 44);
-        // wrap_and_apply_header, fixed, raw_fixed, buffer_too_short are
-        // encoder-only reserved; decoder keeps raw snake_case.
+        // wrap_and_apply_header is encoder-only reserved; decoder keeps the
+        // field accessor name (u16, not a Result).
         assert_eq!(dec.wrap_and_apply_header(), 55);
         assert_eq!(dec.fixed(), 66);
         assert_eq!(dec.raw_fixed(), 77);
@@ -259,7 +254,7 @@ fn rewind_field_vs_consuming_method() -> Result<(), Box<dyn std::error::Error>> 
         let payload = b"hello";
         let len = MsgEncoder::compute_length_with_header(payload.len());
         let mut buf = vec![0u8; len];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { rewind: 42, normal: 99 })
             .payload(payload)?
             .encoded_length_with_header();
@@ -307,7 +302,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let n = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { x: 1, maybe: Some(2) })
             .encoded_length_with_header();
         let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
@@ -315,7 +310,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(dec.maybe(), Some(2));
 
         // apply_nulls() nullifies ALL optional fields (by design).
-        let n2 = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+        let n2 = MsgEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { x: 99, maybe: None })
             .apply_nulls()
             .encoded_length_with_header();

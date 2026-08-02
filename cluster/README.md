@@ -113,7 +113,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         .cluster_session_id(99);
 
     // Decode the first message
-    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
 
     // remaining() returns the bytes after the header (the SessionKeepAlive)
     let tail = smh.remaining();

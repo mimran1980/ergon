@@ -1,7 +1,7 @@
 # Method Chaining
 
 ergo-sbe encoders are designed so **the entire encode reads as one expression**,
-from `try_wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
+from `wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
 ending in `.encoded_length_with_header()` (or `.as_bytes_with_header()` on a
 complete stage when you need the raw slice). Bind only the resulting length; do not retain
 intermediate encoder variables.
@@ -15,7 +15,7 @@ intermediate encoder variables.
 
 ### Staged chaining vs fixed-only
 
-For a fixed-only message like `Quote`, `try_wrap_and_apply_header` returns
+For a fixed-only message like `Quote`, `wrap_and_apply_header` returns
 the encoder. `.fixed(...)` completes the write and returns `&Self`:
 
 ```rust,no_run
@@ -28,7 +28,7 @@ the encoder. `.fixed(...)` completes the write and returns `&Self`:
 ```text
 // Each `let` breaks the chain and splays the pipeline across the screen.
 // The `.unwrap()` calls are a code smell — the fallible chain should use `?`.
-let enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
+let enc = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?.fixed(&fields);
 let enc = enc.legs(1, |legs| {
     legs.add(|leg| { leg.value(99); Ok(()) })?;
     Ok(())

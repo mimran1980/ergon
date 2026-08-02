@@ -326,7 +326,7 @@ Problem:
   `read_bytes_unchecked`/`write_bytes_unchecked` functions around raw pointer
   operations. Safe callers can immediately cause out-of-bounds UB.
 - `sbe/src/codegen/message_decoder.rs:294` emits safe `wrap` without validating
-  offsets or the base fixed extent. `try_wrap_and_apply_header` validates that
+  offsets or the base fixed extent. `wrap_and_apply_header` validates that
   the declared block fits the slice, but accepts an undersized declared fixed
   block. A valid Car header declaring block length zero is accepted; the safe
   `serial_number()` accessor then reads beyond the eight-byte frame.
@@ -834,7 +834,7 @@ CI/docs acceptance criteria:
 - [ ] Run a link checker and validate versioned book/docs.rs links.
 - [ ] Generated code examples compile without blanket warning suppression.
 - [ ] A repository-wide stale-interface check rejects `try_wrap`,
-      `try_wrap_and_apply_header`, decoder “apply header” wording, safe
+      `wrap_and_apply_header`, decoder “apply header” wording, safe
       zero-check constructor claims, and unchecked “garbage but not UB” claims,
       except in an allowlisted migration/changelog context.
 - [ ] A generated-interface inventory checks that every public `unsafe fn` is
@@ -853,7 +853,7 @@ Priority: P1
 Dependencies: all P0 tickets, HFT-006 through HFT-010
 
 - Publish a 0.1-to-0.2 migration table that explicitly maps
-  `try_wrap_and_apply_header` to checked `wrap_and_apply_header`, old safe
+  `wrap_and_apply_header` to checked `wrap_and_apply_header`, old safe
   zero-check `wrap_and_apply_header` to unsafe
   `wrap_and_apply_header_unchecked`, concrete decoder construction to
   `decode`/`decode_unchecked`, and `AnyMessage`/frame variants, as well as

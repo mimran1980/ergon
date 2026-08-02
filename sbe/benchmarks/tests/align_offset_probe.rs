@@ -3,7 +3,7 @@
 use ergo_sbe_benchmarks::codec_matrix::{Fixed64Decoder, Fixed64Encoder, Fixed64FixedFields};
 
 fn encode_at(buffer: &mut [u8], offset: usize) -> usize {
-    Fixed64Encoder::try_wrap_and_apply_header(buffer, offset)
+    Fixed64Encoder::wrap_and_apply_header(buffer, offset)
         .unwrap()
         .fixed(&Fixed64FixedFields {
             value: 0x0102_0304_0506_0708,
@@ -18,7 +18,7 @@ fn encode_decode_all_offsets_0_to_63() {
         let mut storage = [0u8; 512];
         let len = encode_at(&mut storage, offset);
         assert_eq!(len, Fixed64Encoder::ENCODED_LENGTH, "offset={offset}");
-        let dec = Fixed64Decoder::try_wrap_and_apply_header(&storage[..offset + len], offset)
+        let dec = Fixed64Decoder::decode(&storage[..offset + len], offset)
             .unwrap_or_else(|e| panic!("offset={offset} decode: {e:?}"));
         assert_eq!(
             dec.value(),

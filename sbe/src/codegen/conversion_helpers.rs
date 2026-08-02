@@ -164,18 +164,18 @@ pub(crate) fn find_domain_type<'a>(
 
 /// Encoder setter name used by domain DTOs.
 ///
-/// When a conversion is configured without a domain type, flyweight setters
-/// are renamed to `*_wire` (concrete domain methods take the bare name).
-/// Domain-object encode must call the same name.
+/// - Conversion-only (no domain type): flyweight is `*_wire`.
+/// - Concrete domain type (HFT-003): fallible `try_*` setter.
+/// - Otherwise: bare field name.
 pub(crate) fn domain_encode_setter_name(
     field: &MessageField,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     field_snake: &str,
 ) -> String {
-    if field_has_conversion_free(field, conversions)
-        && find_domain_type(field, domain_types).is_none()
-    {
+    if find_domain_type(field, domain_types).is_some() {
+        format!("try_{field_snake}")
+    } else if field_has_conversion_free(field, conversions) {
         format!("{field_snake}_wire")
     } else {
         field_snake.to_string()

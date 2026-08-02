@@ -399,7 +399,7 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
         "FixedArrayTooLong",
         "QuoteDomain",
         "ValueOutOfRange",
-        "try_wrap_and_apply_header",
+        "wrap_and_apply_header",
         "ENCODED_LENGTH",
     ] {
         assert!(
@@ -451,7 +451,7 @@ use gen::*;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
     let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
-    let heartbeat_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    let heartbeat_len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)?
         .seq(7)
         .encoded_length_with_header();
     let dec = HeartbeatDecoder::try_from(&buf[..heartbeat_len])?;
@@ -464,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bulk array helpers + group/var-data tail (docs)
     let mut qbuf = [0u8; 512];
-    let written = QuoteEncoder::try_wrap_and_apply_header(&mut qbuf, 0)?
+    let written = QuoteEncoder::wrap_and_apply_header(&mut qbuf, 0)?
         .fixed(&QuoteFixedFields {
             seq: 1,
             some_numbers: [1, 2, 3, 4],
@@ -487,8 +487,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(q.copy_vehicle_code(&mut dst), 6);
     assert_eq!(&dst, b"ABCDEF");
 
-    // Domain object (docs)
-    let dto = QuoteDomain::from(q);
+    // Domain object (docs) — fallible materialisation (0.2 / HFT-003)
+    let dto = QuoteDomain::try_from_decoder(q)?;
     let mut out = [0u8; 512];
     let n = dto.encode(&mut out)?;
     assert!(n > 0);

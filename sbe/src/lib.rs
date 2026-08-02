@@ -32,8 +32,8 @@
 //! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
 //! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
 //!   Aeron `try_claim`
-//! - **Checked entry points** — `try_from` / `try_wrap` for untrusted input;
-//!   `wrap` for trusted — explicit in the type system
+//! - **Checked entry points** — `decode` / `try_from` / `wrap` return `Result`
+//!   and validate extents; zero-check cores stay private until an HFT-008 keep
 //! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
 //! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
 //!   line of config
@@ -352,8 +352,8 @@ pub use build::{
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
-    ConversionSelector, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig, ItemContext,
-    ItemKind, SetChoiceInfo,
+    ConversionSelector, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig,
+    GenerationProfile, ItemContext, ItemKind, SetChoiceInfo,
 };
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};

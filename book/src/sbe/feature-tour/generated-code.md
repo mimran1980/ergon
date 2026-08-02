@@ -24,7 +24,7 @@ impl<'a> CarDecoder<'a> {
                acting_block_length: usize, acting_version: u16) -> Self { ... }
 
     // Validates header fields (template_id, schema_id, block_length).
-    pub fn try_wrap_and_apply_header(buf: &'a [u8], pos: usize)
+    pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize)
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
     // Fixed fields are random-access — zero-copy reads.

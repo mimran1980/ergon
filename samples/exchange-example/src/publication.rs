@@ -179,13 +179,13 @@ impl<P: Publication> ClaimPublisher<P> {
                     inner_len,
                 );
                 let outcome = self.typed.try_claim_and_commit(outer_len, |buf| {
-                    let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0);
+                    let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0).unwrap();
                     app.sent_ts(*receive_ts_ns);
                     let after = app.app_name(APP_NAME)?;
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
-                            let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0);
+                            let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0).unwrap();
                             enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
@@ -241,13 +241,13 @@ impl<P: Publication> ClaimPublisher<P> {
                     inner_len,
                 );
                 let outcome = self.typed.try_claim_and_commit(outer_len, |buf| {
-                    let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0);
+                    let mut app = AppMessageEncoder::wrap_and_apply_header(buf, 0).unwrap();
                     app.sent_ts(*receive_ts_ns);
                     let after = app.app_name(APP_NAME)?;
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
-                            let mut enc = TradeEncoder::wrap_and_apply_header(payload, 0);
+                            let mut enc = TradeEncoder::wrap_and_apply_header(payload, 0).unwrap();
                             enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)

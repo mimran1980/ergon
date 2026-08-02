@@ -4,7 +4,7 @@
 // ANCHOR: staged_chaining
 let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
 // Buffer is exact size from const compute_length_with_header — no bounds check needed.
-let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
+let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
     .fixed(&HeartbeatFixedFields { sequence: 7, timestamp: 0 })
     .encoded_length_with_header();
 let dec = HeartbeatDecoder::try_from(&buf[..len])?;

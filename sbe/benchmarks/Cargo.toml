@@ -17,7 +17,8 @@ rust_decimal = "1"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 hdrhistogram = "7"
-iai-callgrind = "0.16.1"
+# iai-callgrind removed (HFT-005): pulled unmaintained proc-macro-error2
+# (RUSTSEC-2026-0173). instruction_counts is a dep-free Instant harness.
 
 [build-dependencies]
 ergo-sbe = { path = ".." }

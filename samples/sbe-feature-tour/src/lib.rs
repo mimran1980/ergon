@@ -13,7 +13,7 @@
 //! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
-//! | [`demo_try_vs_trusted`] | `try_wrap` / `try_from` vs trusted wrap; `verify` |
+//! | [`demo_try_vs_trusted`] | `try_from` / checked wrap vs `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
@@ -59,7 +59,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
     // Buffer is exact size from const compute_length_with_header — no bounds check needed.
-    let written = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
+    let written = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0).unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 7,
             timestamp: nanos as u64,
@@ -68,7 +68,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let dec = HeartbeatDecoder::try_from(&buf[..written])?;
     assert_eq!(dec.sequence(), 7);
-    let decoded_ts: DateTime<Utc> = dec.timestamp();
+    let decoded_ts: DateTime<Utc> = dec.try_timestamp()?;
     assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
     Ok(buf[..written].to_vec())
 }
@@ -77,7 +77,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 // ─── 2. EncodedLength + encode ─────────────────────────────────────────────
 
 /// Compute exact wire length for a Car with known group shapes, allocate once,
-/// encode with `try_wrap_and_apply_header` + fixed phase + consuming tails.
+/// encode with `wrap_and_apply_header` + fixed phase + consuming tails.
 // ANCHOR: demo_car_size_and_encode
 pub fn demo_car_size_and_encode() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Fuel: 2 entries with usage ASCII lengths 5 and 7.
@@ -122,7 +122,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     extras.cruise_control(true).sports_pack(true);
 
     // Buffer is pre-sized from compute_length — no bounds check needed.
-    let len = CarEncoder::wrap_and_apply_header(buf, 0)
+    let len = CarEncoder::wrap_and_apply_header(buf, 0).unwrap()
         .fixed(&CarFixedFields {
             serial_number: 1234,
             model_year: 2013,
@@ -188,7 +188,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.serial_number(), 1234);
     assert_eq!(car.model_year(), 2013);
     // Domain conversion: BooleanType → bool when configured.
-    let available: bool = car.available();
+    let available: bool = car.try_available()?;
     assert!(available);
     assert_eq!(car.code(), Model::A);
     assert_eq!(car.discounted_model(), Model::C); // constant field
@@ -264,7 +264,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let hb_len = HeartbeatEncoder::compute_length_with_header();
     let nanos: u64 = 1_700_000_000_000_000_000;
-    HeartbeatEncoder::wrap_and_apply_header(&mut hb, 0)
+    HeartbeatEncoder::wrap_and_apply_header(&mut hb, 0).unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 1,
             timestamp: nanos,
@@ -276,7 +276,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     assert!(note_len <= NOTE_PAD);
     let mut note_storage = [0u8; NOTE_PAD];
     let note = &mut note_storage[..note_len];
-    let note_written = NoteEncoder::try_wrap_and_apply_header(note, 0)?
+    let note_written = NoteEncoder::wrap_and_apply_header(note, 0)?
         .fixed(&NoteFixedFields { note_id: 99 })
         .body(note_body)?
         .encoded_length_with_header();
@@ -321,10 +321,10 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
 /// Trust-boundary constructors reject short / wrong-schema buffers.
 // ANCHOR: demo_try_vs_trusted
 pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    // `try_wrap_and_apply_header` validates template_id, schema_id, version,
+    // `wrap_and_apply_header` validates template_id, schema_id, version,
     // block_length, and buffer bounds at the given offset. The `_dec` binding
     // holds the decoder alive until dropped (showing both paths).
-    let _dec = CarDecoder::try_wrap_and_apply_header(valid_car, 0)?;
+    let _dec = CarDecoder::decode(valid_car, 0)?;
 
     // `verify` is a cheaper header-only check — no decoder constructed.
     CarDecoder::verify(valid_car)?;
@@ -346,7 +346,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let mut hdr_bytes = [0u8; 8];
     hdr_bytes.copy_from_slice(&valid_car[..8]);
     let hdr = MessageHeader(hdr_bytes);
-    let trusted = CarDecoder::wrap(valid_car, 0, hdr.block_length() as usize, hdr.version());
+    let trusted = CarDecoder::wrap(valid_car, 0, hdr.block_length() as usize, hdr.version()).unwrap();
     assert_eq!(trusted.serial_number(), 1234);
     Ok(())
 }
@@ -483,7 +483,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
-    let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+    let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
         .price_from(&price)?
         .size_from(&size)?
         .encoded_length_with_header();
@@ -508,7 +508,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         }
     );
 
-    let dto = QuoteDomain::from(dec);
+    let dto = QuoteDomain::try_from_decoder(dec)?;
     assert_eq!(dto.price.mantissa(), 12345);
     let mut re = [0u8; QuoteEncoder::compute_length_with_header()];
     let n = dto.encode(&mut re)?;
@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(fixed.exponent, -2);
         // Wire setter path still works without any adapter:
         let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
-        QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
             .price_wire(Decimal::new(1, -2))
             .size_wire(Decimal::new(2, 0));
         let d2 = QuoteDecoder::try_from(buf.as_slice())?;

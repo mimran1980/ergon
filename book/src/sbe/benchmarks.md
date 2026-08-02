@@ -122,7 +122,7 @@ Every gated ergon/sbe-tool pair uses the same header mode on both arms:
 | decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
 | decode full / batch 10k | body wrap + same fields | same | same |
 | cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
-| cluster decode | header+body parse | `try_wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
+| cluster decode | header+body parse | `wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
 
 Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
 throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
@@ -198,8 +198,9 @@ cd sbe/benchmarks && cargo bench --bench encode_style_bench
 The two cluster encode scenarios (`session_keep_alive`, `claim_shaped`) previously
 failed at 1.19× and 1.28×. Root cause: generated field setters used
 `self.buf[offset..offset+N].copy_from_slice(...)`, which re-checks bounds on every
-field write. After `wrap`/`try_wrap` validates `buf.len() >= BLOCK_LENGTH`, field
-offsets are in-bounds by construction — the per-write bounds check was redundant.
+field write. After `wrap`/`wrap_and_apply_header` validates
+`buf.len() >= BLOCK_LENGTH`, field offsets are in-bounds by construction — the
+per-write bounds check was redundant.
 
 **Fix:** field setters now use `get_unchecked_mut` after the trust boundary. This
 restored the encode paths to parity: `session_keep_alive` went from 1.19× slower to

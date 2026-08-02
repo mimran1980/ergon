@@ -17,7 +17,7 @@ than retaining dated point estimates as release guarantees.
 Most of the measured difference between ergo-sbe and sbe-tool comes down to
 **bounds checking**, not fundamental codegen quality. Minor variations in how
 headers are written or how bulk operations are laid out account for the rest.
-If you had to call `try_wrap_and_apply_header` (which validates `template_id`
+If you had to call `wrap_and_apply_header` (which validates `template_id`
 and `schema_id`) every time, ergo-sbe would be slower than sbe-tool —
 sbe-tool's `wrap` + `header()` does no such validation in release builds. The
 benchmarks therefore use infallible `wrap` / `wrap_and_apply_header` on both

@@ -13,7 +13,7 @@ Two styles — pick whichever fits:
 
 ```rust,no_run
   let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
-  let len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+  let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)?
       .fixed(&HeartbeatFixedFields { seq: 7 })
       .encoded_length_with_header();
   let dec = HeartbeatDecoder::try_from(&buf[..len])?;
@@ -25,7 +25,7 @@ On decode, `copy_*` copies the raw bytes into your buffer:
 
 ```rust,no_run
   let mut buf = [0u8; FixedStringEncoder::compute_length_with_header()];
-  let len = FixedStringEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+  let len = FixedStringEncoder::wrap_and_apply_header(&mut buf, 0)?
       .code_str("ABC")?
       .encoded_length_with_header();
   let dec = FixedStringDecoder::try_from(&buf[..len])?;
