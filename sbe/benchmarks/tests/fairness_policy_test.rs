@@ -214,8 +214,10 @@ fn arm_writes_message_header(arm: &str) -> bool {
 
 fn arm_is_body_only_encode(arm: &str) -> bool {
     // Body-only: wraps without applying/writing the MessageHeader.
-    let has_wrap =
-        arm.contains("::wrap(") || arm.contains(".wrap(") || arm.contains("Encoder::wrap(");
+    let has_wrap = arm.contains("::wrap(")
+        || arm.contains("::wrap_unchecked(")
+        || arm.contains(".wrap(")
+        || arm.contains("Encoder::wrap(");
     has_wrap && !arm_writes_message_header(arm)
 }
 
