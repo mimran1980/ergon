@@ -210,7 +210,7 @@ pub fn compile_fails_with_diagnostics(
         "compile-fail test {module_name} must name its intended diagnostic"
     );
     let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -237,7 +237,7 @@ pub fn compile_fails_with_diagnostics(
         .expect("cargo build failed");
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 
     if out.status.success() {
         panic!(
@@ -266,7 +266,7 @@ fn _compile_and_run(
     deps: &str,
 ) -> String {
     let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -309,7 +309,7 @@ fn _compile_and_run(
         .expect("cargo run failed");
 
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
@@ -359,7 +359,7 @@ pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &st
     let package = format!("parity_{tool_key}");
 
     let dir = std::env::temp_dir().join(format!("ergo_dual_{test_name}"));
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -434,7 +434,7 @@ tool = {{ path = "{tool_path_toml}", package = "{package}" }}
             dir.display()
         );
     }
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// Cross-check the generated message-header decoder against the matching
@@ -507,7 +507,7 @@ pub fn compile_and_run_two_modules(
     code: &str,
 ) {
     let dir = std::env::temp_dir().join(format!("ergo_test_{test_name}"));
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -534,7 +534,7 @@ pub fn compile_and_run_two_modules(
         .output()
         .expect("cargo run failed");
 
-    // let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);

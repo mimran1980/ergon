@@ -6,7 +6,7 @@
 //!
 //! sbe-tool reference code is checked in (stable, generated once from upstream).
 
-#![allow(unsafe_code)]
+#![allow(unsafe_code, unused_unsafe)]
 #![allow(
     missing_docs,
     unused_variables,

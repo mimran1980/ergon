@@ -51,7 +51,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let expected_len = SessionConnectRequestEncoder::compute_length_with_header(resp.len(), 0, 0);
         let mut storage = [0u8; 512];
         let len = SessionConnectRequestEncoder::wrap_and_apply_header(&mut storage[..expected_len], 0)
-            .unwrap()
             .fixed(&SessionConnectRequestFixedFields {
                 correlation_id: 1,
                 response_stream_id: 102,

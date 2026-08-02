@@ -13,7 +13,7 @@ mod common;
 use common::{Paths, generate};
 
 const STALE_GENERATED: &[&str] = &[
-    "pub fn try_wrap_and_apply_header(&self",  // decoders only
+    "pub fn try_wrap_and_apply_header(&self", // decoders only
 ];
 
 /// Substrings that must not appear in inventory docs (case-sensitive where noted).
@@ -141,8 +141,14 @@ fn car_generated_source_rejects_stale_0_1_names() -> Result<(), Box<dyn Error>> 
             "stale interface still generated: {needle}"
         );
     }
-    assert!(src.contains("pub fn try_wrap_and_apply_header("), "checked wah missing");
-    assert!(src.contains("pub fn wrap_and_apply_header("), "wrap_and_apply_header missing");
+    assert!(
+        src.contains("pub fn try_wrap_and_apply_header("),
+        "checked wah missing"
+    );
+    assert!(
+        src.contains("pub fn wrap_and_apply_header("),
+        "wrap_and_apply_header missing"
+    );
     assert!(src.contains("pub fn try_decode("), "try_decode missing");
     Ok(())
 }

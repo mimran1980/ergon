@@ -69,7 +69,10 @@ fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error
         "decoder framed entry must be try_decode"
     );
     assert!(src.contains("pub fn wrap"), "wrap must be public");
-    assert!(src.contains("pub fn try_decode"), "try_decode must be public");
+    assert!(
+        src.contains("pub fn try_decode"),
+        "try_decode must be public"
+    );
     Ok(())
 }
 
