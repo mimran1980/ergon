@@ -354,9 +354,9 @@ The principal goals were not invented by a model:
   borrow-checker pain.
 - **Converters and DTOs.** I wanted application code to use types such as Rust
   `bool` and decimal values where direct wire access was unnecessary.
-- **Checked and trusted wrapping.** I wanted a checked boundary for untrusted
-  data and an official-codec-style fast path when the caller already knows the
-  buffer is valid.
+- **Checked constructors with private zero-check cores.** I wanted fallible
+  `wrap` / `decode` for every untrusted buffer, and a measured private hot-path
+  core only after extent proof (public `*_unchecked` twins only if keep=true).
 - **Unsafe only when justified.** I asked the agents to test particular unsafe
   optimisations, measure them, and remove them when they did not matter.
 
@@ -1770,8 +1770,8 @@ At minimum:
 7. Verify exact buffer lengths before integrating with `try_claim` or another
    zero-copy publication API.
 8. Benchmark your real hot fields and message shapes, not only the Car example.
-9. Audit the internal unsafe assumptions relevant to your use of checked and
-   trusted wrapping.
+9. Audit the internal unsafe assumptions relevant to your use of checked
+   constructors and any private zero-check cores.
 10. Run soak tests under real traffic and deployment conditions.
 
 If you are not already comfortable explaining SBE block lengths, group

@@ -8,7 +8,7 @@ implementations — they move with experimental APIs on purpose.
 
 | Step | Sample | Why |
 |------|--------|-----|
-| **1** | [SBE Feature Tour](sbe-feature-tour.md) | **Golden path.** Full feature map: stages, EncodedLength, try/trusted, Display, DTO with `DomainVarData::LossyStrings`, both conversion styles |
+| **1** | [SBE Feature Tour](sbe-feature-tour.md) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::LossyStrings`, both conversion styles |
 | **2a** | [L3 Order Book](l3-book.md) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
 | **2b** | [Exchange Example](exchange-example.md) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [Codegen as Library](codegen-library.md) | Generator **as a library** (no `build.rs`) |

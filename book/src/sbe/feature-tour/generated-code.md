@@ -19,19 +19,23 @@ impl<'a> CarDecoder<'a> {
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
 
-    // Infallible wrap for trusted buffers.
-    pub fn wrap(buf: &'a [u8], message_offset: usize,
-               acting_block_length: usize, acting_version: u16) -> Self { ... }
-
-    // Validates header fields (template_id, schema_id, block_length).
-    pub fn wrap_and_apply_header(buf: &'a [u8], pos: usize)
+    // Checked framed entry (message start). Validates header + fixed extent.
+    pub fn decode(buf: &'a [u8], pos: usize)
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
-    // Fixed fields are random-access — zero-copy reads.
+    // Checked external-metadata wrap (still returns Result).
+    pub fn wrap(buf: &'a [u8], message_offset: usize,
+               acting_block_length: usize, acting_version: u16)
+        -> Result<Self, sbe_rt::DecodeError> { ... }
+
+    // Full dynamic-tail structural check (associated, not `car.verify()`).
+    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> { ... }
+
+    // Fixed fields are random-access — zero-copy reads after a checked wrap.
     #[inline]
     pub fn serial_number(&self) -> u64 {
         let offset = self.pos + 0;
-        u64::from_le_bytes(read_bytes_unchecked::<8>(self.buf, offset))
+        u64::from_le_bytes(/* private read after extent proof */)
     }
 }
 ```

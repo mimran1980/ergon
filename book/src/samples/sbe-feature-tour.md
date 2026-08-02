@@ -47,7 +47,7 @@ Other samples:
 | Consuming decoder stages | `demo_car_decode_stages` |
 | Owned DTO | `demo_car_domain_dto` |
 | `AnyMessage` | `demo_any_message` |
-| try vs trusted wrap | `demo_try_vs_trusted` |
+| Checked decode / wrap / verify | `demo_try_vs_trusted` |
 | Display / Debug | `demo_display_debug` |
 | **`with_conversion` only** | **`demo_conversion_only`** |
 | All of the above | `run_all` |

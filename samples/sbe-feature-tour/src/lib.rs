@@ -547,7 +547,7 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
     demo_any_message()?;
     println!("   ok\n");
 
-    println!("6) try_* trust boundary vs trusted wrap");
+    println!("6) checked decode / wrap / verify (trust boundary)");
     demo_try_vs_trusted(&car)?;
     println!("   ok\n");
 
