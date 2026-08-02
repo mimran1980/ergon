@@ -238,13 +238,23 @@ pub(crate) fn generate_message_encoder(
             }
         });
     } else {
+        // Leading space required: `#[doc = "…"]` renders as `///…` with no
+        // automatic space after the slashes.
         let max_doc_attr = if is_capped {
             quote::quote! {
-                #[doc = "MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation"]
+                #[doc = " Upper bound of any encoded form of this message (capped at 64KB). \
+                         The theoretical max exceeds a sensible stack array — size the buffer \
+                         with the staged `*EncodedLength` builder / `Self::compute_length()` \
+                         (exact length), or a transport claim of that size. Do not stack-allocate \
+                         this constant and do not `Vec::with_capacity` then truncate."]
             }
         } else {
             quote::quote! {
-                #[doc = "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"]
+                #[doc = " Upper bound of any encoded form of this message (header + body). \
+                         Prefer exact sizing via `Self::compute_length()` / the staged \
+                         `*EncodedLength` builder when the message has groups or var-data; \
+                         a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
+                         constant is a true fixed upper bound you intend to use."]
             }
         };
         impl_consts.extend(quote::quote! {
@@ -320,6 +330,11 @@ pub(crate) fn generate_message_encoder(
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with bounds validation.
         /// Does **not** write the message header (`HeaderAbsent`).
+        ///
+        /// `msg_offset` is the **message start** (first byte of the SBE frame),
+        /// not the body. sbe-tool Rust `wrap` takes the body offset instead —
+        /// see [`Self::wrap`].
+        ///
         /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
         /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
@@ -359,6 +374,7 @@ pub(crate) fn generate_message_encoder(
     };
     let wrap_apply_fn = quote::quote! {
         /// Wrap a mutable buffer, write the header, with bounds validation.
+        /// `pos` is the **message start** (see [`Self::wrap`]).
         /// Returns an error if the buffer is too short.
         /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
         #[inline]
@@ -687,6 +703,11 @@ pub(crate) fn generate_message_encoder(
             /// Complete set of latest-version fixed fields for this message.
             /// Required fields are concrete values; optional/versioned fields
             /// are `Option<T>`. Constants are excluded.
+            ///
+            /// This struct is **intentionally exhaustive** (not
+            /// `#[non_exhaustive]`): when the schema adds a fixed field, every
+            /// `fixed(&…)` call site must be updated. That is a feature — schema
+            /// changes surface as compile errors rather than silent defaults.
             #[derive(Debug, Clone)]
             pub struct #fixed_name {
                 #fixed_fields_ts
@@ -1201,6 +1222,14 @@ pub(crate) fn generate_message_encoder(
                 /// Wrap a mutable buffer for encoding — no bounds check.
                 /// Does **not** write the message header (`HeaderAbsent`).
                 /// Caller guarantees the buffer is large enough.
+                ///
+                /// # Message start, not body offset
+                ///
+                /// `msg_offset` is the first byte of the SBE frame (header + body).
+                /// sbe-tool Rust `wrap` takes the **body** offset (typically
+                /// `message_start + 8`). Passing sbe-tool's body offset here
+                /// mis-aligns every field. Prefer `0` for a frame at the start
+                /// of `buf`.
                 #[inline]
                 pub fn wrap(
                     buf: &'a mut [u8],
@@ -1216,7 +1245,10 @@ pub(crate) fn generate_message_encoder(
 
                 /// Wrap a mutable buffer, write the header, and return the encoder.
                 /// No bounds check — caller guarantees the buffer is large enough.
-                /// This is the default fast path (matching sbe-tool's `wrap`).
+                /// This is the default fast path.
+                ///
+                /// `msg_offset` is **message start** (see [`Self::wrap`]), not the
+                /// sbe-tool body offset.
                 #[inline]
                 pub fn wrap_and_apply_header(
                     buf: &'a mut [u8],

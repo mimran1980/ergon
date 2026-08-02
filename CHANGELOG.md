@@ -8,12 +8,19 @@
 - **Codegen split:** mod.rs 9,075 → 1,723 lines (-81%), 14 responsibility modules extracted
 - **Config API unified:** `enable_*` renamed to `with_*`; all boolean toggles take `(bool)`
 - **Config knobs:** `with_display_debug(bool)`, `with_meta_attributes(bool)`, `with_dispatch(bool)` — enabled by default; disable to shrink generated output
+- **`MAX_ENCODED_LENGTH` rustdoc** — space after `///`; stack warning only when capped; points at EncodedLength builders (not `Vec::with_capacity`)
+- **`with_unchecked_companions`** reframed as supported post-validation opt-in (HFT hot path), not bench-only
+- **Crate-root clippy allows** burned down to five justified items; remaining noise scoped per module
+- **XML parser split:** `sbe/src/xml.rs` (5.4k) → `sbe/src/xml/` modules (entry, schema, types, message, registry, attr, error, warn)
 - **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
 - **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
 - Nightly CI → weekly schedule
 - `rust,ignore` fences allowed unconditionally in `.md` files for syntax highlighting
 
 ### Added
+- Book: type-state design note, API freeze decisions, Coming from sbe-tool, Road to 1.0
+- Generated `wrap`/`try_wrap*` rustdoc: loud message-start vs sbe-tool body-offset callout
+- `*FixedFields` rustdoc: intentionally exhaustive (schema change forces call-site review)
 - `with_unchecked_companions` safety contract documented in rustdoc
 - `cargo-deny` + `cargo-audit` in CI and justfile (`deny.toml`)
 - Aeron `try_claim` integration recipe page in book

@@ -12,7 +12,7 @@ flags default to the value shown.
 | `with_meta_attributes(enable: bool)` | `true` | Emit `*_ENCODING_OFFSET`, `*_ID`, `*_META_ATTRIBUTE` etc. |
 | `with_dispatch(enable: bool)` | `true` | Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch |
 | `with_bool_domain_type(enable: bool)` | `false` | Auto-register `bool` converters for every boolean enum (name, `semanticType`, or `{0,1}` value pair) |
-| `with_unchecked_companions(enable: bool)` | `false` | `_unchecked` field accessors — **benchmarks only**, see safety contract |
+| `with_unchecked_companions(enable: bool)` | `false` | `_unchecked` field accessors — **supported opt-in** after validation (HFT hot path), see safety contract |
 | `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated]` on schema-deprecated items |
 | `with_error_from_impls(path)` | — | `From<EncodeError/DecodeError>` for your error type |
 | `with_shared_module(name)` | — | Multi-schema shared types module |

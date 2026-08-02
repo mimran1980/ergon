@@ -1,47 +1,14 @@
 #![warn(missing_docs)]
-#![allow(unused)] // legacy codegen module still contains unused helpers
-#![allow(clippy::pedantic)] // legacy codegen is being tightened incrementally
-#![allow(clippy::nursery)] // experimental lints on stable code
-#![allow(clippy::panic)] // codegen uses panic/expect for irrecoverable states
-#![allow(clippy::too_many_arguments)] // codegen functions need many params
-#![allow(clippy::manual_memcpy)] // explicit loop in codegen is intentional
-#![allow(clippy::needless_range_loop)] // codegen uses index-based loops
-#![allow(clippy::unnecessary_cast)] // schema value casting
-#![allow(clippy::useless_format)] // codegen generates format strings
-#![allow(clippy::items_after_statements)] // codegen structure
-#![allow(clippy::explicit_counter_loop)] // codegen uses counter loops
-#![allow(clippy::uninlined_format_args)] // legacy string-template code
-#![allow(clippy::unwrap_used)] // legacy test helpers and config
-#![allow(clippy::collapsible_if)] // intentional readability in codegen
-#![allow(clippy::unreadable_literal)] // schema constants with specific bit patterns
-#![allow(clippy::match_same_arms)] // SBE signal dispatch with matching bodies
-#![allow(clippy::needless_borrow)] // explicit in generated code patterns
-#![allow(clippy::use_self)] // codegen uses concrete type names
-#![allow(clippy::missing_const_for_fn)] // runtime buffer ops cannot be const
-#![allow(clippy::result_large_err)] // error types carry context
-#![allow(clippy::similar_names)] // codegen variable naming
-#![allow(clippy::redundant_clone)] // intentional clarity in codegen
-#![allow(clippy::doc_markdown)] // SBE terms like blockLength are schema identifiers
-#![allow(clippy::ref_option)] // legacy IR model API
-#![allow(clippy::map_unwrap_or)] // legacy resolver pattern
-#![allow(clippy::expect_used)] // expect() is intentional in codegen
-#![allow(clippy::redundant_closure_for_method_calls)] // generated code
-#![allow(clippy::unnecessary_unwrap)] // codegen uses unwrap_or pattern
-#![allow(clippy::cast_lossless)] // u8/u32 -> u64 in IR is intentional
-#![allow(clippy::cast_possible_truncation)] // checked by schema validation
-#![allow(clippy::cast_sign_loss)] // schema validation ensures valid ranges
-#![allow(clippy::cast_precision_loss)] // float conversions are explicit
-#![allow(clippy::if_same_then_else)] // SBE signal dispatch patterns
-#![allow(clippy::should_panic_without_expect)] // test patterns
-#![allow(clippy::too_many_lines)] // codegen.rs is inherently large
-#![allow(clippy::module_name_repetitions)] // codegen uses descriptive names
-#![allow(clippy::option_if_let_else)] // legacy control-flow patterns
-#![allow(clippy::match_wildcard_for_single_variants)] // exhaustive match
-#![allow(clippy::single_match_else)] // semantic intent
-#![allow(clippy::fn_params_excessive_bools)] // codegen parameter style
-#![allow(clippy::cast_enum_constructor)] // SBE value construction
-#![allow(clippy::ptr_as_ptr)] // pointer casts are explicit
-#![allow(clippy::only_used_in_recursion)] // domain_types threaded through recursive codegen
+// Crate-root allows are deliberately few. Codegen-specific noise lives on
+// `codegen` (and other modules) via scoped attributes — not a 40-line blanket
+// silence of workspace lint policy.
+//
+// Justified at crate root (schema/codegen reality, not laziness):
+#![allow(clippy::too_many_arguments)] // Generator pipelines thread many schema/config params
+#![allow(clippy::too_many_lines)] // Emit functions are inherently large token builders
+#![allow(clippy::doc_markdown)] // SBE identifiers (blockLength, templateId) trip false positives
+#![allow(clippy::cast_possible_truncation)] // Numeric widths constrained by schema validation
+#![allow(clippy::cast_sign_loss)] // Same: ranges validated against primitive types
 
 //! Opinionated, idiomatic Rust code generation for Simple Binary Encoding (SBE).
 //!
@@ -62,6 +29,8 @@
 //!   line of config
 //!
 //! Full feature walkthrough: [crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md).
+//! Book: [type-state](https://mimran1980.github.io/ergon/sbe/design-notes/type-state.html),
+//! [coming from sbe-tool](https://mimran1980.github.io/ergon/sbe/getting-started/from-sbe-tool.html).
 //!
 //! # Architecture
 //!
@@ -72,7 +41,15 @@
 //! | Options | [`config`] | Module name, conversions, domain objects, … |
 //! | Codegen | [`codegen`] | Rust source modules |
 //!
-//! # Quick-start (`build.rs`)
+//! # Quick-start (`build.rs`) — doctest pins generated idioms
+//!
+//! Generated *application* types do not exist in this crate at doctest time.
+//! The example below **runs the generator** on an inline schema and asserts on
+//! the emitted source so chained encode / length-builder names cannot drift
+//! unnoticed. For end-to-end encode/decode of real types, see
+//! [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
+//! and the golden file
+//! [`sbe/tests/golden/car_example.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/golden/car_example.rs).
 //!
 //! ```rust
 //! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
@@ -94,19 +71,24 @@
 //!   </message>
 //! </messageSchema>"#;
 //!
-//! let ir = parse(schema_xml).unwrap();
+//! let ir = parse(schema_xml).expect("parse schema");
 //! let schema = Schema::from_ir(ir);
 //! let output = Generator::new(GenerationConfig::new("my_messages"))
 //!     .generate(&schema)
-//!     .unwrap();
-//! assert!(output.modules().any(|m| m.path == "my_messages.rs"));
+//!     .expect("generate");
+//! let src = &output.modules().next().expect("one module").source;
+//! assert!(src.contains("CarDecoder"));
+//! assert!(src.contains("CarEncoder"));
+//! assert!(src.contains("CarFixedFields"));
+//! assert!(src.contains("wrap_and_apply_header"));
+//! assert!(src.contains("compute_length_with_header") || src.contains("ENCODED_LENGTH"));
 //! // write module.source to OUT_DIR and `include!` it from your crate
 //! ```
 //!
 //! # What gets generated (how to use it)
 //!
-//! Names depend on your schema (`Car` below is illustrative). Examples use
-//! `ignore` because the types only exist after codegen.
+//! Names depend on your schema (`Car` below is illustrative). Prefer the
+//! feature-tour sample and golden file over prose-only snippets.
 //!
 //! ## Composites = wire images (not `repr(C)` overlays)
 //!
@@ -183,7 +165,7 @@
 //!
 //! ## Domain objects
 //!
-//! [`GenerationConfig::with_domain_objects`]`(`[`DomainVarData`]`)` emits
+//! [`GenerationConfig::with_domain_objects`] with a [`DomainVarData`] mode emits
 //! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
 //! invalid UTF-8 → `""`) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
@@ -226,25 +208,137 @@
 pub use miette;
 
 /// Cargo `build.rs` helpers ([`generate_to_out_dir`], [`sbe_mod!`]).
+#[allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::result_large_err
+)]
 pub mod build;
 /// Codec generation ([`Generator`]).
+// Scoped: quote!/token emit paths and submodule re-exports trip style lints and
+// unused_import on `pub(crate) use` hubs. Prefer fixing real dead code over
+// growing this list — do not re-blanket the crate root.
+#[allow(
+    unused,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::manual_memcpy,
+    clippy::needless_range_loop,
+    clippy::unnecessary_cast,
+    clippy::useless_format,
+    clippy::items_after_statements,
+    clippy::explicit_counter_loop,
+    clippy::uninlined_format_args,
+    clippy::collapsible_if,
+    clippy::unreadable_literal,
+    clippy::match_same_arms,
+    clippy::needless_borrow,
+    clippy::use_self,
+    clippy::missing_const_for_fn,
+    clippy::result_large_err,
+    clippy::similar_names,
+    clippy::redundant_clone,
+    clippy::ref_option,
+    clippy::map_unwrap_or,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnecessary_unwrap,
+    clippy::cast_lossless,
+    clippy::cast_precision_loss,
+    clippy::if_same_then_else,
+    clippy::should_panic_without_expect,
+    clippy::module_name_repetitions,
+    clippy::option_if_let_else,
+    clippy::match_wildcard_for_single_variants,
+    clippy::single_match_else,
+    clippy::fn_params_excessive_bools,
+    clippy::cast_enum_constructor,
+    clippy::ptr_as_ptr,
+    clippy::only_used_in_recursion
+)]
 pub mod codegen;
 /// [`GenerationConfig`] — conversions, domain objects, keywords, etc.
+#[allow(
+    dead_code,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used
+)]
 pub mod config;
 /// Token [`Ir`] (usually via [`Schema`]).
 #[doc(hidden)]
+#[allow(clippy::pedantic, clippy::nursery)]
 pub mod ir;
 /// Offset resolution ([`resolve_schema`]; called by parse).
 #[doc(hidden)]
+#[allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::cast_lossless,
+    clippy::cast_precision_loss,
+    clippy::result_large_err,
+    clippy::collapsible_if,
+    clippy::needless_range_loop
+)]
 pub mod resolve;
 /// [`Schema`] handle for codegen.
+#[allow(
+    dead_code,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unnecessary_wraps
+)]
 pub mod schema;
 /// Structured IR for codegen (internal).
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cast_lossless
+)]
 pub(crate) mod structured_ir;
 /// XML parse ([`parse`], [`parse_file`]).
 #[doc(hidden)]
+#[allow(
+    unused,
+    dead_code,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_lossless,
+    clippy::cast_precision_loss,
+    clippy::manual_memcpy,
+    clippy::needless_range_loop,
+    clippy::collapsible_if,
+    clippy::match_same_arms,
+    clippy::similar_names,
+    clippy::redundant_clone,
+    clippy::option_if_let_else,
+    clippy::module_name_repetitions,
+    clippy::items_after_statements,
+    clippy::uninlined_format_args,
+    clippy::result_large_err,
+    clippy::unnecessary_cast
+)]
 pub mod xml;
 /// Optional XSD-shaped validation ([`validate_against_sbe_xsd`], [`SBE_XSD`]).
+#[allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used
+)]
 pub mod xsd;
 
 pub use build::{

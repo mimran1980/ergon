@@ -1067,9 +1067,20 @@ impl<'a> CarDecoder<'a> {
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
     pub const HEADER_LENGTH: usize = 8;
-    ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
+    /// Upper bound of any encoded form of this message (capped at 64KB). The theoretical max exceeds a sensible stack array — size the buffer with the staged `*EncodedLength` builder / `Encoder::compute_length()` (exact length), or a transport claim of that size. Do not stack-allocate this constant and do not `Vec::with_capacity` then truncate.
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+    /// Wrap a buffer for decoding at **message start** (byte 0 of the
+    /// SBE frame — header then body). Fields are at
+    /// `message_offset + HEADER_LENGTH + field_offset`.
+    ///
+    /// # Migration from sbe-tool
+    ///
+    /// sbe-tool Rust `wrap` takes the **body** offset (usually
+    /// `message_start + 8`). ergo-sbe takes the **message** start so the
+    /// same offset works for `wrap`, `try_wrap_and_apply_header`, and
+    /// claim buffers. Passing `8` here for a frame at zero mis-aligns
+    /// every field.
     #[inline]
     pub fn wrap(
         buf: &'a [u8],
@@ -1085,6 +1096,10 @@ impl<'a> CarDecoder<'a> {
             acting_version,
         }
     }
+    /// Fallible wrap at **message start** (`pos` = first byte of the
+    /// header). Validates header fields (template_id, schema_id,
+    /// block length bounds). See [`Self::wrap`] for the message-start
+    /// vs sbe-tool body-offset migration note.
     #[inline]
     pub fn try_wrap_and_apply_header(
         buf: &'a [u8],
@@ -4601,6 +4616,11 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarComplete<'a, H> {
 /// Complete set of latest-version fixed fields for this message.
 /// Required fields are concrete values; optional/versioned fields
 /// are `Option<T>`. Constants are excluded.
+///
+/// This struct is **intentionally exhaustive** (not
+/// `#[non_exhaustive]`): when the schema adds a fixed field, every
+/// `fixed(&…)` call site must be updated. That is a feature — schema
+/// changes surface as compile errors rather than silent defaults.
 #[derive(Debug, Clone)]
 pub struct CarFixedFields {
     pub serial_number: u64,
@@ -4629,7 +4649,7 @@ impl<'a> CarEncoder<'a> {
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
     pub const HEADER_LENGTH: usize = 8;
-    ///MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation
+    /// Upper bound of any encoded form of this message (capped at 64KB). The theoretical max exceeds a sensible stack array — size the buffer with the staged `*EncodedLength` builder / `Self::compute_length()` (exact length), or a transport claim of that size. Do not stack-allocate this constant and do not `Vec::with_capacity` then truncate.
     pub const MAX_ENCODED_LENGTH: usize = 65536;
     const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
@@ -4649,6 +4669,11 @@ impl<'a> CarEncoder<'a> {
     }
     /// Wrap a mutable buffer for encoding with bounds validation.
     /// Does **not** write the message header (`HeaderAbsent`).
+    ///
+    /// `msg_offset` is the **message start** (first byte of the SBE frame),
+    /// not the body. sbe-tool Rust `wrap` takes the body offset instead —
+    /// see [`Self::wrap`].
+    ///
     /// Prefer [`Self::wrap`] for the fast path when the buffer size is known.
     /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
     #[inline]
@@ -4668,6 +4693,7 @@ impl<'a> CarEncoder<'a> {
         })
     }
     /// Wrap a mutable buffer, write the header, with bounds validation.
+    /// `pos` is the **message start** (see [`Self::wrap`]).
     /// Returns an error if the buffer is too short.
     /// Prefer [`Self::wrap_and_apply_header`] for the fast path.
     #[inline]
@@ -6185,6 +6211,14 @@ impl<'a> CarEncoder<'a> {
     /// Wrap a mutable buffer for encoding — no bounds check.
     /// Does **not** write the message header (`HeaderAbsent`).
     /// Caller guarantees the buffer is large enough.
+    ///
+    /// # Message start, not body offset
+    ///
+    /// `msg_offset` is the first byte of the SBE frame (header + body).
+    /// sbe-tool Rust `wrap` takes the **body** offset (typically
+    /// `message_start + 8`). Passing sbe-tool's body offset here
+    /// mis-aligns every field. Prefer `0` for a frame at the start
+    /// of `buf`.
     #[inline]
     pub fn wrap(
         buf: &'a mut [u8],
@@ -6199,7 +6233,10 @@ impl<'a> CarEncoder<'a> {
     }
     /// Wrap a mutable buffer, write the header, and return the encoder.
     /// No bounds check — caller guarantees the buffer is large enough.
-    /// This is the default fast path (matching sbe-tool's `wrap`).
+    /// This is the default fast path.
+    ///
+    /// `msg_offset` is **message start** (see [`Self::wrap`]), not the
+    /// sbe-tool body offset.
     #[inline]
     pub fn wrap_and_apply_header(
         buf: &'a mut [u8],

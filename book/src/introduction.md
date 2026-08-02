@@ -37,8 +37,9 @@ working codec. All API surfaces are covered in the
 
 ergon is an experimental Rust workspace. **ergo-sbe** generates the codecs;
 **ergo-aeron-cluster** is a client-only Aeron Cluster experiment built on
-rusteron. Neither crate is production-ready. APIs may change. Verify wire
-compatibility, failure handling, and performance for your own schemas.
+rusteron. Neither crate is production-ready today. APIs may change. Verify
+wire compatibility, failure handling, and performance for your own schemas.
+Exit criteria: [Road to 1.0](project/road-to-1.0.md).
 
 ergo-sbe parses [Simple Binary Encoding](https://www.fixtrading.org/standards/sbe/)
 (SBE) schemas and generates **Rust codecs that are binary-compatible with the

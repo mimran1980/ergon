@@ -33,7 +33,7 @@
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
 //! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
-//! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` style fast paths for benches |
+//! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` opt-in after validation (HFT hot path) |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
 //! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
 
@@ -545,18 +545,19 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `_unchecked` companion methods. **Benchmarking only — not for
-    /// production code in normal operation.**
+    /// Emit `_unchecked` companion field accessors as a **supported opt-in**
+    /// for hot loops after independent validation (not “bench-only” theatre).
     ///
     /// Each field accessor `dec.serial_number()` gains a companion
-    /// `dec.serial_number_unchecked()` that skips the bounds check (the
-    /// decoder already validates the buffer on construction, so the
-    /// per-field check is redundant on a known-valid message).
+    /// `dec.serial_number_unchecked()` that skips the redundant per-field
+    /// bounds check. After `try_from` / `try_wrap` / `verify` has accepted the
+    /// buffer, that check is pure overhead on the critical path.
     ///
     /// # Safety contract (caller's responsibility)
     ///
     /// - The buffer must have been validated by `try_from` / `try_wrap` /
-    ///   `verify` before any `_unchecked` accessor is called.
+    ///   `verify` (or an equivalent application check) before any
+    ///   `_unchecked` accessor is called.
     /// - After any stage transition (`into_fuel_figures()`, etc.), the
     ///   decoder's position advances and the unchecked guard is lost —
     ///   do not carry an unchecked reference across a stage boundary.
@@ -565,9 +566,10 @@ impl GenerationConfig {
     ///   is **not** undefined behaviour (the buffer is still a valid
     ///   `&[u8]` slice), but the values returned are garbage.
     ///
-    /// The checked accessors are always available; `_unchecked` is an
-    /// opt-in for the narrow hot loop where you have independently proven
-    /// the buffer is valid and you cannot afford a redundant branch.
+    /// Checked accessors remain the default API surface; `_unchecked` is
+    /// opt-in via this config flag. HFT production use after a proven
+    /// trust boundary is an intended use case — not a misuse of a bench
+    /// hack. See the book trust-boundary page.
     #[must_use]
     pub fn with_unchecked_companions(mut self, enable: bool) -> Self {
         self.unchecked_companions = enable;

@@ -240,6 +240,9 @@ pub(crate) fn generate_message_decoder(
             }
         });
     } else {
+        // Cap the published constant at 64KB so it can appear in stack array
+        // types when it fits. Leading space in doc strings matters: `#[doc = "…"]`
+        // is rendered as `///…` with no automatic space after the slashes.
         const STACK_LIMIT: usize = 65536;
         let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
         let max_encoded_lit = syn::LitInt::new(
@@ -248,9 +251,17 @@ pub(crate) fn generate_message_decoder(
         );
         let is_capped = max_encoded_length > STACK_LIMIT;
         let max_doc = if is_capped {
-            "MAX_ENCODED_LENGTH exceeds the 64KB stack limit; use `Vec::with_capacity(Self::MAX_ENCODED_LENGTH)` for heap allocation"
+            " Upper bound of any encoded form of this message (capped at 64KB). \
+             The theoretical max exceeds a sensible stack array — size the buffer \
+             with the staged `*EncodedLength` builder / `Encoder::compute_length()` \
+             (exact length), or a transport claim of that size. Do not stack-allocate \
+             this constant and do not `Vec::with_capacity` then truncate."
         } else {
-            "Stack-allocate with `let mut buf = [0u8; Msg::MAX_ENCODED_LENGTH];`"
+            " Upper bound of any encoded form of this message (header + body). \
+             Prefer exact sizing via `Encoder::compute_length()` / the staged \
+             `*EncodedLength` builder when the message has groups or var-data; \
+             a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
+             constant is a true fixed upper bound you intend to use."
         };
         let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
@@ -268,6 +279,17 @@ pub(crate) fn generate_message_decoder(
     }
 
     impl_body.extend(quote::quote! {
+        /// Wrap a buffer for decoding at **message start** (byte 0 of the
+        /// SBE frame — header then body). Fields are at
+        /// `message_offset + HEADER_LENGTH + field_offset`.
+        ///
+        /// # Migration from sbe-tool
+        ///
+        /// sbe-tool Rust `wrap` takes the **body** offset (usually
+        /// `message_start + 8`). ergo-sbe takes the **message** start so the
+        /// same offset works for `wrap`, `try_wrap_and_apply_header`, and
+        /// claim buffers. Passing `8` here for a frame at zero mis-aligns
+        /// every field.
         #[inline]
         pub fn wrap(buf: &'a [u8], message_offset: usize, acting_block_length: usize, acting_version: u16) -> Self {
             let body_pos = message_offset + Self::HEADER_LENGTH;
@@ -315,6 +337,10 @@ pub(crate) fn generate_message_decoder(
             }
         };
         impl_body.extend(quote::quote! {
+            /// Fallible wrap at **message start** (`pos` = first byte of the
+            /// header). Validates header fields (template_id, schema_id,
+            /// block length bounds). See [`Self::wrap`] for the message-start
+            /// vs sbe-tool body-offset migration note.
             #[inline]
             pub fn try_wrap_and_apply_header(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Decoder trust boundary: validate buffer bounds + schema_id + template_id.
