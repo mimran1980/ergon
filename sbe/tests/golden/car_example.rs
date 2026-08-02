@@ -5900,7 +5900,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = unsafe { FuelFiguresEntryEncoder::wrap(__buf, self.pos) };
+            let mut __entry = FuelFiguresEntryEncoder::wrap(__buf, self.pos);
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }
@@ -6069,9 +6069,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = unsafe {
-                PerformanceFiguresEntryEncoder::wrap(__buf, self.pos)
-            };
+            let mut __entry = PerformanceFiguresEntryEncoder::wrap(__buf, self.pos);
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }
@@ -6283,9 +6281,10 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = unsafe {
-                PerformanceFiguresAccelerationEntryEncoder::wrap(__buf, self.pos)
-            };
+            let mut __entry = PerformanceFiguresAccelerationEntryEncoder::wrap(
+                __buf,
+                self.pos,
+            );
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }

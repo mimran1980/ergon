@@ -139,7 +139,7 @@ pub(crate) fn generate_group_encoder(
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             // SAFETY: capacity check above proved pos+block_len ≤ buf.len().
-            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
+            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }
