@@ -8,7 +8,7 @@ walks the complete dynamic tail before trusted access:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
-## Checked constructors (0.2)
+## Checked constructors (0.1.10)
 
 | Entry | When |
 |-------|------|

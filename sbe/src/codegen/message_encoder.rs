@@ -241,16 +241,10 @@ pub(crate) fn generate_message_encoder(
             }
         });
     } else {
-        // Leading space required: `#[doc = "…"]` renders as `///…` with no
-        // automatic space after the slashes.
-        let max_doc_attr = if is_capped {
-            quote::quote! {
-                #[doc = " Upper bound of any encoded form of this message (capped at 64KB). \
-                         The theoretical max exceeds a sensible stack array — size the buffer \
-                         with the staged `*EncodedLength` builder / `Self::compute_length()` \
-                         (exact length), or a transport claim of that size. Do not stack-allocate \
-                         this constant and do not `Vec::with_capacity` then truncate."]
-            }
+        let impl_consts_suffix = if is_capped {
+            // When theoretical max exceeds 64KB, do NOT emit MAX_ENCODED_LENGTH —
+            // the constant would be a dangerous lie. Use EncodedLength instead.
+            quote::quote! {}
         } else {
             quote::quote! {
                 #[doc = " Upper bound of any encoded form of this message (header + body). \
@@ -258,6 +252,8 @@ pub(crate) fn generate_message_encoder(
                          `*EncodedLength` builder when the message has groups or var-data; \
                          a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
                          constant is a true fixed upper bound you intend to use."]
+                pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
+                const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             }
         };
         impl_consts.extend(quote::quote! {
@@ -268,9 +264,7 @@ pub(crate) fn generate_message_encoder(
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #block_length_lit);
             /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #header_size_lit;
-            #max_doc_attr
-            pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
-            const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            #impl_consts_suffix
             pub const HEADER_TEMPLATE: [u8; #header_size_lit] = [#(#hdr_lits),*];
             const _HEADER_TEMPLATE_LEN: () =
                 assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
@@ -401,8 +395,14 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            buf[pos..pos + #header_size_lit]
-                .copy_from_slice(&Self::HEADER_TEMPLATE);
+            // SAFETY: caller guarantees pos + HEADER_LENGTH ≤ buf.len() (see Safety doc).
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    Self::HEADER_TEMPLATE.as_ptr(),
+                    buf.as_mut_ptr().add(pos),
+                    #header_size_lit,
+                );
+            }
             let body_pos = pos + #header_size_lit;
             #name_encoder_ident {
                 buf,

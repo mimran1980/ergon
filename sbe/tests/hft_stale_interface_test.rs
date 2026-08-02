@@ -43,9 +43,9 @@ const STALE_DOC_SUBSTRINGS: &[&str] = &[
 
 fn allowlisted(path: &Path) -> bool {
     let s = path.to_string_lossy().replace('\\', "/");
-    s.contains("MIGRATION_0_1_TO_0_2")
+    s.contains("MIGRATION_0_1_TO_0_1_10")
         || s.contains("CHANGELOG.md")
-        || s.contains("SBE_HFT_0_2_RELEASE_SPEC")
+        || s.contains("SBE_HFT_0_1_10_RELEASE_SPEC")
         || s.contains("docs/research/")
         || s.contains("sbe-hft-architecture-primary-sources")
         || s.ends_with("hft_stale_interface_test.rs")

@@ -928,7 +928,7 @@ The unsafe strategy came from me, not from an LLM spontaneously “optimising”
 the project.
 
 Official-style codecs often separate checked setup from a trusted hot path. For
-**0.2** I wanted (and the product now ships):
+**0.1.10** I wanted (and the product now ships):
 
 - unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
   lane — they return `Result`, validate extents once, then enter a private

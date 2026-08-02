@@ -59,4 +59,4 @@ cargo run  --manifest-path samples/sbe-feature-tour/Cargo.toml
 cargo test --manifest-path samples/sbe-feature-tour/Cargo.toml
 ```
 
-After build, generated source is under `target/.../out/feature_tour.rs`.
+After build, generated source is under `src/generated/feature_tour.rs`.

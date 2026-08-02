@@ -149,7 +149,7 @@
 //! | Config | Generated decode | Generated encode |
 //! |--------|------------------|------------------|
 //! | [`GenerationConfig::with_conversion`] | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | `dec.price() -> path::Type` | `enc.price(value)` |
+//! | [`GenerationConfig::with_domain_type`] | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
 //!
 //! ```rust
 //! use ergo_sbe::{ConversionSelector, GenerationConfig};
@@ -173,7 +173,7 @@
 //!
 //! [`GenerationConfig::with_domain_objects`] with a [`DomainVarData`] mode emits
 //! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
-//! invalid UTF-8 → `""`) or [`DomainVarData::Bytes`] for `Vec<u8>`.
+//! invalid UTF-8 → `InvalidUtf8` error) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
 //! See [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
 //!

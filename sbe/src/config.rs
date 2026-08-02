@@ -5,7 +5,7 @@
 //! | API | When to use | Generated decode | Generated encode |
 //! |-----|-------------|------------------|------------------|
 //! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dep | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.price() -> path::Type` | `enc.price(value)` |
+//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
 //!
 //! `with_domain_type` **implies** conversion for that selector. Do **not** also
 //! call `with_conversion` for the same selector.
@@ -91,9 +91,9 @@ impl ConversionSelector {
 /// | Variant | DTO field | Invalid UTF-8 on materialise |
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **`InvalidUtf8` error** (0.2; never invents empty) |
+/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **`InvalidUtf8` error** (0.1.10; never invents empty) |
 ///
-/// Name historical; 0.2 materialisation is strict (HFT-003).
+/// Name historical; 0.1.10 materialisation is strict (HFT-003).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
@@ -475,7 +475,7 @@ impl GenerationConfig {
     /// # Generated API
     ///
     /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
-    /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))` / `let p = dec.price()`.
+    /// Application: `enc.try_price(rust_decimal::Decimal::new(12345, 2))?` / `let p = dec.try_price()?`.
     ///
     /// # Example
     ///
@@ -524,7 +524,7 @@ impl GenerationConfig {
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
     /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
-    /// | [`DomainVarData::LossyStrings`] | `String` | silent empty `""` |
+    /// | [`DomainVarData::LossyStrings`] | `String` | `InvalidUtf8` error (strict; HFT-003) |
     ///
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};

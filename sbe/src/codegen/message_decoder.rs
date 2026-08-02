@@ -241,9 +241,6 @@ pub(crate) fn generate_message_decoder(
             }
         });
     } else {
-        // Cap the published constant at 64KB so it can appear in stack array
-        // types when it fits. Leading space in doc strings matters: `#[doc = "…"]`
-        // is rendered as `///…` with no automatic space after the slashes.
         const STACK_LIMIT: usize = 65536;
         let max_encoded_capped = max_encoded_length.min(STACK_LIMIT);
         let max_encoded_lit = syn::LitInt::new(
@@ -251,20 +248,23 @@ pub(crate) fn generate_message_decoder(
             proc_macro2::Span::call_site(),
         );
         let is_capped = max_encoded_length > STACK_LIMIT;
-        let max_doc = if is_capped {
-            " Upper bound of any encoded form of this message (capped at 64KB). \
-             The theoretical max exceeds a sensible stack array — size the buffer \
-             with the staged `*EncodedLength` builder / `Encoder::compute_length()` \
-             (exact length), or a transport claim of that size. Do not stack-allocate \
-             this constant and do not `Vec::with_capacity` then truncate."
+        let max_len_suffix: proc_macro2::TokenStream = if is_capped {
+            // When theoretical max exceeds 64KB, do NOT emit MAX_ENCODED_LENGTH —
+            // the constant would be a dangerous lie. Use EncodedLength instead.
+            quote::quote! {}
         } else {
-            " Upper bound of any encoded form of this message (header + body). \
-             Prefer exact sizing via `Encoder::compute_length()` / the staged \
-             `*EncodedLength` builder when the message has groups or var-data; \
-             a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
-             constant is a true fixed upper bound you intend to use."
+            let max_doc = " Upper bound of any encoded form of this message (header + body). \
+                 Prefer exact sizing via `Encoder::compute_length()` / the staged \
+                 `*EncodedLength` builder when the message has groups or var-data; \
+                 a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
+                 constant is a true fixed upper bound you intend to use.";
+            let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
+            quote::quote! {
+                #[doc = #max_doc_lit]
+                pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
+                const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            }
         };
-        let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
         impl_body.extend(quote::quote! {
             pub const SCHEMA_ID: u16 = #schema_id_lit;
             pub const SCHEMA_VERSION: u16 = #schema_version_lit;
@@ -273,9 +273,7 @@ pub(crate) fn generate_message_decoder(
             const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == #bl_lit);
             /// Schema-declared message header size in bytes.
             pub const HEADER_LENGTH: usize = #hdr_size_lit;
-            #[doc = #max_doc_lit]
-            pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
-            const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
+            #max_len_suffix
         });
     }
 

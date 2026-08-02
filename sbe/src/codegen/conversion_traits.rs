@@ -95,14 +95,19 @@ pub(crate) fn generate_conversion_impl_blocks(
                 #[inline]
                 fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
                     let mantissa = wire.mantissa() as i128;
-                    let exponent = wire.exponent();
+                    let exponent = wire.exponent() as i32;
                     // SBE Decimal: negative exponent = fractional places (e.g.
                     // -2 → scale 2). Positive exponent = magnitude (mantissa ×
                     // 10^exp). rust_decimal scale must be a positive u32 ≤ 28.
                     let (mantissa, scale) = if exponent < 0 {
-                        (mantissa, (-exponent) as u32)
+                        let scale = exponent.unsigned_abs();
+                        (mantissa, scale)
                     } else {
-                        (mantissa.saturating_mul(10i128.saturating_pow(exponent as u32)), 0)
+                        let pow = 10i128.checked_pow(exponent as u32)
+                            .ok_or("Decimal exponent overflow")?;
+                        let scaled = mantissa.checked_mul(pow)
+                            .ok_or("Decimal mantissa overflow")?;
+                        (scaled, 0)
                     };
                     rust_decimal::Decimal::from_i128_with_scale(mantissa, scale)
                         .try_into()
@@ -141,7 +146,8 @@ pub(crate) fn generate_conversion_impl_blocks(
                 fn try_to_sbe(&self) -> Result<u64, Self::Error> {
                     let total_nanos = self.timestamp_nanos_opt()
                         .ok_or("timestamp_nanos overflow")?;
-                    Ok(total_nanos as u64)
+                    u64::try_from(total_nanos)
+                        .map_err(|_| "timestamp out of u64 range")
                 }
             }
         };

@@ -1,6 +1,6 @@
 //! Official FIX SBE Conformance suite (FIXTradingCommunity/fix-sbe-conformance).
 //!
-//! Profile: `ergo-sbe-fix-sbe-0.2`. The respond leg uses ergo-sbe generated
+//! Profile: `ergo-sbe-fix-sbe-0.1.10`. The respond leg uses ergo-sbe generated
 //! codecs; inject bytes and RL golden responses are pinned under
 //! `tests/fixtures/fix-sbe-conformance/` (produced by the Real Logic Java
 //! injector / UnderTest). Equality to RL goldens is the primary gate;

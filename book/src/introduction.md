@@ -5,8 +5,8 @@
 schemas with **official-SBE wire fidelity** inside the published profile
 ([compatibility](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)).
 Wire-order safety is enforced at **compile time** — calling methods out of schema
-order is a type error. All 15 maintained parity benchmarks pass at or below the
-`1.00×` sbe-tool ceiling under both LTO profiles (0.1.8 release).
+order is a type error. All 10 maintained SBE parity benchmarks pass at or below the
+`1.00×` sbe-tool ceiling under both LTO profiles (0.1.10).
 
 ## Quick start
 
@@ -137,10 +137,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 runs the Java Cluster lifecycle/recovery lane and the HA sample. Use
 `just test-all` to add Miri and deterministic fuzz replay.
 
-Pull-request CI also enforces the non-decreasing coverage baseline and executes
-32-bit x86 plus big-endian s390x codec tests. Scheduled lanes run every fuzz
-target for ten minutes, Miri fixtures nightly, and critical-path mutation
-testing weekly. Missing or empty results fail closed.
+Pull-request CI also enforces the non-decreasing coverage baseline. Scheduled
+lanes run every fuzz target for ten minutes, Miri fixtures weekly, and
+critical-path mutation testing weekly. Missing or empty results fail closed.
 
 See the [samples README](https://github.com/mimran1980/ergon/blob/main/samples/README.md) for standalone sample commands and
 Java harness requirements. Run `just --list` for the repository's available

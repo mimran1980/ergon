@@ -1,7 +1,7 @@
 # ergo-sbe SBE compatibility profile
 
 Date: 2026-08-02  
-Target release: **0.2.0**  
+Target release: **0.1.10**
 Status: normative for crates that claim wire compatibility with this profile
 
 This document is the **precise** compatibility claim for `ergo-sbe`. Do **not**
@@ -12,7 +12,7 @@ evidence links below.
 
 | Item | Value |
 |------|--------|
-| Profile name | `ergo-sbe-fix-sbe-0.2` |
+| Profile name | `ergo-sbe-fix-sbe-0.1.10` |
 | FIX SBE family | FIX Simple Binary Encoding (SBE) XML schemas |
 | XML namespace(s) | `http://fixprotocol.io/2016/sbe` (and plain `messageSchema` roots accepted by the parser) |
 | Reference generator | Real Logic [simple-binary-encoding](https://github.com/real-logic/simple-binary-encoding) **submodule pin** in this monorepo (`simple-binary-encoding/`) |
@@ -35,13 +35,13 @@ documented cross-decode fixture).
 | Fixed primitives (u8–u64, i8–i64, f32/f64, char) | Full | `sbe_tool_wire_parity_test`, `java_parity_features_test`, all-types LE/BE fixtures |
 | Enums / sets | Full | parity + comprehensive tests |
 | Composites / nested composites | Full | composite layout tests, Car engine |
-| Optional presence + null sentinels | Full (0.2 null-width fix) | nullification unit tests + group optional matrix |
+| Optional presence + null sentinels | Full (0.1.10 null-width fix) | nullification unit tests + group optional matrix |
 | Constant fields | Full | baseline / example schema |
 | Repeating groups (flat + nested) | Full | L3, Car fuel/performance, proptest |
 | Variable-length data | Full | Car manufacturer/model, maxLength enforcement |
 | Multi-template `AnyMessage` dispatch | Full when `with_dispatch(true)` | baseline AnyMessage tests |
 | Schema evolution (`sinceVersion`, acting block length) | Full | multi_schema_versioning_test |
-| Domain DTOs / converters | Supported (fallible in 0.2) | domain_objects_test |
+| Domain DTOs / converters | Supported (fallible in 0.1.10) | domain_objects_test |
 
 ## Partial / qualified support
 
@@ -65,7 +65,7 @@ documented cross-decode fixture).
 | Checked (safe) | `wrap`, `wrap_and_apply_header`, `decode`, `AnyMessage::decode`, `decode_frame` | One validation boundary; returns `Result`; no caller-owned extent precondition |
 | Trusted (unsafe) | `*_unchecked` twins (`#[doc(hidden)]` until HFT-008 keep) | Caller proves non-overflowing extents; `# Safety` required |
 
-`try_wrap*` aliases are **removed** in 0.2.
+`try_wrap*` aliases are **removed** in 0.1.10.
 
 Public `_unchecked` keep decisions: `docs/evidence/unchecked-keep-manifest.json`
 (currently all `keep: false`; zero-check cores are **module-private** `unsafe fn`

@@ -98,8 +98,10 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool"
         "cluster_encode_session_keep_alive|ergo-sbe|sbe-tool"
+        "cluster_encode_session_connect_request|ergo-sbe|sbe-tool"
         "cluster_decode_session_message_header|ergo-sbe|sbe-tool"
         "cluster_decode_session_event|ergo-sbe|sbe-tool"
+        "cluster_decode_new_leader_event|ergo-sbe|sbe-tool"
         "cluster_encode_claim_shaped_header_plus_app|ergo-sbe|sbe-tool"
     )
 

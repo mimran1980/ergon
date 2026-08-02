@@ -37,8 +37,8 @@ header capability, not wire-order progression. Duplicating the stage graph
 for `HeaderPresent` and `HeaderAbsent` would provide no latency advantage.
 
 All 10 maintained SBE parity comparisons pass at or below the `1.00×` ceiling
-under both LTO-on and LTO-off profiles. The closest case is non-LTO body-only
-encode at `0.9933×` sbe-tool.
+under both LTO-on and LTO-off profiles. The closest case is LTO body-only
+encode at `0.9867×` sbe-tool.
 
 Generated code emits **separate types** for each stage, same fields, different
 methods:

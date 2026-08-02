@@ -1079,9 +1079,6 @@ impl<'a> CarDecoder<'a> {
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
     pub const HEADER_LENGTH: usize = 8;
-    /// Upper bound of any encoded form of this message (capped at 64KB). The theoretical max exceeds a sensible stack array — size the buffer with the staged `*EncodedLength` builder / `Encoder::compute_length()` (exact length), or a transport claim of that size. Do not stack-allocate this constant and do not `Vec::with_capacity` then truncate.
-    pub const MAX_ENCODED_LENGTH: usize = 65536;
-    const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     /// Minimum body bytes needed to safely read every fixed field present
     /// at `acting_version` (version-aware; not always full `BLOCK_LENGTH`).
     #[inline]
@@ -4161,7 +4158,12 @@ impl<'a> CarDecoderComplete<'a> {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
+///
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+///
+/// Materialise with [`Self::try_from_decoder`] (from a decoder).
+/// This is an inherent method, not `TryFrom`/`From`: conversion is never
+/// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarFuelFiguresEntryDomain {
     pub speed: u16,
@@ -4169,8 +4171,10 @@ pub struct CarFuelFiguresEntryDomain {
     pub usage_description: Vec<u8>,
 }
 impl CarFuelFiguresEntryDomain {
-    /// Fallible conversion from a decoder. Propagates decode errors
-    /// from malformed group entries instead of silently dropping them.
+    /// Fallible conversion from a flyweight decoder.
+    ///
+    /// Propagates decode errors from malformed group entries and var-data
+    /// instead of panicking. Prefer this over `From`/`TryFrom`.
     pub fn try_from_decoder(
         dec: FuelFiguresEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4224,15 +4228,22 @@ impl CarFuelFiguresEntryDomain {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
+///
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+///
+/// Materialise with [`Self::try_from_decoder`] (from a decoder).
+/// This is an inherent method, not `TryFrom`/`From`: conversion is never
+/// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
     pub mph: u16,
     pub seconds: f32,
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
-    /// Fallible conversion from a decoder. Propagates decode errors
-    /// from malformed group entries instead of silently dropping them.
+    /// Fallible conversion from a flyweight decoder.
+    ///
+    /// Propagates decode errors from malformed group entries and var-data
+    /// instead of panicking. Prefer this over `From`/`TryFrom`.
     pub fn try_from_decoder(
         dec: PerformanceFiguresAccelerationEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4309,15 +4320,22 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
+///
+/// Owned domain object — application-layer counterpart to the flyweight decoder.
+///
+/// Materialise with [`Self::try_from_decoder`] (from a decoder).
+/// This is an inherent method, not `TryFrom`/`From`: conversion is never
+/// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarPerformanceFiguresEntryDomain {
     pub octane_rating: u8,
     pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
 }
 impl CarPerformanceFiguresEntryDomain {
-    /// Fallible conversion from a decoder. Propagates decode errors
-    /// from malformed group entries instead of silently dropping them.
+    /// Fallible conversion from a flyweight decoder.
+    ///
+    /// Propagates decode errors from malformed group entries and var-data
+    /// instead of panicking. Prefer this over `From`/`TryFrom`.
     pub fn try_from_decoder(
         dec: PerformanceFiguresEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4378,7 +4396,11 @@ impl CarPerformanceFiguresEntryDomain {
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
-/// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
+///
+/// Materialise with [`Self::try_from_decoder`] (from a decoder) or
+/// [`Self::try_from_slice_with_header`] (from framed bytes).
+/// These are inherent methods, not `TryFrom`/`From`: there are two fallible
+/// sources, and conversion is never infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarDomain {
     pub serial_number: u64,
@@ -4396,8 +4418,12 @@ pub struct CarDomain {
     pub activation_code: Vec<u8>,
 }
 impl CarDomain {
-    /// Fallible conversion from a decoder. Propagates decode errors
-    /// from malformed group entries instead of silently dropping them.
+    /// Fallible conversion from a flyweight decoder.
+    ///
+    /// Propagates decode errors from malformed group entries and var-data
+    /// instead of panicking. Prefer this over `From`/`TryFrom`: the companion
+    /// entry point is [`Self::try_from_slice_with_header`] (when generated),
+    /// and named methods make the two sources unambiguous.
     pub fn try_from_decoder(dec: CarDecoder<'_>) -> Result<Self, sbe_rt::DecodeError> {
         Ok(Self {
             serial_number: dec.serial_number(),
@@ -4444,8 +4470,12 @@ impl CarDomain {
             },
         })
     }
-    /// Decode directly from a byte slice — validates the header
-    /// and materialises the full domain object in one call.
+    /// Decode from a framed byte slice: validate the message header, then
+    /// materialise the full domain object.
+    ///
+    /// Distinct from [`Self::try_from_decoder`]: this path owns header
+    /// validation + offset; that path starts from an already-wrapped decoder.
+    /// Named methods (not `TryFrom`/`From`) keep the two sources obvious.
     pub fn try_from_slice_with_header(
         buf: &[u8],
         message_offset: usize,
@@ -4805,9 +4835,6 @@ impl<'a> CarEncoder<'a> {
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
     pub const HEADER_LENGTH: usize = 8;
-    /// Upper bound of any encoded form of this message (capped at 64KB). The theoretical max exceeds a sensible stack array — size the buffer with the staged `*EncodedLength` builder / `Self::compute_length()` (exact length), or a transport claim of that size. Do not stack-allocate this constant and do not `Vec::with_capacity` then truncate.
-    pub const MAX_ENCODED_LENGTH: usize = 65536;
-    const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
     #[inline]
@@ -4883,7 +4910,13 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
-        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                Self::HEADER_TEMPLATE.as_ptr(),
+                buf.as_mut_ptr().add(pos),
+                8,
+            );
+        }
         let body_pos = pos + 8;
         CarEncoder {
             buf,
@@ -5867,7 +5900,19 @@ impl<'a> FuelFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
+        let end = match self.pos.checked_add(block_len) {
+            Some(e) => e,
+            None => {
+                return Err(
+                    sbe_rt::EncodeError::BufferTooShort {
+                        needed: block_len,
+                        available: 0,
+                    }
+                        .into(),
+                );
+            }
+        };
+        if end > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -6036,7 +6081,19 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
+        let end = match self.pos.checked_add(block_len) {
+            Some(e) => e,
+            None => {
+                return Err(
+                    sbe_rt::EncodeError::BufferTooShort {
+                        needed: block_len,
+                        available: 0,
+                    }
+                        .into(),
+                );
+            }
+        };
+        if end > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -6250,7 +6307,19 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
+        let end = match self.pos.checked_add(block_len) {
+            Some(e) => e,
+            None => {
+                return Err(
+                    sbe_rt::EncodeError::BufferTooShort {
+                        needed: block_len,
+                        available: 0,
+                    }
+                        .into(),
+                );
+            }
+        };
+        if end > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     needed: block_len,
@@ -7364,11 +7433,13 @@ pub mod prelude {
 /// slice length is known (stack buffer with visible size).
 #[inline]
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
-    buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
+    let end = offset.checked_add(N).expect("read_bytes: offset + N overflow");
+    buf[offset..end].try_into().expect("read_bytes: buffer too short")
 }
 #[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
-    buf[offset..offset + N].copy_from_slice(bytes);
+    let end = offset.checked_add(N).expect("write_bytes: offset + N overflow");
+    buf[offset..end].copy_from_slice(bytes);
 }
 /// Unchecked companion to [`read_bytes`] — zero bounds checks.
 ///

@@ -238,8 +238,8 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 // ANCHOR: demo_car_domain_dto
 pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let dec = CarDecoder::try_from(wire)?;
-    // Prefer try_from_decoder when you need fallible conversion; From panics on
-    // malformed tails (see generated docs).
+    // try_from_decoder (not TryFrom/From): two fallible sources — decoder vs
+    // try_from_slice_with_header for framed bytes; materialisation can fail.
     let dto = CarDomain::try_from_decoder(dec)?;
     assert_eq!(dto.serial_number, 1234);
     assert!(dto.available); // bool domain field

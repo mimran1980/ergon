@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "=== ergo-sbe FIX SBE Conformance (profile ergo-sbe-fix-sbe-0.2) ==="
+echo "=== ergo-sbe FIX SBE Conformance (profile ergo-sbe-fix-sbe-0.1.10) ==="
 echo "rustc: $(rustc -Vv | head -1)"
 echo "java: $(java -version 2>&1 | head -1)"
 echo "git: $(git rev-parse HEAD)"

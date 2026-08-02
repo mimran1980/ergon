@@ -1,14 +1,14 @@
-# Migration guide: 0.1.x → 0.2.0
+# Migration guide: 0.1.x → 0.1.10
 
 ## Why a minor-as-major bump
 
 Pre-1.0 Cargo treats the **minor** component as the compatibility boundary.
-0.2.0 changes safe constructor semantics (fallible by default) and removes
+0.1.10 changes safe constructor semantics (fallible by default) and removes
 `try_wrap*` aliases. That is intentionally a **breaking** release.
 
 ## API renames
 
-| 0.1.x | 0.2.0 |
+| 0.1.x | 0.1.10 |
 |-------|--------|
 | `Encoder::try_wrap` | `Encoder::wrap` → `Result` |
 | `Encoder::try_wrap_and_apply_header` | `Encoder::wrap_and_apply_header` → `Result` |
@@ -16,7 +16,7 @@ Pre-1.0 Cargo treats the **minor** component as the compatibility boundary.
 | `Encoder::wrap_and_apply_header` (infallible) | Safe `Encoder::wrap_and_apply_header` → `Result` (private `*_unchecked` core) |
 | `Decoder::try_wrap_and_apply_header` | `Decoder::decode` |
 | `Decoder::wrap` (infallible) | `Decoder::wrap` → `Result` (version-aware min fixed extent) |
-| `Domain::from(decoder)` / `.into()` | `Domain::try_from_decoder(decoder)?` |
+| `Domain::from(decoder)` / `.into()` | `Domain::try_from_decoder(decoder)?` (or `try_from_slice_with_header` from framed bytes). Named methods, not `TryFrom`/`From`: two fallible sources; conversion is never infallible. |
 | Concrete domain getters `fn price(&self) -> Decimal` | `fn try_price(&self) -> Result<…>` |
 
 ## Pattern updates

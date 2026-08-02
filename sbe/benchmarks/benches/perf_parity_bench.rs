@@ -484,14 +484,15 @@ fn bench_encode_scalar(c: &mut Criterion) {
             WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
         };
 
-        let mut ergon = [0u8; 18];
+        // Car BLOCK_LENGTH=45 + HEADER_LENGTH=8 = 53 minimum for checked constructor
+        let mut ergon = [0u8; 53];
         black_box(
             CarEncoder::wrap_and_apply_header(&mut ergon, 0)
                 .unwrap()
                 .serial_number(1234)
                 .model_year(2013),
         );
-        let mut sbe_tool = [0u8; 18];
+        let mut sbe_tool = [0u8; 53];
         black_box(
             ToolCarEncoder::default()
                 .wrap(WriteBuf::new(&mut sbe_tool), 8)

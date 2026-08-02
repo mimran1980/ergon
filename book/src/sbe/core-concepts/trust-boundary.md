@@ -1,6 +1,6 @@
 # Trust Boundary
 
-Every SBE buffer crossing a process boundary must be validated. In **0.2**,
+Every SBE buffer crossing a process boundary must be validated. In **0.1.10**,
 unsuffixed constructors are the **checked** lane: they return `Result`,
 validate extents once, then enter a shared private zero-check core.
 

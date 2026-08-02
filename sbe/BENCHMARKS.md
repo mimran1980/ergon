@@ -16,8 +16,8 @@ than retaining dated point estimates as release guarantees.
 
 | | |
 |---|---|
-| **Date** | 2026-07-30 |
-| **Release tree** | `feat/0.1.5` cluster fairness correction |
+| **Date** | 2026-08-02 |
+| **Release** | 0.1.10 |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |

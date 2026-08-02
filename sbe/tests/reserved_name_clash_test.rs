@@ -135,7 +135,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         .clone();
 
     // Encoder reserved names always take `_field` on the encoder.
-    // Decoder reserved now includes wrap/decode (0.2 dual-lane), so those
+    // Decoder reserved now includes wrap/decode (0.1.10 dual-lane), so those
     // names are also `_field` on the decoder.
     for renamed in [
         "encoded_length_field",

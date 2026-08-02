@@ -42,6 +42,7 @@ pub(crate) fn generate_domain_objects(
         byte_order,
         multi_message,
         msg_name,
+        msg.block_length,
         conversions,
         domain_types,
         domain_var_data,
@@ -222,6 +223,7 @@ pub(crate) fn generate_domain_recursive(
     byte_order: ByteOrder,
     multi_message: bool,
     msg_name: &str,
+    message_block_length: usize,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     domain_var_data: crate::config::DomainVarData,
@@ -573,6 +575,7 @@ pub(crate) fn generate_domain_recursive(
             byte_order,
             multi_message,
             msg_name,
+            g.effective_block_length(),
             &conversions,
             domain_types,
             domain_var_data,
@@ -666,10 +669,20 @@ pub(crate) fn generate_domain_recursive(
 
     // Only message-level decoders have decode;
     // entry decoders use wrap() and don't get try_from_slice_with_header.
+    //
+    // Naming: inherent `try_from_decoder` / `try_from_slice_with_header` instead of
+    // `TryFrom`/`From` — two distinct fallible sources (flyweight decoder vs
+    // framed byte slice + offset). Std `TryFrom` would collapse both into
+    // `try_from` and hide which path validates the message header. No infallible
+    // `From`/`from`: materialisation can fail on groups, var-data, and converters.
     let try_from_slice_method: proc_macro2::TokenStream = if !is_entry {
         quote::quote! {
-            /// Decode directly from a byte slice — validates the header
-            /// and materialises the full domain object in one call.
+            /// Decode from a framed byte slice: validate the message header, then
+            /// materialise the full domain object.
+            ///
+            /// Distinct from [`Self::try_from_decoder`]: this path owns header
+            /// validation + offset; that path starts from an already-wrapped decoder.
+            /// Named methods (not `TryFrom`/`From`) keep the two sources obvious.
             pub fn try_from_slice_with_header(
                 buf: &[u8],
                 message_offset: usize,
@@ -683,17 +696,52 @@ pub(crate) fn generate_domain_recursive(
         proc_macro2::TokenStream::new()
     };
 
+    let domain_doc: proc_macro2::TokenStream = if is_entry {
+        quote::quote! {
+            /// Owned domain object — application-layer counterpart to the flyweight decoder.
+            ///
+            /// Materialise with [`Self::try_from_decoder`] (from a decoder).
+            /// This is an inherent method, not `TryFrom`/`From`: conversion is never
+            /// infallible (groups, var-data, converters).
+        }
+    } else {
+        quote::quote! {
+            /// Materialise with [`Self::try_from_decoder`] (from a decoder) or
+            /// [`Self::try_from_slice_with_header`] (from framed bytes).
+            /// These are inherent methods, not `TryFrom`/`From`: there are two fallible
+            /// sources, and conversion is never infallible (groups, var-data, converters).
+        }
+    };
+
+    let try_from_decoder_doc: proc_macro2::TokenStream = if is_entry {
+        quote::quote! {
+            /// Fallible conversion from a flyweight decoder.
+            ///
+            /// Propagates decode errors from malformed group entries and var-data
+            /// instead of panicking. Prefer this over `From`/`TryFrom`.
+        }
+    } else {
+        quote::quote! {
+            /// Fallible conversion from a flyweight decoder.
+            ///
+            /// Propagates decode errors from malformed group entries and var-data
+            /// instead of panicking. Prefer this over `From`/`TryFrom`: the companion
+            /// entry point is [`Self::try_from_slice_with_header`] (when generated),
+            /// and named methods make the two sources unambiguous.
+        }
+    };
+
     ts.extend(quote::quote! {
         /// Owned domain object — application-layer counterpart to the flyweight decoder.
-        /// Use `MsgDomain::from(decoder)` or `decoder.into()` to convert.
+        ///
+        #domain_doc
         #[derive(Debug, Clone, PartialEq)]
         pub struct #domain_ident {
             #(#struct_fields),*
         }
 
         impl #domain_ident {
-            /// Fallible conversion from a decoder. Propagates decode errors
-            /// from malformed group entries instead of silently dropping them.
+            #try_from_decoder_doc
             pub fn try_from_decoder(
                 dec: #decoder_ident<'_>,
             ) -> Result<Self, sbe_rt::DecodeError> {
@@ -704,9 +752,6 @@ pub(crate) fn generate_domain_recursive(
 
             #try_from_slice_method
         }
-
-        // HFT-003: no panicking `From` — checked materialisation is
-        // `try_from_decoder` / `try_from_slice_with_header` only.
     });
 
     // Fire hooks for this domain struct (message DTO or entry DTO).
@@ -884,10 +929,10 @@ pub(crate) fn generate_domain_recursive(
         } else {
             quote::quote! {}
         };
-        let block_len = fields.iter().fold(0usize, |acc, f| {
-            let size = f.field_type.size();
-            acc.max(f.offset + size)
-        });
+        // Use the schema-declared padded block length, not the last field's
+        // extent — the schema may include trailing padding or future-version
+        // reservation beyond the last field's offset + size.
+        let block_len = message_block_length;
         let bl_lit = syn::LitInt::new(&block_len.to_string(), span);
         let mut msg_len_stmts = quote::quote! {
             let mut len: usize = #bl_lit;

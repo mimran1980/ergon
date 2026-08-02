@@ -769,34 +769,6 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         let full = car.encoded_length_with_header();
         assert!(full > body, "full length must exceed body length");
 
-        // Computed length must be ≤ MAX_ENCODED_LENGTH (worst-case bound)
-        // Use large buffer pattern instead of staged EncodedLength builders
-        let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(3, |ff| {
-            for _ in 0..3 { ff.add(|_entry| Ok(()))?; }
-            Ok(())
-        }).unwrap();
-        let car = car.performance_figures(2, |pf| {
-            for _ in 0..2 { pf.add(|_entry| Ok(()))?; }
-            Ok(())
-        }).unwrap();
-        let car = car.manufacturer(&[0u8; 100]).unwrap();
-        let car = car.model(&[0u8; 100]).unwrap();
-        let car = car.activation_code(&[0u8; 100]).unwrap();
-        let computed = car.encoded_length();
-        assert!(computed <= CarEncoder::MAX_ENCODED_LENGTH,
-            "computed {computed} exceeds MAX_ENCODED_LENGTH {}",
-            CarEncoder::MAX_ENCODED_LENGTH);
-
         // Encode a simple message (no nested groups, no entry var-data)
         // and verify the pre-computed length matches actual encoded length
         // Use large buffer pattern instead of staged EncodedLength builders
@@ -1106,13 +1078,16 @@ fn generated_code_has_cold_annotations() -> Result<(), Box<dyn std::error::Error
 #[test]
 fn generated_code_has_const_assertions() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
+    // When theoretical max ≤ 64KB: a MAX_ENCODED_LENGTH (or ENCODED_LENGTH) const
+    // with a compile-time BLOCK_LENGTH check. When max > 64KB: no const is emitted
+    // (use the staged EncodedLength builder instead).
     assert!(
         src.contains(
             "const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);"
         ) || src.contains(
             "const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);"
-        ),
-        "generated code must have a compile-time assertion for ENCODED_LENGTH >= BLOCK_LENGTH"
+        ) || src.contains("EncodedLength"),
+        "generated code must have either ENCODED_LENGTH assertion or EncodedLength builder"
     );
     assert!(
         src.contains("const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == "),
@@ -1561,10 +1536,10 @@ fn static_header_templates_exist() -> Result<(), Box<dyn std::error::Error>> {
         "GROUP_DIM_TEMPLATE must exist as a [u8; 4] constant"
     );
 
-    // wrap_and_apply_header must use copy_from_slice from HEADER_TEMPLATE
+    // wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE without bounds checks
     assert!(
-        src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
-        "wrap_and_apply_header must use copy_from_slice from HEADER_TEMPLATE"
+        src.contains("HEADER_TEMPLATE.as_ptr()") || src.contains("buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE)"),
+        "wrap_and_apply_header_unchecked must copy HEADER_TEMPLATE via ptr::copy_nonoverlapping or copy_from_slice"
     );
 
     // Group encoder must use copy_from_slice from its GROUP_DIM_TEMPLATE

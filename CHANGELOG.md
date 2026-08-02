@@ -1,10 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.10] — 2026-08-02
 
-## [0.2.0] — unreleased
-
-Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_2.md` and
+Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and
 `docs/SBE_COMPATIBILITY.md`.
 
 ### Breaking
@@ -20,7 +18,7 @@ Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_2.md` and
 - Group var-data schema `maxLength` enforced; domain group counts use `try_from`
 
 ### Added
-- `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_2.md`
+- `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_1_10.md`
 - `hft_001_soundness_test` hostile/safe-constructor gates
 - `GenerationProfile::{Full, HftLean}` preset (`GenerationConfig::profile`)
 - HFT-006 typestate compile-fail + size_of/Send budgets; HFT-008 checked/unchecked
@@ -51,7 +49,7 @@ commits).
 - **Config size knobs (API surface only):** `with_display_debug(bool)`,
   `with_meta_attributes(bool)`, `with_dispatch(bool)` — defaults true in config.
   **Caveat:** 0.1.9 codegen did not read these flags, so `false` was a no-op;
-  real omit-on-disable behaviour ships in 0.2.0.
+  real omit-on-disable behaviour ships in 0.1.10.
 - **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
 - **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
 - Nightly CI → weekly schedule

@@ -14,8 +14,8 @@ pub struct CarDecoder<'a> {
 }
 
 impl<'a> CarDecoder<'a> {
-    pub const SCHEMA_ID: u16 = 1;
-    pub const TEMPLATE_ID: u16 = 1;
+    pub const SCHEMA_ID: u16 = 77;
+    pub const TEMPLATE_ID: u16 = 2;
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
 
@@ -29,7 +29,7 @@ impl<'a> CarDecoder<'a> {
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
     // Full dynamic-tail structural check (associated, not `car.verify()`).
-    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::DecodeError> { ... }
+    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> { ... }
 
     // Fixed fields are random-access — zero-copy reads after a checked wrap.
     #[inline]

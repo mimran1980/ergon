@@ -59,7 +59,7 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
     session.validate()?;
     let mut client = session.connect("/path/to/aeron-dir")?;
     client.offer(b"application payload")?;
-    client.close()
+    client.close()?
 }
 ```
 
@@ -97,18 +97,19 @@ message). Use the decoder's `remaining()` to get the payload, then
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (24 bytes).
     // Both lengths are const, so size the frame on the stack.
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     enc.leadership_term_id(7)
         .cluster_session_id(99)
         .timestamp(42);
 
-    // remaining_mut() returns the unwritten region after this message
-    SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
+    // into_remaining_mut() returns the unwritten region after this message
+    SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
+        .unwrap()
         .leadership_term_id(7)
         .cluster_session_id(99);
 
@@ -132,7 +133,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`whole_buffer()` returns the entire original buffer (header + payload).
+`buffer()` on the decoder returns the entire original buffer (header + payload).
 
 ## Features and harness
 

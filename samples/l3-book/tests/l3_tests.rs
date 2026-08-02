@@ -776,3 +776,86 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     assert!(lvl.next().is_none());
     Ok(())
 }
+
+// ── Large-scale: prove messages can exceed 64KB ──────────────────────────
+
+#[test]
+fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Error>> {
+    const NUM_LEVELS: usize = 60_000;
+
+    // 1. EncodedLength: size the buffer first.
+    let len = L3BookEncoder::compute_length()
+        .bids_ragged(NUM_LEVELS as u16, |g| {
+            for _ in 0..NUM_LEVELS {
+                g.add()?.orders(|og| {
+                    og.uniform(0)?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks_ragged(NUM_LEVELS as u16, |g| {
+            for _ in 0..NUM_LEVELS {
+                g.add()?.orders(|og| {
+                    og.uniform(0)?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(4)?
+        .encoded_length_with_header();
+
+    assert!(
+        len > 65536,
+        "large book must exceed 64KB (got {len}); 60k levels on each side"
+    );
+
+    // 2. Encode using rust_decimal domain type (the l3-book config uses with_domain_type).
+    let mut buf = vec![0u8; len];
+    let actual = L3BookEncoder::wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields {
+            exchange_timestamp: 1_720_000_000_000_000_000,
+            sequence: 1,
+            is_active: true.into(),
+        })
+        .bids(NUM_LEVELS as u16, |g| {
+            for i in 0..NUM_LEVELS {
+                g.add(|e| {
+                    // Valid Decimal values — unwrap is safe here.
+                    e.try_price(d((i % 50000) as i64)).unwrap()
+                     .try_size(d(100)).unwrap()
+                     .orders(0, |_og| Ok(()))?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks(NUM_LEVELS as u16, |g| {
+            for i in 0..NUM_LEVELS {
+                g.add(|e| {
+                    e.try_price(d(((NUM_LEVELS - i) % 50000) as i64)).unwrap()
+                     .try_size(d(50)).unwrap()
+                     .orders(0, |_og| Ok(()))?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(b"MSFT")?
+        .encoded_length_with_header();
+
+    assert_eq!(len, actual, "EncodedLength must match actual encoded length");
+
+    // 3. Decode and spot-check.
+    let book = L3BookDecoder::decode(&buf[..actual], 0)?;
+    assert_eq!(
+        book.try_exchange_timestamp()?.timestamp_nanos_opt(),
+        Some(1_720_000_000_000_000_000)
+    );
+    let mut bids = book.into_bids()?;
+    let first = bids.next().transpose()?.unwrap();
+    assert_eq!(first.try_price()?, rust_decimal::Decimal::new(0, 0));
+
+    Ok(())
+}
