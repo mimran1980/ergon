@@ -255,8 +255,7 @@ fn source_checked_delegates_to_unchecked_core() -> Result<(), Box<dyn Error>> {
         "wrap_unchecked must be public safe"
     );
     assert!(
-        src.contains("pub fn decode_unchecked")
-            && !src.contains("pub unsafe fn decode_unchecked"),
+        src.contains("pub fn decode_unchecked") && !src.contains("pub unsafe fn decode_unchecked"),
         "decode_unchecked must be public safe"
     );
     let idx = src
