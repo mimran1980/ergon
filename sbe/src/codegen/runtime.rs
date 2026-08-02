@@ -1978,7 +1978,7 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let decoder = #decoder::wrap(buf, pos, block_length, version)?;
+                    let decoder = #decoder::try_wrap(buf, pos, block_length, version)?;
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
                         return Err(sbe_rt::DecodeError::BufferTooShort {

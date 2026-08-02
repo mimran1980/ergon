@@ -773,7 +773,7 @@ impl Generator {
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
                        clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                       unused_assignments, unused_comparisons)]\n",
+                       unused_assignments, unused_comparisons, unused_unsafe)]\n",
         );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");

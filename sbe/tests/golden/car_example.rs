@@ -6,7 +6,8 @@
     clippy::identity_op,
     clippy::unnecessary_cast,
     unused_assignments,
-    unused_comparisons
+    unused_comparisons,
+    unused_unsafe
 )]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
@@ -7657,7 +7658,7 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                let decoder = CarDecoder::wrap(buf, pos, block_length, version)?;
+                let decoder = CarDecoder::try_wrap(buf, pos, block_length, version)?;
                 let total_len = decoder.encoded_length_with_header()?;
                 if total_len > frame_len {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
