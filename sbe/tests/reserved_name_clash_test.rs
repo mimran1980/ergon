@@ -355,10 +355,22 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
         .clone();
 
     // Field names get the keyword append token.
-    assert!(src.contains("fn type_(&self)"), "keyword field 'type' must be type_");
-    assert!(src.contains("fn fn_(&self)"), "keyword field 'fn' must be fn_");
-    assert!(src.contains("fn match_(&self)"), "keyword field 'match' must be match_");
-    assert!(src.contains("fn impl_(&self)"), "keyword field 'impl' must be impl_");
+    assert!(
+        src.contains("fn type_(&self)"),
+        "keyword field 'type' must be type_"
+    );
+    assert!(
+        src.contains("fn fn_(&self)"),
+        "keyword field 'fn' must be fn_"
+    );
+    assert!(
+        src.contains("fn match_(&self)"),
+        "keyword field 'match' must be match_"
+    );
+    assert!(
+        src.contains("fn impl_(&self)"),
+        "keyword field 'impl' must be impl_"
+    );
 
     // The real proof: the generated crate compiles and runs.
     compile_and_run(

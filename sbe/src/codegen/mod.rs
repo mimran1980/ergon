@@ -1075,9 +1075,8 @@ impl Generator {
             Err(e) => {
                 // Produce a comment explaining the failure so the user
                 // can diagnose it (e.g. a reserved keyword leaked through).
-                let mut diag = String::from(
-                    "// ergo-sbe: generated code failed Rust syntax validation.\n",
-                );
+                let mut diag =
+                    String::from("// ergo-sbe: generated code failed Rust syntax validation.\n");
                 use std::fmt::Write;
                 let _ = writeln!(
                     diag,

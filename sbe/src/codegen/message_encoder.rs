@@ -835,10 +835,7 @@ pub(crate) fn generate_message_encoder(
     });
 
     // ── Metadata facet ──────────────────────────────────────────────────
-    let enc_metadata_ident = syn::Ident::new(
-        &format!("{}EncoderMetadata", name),
-        span,
-    );
+    let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
     ts.extend(quote::quote! {
         /// Buffer-placement and wire-frame metadata. Holds a reference to the
         /// parent encoder — zero-copy. All utility methods (`as_body_bytes`,

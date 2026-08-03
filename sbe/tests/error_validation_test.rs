@@ -342,7 +342,10 @@ fn invalid_field_type_names_the_field() -> Result<(), Box<dyn std::error::Error>
 
     let err = ergo_sbe::parse(xml).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("NotARealType"), "must name the bad type: {msg}");
+    assert!(
+        msg.contains("NotARealType"),
+        "must name the bad type: {msg}"
+    );
     // NOTE: the error currently does not name the containing field (e.g. "price").
     // That is a desirable improvement for future releases.
     Ok(())
@@ -396,7 +399,10 @@ fn malformed_xml_gives_clear_error() -> Result<(), Box<dyn std::error::Error>> {
     let err = ergo_sbe::parse(xml).unwrap_err();
     let msg = format!("{err}");
     assert!(
-        msg.contains("XML") || msg.contains("xml") || msg.contains("malformed") || msg.contains("unexpected"),
+        msg.contains("XML")
+            || msg.contains("xml")
+            || msg.contains("malformed")
+            || msg.contains("unexpected"),
         "must indicate malformed XML: {msg}"
     );
     Ok(())
@@ -422,7 +428,10 @@ fn unknown_composite_type_named_in_error() -> Result<(), Box<dyn std::error::Err
 
     let err = ergo_sbe::parse(xml).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("UnknownComposite"), "must name the unknown type: {msg}");
+    assert!(
+        msg.contains("UnknownComposite"),
+        "must name the unknown type: {msg}"
+    );
     Ok(())
 }
 
@@ -433,7 +442,10 @@ fn missing_attribute_renders_miette_source_context() -> Result<(), Box<dyn std::
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     let report = miette::Report::from(err);
     let rendered = format!("{report:?}");
-    assert!(rendered.contains("field @name"), "must mention what is missing: {rendered}");
+    assert!(
+        rendered.contains("field @name"),
+        "must mention what is missing: {rendered}"
+    );
     assert!(
         rendered.contains("id=\"1\"") || rendered.contains("field"),
         "rendering should include source context: {rendered}"
@@ -447,7 +459,10 @@ fn since_version_beyond_schema_is_explained() -> Result<(), Box<dyn std::error::
     let path = fixture_path("version-gap.xml");
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("sinceVersion"), "must mention sinceVersion: {msg}");
+    assert!(
+        msg.contains("sinceVersion"),
+        "must mention sinceVersion: {msg}"
+    );
     assert!(msg.contains("5"), "must show the bad version: {msg}");
     assert!(msg.contains("1"), "must show the schema version: {msg}");
     Ok(())
