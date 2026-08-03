@@ -5278,6 +5278,43 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
         }
     }
 }
+/// Buffer-placement and wire-frame metadata. Holds a reference to the
+/// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
+/// `as_bytes_with_header`, `into_remaining_mut`) live here so no
+/// schema field can collide with them.
+#[derive(Clone, Copy)]
+pub struct CarEncoderMetadata<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+    encoder: &'m CarEncoder<'a, H>,
+}
+impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
+    /// Message body bytes (header exclusive).
+    #[inline]
+    pub fn as_body_bytes(&self) -> &[u8] {
+        &self.encoder.buf[self.encoder.msg_offset + 8..self.encoder.pos]
+    }
+    /// Header-inclusive frame bytes.
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &[u8] {
+        &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+    }
+    /// Absolute offset of this message within the original buffer.
+    #[inline]
+    pub fn message_offset(&self) -> usize {
+        self.encoder.msg_offset
+    }
+}
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
+    /// Metadata accessor: buffer positions, wire-frame boundaries.
+    /// Returns a zero-copy reference to the parent encoder.
+    /// All utility methods are scoped here so no schema field name
+    /// can collide with them.
+    #[inline]
+    pub fn get_metadata(&self) -> CarEncoderMetadata<'_, 'a, H> {
+        CarEncoderMetadata {
+            encoder: self,
+        }
+    }
+}
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     /// Encode this group with a known count up front. Closure may
     /// return `()` or `Result<(), E>` (via
