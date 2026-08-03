@@ -1556,8 +1556,8 @@ mod tests {
         // (in separate impl blocks). The field accessor is renamed to
         // `remaining_field` and must not appear as `fn remaining(&self)`.
         assert_eq!(
-            remaining_count, 1,
-            "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
+            remaining_count, 2,
+            "expected 2 'remaining' methods (decoder + DecoderMetadata), found {remaining_count}"
         );
         // The field accessor must be renamed.
         assert!(
