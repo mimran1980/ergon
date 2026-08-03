@@ -1941,7 +1941,7 @@ impl<'a> CarDecoder<'a> {
 impl<'a> TryFrom<&'a [u8]> for CarDecoder<'a> {
     type Error = sbe_rt::DecodeError;
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        Self::decode(buf, 0)
+        Self::try_decode(buf, 0)
     }
 }
 impl<'a> sbe_rt::private::Sealed for CarDecoder<'a> {}

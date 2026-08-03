@@ -13,7 +13,7 @@
 //! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
-//! | [`demo_try_vs_trusted`] | `decode` / `try_from` / `wrap` + full-tail `verify` |
+//! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
@@ -66,7 +66,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         })
         .encoded_length_with_header();
 
-    let dec = HeartbeatDecoder::try_from(&buf[..written])?;
+    let dec = HeartbeatDecoder::try_decode(&buf[..written], 0)?;
     assert_eq!(dec.sequence(), 7);
     let decoded_ts: DateTime<Utc> = dec.try_timestamp()?;
     assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
@@ -184,7 +184,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 // ANCHOR: demo_car_decode_stages
 pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // ANCHOR: flyweight_access
-    let car = CarDecoder::try_from(wire)?;
+    let car = CarDecoder::try_decode(wire, 0)?;
     assert_eq!(car.serial_number(), 1234);
     assert_eq!(car.model_year(), 2013);
     // Domain conversion: BooleanType → bool when configured.
@@ -237,7 +237,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 /// Materialise owned `CarDomain`, re-encode, compare bytes.
 // ANCHOR: demo_car_domain_dto
 pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let dec = CarDecoder::try_from(wire)?;
+    let dec = CarDecoder::try_decode(wire, 0)?;
     // try_from_decoder (not TryFrom/From): two fallible sources — decoder vs
     // try_from_slice_with_header for framed bytes; materialisation can fail.
     let dto = CarDomain::try_from_decoder(dec)?;
@@ -332,8 +332,8 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
 
     // Truncated buffers fail checked entry points with Result errors.
     assert!(
-        CarDecoder::try_from(&valid_car[..8.min(valid_car.len())]).is_err(),
-        "truncated buffer should fail try_from"
+        CarDecoder::try_decode(&valid_car[..8.min(valid_car.len())], 0).is_err(),
+        "truncated buffer should fail try_decode"
     );
     if valid_car.len() > 16 {
         assert!(

@@ -1442,7 +1442,7 @@ pub(crate) fn generate_message_decoder(
             type Error = sbe_rt::DecodeError;
 
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-                Self::decode(buf, 0)
+                Self::try_decode(buf, 0)
             }
         }
 
