@@ -255,12 +255,12 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+        let encoded = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
             g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
             g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) })?;
             Ok(())
-        })?;
-        let car = car.performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
+        })?
+        .performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
             g.add(|e| -> Result<(), sbe_rt::EncodeError> {
                 e.octane_rating(95);
                 e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
@@ -271,12 +271,12 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })?;
             Ok(())
-        })?;
-        let car = car.manufacturer(b"Honda")?;
-        let car = car.model(b"Civic VTi")?;
-        let complete = car.activation_code(b"abcdef")?;
-        assert!(complete.encoded_length_with_header() > 0);
-        let encoded = complete.as_bytes_with_header().to_vec();
+        })?
+        .manufacturer(b"Honda")?
+        .model(b"Civic VTi")?
+        .activation_code(b"abcdef")?
+        .as_bytes_with_header()
+        .to_vec();
 
         let dec = CarDecoder::try_from(&encoded[..]).unwrap();
         let d: CarDomain = CarDomain::try_from_decoder(dec)?;
@@ -622,12 +622,12 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         extras.sports_pack(true);
         car.extras(extras);
         car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+        let flyweight_bytes = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
             g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
             g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) })?;
             Ok(())
-        })?;
-        let car = car.performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
+        })?
+        .performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
             g.add(|e| -> Result<(), sbe_rt::EncodeError> {
                 e.octane_rating(95);
                 e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
@@ -638,12 +638,12 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })?;
             Ok(())
-        })?;
-        let car = car.manufacturer(b"Honda")?;
-        let car = car.model(b"Civic VTi")?;
-        let complete = car.activation_code(b"abcdef")?;
-        assert!(complete.encoded_length_with_header() > 0);
-        let flyweight_bytes = complete.as_bytes_with_header().to_vec();
+        })?
+        .manufacturer(b"Honda")?
+        .model(b"Civic VTi")?
+        .activation_code(b"abcdef")?
+        .as_bytes_with_header()
+        .to_vec();
 
         let dec = CarDecoder::try_from(&flyweight_bytes[..]).unwrap();
         let d: CarDomain = CarDomain::try_from_decoder(dec)?;
@@ -690,19 +690,30 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
         "car_enc_short",
         &src,
         r#"
-        let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1).model_year(2000).available_bool(false).code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let car = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
-        let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
-        let car = car.manufacturer(b"Honda")?;
-        let car = car.model(b"Test")?;
-        let complete = car.activation_code(b"abc")?;
-        assert!(complete.encoded_length_with_header() > 0);
-        let fb = complete.as_bytes_with_header().to_vec();
+        let len = CarEncoder::compute_length()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(5)?
+            .model(4)?
+            .activation_code(3)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
+        let fb = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&CarFixedFields {
+                serial_number: 1, model_year: 2000, available: BooleanType::T, code: Model::A,
+                some_numbers: [0u32;4], vehicle_code: [0u8;6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            })
+            .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(b"Honda")?
+            .model(b"Test")?
+            .activation_code(b"abc")?
+            .as_bytes_with_header()
+            .to_vec();
 
         let dec = CarDecoder::try_from(&fb[..]).unwrap();
         let d: CarDomain = CarDomain::try_from_decoder(dec)?;
