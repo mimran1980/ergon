@@ -336,11 +336,9 @@ pub enum BooleanType {
     NullVal = 255,
 }
 impl BooleanType {
-    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
-    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             0 => Self::F,
@@ -403,11 +401,9 @@ pub enum Model {
     NullVal = 0,
 }
 impl Model {
-    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
-    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'A' => Self::A,
@@ -462,11 +458,9 @@ pub enum BoostType {
     NullVal = 0,
 }
 impl BoostType {
-    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
-    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'T' => Self::TURBO,
@@ -654,7 +648,6 @@ impl MessageHeader {
     pub fn version(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
     }
-    #[inline]
     pub fn new(
         block_length: u16,
         template_id: u16,
@@ -768,7 +761,6 @@ impl GroupSizeEncoding {
     pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
-    #[inline]
     pub fn new(block_length: u16, num_in_group: u16) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = block_length.to_le_bytes();
@@ -809,7 +801,6 @@ impl VarStringEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
-    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -847,7 +838,6 @@ impl VarAsciiEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
-    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -885,7 +875,6 @@ impl VarDataEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
-    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -922,7 +911,6 @@ impl Booster {
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
     }
-    #[inline]
     pub fn new(boost_type: BoostType, horse_power: u8) -> Self {
         let mut bytes = [0u8; 2];
         let val_bytes = (boost_type as u8).to_le_bytes();
@@ -995,7 +983,6 @@ impl Engine {
     pub fn booster(&self) -> Booster {
         Booster(read_bytes::<2>(&self.0, 8))
     }
-    #[inline]
     pub fn new(
         capacity: u16,
         num_cylinders: u8,
@@ -1366,7 +1353,7 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        let header_bytes: [u8; 8] = unsafe { read_bytes_unchecked::<8>(buf, pos) };
+        let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
             "templateId",
@@ -6789,7 +6776,6 @@ pub struct CarFuelFiguresRaggedBuilder<'a> {
 impl<'a> CarFuelFiguresRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
     #[inline]
-    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6797,7 +6783,6 @@ impl<'a> CarFuelFiguresRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
-    #[inline]
     #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;
@@ -6826,7 +6811,6 @@ pub struct CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
 impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
     #[inline]
-    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6834,7 +6818,6 @@ impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
-    #[inline]
     #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;
@@ -6844,7 +6827,6 @@ impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
 impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
     #[inline]
-    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6852,7 +6834,6 @@ impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
-    #[inline]
     #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;

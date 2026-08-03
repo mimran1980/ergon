@@ -817,12 +817,10 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl #name_ident {
-            #[inline]
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
-            #[inline]
             pub const fn from_raw(val: #r_type_ty) -> Self {
                 match val {
                     #(#from_raw_arms,)*
@@ -1259,7 +1257,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         impl #name_ident {
             #getters
 
-            #[inline]
             pub fn new(#(#ctor_params),*) -> Self {
                 let mut bytes = [0u8; #size_lit];
                 #ctor_body

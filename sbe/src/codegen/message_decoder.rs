@@ -536,7 +536,7 @@ pub(crate) fn generate_message_decoder(
             /// be fully in-bounds at `pos`.
             #[inline]
             pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
+                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
