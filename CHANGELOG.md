@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.11] — 2026-08-03
+
+### Breaking
+- **`get_metadata()` zero-copy metadata struct.** Decoder utility methods (`limit()`,
+  `buffer()`, `message_offset()`, `as_body_bytes()`, `as_bytes_with_header()`,
+  `acting_version()`, `remaining()`) moved from the decoder to a zero-copy
+  `XxxDecoderMetadata` struct returned by `dec.get_metadata()`. Encoder gains the
+  equivalent. This prevents schema field names from colliding with utility methods.
+  Migrate: `dec.limit()` → `dec.get_metadata().limit()`.
+
+### Added
+- `ENCODED_LENGTH` constant emitted for all messages (was only emitted for
+  messages without var-data/groups)
+- Codegen produces a readable diagnostic (field names + suggested rename) on
+  keyword collisions
+- `union` added to Rust keyword list
+- Expanded error-message quality tests
+- Generated-code showcase in book with `get_metadata()` example
+
+### Fixed
+- Keyword collision handling with custom append token verified end-to-end
+- Reserved keyword field test covers both with and without `with_keyword_append_token`
+
 ## [0.1.10] — 2026-08-02
 
 Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and

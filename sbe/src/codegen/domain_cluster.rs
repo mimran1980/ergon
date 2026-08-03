@@ -688,7 +688,7 @@ pub(crate) fn generate_domain_recursive(
                 message_offset: usize,
             ) -> Result<Self, sbe_rt::DecodeError> {
                 Self::try_from_decoder(
-                    #decoder_ident::try_decode(buf, message_offset)?,
+                    #decoder_ident::decode(buf, message_offset)?,
                 )
             }
         }
@@ -920,7 +920,7 @@ pub(crate) fn generate_domain_recursive(
             });
         }
     } else {
-        // Message domains: full encode via wrap_and_apply_header
+        // Message domains: full encode via try_wrap_and_apply_header (checked)
         let has_optional = fields
             .iter()
             .any(|f| f.presence == Presence::Optional && f.null_value.is_some());

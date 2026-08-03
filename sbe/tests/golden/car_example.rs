@@ -5,8 +5,6 @@
     clippy::erasing_op,
     clippy::identity_op,
     clippy::unnecessary_cast,
-    unused_assignments,
-    unused_comparisons,
     unused_unsafe
 )]
 #[allow(non_camel_case_types)]
@@ -16,9 +14,6 @@
 #[allow(clippy::needless_borrow)]
 #[allow(clippy::manual_range_contains)]
 #[allow(unused_imports)]
-#[allow(unused_variables)]
-#[allow(unused_mut)]
-#[allow(dead_code)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
@@ -341,9 +336,11 @@ pub enum BooleanType {
     NullVal = 255,
 }
 impl BooleanType {
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             0 => Self::F,
@@ -406,9 +403,11 @@ pub enum Model {
     NullVal = 0,
 }
 impl Model {
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'A' => Self::A,
@@ -463,9 +462,11 @@ pub enum BoostType {
     NullVal = 0,
 }
 impl BoostType {
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'T' => Self::TURBO,
@@ -653,6 +654,7 @@ impl MessageHeader {
     pub fn version(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
     }
+    #[inline]
     pub fn new(
         block_length: u16,
         template_id: u16,
@@ -674,12 +676,19 @@ impl MessageHeader {
 const _: () = assert!(core::mem::size_of:: < MessageHeader > () == 8);
 /// Canonical wire size of the SBE message header.
 pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
+/// Parsed `(template_id, schema_id)` from [`MessageHeader::peek_header`].
+/// Named fields prevent silent transposition of the two `u16` values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeekedHeader {
+    pub template_id: u16,
+    pub schema_id: u16,
+}
 impl MessageHeader {
-    /// Read `(template_id, schema_id)` from a frame without
-    /// constructing a full `MessageHeader`. Returns `None`
-    /// when the buffer is shorter than the header.
+    /// Read the header fields from a buffer without constructing a
+    /// full `MessageHeader`. Returns `None` when the buffer is
+    /// shorter than the header.
     #[inline]
-    pub fn peek_header(data: &[u8]) -> Option<(u16, u16)> {
+    pub fn peek_header(data: &[u8]) -> Option<PeekedHeader> {
         if data.len() < 8 {
             return None;
         }
@@ -688,7 +697,10 @@ impl MessageHeader {
         let this = Self(hdr);
         let template_id = u16::try_from(this.template_id() as u64).ok()?;
         let schema_id = u16::try_from(this.schema_id() as u64).ok()?;
-        Some((template_id, schema_id))
+        Some(PeekedHeader {
+            template_id,
+            schema_id,
+        })
     }
     /// Read `template_id` from a frame without constructing a full
     /// `MessageHeader`. Returns `None` when the buffer is shorter
@@ -708,8 +720,12 @@ impl MessageHeader {
     /// match. Use this for correct multi-schema dispatch.
     #[inline]
     pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
-        let (tid, sid) = Self::peek_header(data)?;
-        if sid == expected_schema_id { Some(tid) } else { None }
+        let header = Self::peek_header(data)?;
+        if header.schema_id == expected_schema_id {
+            Some(header.template_id)
+        } else {
+            None
+        }
     }
 }
 #[derive(Clone, Copy)]
@@ -752,6 +768,7 @@ impl GroupSizeEncoding {
     pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
+    #[inline]
     pub fn new(block_length: u16, num_in_group: u16) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = block_length.to_le_bytes();
@@ -792,6 +809,7 @@ impl VarStringEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -829,6 +847,7 @@ impl VarAsciiEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -866,6 +885,7 @@ impl VarDataEncoding {
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
         let val_bytes = length.to_le_bytes();
@@ -902,6 +922,7 @@ impl Booster {
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
     }
+    #[inline]
     pub fn new(boost_type: BoostType, horse_power: u8) -> Self {
         let mut bytes = [0u8; 2];
         let val_bytes = (boost_type as u8).to_le_bytes();
@@ -974,6 +995,7 @@ impl Engine {
     pub fn booster(&self) -> Booster {
         Booster(read_bytes::<2>(&self.0, 8))
     }
+    #[inline]
     pub fn new(
         capacity: u16,
         num_cylinders: u8,
@@ -1205,10 +1227,33 @@ impl<'a> CarDecoder<'a> {
     ///
     /// # Safety
     /// `message_offset + HEADER_LENGTH + max(acting_block_length,
-    /// min_readable_fixed_extent(acting_version))` must not overflow and
     /// must be ≤ `buf.len()`.
     #[inline]
     pub fn wrap(
+        buf: &'a [u8],
+        message_offset: usize,
+        acting_block_length: usize,
+        acting_version: u16,
+    ) -> Self {
+        let body_pos = message_offset + Self::HEADER_LENGTH;
+        Self {
+            buf,
+            pos: body_pos,
+            acting_block_length,
+            acting_version,
+        }
+    }
+    /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
+    /// Only for proven-tight HFT loops. Identical struct to [`Self::wrap`]
+    /// but the field accessors use raw-pointers; the constructor is the
+    /// same, so the UB comes from calling an accessor on a mis-sized buffer.
+    ///
+    /// # Safety
+    /// `message_offset + HEADER_LENGTH + max(acting_block_length,
+    /// min_readable_fixed_extent(acting_version))` must not overflow
+    /// and must be ≤ `buf.len()`.
+    #[inline]
+    pub unsafe fn wrap_unchecked(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -1276,7 +1321,7 @@ impl<'a> CarDecoder<'a> {
     /// be fully in-bounds at `pos`.
     #[inline]
     pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-        let header_bytes: [u8; 8] = unsafe { read_bytes_unchecked::<8>(buf, pos) };
+        let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
             "templateId",
@@ -1310,10 +1355,58 @@ impl<'a> CarDecoder<'a> {
         )?;
         Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
     }
+    /// Zero-check framed decode — raw pointer header read, **UB** on
+    /// OOB. Only for proven-tight HFT loops.
+    ///
+    /// # Safety
+    /// Header and version-readable fixed body for this template must
+    /// be fully in-bounds at `pos`.
+    #[inline]
+    pub unsafe fn decode_unchecked(
+        buf: &'a [u8],
+        pos: usize,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        let header_bytes: [u8; 8] = unsafe { read_bytes_unchecked::<8>(buf, pos) };
+        let header = MessageHeader(header_bytes);
+        let template_id = sbe_rt::checked_header_u16(
+            "templateId",
+            header.template_id() as u64,
+        )?;
+        if template_id != Self::TEMPLATE_ID {
+            return Err(sbe_rt::DecodeError::WrongSchema {
+                expected: Self::TEMPLATE_ID,
+                actual: template_id,
+                expected_name: "baseline",
+            });
+        }
+        let schema_id = sbe_rt::checked_header_u16(
+            "schemaId",
+            header.schema_id() as u64,
+        )?;
+        if schema_id != Self::SCHEMA_ID {
+            return Err(sbe_rt::DecodeError::WrongSchema {
+                expected: Self::SCHEMA_ID,
+                actual: schema_id,
+                expected_name: "baseline",
+            });
+        }
+        let acting_block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.version() as u64,
+        )?;
+        Ok(unsafe {
+            Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
+        })
+    }
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
@@ -1699,7 +1792,16 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(manufacturer),
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         if wire_length > 1073741824 as u64 {
@@ -1742,7 +1844,16 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(model),
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         if wire_length > 1073741824 as u64 {
@@ -1785,7 +1896,16 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        if offset + 4 > self.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(activation_code),
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
+        };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
         if wire_length > 1073741824 as u64 {
@@ -2023,14 +2143,6 @@ impl<'a> sbe_rt::SbeMessage for CarDecoder<'a> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
-impl<'a> CarDecoder<'a> {
-    /// Fallible byte view of the complete SBE frame (header + body).
-    /// Returns `None` if the buffer is malformed or truncated.
-    /// Prefer [`Self::as_bytes_with_header`] for explicit error handling.
-    pub fn as_ref_opt(&self) -> Option<&[u8]> {
-        self.as_bytes_with_header().ok()
-    }
-}
 impl<'a> core::fmt::Display for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self, f)
@@ -2109,6 +2221,10 @@ impl<'a> core::fmt::Debug for CarDecoder<'a> {
         d.finish()
     }
 }
+/// This group has entries with nested groups or var-data —
+/// there is no constant stride, so `nth()` (O(1) random access)
+/// is **not** available. Use the [`Iterator`] implementation or
+/// [`Self::skip_n`] to advance positionally instead.
 pub struct FuelFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -2699,6 +2815,10 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+/// This group has entries with nested groups or var-data —
+/// there is no constant stride, so `nth()` (O(1) random access)
+/// is **not** available. Use the [`Iterator`] implementation or
+/// [`Self::skip_n`] to advance positionally instead.
 pub struct PerformanceFiguresDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -3202,13 +3322,14 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
         self.count -= n;
         Ok(())
     }
-    /// Bulk-decode all remaining entries into a `Vec`.
-    /// One bounds check for the whole batch — faster than
-    /// iterating with [`Iterator::next`] when materialising
-    /// the entire group (DTO construction, snapshots).
-    pub fn bulk_decode(
+    /// Bulk-decode all remaining entries into a caller-owned `Vec`.
+    /// Zero-allocation after warm-up — the caller reuses the
+    /// destination buffer across messages.
+    #[inline]
+    pub fn bulk_decode_into(
         &mut self,
-    ) -> Result<Vec<PerformanceFiguresAccelerationEntry>, sbe_rt::DecodeError> {
+        dst: &mut Vec<PerformanceFiguresAccelerationEntry>,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         let needed = self
             .count
             .checked_mul(self.acting_block_length)
@@ -3225,11 +3346,12 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             });
         }
         let cap = self.count;
-        let mut out = Vec::with_capacity(cap);
+        dst.clear();
+        dst.reserve(cap);
         for _ in 0..cap {
             let pos = self.pos;
             self.pos += self.acting_block_length;
-            out.push(PerformanceFiguresAccelerationEntry {
+            dst.push(PerformanceFiguresAccelerationEntry {
                 mph: u16::from_le_bytes(
                     self.buf[pos + 0..pos + 0 + 2].try_into().unwrap(),
                 ),
@@ -3239,6 +3361,18 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
             });
         }
         self.count = 0;
+        Ok(cap)
+    }
+    /// Bulk-decode all remaining entries into a new `Vec`.
+    /// Convenience wrapper around [`Self::bulk_decode_into`].
+    /// One bounds check for the whole batch — faster than
+    /// iterating with [`Iterator::next`] when materialising
+    /// the entire group (DTO construction, snapshots).
+    pub fn bulk_decode(
+        &mut self,
+    ) -> Result<Vec<PerformanceFiguresAccelerationEntry>, sbe_rt::DecodeError> {
+        let mut out = Vec::new();
+        self.bulk_decode_into(&mut out)?;
         Ok(out)
     }
 }
@@ -4541,7 +4675,7 @@ impl CarDomain {
         buf: &[u8],
         message_offset: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        Self::try_from_decoder(CarDecoder::try_decode(buf, message_offset)?)
+        Self::try_from_decoder(CarDecoder::decode(buf, message_offset)?)
     }
 }
 impl CarDomain {
@@ -4928,13 +5062,33 @@ impl<'a> CarEncoder<'a> {
         }
         Ok(Self::wrap(buf, msg_offset))
     }
-    /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
+    /// Trusted body-only wrap — skips capacity validation. The encoder's
+    /// field setters use slice indexing, so an undersized buffer will
+    /// **panic** rather than invoke UB.
     ///
-    /// # Safety
-    /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
-    /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
+    /// Prefer [`Self::try_wrap`] at trust boundaries.
     #[inline]
     pub fn wrap(
+        buf: &'a mut [u8],
+        msg_offset: usize,
+    ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
+        let body_pos = msg_offset + 8;
+        CarEncoder {
+            buf,
+            msg_offset,
+            pos: body_pos + 45,
+            _header: core::marker::PhantomData,
+        }
+    }
+    /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
+    /// Only for proven-tight HFT loops where the panic machinery is
+    /// measurable in the critical path.
+    ///
+    /// # Safety
+    /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow
+    /// and must be ≤ `buf.len()` for the lifetime of the encoder.
+    #[inline]
+    pub unsafe fn wrap_unchecked(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
@@ -4961,13 +5115,35 @@ impl<'a> CarEncoder<'a> {
         }
         Ok(Self::wrap_and_apply_header(buf, pos))
     }
-    /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
+    /// Trusted full-frame wrap + header — skips capacity validation.
+    /// The header write uses slice indexing, so an undersized buffer will
+    /// **panic** rather than invoke UB.
+    ///
+    /// Prefer [`Self::try_wrap_and_apply_header`] at trust boundaries.
+    /// Call [`Self::wrap_and_apply_header_unchecked`] if you have proven
+    /// the buffer is large enough and want to skip even the panic machinery.
+    #[inline]
+    pub fn wrap_and_apply_header(
+        buf: &'a mut [u8],
+        pos: usize,
+    ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
+        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
+        let body_pos = pos + 8;
+        CarEncoder {
+            buf,
+            msg_offset: pos,
+            pos: body_pos + 45,
+            _header: core::marker::PhantomData,
+        }
+    }
+    /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
+    /// on OOB. Only for proven-tight HFT loops.
     ///
     /// # Safety
     /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
-    /// ≤ `buf.len()` for the lifetime of the returned encoder.
+    /// ≤ `buf.len()` for the lifetime of the encoder.
     #[inline]
-    pub fn wrap_and_apply_header(
+    pub unsafe fn wrap_and_apply_header_unchecked(
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
@@ -6612,6 +6788,8 @@ pub struct CarFuelFiguresRaggedBuilder<'a> {
 }
 impl<'a> CarFuelFiguresRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
+    #[inline]
+    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6619,6 +6797,8 @@ impl<'a> CarFuelFiguresRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
+    #[inline]
+    #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;
         Ok(self)
@@ -6645,6 +6825,8 @@ pub struct CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
 }
 impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
+    #[inline]
+    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6652,6 +6834,8 @@ impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
+    #[inline]
+    #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;
         Ok(self)
@@ -6659,6 +6843,8 @@ impl<'a> CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
 }
 impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     /// Register one entry. Returns `&mut Self` for chaining.
+    #[inline]
+    #[inline]
     pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.add()?;
         Ok(self)
@@ -6666,6 +6852,8 @@ impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     /// Register `count` identical entries at once (uniform shape — no
     /// per-entry var-data or nested-group differences). Shortcut for
     /// calling `add()` in a loop.
+    #[inline]
+    #[inline]
     pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
         self.b.entries(count)?;
         Ok(self)

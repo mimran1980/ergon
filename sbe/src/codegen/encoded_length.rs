@@ -1029,6 +1029,8 @@ fn generate_ragged_wrappers(
 
     methods.push(quote::quote! {
         /// Register one entry. Returns `&mut Self` for chaining.
+        #[inline]
+        #[inline]
         pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
             self.b.add()?;
             Ok(self)
@@ -1036,6 +1038,8 @@ fn generate_ragged_wrappers(
         /// Register `count` identical entries at once (uniform shape — no
         /// per-entry var-data or nested-group differences). Shortcut for
         /// calling `add()` in a loop.
+        #[inline]
+        #[inline]
         pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
             self.b.entries(count)?;
             Ok(self)

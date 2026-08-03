@@ -346,13 +346,34 @@ pub(crate) fn generate_message_encoder(
             Ok(Self::wrap(buf, msg_offset))
         }
 
-        /// Private zero-check body-only wrap core (HFT-008 keep=false → not public).
+        /// Trusted body-only wrap — skips capacity validation. The encoder's
+        /// field setters use slice indexing, so an undersized buffer will
+        /// **panic** rather than invoke UB.
         ///
-        /// # Safety
-        /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and
-        /// must be ≤ `buf.len()` for the lifetime of the returned encoder.
+        /// Prefer [`Self::try_wrap`] at trust boundaries.
         #[inline]
         pub fn wrap(
+            buf: &'a mut [u8],
+            msg_offset: usize,
+        ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
+            let body_pos = msg_offset + #header_size_lit;
+            #name_encoder_ident {
+                buf,
+                msg_offset,
+                pos: body_pos + #block_length_lit,
+                _header: core::marker::PhantomData,
+            }
+        }
+
+        /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
+        /// Only for proven-tight HFT loops where the panic machinery is
+        /// measurable in the critical path.
+        ///
+        /// # Safety
+        /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow
+        /// and must be ≤ `buf.len()` for the lifetime of the encoder.
+        #[inline]
+        pub unsafe fn wrap_unchecked(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
@@ -385,13 +406,37 @@ pub(crate) fn generate_message_encoder(
             Ok(Self::wrap_and_apply_header(buf, pos))
         }
 
-        /// Private zero-check full-frame wrap + header core (HFT-008 keep=false).
+        /// Trusted full-frame wrap + header — skips capacity validation.
+        /// The header write uses slice indexing, so an undersized buffer will
+        /// **panic** rather than invoke UB.
+        ///
+        /// Prefer [`Self::try_wrap_and_apply_header`] at trust boundaries.
+        /// Call [`Self::wrap_and_apply_header_unchecked`] if you have proven
+        /// the buffer is large enough and want to skip even the panic machinery.
+        #[inline]
+        pub fn wrap_and_apply_header(
+            buf: &'a mut [u8],
+            pos: usize,
+        ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
+            buf[pos..pos + #header_size_lit]
+                .copy_from_slice(&Self::HEADER_TEMPLATE);
+            let body_pos = pos + #header_size_lit;
+            #name_encoder_ident {
+                buf,
+                msg_offset: pos,
+                pos: body_pos + #block_length_lit,
+                _header: core::marker::PhantomData,
+            }
+        }
+
+        /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
+        /// on OOB. Only for proven-tight HFT loops.
         ///
         /// # Safety
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
-        /// ≤ `buf.len()` for the lifetime of the returned encoder.
+        /// ≤ `buf.len()` for the lifetime of the encoder.
         #[inline]
-        pub fn wrap_and_apply_header(
+        pub unsafe fn wrap_and_apply_header_unchecked(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {

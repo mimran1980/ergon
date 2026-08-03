@@ -127,13 +127,18 @@ fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
 #[test]
 fn group_and_entry_zero_check_wraps_are_private_unsafe() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_group_vis");
-    // Post-safe-ification: entry constructors are public and safe.
-    // Only *_unchecked string accessors remain pub unsafe fn.
+    // 0.1.12: three-tier API adds unsafe fn *_unchecked variants.
+    // Expect at least wrap_unchecked + wrap_and_apply_header_unchecked + decode_unchecked
+    // plus the existing _as_str_unchecked accessors.
     let unsafe_fns = src.match_indices("pub unsafe fn").count();
-    let unchecked_str = src.match_indices("_as_str_unchecked").count();
+    let unchecked_str = src.match_indices("_unchecked").count();
     assert!(
-        unsafe_fns <= unchecked_str,
-        "only *_as_str_unchecked may be pub unsafe fn, found {unsafe_fns} unsafe vs {unchecked_str} unchecked"
+        unsafe_fns >= 3,
+        "expected at least 3 pub unsafe fn (wrap_unchecked, wrap_and_apply_header_unchecked, decode_unchecked), found {unsafe_fns}"
+    );
+    assert!(
+        unchecked_str >= unsafe_fns,
+        "all unsafe fns must carry _unchecked suffix, found {unsafe_fns} unsafe vs {unchecked_str} unchecked"
     );
     assert!(
         src.contains("pub fn wrap") || src.contains("pub const fn wrap"),

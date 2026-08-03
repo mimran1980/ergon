@@ -382,10 +382,34 @@ pub(crate) fn generate_message_decoder(
         ///
         /// # Safety
         /// `message_offset + HEADER_LENGTH + max(acting_block_length,
-        /// min_readable_fixed_extent(acting_version))` must not overflow and
         /// must be ≤ `buf.len()`.
         #[inline]
         pub fn wrap(
+            buf: &'a [u8],
+            message_offset: usize,
+            acting_block_length: usize,
+            acting_version: u16,
+        ) -> Self {
+            let body_pos = message_offset + Self::HEADER_LENGTH;
+            Self {
+                buf,
+                pos: body_pos,
+                acting_block_length,
+                acting_version,
+            }
+        }
+
+        /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
+        /// Only for proven-tight HFT loops. Identical struct to [`Self::wrap`]
+        /// but the field accessors use raw-pointers; the constructor is the
+        /// same, so the UB comes from calling an accessor on a mis-sized buffer.
+        ///
+        /// # Safety
+        /// `message_offset + HEADER_LENGTH + max(acting_block_length,
+        /// min_readable_fixed_extent(acting_version))` must not overflow
+        /// and must be ≤ `buf.len()`.
+        #[inline]
+        pub unsafe fn wrap_unchecked(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -481,7 +505,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Still validates schema/template identity (protocol, not memory).
-                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
+                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
@@ -503,12 +527,53 @@ pub(crate) fn generate_message_decoder(
                 )?;
                 Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
             }
+
+            /// Zero-check framed decode — raw pointer header read, **UB** on
+            /// OOB. Only for proven-tight HFT loops.
+            ///
+            /// # Safety
+            /// Header and version-readable fixed body for this template must
+            /// be fully in-bounds at `pos`.
+            #[inline]
+            pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
+                let header = #hp(header_bytes);
+                let template_id = sbe_rt::checked_header_u16(
+                    "templateId",
+                    header.#hti() as u64,
+                )?;
+                #template_id_validation
+                let schema_id = sbe_rt::checked_header_u16(
+                    "schemaId",
+                    header.#hsi() as u64,
+                )?;
+                #schema_id_validation
+                let acting_block_length = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#hbl() as u64,
+                )?;
+                let acting_version = sbe_rt::checked_header_u16(
+                    "version",
+                    header.#hvr() as u64,
+                )?;
+                Ok(unsafe {
+                    Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
+                })
+            }
         });
     }
 
-    impl_body.extend(syn::parse_str::<proc_macro2::TokenStream>(
-        "#[inline]\n    pub const fn acting_version(&self) -> u16 {\n        self.acting_version\n    }\n\n    pub const fn acting_block_length(&self) -> usize {\n        self.acting_block_length\n    }\n\n"
-    ).unwrap());
+    impl_body.extend(quote::quote! {
+        #[inline]
+        pub const fn acting_version(&self) -> u16 {
+            self.acting_version
+        }
+
+        #[inline]
+        pub const fn acting_block_length(&self) -> usize {
+            self.acting_block_length
+        }
+    });
 
     for f in &msg.fields {
         let fname_snake = to_snake_case(&f.name);
@@ -535,7 +600,6 @@ pub(crate) fn generate_message_decoder(
             "encoded_length_with_header",
             "as_body_bytes",
             "as_bytes_with_header",
-            "as_ref_opt",
             "verify",
             "acting_version",
             "acting_block_length",
@@ -1164,7 +1228,19 @@ pub(crate) fn generate_message_decoder(
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_ident()?;
-                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                if offset + #prefix_size_lit > self.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: stringify!(#vd_snake_ident),
+                        needed: #prefix_size_lit,
+                        available: self.buf.len().saturating_sub(offset),
+                    });
+                }
+                // SAFETY: bounds verified by the preceding check
+                let bytes: [u8; #prefix_size_lit] = unsafe {
+                    core::ptr::read_unaligned(
+                        self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit]
+                    )
+                };
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
                 if wire_length > #max_lit as u64 {
@@ -1504,15 +1580,6 @@ pub(crate) fn generate_message_decoder(
             const BLOCK_LENGTH: usize = #bl_lit;
             const SCHEMA_ID: u16 = #schema_id_lit;
             const SCHEMA_VERSION: u16 = #schema_version_lit;
-        }
-
-        impl<'a> #decoder_ident<'a> {
-            /// Fallible byte view of the complete SBE frame (header + body).
-            /// Returns `None` if the buffer is malformed or truncated.
-            /// Prefer [`Self::as_bytes_with_header`] for explicit error handling.
-            pub fn as_ref_opt(&self) -> Option<&[u8]> {
-                self.as_bytes_with_header().ok()
-            }
         }
     });
 

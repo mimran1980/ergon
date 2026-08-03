@@ -817,10 +817,12 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl #name_ident {
+            #[inline]
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
+            #[inline]
             pub const fn from_raw(val: #r_type_ty) -> Self {
                 match val {
                     #(#from_raw_arms,)*
@@ -1257,6 +1259,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         impl #name_ident {
             #getters
 
+            #[inline]
             pub fn new(#(#ctor_params),*) -> Self {
                 let mut bytes = [0u8; #size_lit];
                 #ctor_body
@@ -1279,12 +1282,20 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
             /// Canonical wire size of the SBE message header.
             pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = #hs_lit;
 
+            /// Parsed `(template_id, schema_id)` from [`MessageHeader::peek_header`].
+            /// Named fields prevent silent transposition of the two `u16` values.
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            pub struct PeekedHeader {
+                pub template_id: u16,
+                pub schema_id: u16,
+            }
+
             impl #name_ident {
-                /// Read `(template_id, schema_id)` from a frame without
-                /// constructing a full `MessageHeader`. Returns `None`
-                /// when the buffer is shorter than the header.
+                /// Read the header fields from a buffer without constructing a
+                /// full `MessageHeader`. Returns `None` when the buffer is
+                /// shorter than the header.
                 #[inline]
-                pub fn peek_header(data: &[u8]) -> Option<(u16, u16)> {
+                pub fn peek_header(data: &[u8]) -> Option<PeekedHeader> {
                     if data.len() < #hs_lit {
                         return None;
                     }
@@ -1295,7 +1306,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         u16::try_from(this.template_id() as u64).ok()?;
                     let schema_id =
                         u16::try_from(this.schema_id() as u64).ok()?;
-                    Some((template_id, schema_id))
+                    Some(PeekedHeader { template_id, schema_id })
                 }
 
                 /// Read `template_id` from a frame without constructing a full
@@ -1317,8 +1328,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 /// match. Use this for correct multi-schema dispatch.
                 #[inline]
                 pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
-                    let (tid, sid) = Self::peek_header(data)?;
-                    if sid == expected_schema_id { Some(tid) } else { None }
+                    let header = Self::peek_header(data)?;
+                    if header.schema_id == expected_schema_id { Some(header.template_id) } else { None }
                 }
             }
         };
