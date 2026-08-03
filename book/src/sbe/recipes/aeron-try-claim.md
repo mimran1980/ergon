@@ -36,12 +36,14 @@ let len = CarEncoder::compute_length()
         ff.add()?.usage_description(7)?;  // "Highway"
         Ok(())
     })?
+    .performance_figures_ragged(0, |_| Ok(()))?
     .manufacturer(5)?
+    .model(9)?
     .activation_code(6)?
     .encoded_length_with_header();
 
 let claim = publication.try_claim(header_len + len as i32)?;
-CarEncoder::wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)?
+CarEncoder::wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)
     .fixed(&fields)
     // ...
     .manufacturer(b"Honda")?

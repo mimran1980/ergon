@@ -92,9 +92,9 @@ fn main() -> miette::Result<()> {
         (&ergo_sbe::Schema::from_ir(fills),  "fills"),
     ])?;
 
-    for m in modules {
+    for m in modules.modules() {
         let out = std::path::Path::new(&std::env::var("OUT_DIR")?).join(&m.path);
-        std::fs::write(&out, m.source)?;
+        std::fs::write(&out, &m.source)?;
         println!("cargo::rerun-if-changed=schemas/{}", m.path.replace(".rs", ".xml"));
     }
     Ok(())

@@ -20,13 +20,13 @@ impl<'a> CarDecoder<'a> {
     pub const HEADER_LENGTH: usize = 8;
 
     // Checked framed entry (message start). Validates header + fixed extent.
-    pub fn decode(buf: &'a [u8], pos: usize)
+    pub fn try_decode(buf: &'a [u8], pos: usize)
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
-    // Checked external-metadata wrap (still returns Result).
+    // Infallible external-metadata wrap (caller must prove buffer safety).
     pub fn wrap(buf: &'a [u8], message_offset: usize,
                acting_block_length: usize, acting_version: u16)
-        -> Result<Self, sbe_rt::DecodeError> { ... }
+        -> Self { ... }
 
     // Full dynamic-tail structural check (associated, not `car.verify()`).
     pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> { ... }
@@ -75,7 +75,10 @@ let len = CarEncoder::compute_length()
         ff.add()?.usage_description(5)?;
         Ok(())
     })?
+    .performance_figures_ragged(0, |_| Ok(()))?
     .manufacturer(5)?
+    .model(9)?
+    .activation_code(6)?
     .encoded_length_with_header();
 ```
 
