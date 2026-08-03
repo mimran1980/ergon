@@ -344,6 +344,7 @@ pub(crate) fn is_rust_keyword(s: &str) -> bool {
             | "virtual"
             | "yield"
             | "gen"
+            | "union"
     )
 }
 
