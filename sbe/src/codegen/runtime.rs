@@ -22,6 +22,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
                 InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
                 InvalidAscii { field: &'static str },
+                /// Domain `try_*` conversion failed (HFT-003).
+                DomainConversionFailed { field: &'static str },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -32,10 +34,11 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidHeaderValue { field, value, maximum } => write!(f, "message header field '{}': value {} exceeds supported maximum {}", field, value, maximum),
-                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
+                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}': length {} exceeds max {}", field, length, max_length),
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
+                        Self::DomainConversionFailed { field } => write!(f, "field '{}': domain conversion failed", field),
                     }
                 }
             }
@@ -57,6 +60,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 GroupCountOverflow { maximum: u32, actual: u32 },
                 /// Checked arithmetic overflow in encoded length computation.
                 EncodedLengthOverflow,
+                /// Domain `try_*` conversion failed (HFT-003).
+                DomainConversionFailed { field: &'static str },
                 Decode(DecodeError),
             }
 
@@ -72,6 +77,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
                         Self::GroupCountOverflow { maximum, actual } => write!(f, "group count overflow: max {maximum}, actual {actual}"),
                         Self::EncodedLengthOverflow => write!(f, "encoded length computation overflowed"),
+                        Self::DomainConversionFailed { field } => write!(f, "domain conversion failed for field {field}"),
                         Self::Decode(e) => write!(f, "decode error: {e}"),
                     }
                 }
@@ -1374,7 +1380,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 while idx < #len_lit {
                                     let offset = self.pos + #offset_lit + idx * #prim_size_lit;
                                     res[idx] = #r_type_ty::#from_method(
-                                        read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                                        unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                                     );
                                     idx += 1;
                                 }
@@ -1396,7 +1402,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
+                            #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
                         }
                     });
                 }
@@ -1414,7 +1420,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
+                        #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
                     }
                 });
             }
@@ -1434,7 +1440,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                     }
                 });
             }
@@ -1454,7 +1460,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                     }
                 });
             }
@@ -1491,6 +1497,7 @@ pub(crate) fn generate_prelude(
     messages: &[MessageStructure],
     schema_id: u16,
     schema_version: u16,
+    enable_dispatch: bool,
 ) {
     writeln!(src, "pub const SCHEMA_ID: u16 = {schema_id};").unwrap();
     writeln!(src, "pub const SCHEMA_VERSION: u16 = {schema_version};").unwrap();
@@ -1524,14 +1531,16 @@ pub(crate) fn generate_prelude(
 
     // Module-level types (exported from super)
     src.push_str("    pub use super::{\n");
-    for ty in &[
-        "AnyMessage",
-        "DecodedFrame",
-        "FrameCursor",
-        "FramingPolicy",
-        "MessageVisitor",
-    ] {
-        writeln!(src, "        {ty},").unwrap();
+    if enable_dispatch {
+        for ty in &[
+            "AnyMessage",
+            "DecodedFrame",
+            "FrameCursor",
+            "FramingPolicy",
+            "MessageVisitor",
+        ] {
+            writeln!(src, "        {ty},").unwrap();
+        }
     }
     // Generated types (composites, enums, sets, messages)
     for ty in &gen_types {
@@ -1855,6 +1864,7 @@ pub(crate) fn generate_any_message(
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
         let mut decode_arms = proc_macro2::TokenStream::new();
+        let mut decode_arms_unchecked = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
@@ -1864,6 +1874,12 @@ pub(crate) fn generate_any_message(
             );
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
+                    // try_wrap enforces version-aware fixed extent (HFT-001).
+                    Ok(Self::#name(#decoder::try_wrap(buf, pos, block_length, version)?))
+                }
+            });
+            decode_arms_unchecked.extend(quote::quote! {
+                #schema::TEMPLATE_ID => {
                     Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
                 }
             });
@@ -1871,8 +1887,9 @@ pub(crate) fn generate_any_message(
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
-                pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                     if #header_size_lit > buf.len().saturating_sub(pos) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
@@ -1898,12 +1915,46 @@ pub(crate) fn generate_any_message(
                         "blockLength",
                         header.#bl_ident() as u64,
                     )?;
-                    let body_pos = pos + #header_size_lit;
 
                     #schema_id_validation
 
                     match template_id {
                         #decode_arms
+                        _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),
+                    }
+                }
+
+                /// Private zero-check dispatch core (HFT-008 keep=false).
+                ///
+                /// # Safety
+                /// Header and the version-readable fixed extent of the selected
+                /// template must be fully in-bounds. Dynamic tails remain checked.
+                #[inline]
+                pub fn decode(
+                    buf: &'a [u8],
+                    pos: usize,
+                ) -> Result<Self, sbe_rt::DecodeError> {
+                    let header_bytes = unsafe { read_bytes_unchecked::<#header_size_lit>(buf, pos) };
+                    let header = #header_type_ident(header_bytes);
+                    let template_id = sbe_rt::checked_header_u16(
+                        "templateId",
+                        header.#ti_ident() as u64,
+                    )?;
+                    let schema_id = sbe_rt::checked_header_u16(
+                        "schemaId",
+                        header.#si_ident() as u64,
+                    )?;
+                    let version = sbe_rt::checked_header_u16(
+                        "version",
+                        header.#vr_ident() as u64,
+                    )?;
+                    let block_length = sbe_rt::checked_header_usize(
+                        "blockLength",
+                        header.#bl_ident() as u64,
+                    )?;
+                    #schema_id_validation
+                    match template_id {
+                        #decode_arms_unchecked
                         _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),
                     }
                 }
@@ -1927,7 +1978,7 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let decoder = #decoder::wrap(buf, pos, block_length, version);
+                    let decoder = #decoder::try_wrap(buf, pos, block_length, version)?;
                     let total_len = decoder.encoded_length_with_header()?;
                     if total_len > frame_len {
                         return Err(sbe_rt::DecodeError::BufferTooShort {

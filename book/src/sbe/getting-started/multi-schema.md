@@ -14,7 +14,7 @@ the shared schema parsed in memory.
 
 ### Shared `Ir` — parse, then share
 
-```text
+```rust,ignore
 // 1. Parse the shared schema once (composites, enums, sets).
 let common = ergo_sbe::parse_file("schemas/common-types.xml")?;
 
@@ -37,7 +37,7 @@ duplicate type generation.
 
 ### `parse_with_shared` from in-memory strings
 
-```text
+```rust,ignore
 let common = ergo_sbe::parse(
     r#"<?xml version="1.0"?>
 <messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
@@ -75,7 +75,7 @@ them through a `<composite>` / `<enum>` / `<set>` in the shared schema instead.
 
 ### Full `build.rs` — parse → share → generate
 
-```text
+```rust,ignore
 // build.rs
 fn main() -> miette::Result<()> {
     let common = ergo_sbe::parse_file("schemas/common-types.xml")?;
@@ -92,9 +92,9 @@ fn main() -> miette::Result<()> {
         (&ergo_sbe::Schema::from_ir(fills),  "fills"),
     ])?;
 
-    for m in modules {
+    for m in modules.modules() {
         let out = std::path::Path::new(&std::env::var("OUT_DIR")?).join(&m.path);
-        std::fs::write(&out, m.source)?;
+        std::fs::write(&out, &m.source)?;
         println!("cargo::rerun-if-changed=schemas/{}", m.path.replace(".rs", ".xml"));
     }
     Ok(())
@@ -103,7 +103,7 @@ fn main() -> miette::Result<()> {
 
 Consumer modules import the shared module for cross-schema type resolution:
 
-```text
+```rust,ignore
 mod common_types { include!(concat!(env!("OUT_DIR"), "/common_types.rs")); }
 mod orders {
     use super::common_types::*;       // shared types + header composite

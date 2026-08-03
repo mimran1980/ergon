@@ -38,7 +38,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
         car.model_year(2013);
         let car = car.fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
@@ -59,7 +59,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         let encoded = complete.as_bytes_with_header();
         let total_len = encoded.len();
 
-        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         assert_eq!(dec.serial_number(), 1234);
         assert_eq!(dec.model_year(), 2013);
 
@@ -115,7 +115,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(7);
         let car = car.fuel_figures(3, |g| -> Result<(), sbe_rt::EncodeError> {
             g.add(|e| { e.speed(10).mpg(1.0); e.usage_description(b"aaa")?; Ok(()) })?;
@@ -130,7 +130,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         assert!(complete.encoded_length_with_header() > 0);
         let encoded = complete.as_bytes_with_header();
 
-        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         let mut fuel = dec.into_fuel_figures().unwrap();
         let first = fuel.next().unwrap().unwrap();
         assert_eq!(first.speed(), 10);
@@ -162,7 +162,7 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1);
         let car = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
         let car = car.performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?;
@@ -172,7 +172,7 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         assert!(complete.encoded_length_with_header() > 0);
         let encoded = complete.as_bytes_with_header();
 
-        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         let fuel = dec.into_fuel_figures().unwrap();
         assert!(fuel.is_empty());
         let after_fuel = fuel.finish().unwrap();

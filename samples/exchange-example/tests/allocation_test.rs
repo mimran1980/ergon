@@ -36,8 +36,8 @@ fn warm_up() {
     };
     let mut buf = [0u8; 256];
     // Encode + decode to settle lazy-inits
-    let _ = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
-    let _ = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0);
+    let _ = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
+    let _ = AppMessageDecoder::try_decode(&buf, 0);
     let _ = L2BookEncoder::compute_encoded_length_with_message_header(0, 0, 1);
 }
 
@@ -57,13 +57,13 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
 
-    let mut outer = AppMessageEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+    let mut outer = AppMessageEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
     outer.sent_ts(1);
     let _ = outer
         .app_name(b"x")
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0);
+            let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
             enc.source(Source::Bitget)
                 .exchange_timestamp(1)
                 .receive_timestamp(2)
@@ -111,13 +111,13 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     // Pre-encode
     {
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         outer.sent_ts(1);
         let _ = outer
             .app_name(b"x")
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut enc = L2BookEncoder::wrap_and_apply_header(payload, 0);
+                let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
                 enc.source(Source::Bitget)
                     .exchange_timestamp(1)
                     .receive_timestamp(2)
@@ -141,7 +141,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
 
-    let dec = AppMessageDecoder::try_wrap_and_apply_header(black_box(&buf), 0).unwrap();
+    let dec = AppMessageDecoder::try_decode(black_box(&buf), 0).unwrap();
     let (_name, after_name) = dec.into_app_name().unwrap();
     let (frame, _) = after_name.into_payload_as_message().unwrap();
     match frame.message {

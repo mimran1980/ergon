@@ -1,16 +1,26 @@
 # GenerationConfig Options
 
-| Option | Purpose |
-|--------|---------|
-| `enable_domain_objects(DomainVarData::…)` | Owned `*Domain` + `encode`; **`LossyStrings`** → `String` (bad UTF-8 → `""`), **`Bytes`** → `Vec<u8>` |
-| `with_shared_module` / `generate_multi` | Multi-schema shared types |
-| `with_external_sbe_rt` | Share one `sbe_rt` runtime module |
-| `enable_error_from_impls` | `From<EncodeError/DecodeError>` for your error type |
-| `with_unchecked_companions` | Bench-only fast accessors |
-| `with_keyword_append_token` | Schema `type` → Rust `type_` (default `"_"`) |
-| `enable_bool_domain_type` | Syntax sugar: auto-registers `bool` converters for every boolean enum. Equivalent to calling `.with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")` for each — detects by name, `semanticType="Boolean"`, or True/False value pairs |
-| `with_deprecated_attrs` | `#[deprecated]` on schema-deprecated items |
+Every option except `new("module_name")` is a chained builder method. Boolean
+flags default to the value shown.
 
-Text fields stay bytes unless the schema declares a supported character
-encoding (then strict UTF-8/ASCII helpers apply). `Display`/`Debug` are
-diagnostic only (`Display` currently equals `Debug` on generated decoders).
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `with_conversion(selector)` | — | Generic `*_as::<T>()` / `*_from(&t)` per selected field |
+| `with_domain_type(selector, path)` | — | One canonical app type per field (implies conversion) |
+| `with_domain_objects(var_data)` | off | Owned `*Domain` + `encode`; `LossyStrings` → `String` (bad UTF-8 → `InvalidUtf8` error), `Bytes` → `Vec<u8>` |
+| `with_display_debug(enable: bool)` | `true` | Emit `Debug`/`Display` impls on generated types |
+| `with_meta_attributes(enable: bool)` | `true` | Emit `*_ENCODING_OFFSET`, `*_ID`, `*_META_ATTRIBUTE` etc. |
+| `with_dispatch(enable: bool)` | `true` | Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch |
+| `with_bool_domain_type(enable: bool)` | `false` | Auto-register `bool` converters for every boolean enum (name, `semanticType`, or `{0,1}` value pair) |
+| `with_unchecked_companions(enable: bool)` | `false` | `_unchecked` field accessors — **supported opt-in** after validation (HFT hot path), see safety contract |
+| `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated]` on schema-deprecated items |
+| `with_error_from_impls(path)` | — | `From<EncodeError/DecodeError>` for your error type |
+| `with_shared_module(name)` | — | Multi-schema shared types module |
+| `with_external_sbe_rt(path)` | — | Share one `sbe_rt` runtime module instead of inlining |
+| `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
+| `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
+
+Turn off `with_display_debug`, `with_meta_attributes`, and `with_dispatch` to
+reduce generated-code size (~6,100 lines/message with all on). Text fields
+stay bytes unless the schema declares a character encoding (then strict
+UTF-8/ASCII helpers apply).

@@ -62,7 +62,7 @@ pub(crate) fn partition_tokens(tokens: &[Token]) -> SchemaElements {
 /// Shared bool detection: name convention OR semanticType="Boolean".
 /// Used by codegen to emit `_bool()` accessors. Must match the predicate
 /// in generate_enum. Does NOT use value-based heuristics — those are
-/// reserved for [`is_bool_value_enum`] which powers `enable_bool_domain_type`.
+/// reserved for [`is_bool_value_enum`] which powers `with_bool_domain_type`.
 pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     enum_name == "BooleanType"
         || elements.enums.iter().any(|e| {
@@ -72,7 +72,7 @@ pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
 
 /// Extended detection: name, semanticType, OR exactly two valid values
 /// forming a recognisable true/false pair with discriminants 0 and 1.
-/// Used by `enable_bool_domain_type()` to auto-register `bool` converters
+/// Used by `with_bool_domain_type()` to auto-register `bool` converters
 /// for schemas that don't use the canonical `BooleanType` naming.
 ///
 /// Only the canonical `{0, 1}` representation is supported by auto-detection.

@@ -211,7 +211,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
         let entries = [first.clone(), second.clone()];
 
         let mut buf = [0u8; 128];
-        let len = TestMessage1Encoder::wrap_and_apply_header(&mut buf, 0)
+        let len = TestMessage1Encoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .entries(2, |group| group.bulk_add(&entries))?
             .encoded_length_with_header();
         let mut decoded = TestMessage1Decoder::try_from(&buf[..len])?.into_entries()?;
@@ -224,7 +224,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
         assert!(decoded.next().is_none());
 
         let mut full_buf = [0u8; 128];
-        let len = TestMessage1Encoder::wrap_and_apply_header(&mut full_buf, 0)
+        let len = TestMessage1Encoder::try_wrap_and_apply_header(&mut full_buf, 0).unwrap()
             .entries(1, |group| {
                 let err = group.bulk_add(&entries).unwrap_err();
                 assert!(matches!(
@@ -245,7 +245,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
         );
 
         let mut short_buf = [0u8; 54];
-        let err = TestMessage1Encoder::wrap_and_apply_header(&mut short_buf, 0)
+        let err = TestMessage1Encoder::try_wrap_and_apply_header(&mut short_buf, 0).unwrap()
             .entries(1, |group| group.bulk_add(&entries[..1]))
             .unwrap_err();
         assert!(matches!(
@@ -257,7 +257,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
         ));
 
         let mut empty_buf = [0u8; 32];
-        let len = TestMessage1Encoder::wrap_and_apply_header(&mut empty_buf, 0)
+        let len = TestMessage1Encoder::try_wrap_and_apply_header(&mut empty_buf, 0).unwrap()
             .entries(0, |group| group.bulk_add(&[]))?
             .encoded_length_with_header();
         assert_eq!(len, 27);
@@ -281,7 +281,7 @@ fn zero_block_group_bulk_add_records_count_without_chunks_panic()
         r#"
         let entries = [EntriesEntry {}, EntriesEntry {}, EntriesEntry {}];
         let mut buf = [0u8; 12];
-        let len = ZeroBlockMessageEncoder::wrap_and_apply_header(&mut buf, 0)
+        let len = ZeroBlockMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .entries(3, |group| group.bulk_add(&entries))?
             .encoded_length_with_header();
         assert_eq!(len, 12);
@@ -731,7 +731,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
         // Latest-version add_struct covers multi-byte primitive arrays plus
         // composite/enum/set fields in a flat group entry.
         let mut latest = [0u8; 64];
-        let len = VersionedGroupMessageEncoder::wrap_and_apply_header(&mut latest, 0)
+        let len = VersionedGroupMessageEncoder::try_wrap_and_apply_header(&mut latest, 0).unwrap()
             .entries(1, |group| {
                 group.add_struct(&EntriesEntry {
                     base: 5,
@@ -847,7 +847,7 @@ fn multi_nested_group_compiles_and_roundtrips() -> Result<(), Box<dyn std::error
         // Non-zero nested entries so tail_offset indices diverge: if the
         // `ng_idx` counter regresses (e.g. `*=` stays at 0), both children
         // call `tail_offset_0` and the second group reads the wrong dimension.
-        let mut enc = MultiNestedEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = MultiNestedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.header(0u32);
         let enc = enc.parent(1, |parent| {
             parent.add(|entry| {
@@ -925,7 +925,7 @@ fn group_entry_display_includes_fields() -> Result<(), Box<dyn std::error::Error
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1); car.model_year(2020);
         car.available(BooleanType::T); car.code(Model::A);
         car.some_numbers([0u32; 4]); car.vehicle_code([0u8; 6]);

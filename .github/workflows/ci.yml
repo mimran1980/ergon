@@ -237,10 +237,11 @@ jobs:
       - run: cargo build --release --workspace --exclude ergo-aeron-cluster
       - run: cargo build --release -p ergo-aeron-cluster
 
+  # Thin compile check — full bench runs locally with `just bench`.
   bench:
     needs: gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -254,24 +255,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libbsd-dev
 
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
-      - run: cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-      - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
-      - run: cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
-      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
-      - run: CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
       - run: cargo bench -p ergo-aeron-cluster --no-run
-      - run: cd samples/l3-book && cargo bench --no-run
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shared-runner-criterion-diagnostics
-          path: |
-            target/criterion
-            target/bench-no-lto/criterion
-            sbe/benchmarks/target/bench-no-lto/criterion
-          if-no-files-found: ignore
 
   package:
     needs: gate
@@ -298,8 +282,26 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Check ergo-sbe public API compatibility
+      - name: Check ergo-sbe semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           manifest-path: Cargo.toml
           package: ergo-sbe
+
+      - name: Check ergo-aeron-cluster semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: Cargo.toml
+          package: ergo-aeron-cluster
+
+  audit:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - run: cargo deny check
+      - run: cargo audit

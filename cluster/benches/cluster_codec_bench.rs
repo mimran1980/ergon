@@ -319,12 +319,20 @@ const MSG_HDR_FIXTURE: [u8; 32] = [
 
 const MSG_HDR_TEMPLATE_ID: u16 = 1;
 const MSG_HDR_SCHEMA_ID: u16 = 111;
+const MSG_HDR_SCHEMA_VERSION: u16 = 16;
 
 #[inline(always)]
-fn sbe_tool_header_ok(template_id: u16, schema_id: u16, expected_tid: u16, expected_sid: u16) -> bool {
-    // Same two comparisons ergon performs in wrap_and_apply_header.
+fn sbe_tool_header_ok(
+    template_id: u16,
+    schema_id: u16,
+    version: u16,
+    expected_tid: u16,
+    expected_sid: u16,
+    expected_ver: u16,
+) -> bool {
+    // Same three comparisons ergon decode() performs: template_id, schema_id, version.
     // Return value is black_box'd so LLVM cannot DCE the checks.
-    black_box(template_id == expected_tid && schema_id == expected_sid)
+    black_box(template_id == expected_tid && schema_id == expected_sid && version <= expected_ver)
 }
 
 fn bench_decode_msg_header(c: &mut Criterion) {
@@ -333,11 +341,8 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             ReadBuf, message_header_codec::MessageHeaderDecoder,
             session_message_header_codec::SessionMessageHeaderDecoder,
         };
-        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::try_wrap_and_apply_header(
-            &MSG_HDR_FIXTURE,
-            0,
-        )
-        .unwrap();
+        let ergo =
+            ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::decode(&MSG_HDR_FIXTURE, 0).unwrap();
         let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(&MSG_HDR_FIXTURE), 0);
         let tool = SessionMessageHeaderDecoder::default().header(header, 0);
         assert_eq!(ergo.leadership_term_id(), tool.leadership_term_id());
@@ -349,12 +354,12 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
-                let d =
-                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::try_wrap_and_apply_header(
-                        black_box(&MSG_HDR_FIXTURE[..]),
-                        0,
-                    )
-                    .unwrap();
+                let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::wrap(
+                    black_box(&MSG_HDR_FIXTURE[..]),
+                    0,
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH,
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::SCHEMA_VERSION,
+                );
                 black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
             }
         });
@@ -367,7 +372,8 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);
-                if buf.len() < 8 {
+                // Equal-work: same extent check ergon wrap() performs.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
@@ -375,8 +381,10 @@ fn bench_decode_msg_header(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     MSG_HDR_TEMPLATE_ID,
                     MSG_HDR_SCHEMA_ID,
+                    MSG_HDR_SCHEMA_VERSION,
                 ) {
                     continue;
                 }
@@ -399,17 +407,15 @@ const SESSION_EVENT_FIXTURE: [u8; 67] = [
 
 const SESSION_EVENT_TEMPLATE_ID: u16 = 2;
 const SESSION_EVENT_SCHEMA_ID: u16 = 111;
+const SESSION_EVENT_SCHEMA_VERSION: u16 = 16;
 
 fn bench_decode_session_event(c: &mut Criterion) {
     {
         use reference_sbe::{
             ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
         };
-        let ergo = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::try_wrap_and_apply_header(
-            &SESSION_EVENT_FIXTURE,
-            0,
-        )
-        .unwrap();
+        let ergo =
+            ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(&SESSION_EVENT_FIXTURE, 0).unwrap();
         let ergo_correlation_id = ergo.correlation_id();
         let ergo_cluster_session_id = ergo.cluster_session_id();
         let ergo_leadership_term_id = ergo.leadership_term_id();
@@ -433,8 +439,14 @@ fn bench_decode_session_event(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder;
-                let dec =
-                    SessionEventDecoder::try_wrap_and_apply_header(black_box(&SESSION_EVENT_FIXTURE[..]), 0).unwrap();
+                // Use wrap() — extent-only check, no header field validation.
+                // sbe-tool arm does equivalent manual checks.
+                let dec = SessionEventDecoder::wrap(
+                    black_box(&SESSION_EVENT_FIXTURE[..]),
+                    0,
+                    SessionEventDecoder::BLOCK_LENGTH,
+                    SessionEventDecoder::SCHEMA_VERSION,
+                );
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
@@ -452,7 +464,8 @@ fn bench_decode_session_event(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
-                if buf.len() < 8 {
+                // Same extent check ergon decode() performs: header + block must fit.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
@@ -460,8 +473,10 @@ fn bench_decode_session_event(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     SESSION_EVENT_TEMPLATE_ID,
                     SESSION_EVENT_SCHEMA_ID,
+                    SESSION_EVENT_SCHEMA_VERSION,
                 ) {
                     continue;
                 }
@@ -490,6 +505,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
 
 const NEW_LEADER_TEMPLATE_ID: u16 = 3;
 const NEW_LEADER_SCHEMA_ID: u16 = 111;
+const NEW_LEADER_SCHEMA_VERSION: u16 = 16;
 
 fn new_leader_fixture() -> Vec<u8> {
     use ergo_aeron_cluster::cluster_codec_types::{NewLeaderEventEncoder, NewLeaderEventFixedFields};
@@ -516,9 +532,7 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         use reference_sbe::{
             ReadBuf, message_header_codec::MessageHeaderDecoder, new_leader_event_codec::NewLeaderEventDecoder,
         };
-        let ergo =
-            ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::try_wrap_and_apply_header(&fixture, 0)
-                .unwrap();
+        let ergo = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(&fixture, 0).unwrap();
         let ergo_cluster_session_id = ergo.cluster_session_id();
         let ergo_leadership_term_id = ergo.leadership_term_id();
         let ergo_leader_member_id = ergo.leader_member_id();
@@ -538,7 +552,12 @@ fn bench_decode_new_leader(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
                 use ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder;
-                let dec = NewLeaderEventDecoder::try_wrap_and_apply_header(black_box(fixture.as_slice()), 0).unwrap();
+                let dec = NewLeaderEventDecoder::wrap(
+                    black_box(fixture.as_slice()),
+                    0,
+                    NewLeaderEventDecoder::BLOCK_LENGTH,
+                    NewLeaderEventDecoder::SCHEMA_VERSION,
+                );
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
@@ -554,7 +573,8 @@ fn bench_decode_new_leader(c: &mut Criterion) {
             };
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(fixture.as_slice());
-                if buf.len() < 8 {
+                // Equal-work: same extent check ergon wrap() performs.
+                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::BLOCK_LENGTH {
                     continue;
                 }
                 let rb = ReadBuf::new(buf);
@@ -562,8 +582,10 @@ fn bench_decode_new_leader(c: &mut Criterion) {
                 if !sbe_tool_header_ok(
                     hdr.template_id(),
                     hdr.schema_id(),
+                    hdr.version(),
                     NEW_LEADER_TEMPLATE_ID,
                     NEW_LEADER_SCHEMA_ID,
+                    NEW_LEADER_SCHEMA_VERSION,
                 ) {
                     continue;
                 }

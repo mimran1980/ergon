@@ -12,7 +12,7 @@ fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Err
     let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0);
     enc.leadership_term_id(42).cluster_session_id(99).timestamp(1234567890);
     let bytes = enc.as_bytes_with_header().to_vec();
-    let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&bytes, 0)?;
+    let dec = SessionMessageHeaderDecoder::decode(&bytes, 0)?;
     assert_eq!(dec.leadership_term_id(), 42);
     assert_eq!(dec.cluster_session_id(), 99);
     assert_eq!(dec.timestamp(), 1234567890);
@@ -85,7 +85,7 @@ fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Erro
         .cluster_session_id(42)
         .timestamp(100);
 
-    let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let dec = SessionMessageHeaderDecoder::decode(&buf, 0)?;
     assert_eq!(dec.leadership_term_id(), 7);
     assert_eq!(dec.cluster_session_id(), 42);
     assert_eq!(dec.timestamp(), 100);
@@ -111,7 +111,7 @@ fn test_remaining_returns_payload_after_header() -> Result<(), Box<dyn std::erro
         .timestamp(3);
     buf[SessionMessageHeaderEncoder::ENCODED_LENGTH..].copy_from_slice(payload);
 
-    let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let dec = SessionMessageHeaderDecoder::decode(&buf, 0)?;
     assert_eq!(dec.remaining(), payload);
     Ok(())
 }
@@ -129,7 +129,7 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
         .timestamp(3);
     buf[SessionMessageHeaderEncoder::ENCODED_LENGTH..].copy_from_slice(payload);
 
-    let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let dec = SessionMessageHeaderDecoder::decode(&buf, 0)?;
     assert_eq!(dec.buffer().len(), total);
     assert_eq!(dec.buffer(), buf.as_slice());
     Ok(())
@@ -155,7 +155,7 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
         .cluster_session_id(99);
 
     // Decode the first message (SessionMessageHeader)
-    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
     assert_eq!(smh.cluster_session_id(), 99);
 
     // remaining() is the SessionKeepAlive bytes

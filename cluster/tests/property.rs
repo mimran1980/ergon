@@ -16,7 +16,7 @@ proptest! {
         let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
         enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
         let bytes = enc.as_bytes_with_header().to_vec();
-        let dec = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&bytes, 0).unwrap();
+        let dec = SessionMessageHeaderDecoder::decode(&bytes, 0).expect("decode");
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.timestamp(), ts);
@@ -47,7 +47,7 @@ proptest! {
         let bytes = complete.as_bytes_with_header();
 
         // Decode: skip header bytes (8), decode the body
-        let dec = ergo_aeron_cluster::cluster_codec_types::ChallengeDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::cluster_codec_types::ChallengeDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         let (chal, _) = dec.into_encoded_challenge().unwrap();
@@ -67,7 +67,7 @@ proptest! {
         let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.leadership_term_id(), ltid);
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.leader_member_id(), mid);
@@ -90,7 +90,7 @@ proptest! {
         let complete = enc.detail(detail.as_bytes()).unwrap();
         let bytes = complete.as_bytes_with_header();
 
-        let dec = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::try_wrap_and_apply_header(bytes, 0).unwrap();
+        let dec = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(bytes, 0).expect("decode");
         prop_assert_eq!(dec.cluster_session_id(), csid);
         prop_assert_eq!(dec.correlation_id(), cid);
         prop_assert_eq!(dec.leadership_term_id(), ltid);
@@ -109,7 +109,7 @@ proptest! {
     /// Feed random bytes to SessionMessageHeaderDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_session_message_header_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 && let Ok(dec) = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = SessionMessageHeaderDecoder::decode(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
         }
@@ -118,7 +118,7 @@ proptest! {
     /// Feed random bytes to SessionEventDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_session_event_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 && let Ok(dec) = SessionEventDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = SessionEventDecoder::decode(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
         }
@@ -127,7 +127,7 @@ proptest! {
     /// Feed random bytes to NewLeaderEventDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_new_leader_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 && let Ok(dec) = NewLeaderEventDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = NewLeaderEventDecoder::decode(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
         }
@@ -136,7 +136,7 @@ proptest! {
     /// Feed random bytes to ChallengeDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_challenge_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        if data.len() >= 8 && let Ok(dec) = ChallengeDecoder::try_wrap_and_apply_header(&data, 0) {
+        if data.len() >= 8 && let Ok(dec) = ChallengeDecoder::decode(&data, 0) {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
         }

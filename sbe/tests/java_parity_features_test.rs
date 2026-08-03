@@ -216,14 +216,13 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
         </messageSchema>"#;
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
-    let out =
-        Generator::new(GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes))
-            .generate(&schema)?
-            .modules()
-            .next()
-            .unwrap()
-            .source
-            .clone();
+    let out = Generator::new(GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
 
     assert!(out.contains("ValueOutOfRange"), "{out}");
     assert!(out.contains("OrderDomain"), "{out}");
@@ -405,7 +404,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
         // Older-version decode (acting_version 0): the sinceVersion=1 field
         // must be cleanly omitted, not panic, not print garbage.
         // wrap takes message start (absolute coordinates), not body offset.
-        let old_dec = MDecoder::wrap(&buf[..len], 0, 2, 0);
+        let old_dec = MDecoder::try_wrap(&buf[..len], 0, 2, 0).unwrap();
         let old_text = format!("{old_dec:?}");
         assert!(old_text.contains("topFlags"), "{old_text}");
         assert!(!old_text.contains("verFlags"), "{old_text}");
@@ -469,7 +468,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(xml)?;
     let schema = Schema::from_ir(ir);
     // `#[deprecated]` emission is opt-in (cascades to types/impls).
-    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs())
+    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs(true))
         .generate(&schema)?
         .modules()
         .next()
@@ -600,12 +599,12 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
             .fixed(&MsgFixedFields { qty: 1, side: Side::Buy, inst, algo: BoolFlag::False, price })
             .legs(0, |_| Ok(()))?.note(b"")?
             .encoded_length_with_header();
-        let _ = MsgDecoder::try_from(&buf[..len])?;
+        let _ = MsgDecoder::try_decode(&buf[..len], 0)?;
         // Truncated: 12 bytes is past header (8) but shorter than full
-        // fixed block (16). try_from returns an error — must not panic.
-        assert!(MsgDecoder::try_from(&buf[..12]).is_err());
+        // fixed block (16). try_decode returns an error — must not panic.
+        assert!(MsgDecoder::try_decode(&buf[..12], 0).is_err());
         // Below header — error, not panic.
-        assert!(MsgDecoder::try_from(&buf[..3]).is_err());
+        assert!(MsgDecoder::try_decode(&buf[..3], 0).is_err());
     "#,
     );
     Ok(())
@@ -616,7 +615,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
-        GenerationConfig::new("dbg_dto").enable_domain_objects(DomainVarData::LossyStrings),
+        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::LossyStrings),
     )
     .generate(&schema)?
     .modules()

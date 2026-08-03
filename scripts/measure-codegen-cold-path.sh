@@ -35,7 +35,8 @@ mod messages {
 }
 
 fn main() {
-    std::hint::black_box(messages::MESSAGE_DESCRIPTORS);
+    std::hint::black_box(messages::CarDecoder::BLOCK_LENGTH);
+    std::hint::black_box(messages::CarDecoder::HEADER_LENGTH);
 }
 EOF
 

@@ -82,7 +82,7 @@ fn float_wire_bits_match_sbe_tool_for_all_ieee_classes() {
             let double = f64::from_bits(double_bits);
 
             let mut ergo_buf = [0u8; Issue895Encoder::ENCODED_LENGTH];
-            let ergo_len = Issue895Encoder::wrap_and_apply_header(&mut ergo_buf, 0)
+            let ergo_len = Issue895Encoder::try_wrap_and_apply_header(&mut ergo_buf, 0).unwrap()
                 .fixed(&Issue895FixedFields {
                     optional_float: Some(single),
                     optional_double: Some(double),
@@ -317,7 +317,7 @@ fn message_offsets_0_through_63_preserve_prefix_and_suffix_canaries()
                         .iter()
                         .all(|&byte| byte == CANARY)
                 );
-                let decoder = ProbeDecoder::try_wrap_and_apply_header(&storage, offset)?;
+                let decoder = ProbeDecoder::try_decode(&storage, offset)?;
                 assert_eq!(decoder.value(), 0x1020_3040);
                 ProbeDecoder::verify(&storage[offset..offset + len])?;
             }

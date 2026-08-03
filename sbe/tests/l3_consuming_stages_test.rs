@@ -27,7 +27,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(99);
         e.sequence(7);
         let c = e.bids(2, |g| {
@@ -65,7 +65,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(c.as_bytes_with_header(), encoded);
         let total_len = encoded.len();
 
-        let dec = L3BookDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
         assert_eq!(dec.timestamp(), 99);
         assert_eq!(dec.sequence(), 7);
 
@@ -121,11 +121,11 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
+        let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let _ = dec.into_asks(); // ILLEGAL: no `into_asks` on the initial decoder
     "#,
         &["no method named `into_asks`"],
@@ -144,11 +144,11 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
+        let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
         let _after = bids.finish().unwrap(); // bids moved here
         let _ = bids.next();                  // ILLEGAL: use of moved value `bids`
@@ -171,7 +171,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(5);
         e.sequence(3);
         let c = e.bids(2, |g| {
@@ -196,7 +196,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         let encoded = c.as_bytes_with_header();
         assert_eq!(c.as_bytes_with_header(), encoded);
 
-        let dec = L3BookDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
 
         // Level 0: read fixed fields, then consume the nested orders stage.
@@ -243,14 +243,14 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         e.timestamp(1);
         e.sequence(1);
         let c = e.bids(1, |g| {
             g.add(|lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
             Ok(())
         }).unwrap().asks(0, |_| Ok(())).unwrap();
-        let dec = L3BookDecoder::try_wrap_and_apply_header(c.as_bytes_with_header(), 0).unwrap();
+        let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
         let lvl = bids.next().unwrap().unwrap();
         let _orders = lvl.into_orders().unwrap(); // lvl moved here

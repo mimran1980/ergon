@@ -653,7 +653,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
             other => panic!("unexpected error: {other:?}"),
         }
 
-        let result2 = FlatGroupDecoder::try_from(&[][..]);
+        let result2 = FlatGroupDecoder::try_decode(&[], 0);
         assert!(result2.is_err(), "expected DecodeError");
         match result2.unwrap_err() {
             sbe_rt::DecodeError::BufferTooShort { .. } => {}
@@ -670,7 +670,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
         truncated_group[6..8].copy_from_slice(&0u16.to_le_bytes());
         truncated_group[16..18].copy_from_slice(&12u16.to_le_bytes());
         truncated_group[18..20].copy_from_slice(&2u16.to_le_bytes());
-        let decoded = FlatGroupDecoder::try_from(truncated_group.as_slice())?;
+        let decoded = FlatGroupDecoder::try_decode(truncated_group.as_slice(), 0)?;
         assert!(
             decoded.into_bids().is_err(),
             "fixed-entry group extent must be validated before iteration"
@@ -690,7 +690,7 @@ fn conformance_error_group_full() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(42);
         let result = enc.bids(1, |bids| {
             bids.add(|e| { e.price(1).qty(2); Ok(()) })?;
@@ -758,7 +758,7 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(1);
         let complete = enc.bids(0, |_| Ok(())).unwrap()
             .asks(0, |_| Ok(())).unwrap()

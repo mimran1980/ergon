@@ -1,5 +1,82 @@
 # Changelog
 
+## [0.1.10] — 2026-08-02
+
+Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and
+`docs/SBE_COMPATIBILITY.md`.
+
+### Breaking
+- Safe constructors are fallible: `wrap` / `wrap_and_apply_header` / `decode` return `Result`; `try_wrap*` removed
+- Zero-check twins are `unsafe fn *_unchecked` (doc-hidden until keep gate)
+- Public safe `read_bytes_unchecked` / `write_bytes_unchecked` removed (private unsafe only)
+- Domain DTOs: no panicking `From`; use `try_from_decoder`; domain converters are `try_*`
+- `LossyStrings` no longer invents empty strings for invalid UTF-8 (`InvalidUtf8`)
+
+### Fixed
+- Version-aware decoder min fixed extent (header-only / blockLength=0 no longer UB)
+- Optional null sentinels: exact width + endian for message and group fields
+- Group var-data schema `maxLength` enforced; domain group counts use `try_from`
+
+### Added
+- `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_1_10.md`
+- `hft_001_soundness_test` hostile/safe-constructor gates
+- `GenerationProfile::{Full, HftLean}` preset (`GenerationConfig::profile`)
+- HFT-006 typestate compile-fail + size_of/Send budgets; HFT-008 checked/unchecked
+  identity + keep-sample harness; HFT-009 lean profile matrix tests
+- Book: type-state design note, API freeze decisions, Coming from sbe-tool,
+  Road to 1.0, generated-code showcase, benchmarks methodology split
+- Crate READMEs and crate-level rustdoc link the ergo-sbe book (visible on docs.rs)
+
+### Changed
+- Size knobs `with_display_debug` / `with_meta_attributes` / `with_dispatch` now
+  honored by codegen (were API-only no-ops in 0.1.9)
+- `with_unchecked_companions` reframed as supported post-validation opt-in
+- Crate-root clippy allows burned down; XML parser split to modules
+- `Cargo.lock` untracked (library workspace)
+
+### Internal
+- `deny.toml` Apache-2.0 / ecosystem licenses; CI thin bench lane restored
+
+## [0.1.9] — 2026-08-01
+
+Shipped as crates.io `ergo-sbe` / `ergo-aeron-cluster` **0.1.9**, git tag
+`v0.1.9` @ `0b008696`. Section matches that tree (not later `feat-0.1.9`
+commits).
+
+### Changed
+- **Codegen split:** mod.rs 9,075 → 1,723 lines (-81%), 14 responsibility modules extracted
+- **Config API unified:** `enable_*` renamed to `with_*`; all boolean toggles take `(bool)`
+- **Config size knobs (API surface only):** `with_display_debug(bool)`,
+  `with_meta_attributes(bool)`, `with_dispatch(bool)` — defaults true in config.
+  **Caveat:** 0.1.9 codegen did not read these flags, so `false` was a no-op;
+  real omit-on-disable behaviour ships in 0.1.10.
+- **Benchmark methodology** requires self-comparison against previous release (not just sbe-tool)
+- **No-LTO bench gate is canonical** hard gate; LTO moved to soft warning (thermal variance on shared hardware)
+- Nightly CI → weekly schedule
+- `rust,ignore` fences allowed unconditionally in `.md` files for syntax highlighting
+
+### Added
+- `with_unchecked_companions` safety contract documented in rustdoc
+- `cargo-deny` + `cargo-audit` in CI and justfile (`deny.toml`)
+- Aeron `try_claim` integration recipe page in book
+- bench-cold diagnostic wired into `just release-check`
+
+### Fixed
+- Outdated 17% performance claims replaced with current benchmark evidence
+- Book introduction redesigned with runnable code above the fold
+- Book landing pages filled with orientation prose
+- AI-ASSISTANCE.md book page converted to `{{#include}}`
+- Recipes page broken markdown fence fixed
+- Missing `libbsd-dev` across CI jobs; `just` in pages workflow
+- Release notes existence checked before publish, not after
+
+### Internal
+- Public facade tightened: `ir`, `resolve`, `xml` modules doc-hidden
+- Dead code removed: `generate_raw_fixed_impls`, `has_nested_dynamic_tail`, `generate_encoded_length_builder`
+- Cluster lockstep mechanized: `version.workspace = true`
+- `Cargo.lock` tracked at release; per-sample READMEs deleted; stale directories cleaned
+- Semver checks extended to cluster crate
+
 ## [0.1.8] — 2026-08-01
 
 ### Fixed
@@ -37,7 +114,7 @@
 - **Code style sweep** across samples, examples, and book:
   `EncodedLength::new()` → `Encoder::compute_length()`,
   `BooleanType::True`/`False` → `true.into()`/`false.into()`,
-  `try_wrap_and_apply_header` → `wrap_and_apply_header` on known-size buffers.
+  `wrap_and_apply_header` → `wrap_and_apply_header` on known-size buffers.
 
 ## [0.1.7] — 2026-07-30
 
@@ -216,7 +293,7 @@
   using noisy nanosecond ratios as merge gates. Strict ratio gates remain local
   and dedicated-stable-runner checks.
 - Benchmarks use `wrap_and_apply_header` (infallible) instead of
-  `try_wrap_and_apply_header` — sbe-tool's `header()` does no validation,
+  `wrap_and_apply_header` — sbe-tool's `header()` does no validation,
   so ergon's validation was extra work.
 - Every maintained ergon/sbe-tool benchmark now has a strict `1.00` ceiling
   under both LTO and no LTO. A repeatable sbe-tool win blocks the change until

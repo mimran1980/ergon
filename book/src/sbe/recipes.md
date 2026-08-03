@@ -2,6 +2,7 @@
 
 Runnable, tested code for every pattern lives in [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour). See its `src/lib.rs` for the full API map.
 
+- [Aeron try_claim](recipes/aeron-try-claim.md)
 - [Display / Debug](recipes/display-debug.md)
 - [Schema Descriptions → Rustdoc](recipes/schema-rustdoc.md)
 - [Domain DTOs](recipes/domain-dtos.md)
@@ -17,8 +18,10 @@ Runnable, tested code for every pattern lives in [sbe-feature-tour](https://gith
 ```
 *(From `sbe-feature-tour` — known-count groups with chaining, tested in CI.)*
 
-// Unknown size: count back-patched after the closure (streaming producers).
-let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+**Unknown size:** count back-patched after the closure (streaming producers).
+
+```text
+let unknown_len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
     .fixed(&fields)
     .fuel_figures_unknown_size(|g| {
         for row in rows {
@@ -33,8 +36,7 @@ let unknown_len = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .manufacturer(b"Honda")?
     .model(b"Civic")?
     .activation_code(b"active")?
-    .encoded_length_with_header()
-        .expect("header present");
+    .encoded_length_with_header()?;
 
 println!("known={known_len} unknown={unknown_len}");
 ```

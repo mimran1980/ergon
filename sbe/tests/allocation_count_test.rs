@@ -1,3 +1,4 @@
+#![allow(unused_unsafe)]
 //! Allocation-count tests using a counting global allocator.
 //!
 //! Proves zero heap allocation for core encode/decode operations.
@@ -122,7 +123,7 @@ fn warm_up_all() {
     let _ = black_box((CarDecoder::SCHEMA_ID, CarDecoder::TEMPLATE_ID));
 
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     enc.serial_number(1234);
     enc.model_year(2013);
     enc.available(BooleanType::T);
@@ -203,7 +204,7 @@ fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; 512];
     measure("encode into caller buffer", || {
-        let mut car = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);

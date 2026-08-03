@@ -1191,9 +1191,9 @@ fn basic_var_length_passwords() {
         let overflow_enc =
             TestMessage1Encoder::wrap_and_apply_header(&mut overflow_buf, 0);
         assert!(matches!(
-            overflow_enc.encrypted_new_password_unchecked(&overflow),
+            overflow_enc.encrypted_new_password(&overflow),
             Err(sbe_rt::EncodeError::VarDataTooLong {
-                max_length: 255,
+                max_length: 254,
                 actual: 256,
                 ..
             })

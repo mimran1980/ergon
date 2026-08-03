@@ -91,10 +91,10 @@ impl BookFollower {
         term: i64,
         payload: &[u8],
     ) -> Result<ApplyOutcome, Box<dyn std::error::Error>> {
-        let app = AppMessageDecoder::try_wrap_and_apply_header(payload, 0)?;
+        let app = AppMessageDecoder::try_decode(payload, 0)?;
         let (_name, after) = app.into_app_name()?;
         let (inner, _done) = after.into_payload()?;
-        let book = L2BookDecoder::try_wrap_and_apply_header(inner, 0)?;
+        let book = L2BookDecoder::try_decode(inner, 0)?;
         let exchange_ts = book.exchange_timestamp();
         let seq = book.sequence();
 

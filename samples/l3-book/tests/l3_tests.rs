@@ -32,7 +32,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.price(d(50800)).size(d(15)).orders(1, |og| {
+                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(1, |og| {
                     og.add_struct(&L3BookBidsOrdersEntry {
                         order_id: 1,
                         quantity: l3_book::Decimal::new(5, 0),
@@ -47,11 +47,11 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
     let _len = complete.encoded_length_with_header();
 
     let dec = L3BookDecoder::try_from(complete.as_bytes_with_header())?;
-    let _ts = dec.exchange_timestamp();
-    assert!(dec.is_active());
+    let _ts = dec.try_exchange_timestamp()?;
+    assert!(dec.try_is_active()?);
     let e = dec.into_bids()?.next().transpose()?.unwrap();
-    let _price: Rd = e.price();
-    let _size: Rd = e.size();
+    let _price: Rd = e.try_price()?;
+    let _size: Rd = e.try_size()?;
     Ok(())
 }
 
@@ -106,10 +106,10 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .bids(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
                 g.add(|e| {
-                    e.price(d(1)).size(d(1)).orders(orders.len() as u16, |og| {
+                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
                             og.add(|o| {
-                                o.quantity(*q).order_id(oid)?;
+                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                 Ok(())
                             })?;
                         }
@@ -123,10 +123,10 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .asks(asks.len() as u16, |g| {
             for (_, _, orders) in asks {
                 g.add(|e| {
-                    e.price(d(1)).size(d(1)).orders(orders.len() as u16, |og| {
+                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
                             og.add(|o| {
-                                o.quantity(*q).order_id(oid)?;
+                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                 Ok(())
                             })?;
                         }
@@ -280,13 +280,13 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.price(d(50800)).size(d(15)).orders(2, |og| {
+                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(2, |og| {
                     og.add(|o| {
-                        o.quantity(d(5)).order_id(b"ORD-1")?;
+                        o.try_quantity(d(5)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ORD-1")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.quantity(d(10)).order_id(b"ORD-2")?;
+                        o.try_quantity(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ORD-2")?;
                         Ok(())
                     })?;
                     Ok(())
@@ -305,11 +305,11 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
     let e = bids.next().transpose()?.unwrap();
     let mut orders = e.into_orders()?;
     let o1 = orders.next().transpose()?.unwrap();
-    assert_eq!(o1.quantity(), d(5));
-    assert_eq!(o1.order_id().unwrap(), b"ORD-1");
+    assert_eq!(o1.try_quantity()?, d(5));
+    assert_eq!(o1.order_id()?, b"ORD-1");
     let o2 = orders.next().transpose()?.unwrap();
-    assert_eq!(o2.quantity(), d(10));
-    assert_eq!(o2.order_id().unwrap(), b"ORD-2");
+    assert_eq!(o2.try_quantity()?, d(10));
+    assert_eq!(o2.order_id()?, b"ORD-2");
     assert!(orders.next().is_none());
     Ok(())
 }
@@ -345,9 +345,9 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(2, |g| {
             g.add(|e| {
-                e.price(d(100)).size(d(10)).orders(1, |og| {
+                e.try_price(d(100)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(1, |og| {
                     og.add(|o| {
-                        o.quantity(d(1)).order_id(b"ABC")?;
+                        o.try_quantity(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ABC")?;
                         Ok(())
                     })?;
                     Ok(())
@@ -355,17 +355,17 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })?;
             g.add(|e| {
-                e.price(d(200)).size(d(20)).orders(3, |og| {
+                e.try_price(d(200)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(20)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(3, |og| {
                     og.add(|o| {
-                        o.quantity(d(2)).order_id(b"ID-AA")?;
+                        o.try_quantity(d(2)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-AA")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.quantity(d(3)).order_id(b"ID-BB")?;
+                        o.try_quantity(d(3)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-BB")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.quantity(d(4)).order_id(b"ID-C")?;
+                        o.try_quantity(d(4)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-C")?;
                         Ok(())
                     })?;
                     Ok(())
@@ -443,7 +443,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     );
 
     // 3. DTO Debug — domain-typed fields.
-    let dto = L3BookDomain::from(L3BookDecoder::try_from(&buf[..actual])?);
+    let dto = L3BookDomain::try_from_decoder(L3BookDecoder::try_from(&buf[..actual])?)?;
     let dto_debug = format!("{:?}", dto);
     eprintln!("DTO Debug:       {dto_debug}");
     assert!(
@@ -504,7 +504,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         eprintln!("[L3Book] encoder Display: {enc_display}");
         assert!(enc_display.contains("BTC"));
 
-        let dto = L3BookDomain::from(L3BookDecoder::try_from(&buf[..actual])?);
+        let dto = L3BookDomain::try_from_decoder(L3BookDecoder::try_from(&buf[..actual])?)?;
         let dto_debug = format!("{dto:?}");
         eprintln!("[L3Book] DTO Debug: {dto_debug}");
         let mut buf2_storage = [0u8; 8192];
@@ -774,5 +774,88 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(it2_first.tag()?, b"CCC");
     assert!(it2.next().is_none());
     assert!(lvl.next().is_none());
+    Ok(())
+}
+
+// ── Large-scale: prove messages can exceed 64KB ──────────────────────────
+
+#[test]
+fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Error>> {
+    const NUM_LEVELS: usize = 60_000;
+
+    // 1. EncodedLength: size the buffer first.
+    let len = L3BookEncoder::compute_length()
+        .bids_ragged(NUM_LEVELS as u16, |g| {
+            for _ in 0..NUM_LEVELS {
+                g.add()?.orders(|og| {
+                    og.uniform(0)?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks_ragged(NUM_LEVELS as u16, |g| {
+            for _ in 0..NUM_LEVELS {
+                g.add()?.orders(|og| {
+                    og.uniform(0)?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(4)?
+        .encoded_length_with_header();
+
+    assert!(
+        len > 65536,
+        "large book must exceed 64KB (got {len}); 60k levels on each side"
+    );
+
+    // 2. Encode using rust_decimal domain type (the l3-book config uses with_domain_type).
+    let mut buf = vec![0u8; len];
+    let actual = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&L3BookFixedFields {
+            exchange_timestamp: 1_720_000_000_000_000_000,
+            sequence: 1,
+            is_active: true.into(),
+        })
+        .bids(NUM_LEVELS as u16, |g| {
+            for i in 0..NUM_LEVELS {
+                g.add(|e| {
+                    // Valid Decimal values — unwrap is safe here.
+                    e.try_price(d((i % 50000) as i64)).unwrap()
+                     .try_size(d(100)).unwrap()
+                     .orders(0, |_og| Ok(()))?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .asks(NUM_LEVELS as u16, |g| {
+            for i in 0..NUM_LEVELS {
+                g.add(|e| {
+                    e.try_price(d(((NUM_LEVELS - i) % 50000) as i64)).unwrap()
+                     .try_size(d(50)).unwrap()
+                     .orders(0, |_og| Ok(()))?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?
+        .symbol(b"MSFT")?
+        .encoded_length_with_header();
+
+    assert_eq!(len, actual, "EncodedLength must match actual encoded length");
+
+    // 3. Decode and spot-check.
+    let book = L3BookDecoder::try_decode(&buf[..actual], 0)?;
+    assert_eq!(
+        book.try_exchange_timestamp()?.timestamp_nanos_opt(),
+        Some(1_720_000_000_000_000_000)
+    );
+    let mut bids = book.into_bids()?;
+    let first = bids.next().transpose()?.unwrap();
+    assert_eq!(first.try_price()?, rust_decimal::Decimal::new(0, 0));
+
     Ok(())
 }

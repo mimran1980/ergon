@@ -105,7 +105,7 @@ fn generated_verify_dispatch_cursor_and_nested_decode_corpus_is_panic_free()
         for (case, bytes) in corpus.iter().enumerate() {{
             let result = std::panic::catch_unwind(|| {{
                 let verified = L3BookDecoder::verify(bytes);
-                let _ = AnyMessage::decode(bytes, 0);
+                let _ = AnyMessage::try_decode(bytes, 0);
                 let _ = AnyMessage::decode_frame(bytes, 0, bytes.len());
                 for policy in [
                     FramingPolicy::LengthPrefixU16,

@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/ergo-sbe)](https://crates.io/crates/ergo-sbe)
 [![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
 `ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
 wire-order enforcement, closure-based groups, exact buffer sizing, and zero
@@ -12,10 +13,11 @@ heap allocation on hot paths.
 > assistance**. Humans directed the work, approved designs, and ran verification.
 > Details: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
 
-## 📖 Full Documentation
+## Full documentation
 
-**[The Ergon Book](https://mimran1980.github.io/ergon/)** is the comprehensive
-guide for ergo-sbe, covering:
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide for ergo-sbe (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-sbe/)):
 
 - [Getting Started](https://mimran1980.github.io/ergon/sbe/getting-started.html) — depend, generate, encode, decode
 - [Feature Tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) — exact sizing, bulk arrays, decode stages, DTOs, trust boundaries
@@ -23,6 +25,14 @@ guide for ergo-sbe, covering:
 - [Configuration](https://mimran1980.github.io/ergon/sbe/configuration.html) — `with_conversion` vs `with_domain_type`, hooks
 - [Recipes](https://mimran1980.github.io/ergon/sbe/recipes.html) — Display/Debug, schema→rustdoc, domain DTOs, timestamps
 - [Benchmarks](https://mimran1980.github.io/ergon/sbe/benchmarks.html) — parity methodology and gates
+
+**Compatibility profile (normative):**
+[`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— do not claim unqualified “SBE binary compatibility.”
+
+**0.1 → 0.1.10 migration:**
+[`docs/MIGRATION_0_1_TO_0_1_10.md`](https://github.com/mimran1980/ergon/blob/main/docs/MIGRATION_0_1_TO_0_1_10.md)
+— fallible `wrap` / `decode`, `try_wrap*` removed; private `*_unchecked` cores until HFT-008 keep.
 
 ## Quick Example
 
@@ -51,6 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .generate(&schema)?;
     // In a real project you'd use a build script.
     // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
+    // Checked encode (0.1.10): MessageEncoder::wrap_and_apply_header(buf, 0)?
+    // Public zero-check twins ship only after HFT-008 keep=true evidence.
     let _ = modules;
     Ok(())
 }

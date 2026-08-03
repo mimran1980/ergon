@@ -102,11 +102,14 @@ Use `std::hint::black_box`, not Criterion 0.5's fallback implementation.
 optimizer, but the suite also observes the written range. This avoids relying
 on reference escape alone as proof that every store remains.
 
-### Checked versus trusted entry
+### Checked constructors versus private unchecked cores
 
-Do not time ergon's checked `try_*` entry against sbe-tool's unchecked `wrap`.
-Use trusted direct wraps for parity. Checked entry has its own explicitly
-labelled diagnostic.
+Do not time ergon's checked `wrap` / `wrap_and_apply_header` / `decode`
+(fallible `Result` entry) against sbe-tool's unchecked `wrap` unless both arms
+do the same validation work. For fair parity, match sbe-tool's unchecked body
+path with ergon's private zero-check core only when the buffer extent is already
+proven in the setup — never reintroduce public `try_wrap*`. Checked entry has
+its own explicitly labelled diagnostic.
 
 ### Header isolation
 

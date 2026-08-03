@@ -18,8 +18,8 @@ ergon/sbe-tool fairness ratio.
 
 ```rust,no_run
 // build.rs — DomainVarData picks the DTO field type for var-data:
-// .enable_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → "")
-// .enable_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
+// .with_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → InvalidUtf8 error)
+// .with_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
 ```
 
 **Generated shape** (illustrative — your names follow your schema):
@@ -34,7 +34,10 @@ pub struct QuoteDomain {
     pub note: Vec<u8>,              // Bytes|String per DomainVarData
 }
 impl QuoteDomain {
+    // Named methods, not TryFrom/From: two fallible sources (decoder vs framed
+    // slice+offset), and materialisation is never infallible.
     pub fn try_from_decoder(dec: QuoteDecoder<'_>) -> Result<Self, DecodeError>;
+    pub fn try_from_slice_with_header(buf: &[u8], offset: usize) -> Result<Self, DecodeError>;
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, EncodeError>;
     pub fn encoded_length_with_header(&self) -> Result<usize, EncodeError>;
 }
@@ -45,7 +48,7 @@ impl QuoteDomain {
 ```rust,no_run
   // Encode a message first (the usual flyweight path)
   let mut buf = [0u8; QuoteEncoder::compute_length_with_header(1, 2)];
-  let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+  let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
       .fixed(&QuoteFixedFields {
           seq: 1,
           some_numbers: [1, 2, 3, 4],
@@ -69,19 +72,18 @@ impl QuoteDomain {
   assert_eq!(n, len);
 ```
 
-### `enable_domain_objects(DomainVarData)`
+### `with_domain_objects(DomainVarData)`
 
 SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 
 | Call | Field type | Invalid UTF-8 | When to use |
 |------|------------|---------------|-------------|
-| `.enable_domain_objects(DomainVarData::LossyStrings)` | `String` | **silent empty `""`** (not U+FFFD, not an error) | Text schemas; **easiest** app API |
-| `.enable_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
+| `.with_domain_objects(DomainVarData::LossyStrings)` | `String` | **`InvalidUtf8` error** (strict; 0.1.10) | Text schemas when validity is known |
+| `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
-**`LossyStrings` is not lossless on re-encode.** Materialise clears invalid
-UTF-8 to `""`; `dto.encode` then writes empty var-data, so the bad bytes are
-**not** preserved. Use `Bytes` (or stay on flyweights) when you need audit /
-replay fidelity of non-UTF-8 tails.
+**`LossyStrings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
+for bad bytes; there is no silent empty-string fallback. Use `Bytes` (or stay
+on flyweights) when you need audit / replay fidelity of non-UTF-8 tails.
 
 Runnable demo (text path):
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)

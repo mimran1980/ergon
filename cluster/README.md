@@ -12,6 +12,19 @@ protocol.
 > Hobby project. Do not use it as a production substitute for official Aeron
 > Cluster client support.
 
+## Full documentation
+
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-aeron-cluster/)):
+
+- [Cluster Client overview](https://mimran1980.github.io/ergon/cluster/overview.html)
+- [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html)
+- [Egress Listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html)
+- [Chained Message Decoding](https://mimran1980.github.io/ergon/cluster/chained-decoding.html)
+
+API reference: [docs.rs/ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/).
+
 ## Scope
 
 The crate implements client-side operations:
@@ -46,7 +59,7 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
     session.validate()?;
     let mut client = session.connect("/path/to/aeron-dir")?;
     client.offer(b"application payload")?;
-    client.close()
+    client.close()?
 }
 ```
 
@@ -84,23 +97,24 @@ message). Use the decoder's `remaining()` to get the payload, then
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (24 bytes).
     // Both lengths are const, so size the frame on the stack.
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
     enc.leadership_term_id(7)
         .cluster_session_id(99)
         .timestamp(42);
 
-    // remaining_mut() returns the unwritten region after this message
-    SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
+    // into_remaining_mut() returns the unwritten region after this message
+    SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
+        .unwrap()
         .leadership_term_id(7)
         .cluster_session_id(99);
 
     // Decode the first message
-    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
 
     // remaining() returns the bytes after the header (the SessionKeepAlive)
     let tail = smh.remaining();
@@ -119,7 +133,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`whole_buffer()` returns the entire original buffer (header + payload).
+`buffer()` on the decoder returns the entire original buffer (header + payload).
 
 ## Features and harness
 

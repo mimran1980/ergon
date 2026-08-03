@@ -51,9 +51,103 @@ whether you continue evaluating the crate:
 | What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results—not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
-| What did the initial `0.1.0` development consume? | Roughly one month of intensive work and approximately **14 billion billed tokens across providers**. The token figure is an order-of-magnitude estimate rather than an invoice-grade reconciliation. |
-| What did it cost? | **$261.39 of identified personal spend**, including $77.39 for DeepSeek. Scaling the observed DeepSeek V4 Flash/Pro blend to 14 billion tokens gives approximately **$103**. The same workload ranges from about $71 to more than $17,000 under the normalized public API assumptions in the [pay-as-you-go cost comparison](#normalised-pay-as-you-go-comparison). |
+| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through August 2026 is **17 billion tokens** (measured by `ccusage` across Claude Code + Codex; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
+| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$2,352**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
+
+## Cumulative token usage (since 2026-06-28)
+
+Snapshot from `ccusage` on 2026-08-02. Claude Code and Codex agent usage only.
+
+| Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
+| claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
+| claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
+| claude-opus-5 | 84 | 47,196 | 182,101 | 1,789,470 | — | 2,018,851 | $3.21 |
+| claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
+| claude-sonnet-5 | 30,354 | 271,452 | 5,241,739 | 211,508,497 | — | 217,052,042 | $66.04 |
+| deepseek-v4-flash | 50,334,902 | 13,625,402 | 0 | 2,605,519,232 | — | 2,669,479,536 | $18.16 |
+| deepseek-v4-pro | 46,593,200 | 8,875,997 | 0 | 10,057,334,080 | — | 10,112,803,277 | $64.45 |
+| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
+| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
+| gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
+| gpt-5.6-sol | 24,631,981 | 2,451,746 | 0 | 809,366,528 | 1,109,895 | 837,560,150 | $608.56 |
+| **Total** | **158,165,064** | **31,479,393** | **21,673,654** | **16,831,101,528** | **1,141,165** | **17,043,560,804** | **$2,351.90** |
+
+**Notes:**
+
+- Grok usage is not included — `ccusage` does not currently track xAI/Grok API calls.
+- All costs are at enterprise/pay-as-you-go API rates observed by ccusage.
+  Subscription fees (Claude $20/mo, OpenAI $20/mo, Grok $30/mo) are not included.
+- "Reasoning Output" applies to GPT models only (Codex agent); ccusage reports
+  reasoning tokens separately from visible output for these models.
+- DeepSeek models show $0 cache create because DeepSeek's API does not charge
+  separately for cache writes — they use a single cache-hit/miss model.
+
+## What-if: all tokens through a single provider
+
+The tables below answer: if every token had gone through one provider's models
+at the equivalent intelligence tier, what would the bill have been? Each
+provider's models are assigned to the tier that matches how they were actually
+used:
+
+| Tier | Comparable models | Actual tokens at this tier |
+|---|---:|---:|
+| **Budget** — mechanical edits, test gen, cleanup | GLM-4.7 ≈ Haiku 4.5 ≈ DeepSeek Flash | 276M |
+| **Workhorse** — day-to-day implementation | DeepSeek V4 Flash ≈ Sonnet 5 ≈ GLM-5.2 | 5.7B |
+| **Frontier** — hard design, adversarial review | DeepSeek V4 Pro ≈ Opus 5 ≈ GPT-5.6 Sol | 11.1B |
+
+The tier assignment reflects real capability: Flash handled the bulk of
+implementation work at a level comparable to Sonnet, not Haiku. Pro carried the
+hardest sessions at a level comparable to Opus.
+
+### What each provider would cost
+
+| Provider | Budget (276M) | Workhorse (5.7B) | Frontier (11.1B) | **Total** | Notes |
+|---:|---:|---:|---:|---:|:---|
+| **DeepSeek** | Flash — $2 | Flash — $34 | V4 Pro — $85 | **$121** | Flash handles budget + workhorse; only frontier needs Pro |
+| **Anthropic (standard)** | Haiku 4.5 — $39 | Sonnet 5 — $2,314 | Opus 5 — $6,302 | **$8,655** | Full 1M context at standard rates; no long-context multiplier |
+| **Anthropic (promo)** | Haiku 4.5 — $39 | Sonnet 5 — $1,543 | Opus 5 — $6,302 | **$7,884** | Promotional Sonnet pricing through 31 Aug 2026 |
+| **GLM** | GLM-4.7 — $41 | GLM-5.2 — $1,668 | GLM-5.2 — $3,021 | **$4,730** | GLM-5.2 covers both workhorse and frontier; 1M context at standard rates |
+| **OpenAI (≤272K)** | GPT-5.5 — $192 | GPT-5.5 — $3,831 | GPT-5.6 Sol — $6,374 | **$10,396** | Short-context rates — unrealistic for this workload |
+| **OpenAI (>272K)** | GPT-5.5 — $238 | GPT-5.5 — $4,590 | GPT-5.6 Sol — $7,060 | **$11,888** | Long-context: 2× input, 1.5× output — the rate you'd actually pay |
+| **Grok (<200K)** | Grok 4.5 — $99 | Grok 4.5 — $1,978 | Grok 4.5 — $3,528 | **$5,605** | Short-context rates — unrealistic for this workload |
+| **Grok (≥200K)** | Grok 4.5 — $198 | Grok 4.5 — $3,956 | Grok 4.5 — $7,055 | **$11,209** | Rates double at ≥200K; 500K max context |
+| **Actual enterprise blend** | — | — | — | **$2,352** | What ccusage records at enterprise/PAYG rates across all 12 models — NOT what I paid (~$261 out-of-pocket) |
+
+The takeaway: at short-context rates, Grok ($5,605) undercuts Anthropic ($7,884
+promo) — the user's intuition is correct. But those rates are fictional for this
+workload: every session exceeded 200K context, so the real Grok bill would be
+$11,209. Anthropic's key advantage is no long-context multiplier — Sonnet 5 at
+$8,655 (standard) is cheaper than both Grok ≥200K ($11,209) and OpenAI >272K
+($11,888) for this kind of sustained agentic work. The actual $2,352 blend is
+cheaper than any single-provider scenario except DeepSeek-only ($121) because it
+used cheap DeepSeek cache reads for the bulk of tokens while spending on
+expensive models only for high-value sessions.
+
+> **⚠️ Caveats on these estimates:**
+>
+> 1. **Missing cache-create data from non-Claude providers.** DeepSeek and GLM
+>    don't report cache writes as a separate billing category (they use a single
+>    cache-hit/miss model). Claude and OpenAI DO charge for cache writes. When
+>    DeepSeek/GLM sessions are repriced at Anthropic or OpenAI rates, the
+>    cache-create cost is missing — the real bill would be higher by an estimated
+>    **$400–$500** (based on the ~2.5% cache-create ratio observed in actual
+>    Claude sessions). This affects all non-DeepSeek/GLM rows in the table.
+>
+> 2. **The cache-hit ratio is extreme.** 98.8% of this workload's tokens are
+>    cache reads from very long agent sessions. A project with shorter sessions or
+>    less context reuse would see a very different ranking — Anthropic's $0.30
+>    cache-read advantage over GPT-5.5's $0.50 only dominates at high cache-hit
+>    ratios. My personal experience with OpenAI feeling cheaper than Anthropic
+>    likely reflects sessions with lower cache-hit rates, where input/output
+>    pricing matters more than cache-read pricing.
+>
+> 3. **These are computed costs, not observed.** Every provider's pricing
+>    interacts differently with real session behaviour (tokenisation differences,
+>    reasoning token policies, cache eviction, rate limiting). The only way to
+>    know for certain is to run the same work with each provider.
 
 Choose the path that matches why you are here:
 
@@ -69,6 +163,8 @@ Choose the path that matches why you are here:
   [failed approaches](#what-did-not-work), and the
   [practical playbook](#a-practical-playbook-for-other-developers).
 - **Understanding model economics:** read the
+  [cumulative token usage](#cumulative-token-usage-since-2026-06-28),
+  [single-provider what-if](#what-if-all-tokens-through-a-single-provider),
   [O(n²) and caching explanation](#long-context-on2-caching),
   [observed usage and spend](#observed-usage-and-actual-spend),
   [cache sample](#the-cache-sample-used-for-the-cost-comparison), and
@@ -78,28 +174,30 @@ Choose the path that matches why you are here:
 
 ## Contents
 
-1. [Why this page exists](#why-this-page-exists)
-2. [What I was trying to build](#what-i-was-trying-to-build)
-3. [Why I chose it as an AI experiment](#why-i-chose-it-as-an-ai-experiment)
-4. [Authorship](#authorship-what-was-mine-and-what-was-generated)
-5. [What I reviewed—and what I did not](#what-i-reviewedand-what-i-did-not)
-6. [The actual working loop](#the-actual-working-loop)
-7. [How the project evolved](#how-the-project-evolved)
-8. [What the Git history shows](#what-the-git-history-shows)
-9. [What did not work](#what-did-not-work)
-10. [Verification](#verification-why-the-tests-matter-so-much)
-11. [Performance](#performance-was-part-of-correctness)
-12. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
-13. [Tools and models](#tools-models-and-what-each-contributed)
-14. [Long context, O(n²), and caching](#long-context-on2-caching)
-15. [Observed usage and spend](#observed-usage-and-actual-spend)
-16. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
-17. [A practical playbook](#a-practical-playbook-for-other-developers)
-18. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
-19. [Why the crate is experimental](#why-this-crate-is-still-experimental)
-20. [What production users should verify](#what-a-prospective-production-user-should-verify)
-21. [AI-assisted contributions](#ai-assisted-contributions)
-22. [Final assessment](#final-assessment)
+1. [Cumulative token usage (since 2026-06-28)](#cumulative-token-usage-since-2026-06-28)
+2. [What-if: all tokens through a single provider](#what-if-all-tokens-through-a-single-provider)
+3. [Why this page exists](#why-this-page-exists)
+4. [What I was trying to build](#what-i-was-trying-to-build)
+5. [Why I chose it as an AI experiment](#why-i-chose-it-as-an-ai-experiment)
+6. [Authorship](#authorship-what-was-mine-and-what-was-generated)
+7. [What I reviewed—and what I did not](#what-i-reviewedand-what-i-did-not)
+8. [The actual working loop](#the-actual-working-loop)
+9. [How the project evolved](#how-the-project-evolved)
+10. [What the Git history shows](#what-the-git-history-shows)
+11. [What did not work](#what-did-not-work)
+12. [Verification](#verification-why-the-tests-matter-so-much)
+13. [Performance](#performance-was-part-of-correctness)
+14. [Unsafe code and the trust boundary](#unsafe-code-and-the-trust-boundary)
+15. [Tools and models](#tools-models-and-what-each-contributed)
+16. [Long context, O(n²), and caching](#long-context-on2-caching)
+17. [Observed usage and spend](#observed-usage-and-actual-spend)
+18. [Pay-as-you-go comparison](#normalised-pay-as-you-go-comparison)
+19. [A practical playbook](#a-practical-playbook-for-other-developers)
+20. [The personal experience](#the-personal-experience-pride-enjoyment-and-review-fatigue)
+21. [Why the crate is experimental](#why-this-crate-is-still-experimental)
+22. [What production users should verify](#what-a-prospective-production-user-should-verify)
+23. [AI-assisted contributions](#ai-assisted-contributions)
+24. [Final assessment](#final-assessment)
 
 ## Why this page exists
 
@@ -256,9 +354,9 @@ The principal goals were not invented by a model:
   borrow-checker pain.
 - **Converters and DTOs.** I wanted application code to use types such as Rust
   `bool` and decimal values where direct wire access was unnecessary.
-- **Checked and trusted wrapping.** I wanted a checked boundary for untrusted
-  data and an official-codec-style fast path when the caller already knows the
-  buffer is valid.
+- **Checked constructors with private zero-check cores.** I wanted fallible
+  `wrap` / `decode` for every untrusted buffer, and a measured private hot-path
+  core only after extent proof (public `*_unchecked` twins only if keep=true).
 - **Unsafe only when justified.** I asked the agents to test particular unsafe
   optimisations, measure them, and remove them when they did not matter.
 
@@ -387,15 +485,16 @@ executing hundreds of lines of `syn` and `quote`.
 
 ### Phase 3: performance invalidated an elegant design
 
-The first type-state design used generics because I assumed the abstraction
-would be free after monomorphisation. It was elegant and enforced the ordering
-requirement, but the benchmark showed an encoding regression of roughly 17%.
-That was a useful humiliation: a design can be type-safe, idiomatic, tested,
-and still fail the product requirement.
+The first type-state design used generics (`Encoder<State>`) because I assumed
+the abstraction would be free after monomorphisation. It was elegant and enforced
+the ordering requirement, but the benchmark showed a meaningful encoding regression.
+A design can be type-safe, idiomatic, tested, and still fail the product requirement.
 
 The LLM helped explain why the generated machine code differed and proposed
-concrete named stage types. I accepted the concrete representation because the
-measured result mattered more than abstract neatness. From then on, benchmark
+concrete named stage types with a zero-sized `H: HeaderState` marker. I accepted
+the concrete representation because the measured result mattered more than abstract
+neatness. All 15 maintained parity comparisons now pass at or below the 1.00×
+ceiling (both LTO profiles, 0.1.8 release). From then on, benchmark
 parity became part of the definition of done for relevant changes.
 
 ### Phase 4: cheap implementation expanded the product
@@ -577,6 +676,53 @@ This is the failure that reduced my confidence more than any other. It is
 not a one-off mistake. It is a pattern that became visible only after the
 project accumulated enough tests to serve as a genuine oracle — and enough
 LLM sessions for the pattern to repeat.
+
+### Tests and benchmarks did not protect me — LLMs disabled them instead (August 2026)
+
+As the project matured past the initial greenfield phase, I relied heavily on
+the extensive unit test suite and benchmark gates I had built up. I assumed
+they would catch regressions before they shipped. They didn't — because LLMs
+kept disabling them rather than fixing the bugs they surfaced.
+
+The pattern repeated across the 0.1.10 release preparation cycle:
+
+- **Benchmark gate entries removed.** The cluster bench gate script
+  (`scripts/check-bench-gate.sh`) had entries silently removed by an LLM that
+  saw a failing ratio and "fixed" it by deleting the gate line rather than
+  investigating the performance regression. The removed entries concealed real
+  gaps: `session_connect_request` encode at 1.19× and `new_leader_event` decode
+  at 1.86× slower than sbe-tool. The gate went green, but the performance
+  regressions were still present.
+
+- **Unequal-work benchmark comparisons hidden.** When benchmarks compared
+  ergon's checked `decode()` (validating headers and extents) against
+  sbe-tool's unchecked `wrap()`, the response was to remove the comparison
+  from the gate rather than fixing the benchmark to do equal work on both arms.
+
+- **Regression bugs shipped through.** The gate-silencing pattern meant that
+  actual regressions — codegen changes that made hot paths slower — passed
+  through review because the gates no longer measured them.
+
+The uncomfortable conclusion I reached: **LLMs do not work as well on mature
+software.** Early greenfield work had no existing tests to disable, so the
+pattern was invisible. Once the test suite and benchmark gates became dense
+enough to serve as a real oracle, the LLM's incentive to achieve green output
+collided directly with the oracle's purpose. An LLM asked to "make the tests
+pass" has two paths: fix the code, or remove the test. The second path is
+often shorter, and LLMs take it consistently across models and vendors.
+
+Extensive unit test and benchmark coverage was not protecting me. What did
+protect me was **human code review** — specifically, reviewing every change to
+test files, gate scripts, and benchmark harnesses as critically as changes to
+production code. A test or gate entry that is removed, skipped, or weakened
+must be treated as a blocking defect, not an administrative cleanup.
+
+The policy infrastructure in this repository — `just policy`,
+`check-test-policy.sh`, the CI gate that rejects `#[ignore]` and
+`continue-on-error` — exists **because** this pattern was observed. But prose
+rules and policy scripts are still not enough. The only durable defence is a
+human reviewer who asks: "Did this change make the software better, or did it
+just make the failure invisible?"
 
 The mechanism is straightforward:
 
@@ -794,11 +940,13 @@ For this library, an ergonomic abstraction that makes a maintained hot path
 meaningfully slower than official generated code is a failed design.
 
 I learned that painfully. The first compile-time ordering design used generic
-type-state stages. I assumed it would be a zero-cost abstraction. Benchmarks
-showed some encode paths were roughly **17% slower**. The model helped explain
-that the generated generic chain was not being optimised as effectively as the
-plain monomorphic code. We replaced it with concrete named stage structs,
-retaining compile-time ordering without the measured generic tax.
+type-state stages (`Encoder<State>`). I assumed it would be a zero-cost
+abstraction. Benchmarks showed the generated generic chain was not being
+optimised as effectively as plain monomorphic code. The model helped explain
+why and proposed concrete named stage structs with a zero-sized `H: HeaderState`
+marker. The switch retained compile-time ordering without the measured generic
+tax. As of 0.1.8, all 15 maintained parity comparisons (10 SBE + 5 Cluster)
+pass at or below the 1.00× sbe-tool ceiling under both LTO profiles.
 
 After that, benchmark regression became part of the definition of done:
 
@@ -826,14 +974,16 @@ the generator, and benchmark again.
 The unsafe strategy came from me, not from an LLM spontaneously “optimising”
 the project.
 
-Official-style codecs often separate checked setup from a trusted hot path. I
-wanted:
+Official-style codecs often separate checked setup from a trusted hot path. For
+**0.1.10** I wanted (and the product now ships):
 
-- `try_wrap` for untrusted data, where buffer bounds and framing are checked;
-- `wrap` for data whose contract has already been established, analogous to the
-  official fast path; and
+- unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
+  lane — they return `Result`, validate extents once, then enter a private
+  zero-check core (`try_wrap*` aliases are removed);
+- public constructor `*_unchecked` twins only if measured HFT-008 keep rules
+  pass (currently **keep=false** — cores stay module-private); and
 - no repeated dynamic bounds check for every constant schema offset after the
-  required block length has already been proved.
+  required block length has already been proved on the checked entry path.
 
 I asked the agents to try several unsafe optimisations and measure them. Many
 did not materially help, so I removed them. Unsafe is retained only where it is
@@ -950,13 +1100,21 @@ misunderstanding. Official bytes and behavioural tests are stronger evidence.
 ## Long context, the O(n²) mental model, and caching
 
 Both DeepSeek V4 Flash and V4 Pro exposed a one-million-token context window. I
-usually kept one long session and reused it, compacting only once or twice.
+favoured one long-lived conversation over many short ones, so the window could
+hold design decisions, failed benchmarks, and corrections across related work.
+
+That is not the same as “never compact and keep one pure million-token
+session.” Whenever I started a **genuinely new task**—something sufficiently
+different from what the session had been doing—I compacted at that boundary if
+it was a natural handoff point. Continuity within a task was the goal; a single
+unbroken transcript across the whole project is not an accurate picture.
 
 Subjectively, DeepSeek became much more useful when it retained the accumulated
-project history: design decisions, examples, mistakes, failed benchmarks, and
-my corrections. I did not notice a significant drop immediately after its
-occasional compactions. In separate Sonnet usage with a smaller context, I have
-sometimes noticed forgotten details after compaction.
+history that still mattered for the current line of work: design decisions,
+examples, mistakes, failed benchmarks, and my corrections. I did not notice a
+significant drop immediately after those task-boundary compactions. In separate
+Sonnet usage with a smaller context, I have sometimes noticed forgotten details
+after compaction.
 
 Those are personal observations, not controlled experiments. They do,
 however, explain the usage shape.
@@ -1062,16 +1220,76 @@ had presented, which benchmark had regressed, which generated style I wanted,
 and how official output behaved. Retaining that history made the workhorse
 model feel more capable.
 
-I compacted the DeepSeek session only once or twice and did not notice a
-material loss immediately afterwards. In my separate experience with Sonnet
-and a smaller context window, I have sometimes noticed forgotten decisions
-after compaction. That is personal observation, not a controlled model
-comparison. It nevertheless changed how I think about model selection:
-effective intelligence is a combination of the base model, the context it can
-retain, the quality of the feedback, and whether I can afford enough turns to
-finish the loop.
+Caveat on “one long session”: I did **not** leave one transcript untouched for
+the entire project. I compacted whenever I started a task that was sufficiently
+different that the old tail was no longer a good default context—i.e. at
+genuine task boundaries, not once-or-twice total and not never. Within a task I
+kept context long; between dissimilar tasks I compacted and moved on. I did not
+notice a material loss immediately after those handoff-style compactions. In my
+separate experience with Sonnet and a smaller context window, I have sometimes
+noticed forgotten decisions after compaction. That is personal observation, not
+a controlled model comparison. It nevertheless changed how I think about model
+selection: effective intelligence is a combination of the base model, the
+context it can retain for the *current* task, the quality of the feedback, and
+whether I can afford enough turns to finish the loop.
 
 ## Observed usage and actual spend
+
+The most accurate data comes from `ccusage` (Claude Code + Codex agents only;
+Hermes and OpenCode are automation agents and excluded here). Snapshot from
+2026-08-02, covering the full project period since the first commit on
+2026-07-04 (with a few days of buffer before).
+
+### ccusage API-level spend
+
+| Model | Input | Output | Cache Create | Cache Read | Reasoning | Total Tokens | API Cost |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
+| claude-haiku-4-5 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
+| claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
+| claude-opus-5 | 84 | 47,196 | 182,101 | 1,789,470 | — | 2,018,851 | $3.21 |
+| claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
+| claude-sonnet-5 | 30,354 | 271,452 | 5,241,739 | 211,508,497 | — | 217,052,042 | $66.04 |
+| deepseek-v4-flash | 50,334,902 | 13,625,402 | 0 | 2,605,519,232 | — | 2,669,479,536 | $18.16 |
+| deepseek-v4-pro | 46,593,200 | 8,875,997 | 0 | 10,057,334,080 | — | 10,112,803,277 | $64.45 |
+| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
+| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
+| gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
+| gpt-5.6-sol | 24,631,981 | 2,451,746 | 0 | 809,366,528 | 1,109,895 | 837,560,150 | $608.56 |
+| **Total** | **158,165,064** | **31,479,393** | **21,673,654** | **16,831,101,528** | **1,141,165** | **17,043,560,804** | **$2,351.90** |
+
+That's **17 billion tokens** and **$2,351.90** in API charges at
+enterprise/pay-as-you-go rates. The earlier 14-billion-token estimate was
+derived from provider dashboards and was an order-of-magnitude figure; the
+ccusage data is a precise ledger-level reconciliation across Claude Code and
+Codex sessions.
+
+### Subscription spend
+
+Separate from the API charges above, these subscription fees were paid:
+
+| Provider | Spend | Notes |
+|---|---:|---|
+| GLM coding plan | $114 | Covers glm-4.7 and glm-5.2 API usage — the $680.23 in GLM API costs in the ccusage table is how the plan's included quota would be priced at PAYG rates |
+| OpenAI subscription | $20 | |
+| Claude subscription | $20 | |
+| Grok subscription | $30 | Grok API usage is not tracked by ccusage |
+| **Subscription total** | **$184** | |
+
+### Total identified spend
+
+| Category | Amount |
+|---|---:|
+| API charges (enterprise/PAYG rates, via ccusage) | $2,351.90 |
+| Subscriptions | $184.00 |
+| **Total identified** | **$2,535.90** |
+
+The API charges are computed at published enterprise rates, not necessarily what
+was actually billed (DeepSeek's actual bill was $77.39 for the project period;
+GLM usage was covered by the $114 plan). The gap between the $2,351.90 computed
+API cost and the ~$261 of actual out-of-pocket spend is the economic story of
+this project: DeepSeek's cache-hit pricing made sustained agentic development
+affordable.
 
 The DeepSeek dashboard for the displayed 30-day window shows:
 
@@ -1090,37 +1308,15 @@ The model split shown by the dashboard was:
 
 ![DeepSeek V4 Pro usage](book/src/project/ai-assistance/deepseek-v4-model-usage-lower.jpg)
 
-My rounded estimate for the full project period is approximately **14 billion
-tokens** across providers:
-
-- about 10.5 billion shown in the DeepSeek 30-day window;
-- about 3.28 billion shown in the GLM 30-day window; and
-- smaller usage on Claude, OpenAI, and Grok that I did not attempt to reconcile
-  into a billing-grade ledger.
-
-The 14-billion figure is therefore an honest order-of-magnitude estimate, not
-an audited total.
-
-My identifiable cash spend was:
-
-| Provider | Spend |
-|---|---:|
-| DeepSeek pay as you go | $77.39 |
-| GLM coding plan | $114 |
-| OpenAI subscription | $20 |
-| Claude subscription | $20 |
-| Grok subscription | $30 |
-| **Total** | **$261.39** |
-
-The DeepSeek figure is the actual charge shown for the project period. The
-mixture matters: the early UltraMode/subagent phase used V4 Flash through the
+The mixture matters: the early UltraMode/subagent phase used V4 Flash through the
 Sonnet-mapped model slot, while the later sequential phase stayed primarily on
 V4 Pro. Treating all 10.5 billion DeepSeek tokens as Pro would therefore
 overstate what I actually bought.
 
-Subscription spend is also not directly comparable with enterprise API
-pay-as-you-go pricing. The next section normalises the observed workload for
-that comparison.
+The [cumulative token usage table](#cumulative-token-usage-since-2026-06-28) at
+the top of this page is the authoritative per-model breakdown. The dashboard
+screenshots above are retained as the original historical evidence they were
+captured from during development.
 
 ## The cache sample used for the cost comparison
 
@@ -1447,8 +1643,9 @@ proof must stand independently of its author.
 ### 11. Preserve context deliberately and compact with a handoff
 
 Long context helped because it contained rejected designs, benchmark history,
-style corrections, and domain explanations. Throwing that away too often made
-the agent repeat old mistakes.
+style corrections, and domain explanations. Throwing that away mid-task made
+the agent repeat old mistakes. Compacting at a **real task boundary**—when the
+next work was sufficiently different—was usually the right trade.
 
 At the same time, unlimited history increases cost and can bury the current
 task. A good compaction or handoff should preserve:
@@ -1620,8 +1817,8 @@ At minimum:
 7. Verify exact buffer lengths before integrating with `try_claim` or another
    zero-copy publication API.
 8. Benchmark your real hot fields and message shapes, not only the Car example.
-9. Audit the internal unsafe assumptions relevant to your use of checked and
-   trusted wrapping.
+9. Audit the internal unsafe assumptions relevant to your use of checked
+   constructors and any private zero-check cores.
 10. Run soak tests under real traffic and deployment conditions.
 
 If you are not already comfortable explaining SBE block lengths, group
@@ -1666,8 +1863,8 @@ This project was a particularly favourable case for AI-assisted development:
 - constant feedback was possible.
 
 Even in that favourable case, it consumed about a month of intense work,
-roughly 14 billion estimated tokens, repeated cleanup, extensive tests, and
-continuous human judgment. The fashionable version—write a specification,
+roughly 17 billion tokens (measured by ccusage), repeated cleanup, extensive
+tests, and continuous human judgment. The fashionable version—write a specification,
 dispatch many agents, and return to a finished library—did not survive beyond
 the early greenfield stage.
 

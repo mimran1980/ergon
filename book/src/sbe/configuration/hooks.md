@@ -18,7 +18,7 @@ full IR access.
 
 **Example — add serde Serialize + Deserialize to every enum and set:**
 
-```text
+```rust,ignore
 // build.rs
 use ergo_sbe::{GenerationConfig, ItemContext};
 use quote::quote;

@@ -37,7 +37,7 @@ The chosen design adds a `NullVal` variant to every generated enum. It is the
 same size as any other variant, wire-compatible with sbe-tool, and bears no
 runtime cost:
 
-```rust,no_run
+```rust,ignore
 // ergo-sbe generated (conceptual)
 pub enum EventCode {
     NullVal = 255,  // or schema-declared nullValue

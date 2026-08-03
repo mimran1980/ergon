@@ -137,8 +137,8 @@ pub fn encode_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (oid, qty) in *orders {
                                 let raw_qty =
@@ -158,8 +158,8 @@ pub fn encode_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (oid, qty) in *orders {
                                 let raw_qty =
@@ -204,12 +204,12 @@ pub fn encode_vardata_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (qty, oid) in *orders {
                                 og.add(|o| {
-                                    o.quantity(*qty).order_id(oid)?;
+                                    o.try_quantity(*qty).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                     Ok(())
                                 })?;
                             }
@@ -223,12 +223,12 @@ pub fn encode_vardata_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|e| {
-                    e.price(*price)
-                        .size(*size)
+                    e.try_price(*price).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?
+                        .try_size(*size).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?
                         .orders(orders.len() as u16, |og| {
                             for (qty, oid) in *orders {
                                 og.add(|o| {
-                                    o.quantity(*qty).order_id(oid)?;
+                                    o.try_quantity(*qty).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
                                     Ok(())
                                 })?;
                             }

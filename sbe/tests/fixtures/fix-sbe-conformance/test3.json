@@ -1,0 +1,47 @@
+{
+	"version": {
+		"testVersion": "2016.1",
+		"testNumber": 3,
+		"messageSchema": "TestSchema3.xml",
+		"injectMessageSchema": "TestSchema3.xml",
+		"comment": "Read and write messages with variable-length fields"
+	},
+	"inject": {
+		"messages": [
+			{
+				"template": 99,
+				"11": "CL000001",
+				"1": "ACCT0001",
+				"55": "SYMBOL.A",
+				"54": "2",
+				"60": 1480936563000000,
+				"38": 700,
+				"37": "2",
+				"44": 17.560,
+				"99": null,
+				"2404": "Compliance certified",
+				"110": 200
+			}
+		]
+	},
+	"respond": {
+		"messages": [
+			{
+				"template": 98,
+				"37": "        ",
+				"17": "        ",
+				"150": "8",
+				"39": "8",
+				"55": true,
+				"200": null,
+				"54": true,
+				"151": 0,
+				"14": 0,
+				"75": 17140,
+				"48": "S1234567",
+				"FillsGrp": [],
+				"1328": "Market is closed"
+			}
+		]
+	}
+}

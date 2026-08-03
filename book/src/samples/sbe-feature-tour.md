@@ -17,8 +17,8 @@ no `sbe_mod!` needed. See [Build Patterns](../build-patterns.md).
 
 | Selector | Config | Decode API | Encode API |
 |----------|--------|------------|------------|
-| `BooleanType` | `enable_bool_domain_type()` → `bool` | `dec.available()` | `enc.available(true)` |
-| `UTCTimestamp` | `with_domain_type` → chrono | `dec.timestamp()` | `enc.timestamp(t)` |
+| `BooleanType` | `with_bool_domain_type()` → `bool` | `dec.try_available()?` | `enc.try_available(true)?` |
+| `UTCTimestamp` | `with_domain_type` → chrono | `dec.try_timestamp()?` | `enc.try_timestamp(t)?` |
 | `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
 
 Runnable proof for the Decimal row: **`demo_conversion_only`** in
@@ -47,7 +47,7 @@ Other samples:
 | Consuming decoder stages | `demo_car_decode_stages` |
 | Owned DTO | `demo_car_domain_dto` |
 | `AnyMessage` | `demo_any_message` |
-| try vs trusted wrap | `demo_try_vs_trusted` |
+| Checked decode / wrap / verify | `demo_try_vs_trusted` |
 | Display / Debug | `demo_display_debug` |
 | **`with_conversion` only** | **`demo_conversion_only`** |
 | All of the above | `run_all` |
@@ -59,4 +59,4 @@ cargo run  --manifest-path samples/sbe-feature-tour/Cargo.toml
 cargo test --manifest-path samples/sbe-feature-tour/Cargo.toml
 ```
 
-After build, generated source is under `target/.../out/feature_tour.rs`.
+After build, generated source is under `src/generated/feature_tour.rs`.

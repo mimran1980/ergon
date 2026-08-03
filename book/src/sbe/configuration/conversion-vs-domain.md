@@ -7,8 +7,8 @@ Do **not** call both for the same selector — domain type already enables conve
 | **Idea** | Generic convert API; **you** plug any app type | Always use **this** Rust path |
 | **build.rs** | `.with_conversion(named_type("Decimal"))` | `.with_domain_type(…, "rust_decimal::Decimal")` |
 | **You write** | `TryFromSbe<Decimal>` / `TryToSbe<Decimal>` for your type | Usually nothing for bool / rust_decimal / chrono |
-| **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.price()` |
-| **Encode** | `enc.price_from(&cents)?` | `enc.price(rust_decimal::Decimal::new(12345, 2))` |
+| **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.try_price()?` |
+| **Encode** | `enc.price_from(&cents)?` | `enc.try_price(rust_decimal::Decimal::new(12345, 2))?` |
 | **Raw wire** | `price_value()` / `price_wire(...)` | same when conversion is active |
 | **Sample** | [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [demo_conversion_only](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
 

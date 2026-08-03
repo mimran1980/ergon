@@ -16,8 +16,8 @@ than retaining dated point estimates as release guarantees.
 
 | | |
 |---|---|
-| **Date** | 2026-07-30 |
-| **Release tree** | `feat/0.1.5` cluster fairness correction |
+| **Date** | 2026-08-02 |
+| **Release** | 0.1.10 |
 | **Host** | Apple M4 (macOS Darwin, arm64) |
 | **Toolchain** | rustc 1.95.0 |
 | **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |
@@ -29,7 +29,7 @@ than retaining dated point estimates as release guarantees.
 Most of the measured difference between ergo-sbe and sbe-tool comes down to
 **bounds checking**, not fundamental codegen quality. Minor variations in how
 headers are written or how bulk operations are laid out account for the rest.
-If you had to call `try_wrap_and_apply_header` (which validates `template_id`
+If you had to call `wrap_and_apply_header` (which validates `template_id`
 and `schema_id`) every time, ergo-sbe would be slower than sbe-tool —
 sbe-tool's `wrap` + `header()` does no such validation in release builds. The
 benchmarks therefore use infallible `wrap` / `wrap_and_apply_header` on both
@@ -167,7 +167,7 @@ Every gated ergon/sbe-tool pair uses the same header mode on both arms:
 | decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
 | decode full / batch 10k | body wrap + same fields | same | same |
 | cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
-| cluster decode | header+body parse | `try_wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
+| cluster decode | header+body parse | `wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
 
 Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
 throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
@@ -243,7 +243,7 @@ cd sbe/benchmarks && cargo bench --bench encode_style_bench
 The two cluster encode scenarios (`session_keep_alive`, `claim_shaped`) previously
 failed at 1.19× and 1.28×. Root cause: generated field setters used
 `self.buf[offset..offset+N].copy_from_slice(...)`, which re-checks bounds on every
-field write. After `wrap`/`try_wrap` validates `buf.len() >= BLOCK_LENGTH`, field
+field write. After `wrap`/`wrap_and_apply_header` validates `buf.len() >= BLOCK_LENGTH`, field
 offsets are in-bounds by construction — the per-write bounds check was redundant.
 
 **Fix:** field setters now use `get_unchecked_mut` after the trust boundary. This

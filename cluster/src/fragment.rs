@@ -56,6 +56,9 @@ impl<'a> Fragment<'a> {
     /// cluster may send messages not in our schema). Returns `Err` only
     /// for malformed frames, invalid text, or buffer overruns.
     pub(crate) fn decode(data: &'a [u8]) -> Result<Option<Self>, ClusterError> {
+        if data.len() < 8 {
+            return Ok(None);
+        }
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,
             Err(DecodeError::UnknownTemplateLength { .. }) => return Ok(None),

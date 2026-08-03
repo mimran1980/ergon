@@ -12,9 +12,9 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 **Generated API (concrete):**
 
 ```text
-enc.price(rust_decimal::Decimal::new(100, 0));
-let p: rust_decimal::Decimal = dec.price();
-let ts: DateTime<Utc> = dec.exchange_timestamp();
+enc.try_price(rust_decimal::Decimal::new(100, 0))?;
+let p: rust_decimal::Decimal = dec.try_price()?;
+let ts: DateTime<Utc> = dec.try_exchange_timestamp()?;
 ```
 
 `with_domain_type` **already enables conversion** for that selector. Do not also

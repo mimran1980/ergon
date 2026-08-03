@@ -52,7 +52,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let mut buf_storage = [0u8; 8192];
         assert!(inner_len <= buf_storage.len(), "len exceeds stack pad");
         let buf = &mut buf_storage[..inner_len];
-        let mut enc = L2BookEncoder::wrap_and_apply_header(buf, 0);
+        let mut enc = L2BookEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
         let _ = enc
             .source(Source::Bitget)
             .exchange_timestamp(1)
@@ -72,7 +72,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let bytes = complete.as_bytes_with_header().to_vec();
 
         // Generic decode returns the exact same rust_decimal value.
-        let dec = L2BookDecoder::try_wrap_and_apply_header(&bytes, 0).unwrap();
+        let dec = L2BookDecoder::try_decode(&bytes, 0).unwrap();
         let mut g = dec.into_bids().unwrap();
         let entry = g.next().unwrap();
         let back: rust_decimal::Decimal =
@@ -86,7 +86,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let mut buf2_storage = [0u8; 8192];
         assert!(inner_len <= buf2_storage.len(), "len exceeds stack pad");
         let buf2 = &mut buf2_storage[..inner_len];
-        let mut enc = L2BookEncoder::wrap_and_apply_header(buf2, 0);
+        let mut enc = L2BookEncoder::try_wrap_and_apply_header(buf2, 0).unwrap();
         let _ = enc
             .source(Source::Bitget)
             .exchange_timestamp(1)

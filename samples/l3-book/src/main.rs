@@ -80,11 +80,13 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(len, actual);
 
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
-    let _ts: DateTime<Utc> = dec.exchange_timestamp();
+    let _ts: DateTime<Utc> = dec.try_exchange_timestamp()?;
     println!("  {dec}");
 
     // DTO round-trip — byte-identical.
-    let dto = l3_book::L3BookDomain::from(l3_book::L3BookDecoder::try_from(&buf[..actual])?);
+    let dto = l3_book::L3BookDomain::try_from_decoder(
+        l3_book::L3BookDecoder::try_from(&buf[..actual])?,
+    )?;
     let mut storage2 = [0u8; 4096];
     let encoded2 = dto.encode(&mut storage2[..len])?;
     assert_eq!(

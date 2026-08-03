@@ -53,7 +53,7 @@ fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
     let ir = ergo_sbe::parse_file(&l3_schema()).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let mut config = ergo_sbe::GenerationConfig::new("l3book");
-    let config = config.enable_domain_objects(ergo_sbe::DomainVarData::Bytes);
+    let config = config.with_domain_objects(ergo_sbe::DomainVarData::Bytes);
     let mut g = ergo_sbe::Generator::new(config);
     let src = g
         .generate(&schema)
@@ -80,8 +80,10 @@ fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
         "missing asks entry domain"
     );
     assert!(
-        src.contains("impl<'a> From<L3BookDecoder<'a>> for L3BookDomain"),
-        "missing From impl"
+        src.contains("fn try_from_decoder")
+            && src.contains("L3BookDomain")
+            && src.contains("L3BookDecoder"),
+        "missing try_from_decoder (HFT-003; panicking From removed)"
     );
 
     Ok(())
@@ -95,7 +97,7 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(12345u64);
         book.sequence(1u64);
         let after_bids = book.bids(2, |bids| {
@@ -166,7 +168,7 @@ fn l3_compute_encoded_length_positive() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(0).sequence(0);
         let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
             bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
@@ -192,7 +194,7 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 8192];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(999u64).sequence(7u64);
         let complete = book.bids(1, |bids| {
             bids.add(|level| {
@@ -239,7 +241,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 16384];
-        let mut book = L3BookEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         book.timestamp(555u64).sequence(42u64);
         let complete = book.bids(1, |bids| {
             bids.add(|level| {

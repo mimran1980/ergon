@@ -85,12 +85,14 @@ release-check: test check-coverage
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     # ergo-aeron-cluster dry-run waits until ergo-sbe is on crates.io (publish step below).
+    @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
+    bash scripts/measure-codegen-cold-path.sh
     @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
 
 # Full release gate: test + bench → publish → tag → GitHub release → bump.
 # The LLM must bump the version + write changelog + write release notes before
 # calling this. The version is read from workspace Cargo.toml.
-release:
+release: _check-release-notes
     just clean
     @echo "=== Gate: test suite (inc. clippy) ==="
     just test
@@ -113,6 +115,14 @@ release:
 _tag:
     git tag v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
     git push origin v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
+
+_check-release-notes:
+    @test -f /tmp/ergon-release-notes.md || (echo "ERROR: write release notes to /tmp/ergon-release-notes.md first" >&2 && exit 1)
+
+# Run cargo-deny and cargo-audit supply-chain checks.
+audit:
+    cargo deny check
+    cargo audit
 
 # ── test ──────────────────────────────────────────────────────────────────
 

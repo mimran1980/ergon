@@ -181,13 +181,18 @@ pub fn patch_source(src: &str) -> String {
 /// Write generated source + a `main()` test body into a temp crate, compile,
 /// and run.  `code` is placed directly inside `main()`.
 pub fn compile_and_run(module_name: &str, source: &str, code: &str) {
-    _compile_and_run(module_name, source, code, &[], "");
+    let _ = _compile_and_run(module_name, source, code, &[], "");
+}
+
+/// Like [`compile_and_run`], but returns combined stdout (for keep-gate samples).
+pub fn compile_and_run_capture(module_name: &str, source: &str, code: &str) -> String {
+    _compile_and_run(module_name, source, code, &[], "")
 }
 
 /// Like [`compile_and_run`] but appends `deps` to `[dependencies]` in the
 /// temp crate's `Cargo.toml` (e.g. `"chrono = \"0.4\"\n"`).
 pub fn compile_and_run_with_deps(module_name: &str, source: &str, code: &str, deps: &str) {
-    _compile_and_run(module_name, source, code, &[], deps);
+    let _ = _compile_and_run(module_name, source, code, &[], deps);
 }
 
 /// Diagnostic-checked negative proof: write generated source + a `main()` body
@@ -250,10 +255,16 @@ pub fn compile_fails_with_diagnostics(
 /// Like `compile_and_run` but adds the given feature to `[features]` in the
 /// temp crate's `Cargo.toml` and passes `--features <feature>` at build time.
 pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str, feature: &str) {
-    _compile_and_run(module_name, source, code, &[feature], "");
+    let _ = _compile_and_run(module_name, source, code, &[feature], "");
 }
 
-fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&str], deps: &str) {
+fn _compile_and_run(
+    module_name: &str,
+    source: &str,
+    code: &str,
+    features: &[&str],
+    deps: &str,
+) -> String {
     let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -297,13 +308,14 @@ fn _compile_and_run(module_name: &str, source: &str, code: &str, features: &[&st
         .output()
         .expect("cargo run failed");
 
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let _ = fs::remove_dir_all(&dir);
 
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
-        let o = String::from_utf8_lossy(&out.stdout);
-        panic!("test {module_name} FAILED\nstdout:\n{o}\nstderr:\n{e}");
+        panic!("test {module_name} FAILED\nstdout:\n{stdout}\nstderr:\n{e}");
     }
+    stdout
 }
 
 /// Generate, compile, and run a test against a binary fixture.
@@ -533,7 +545,7 @@ pub fn compile_and_run_two_modules(
 
 pub fn generate_domain(xml_path: &Path, module_name: &str) -> (Schema, String) {
     generate_domain_with(xml_path, module_name, |c| {
-        c.enable_domain_objects(DomainVarData::Bytes)
+        c.with_domain_objects(DomainVarData::Bytes)
     })
 }
 

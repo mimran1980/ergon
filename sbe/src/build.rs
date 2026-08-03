@@ -74,7 +74,7 @@ pub enum BuildError {
 ///     ergo_sbe::generate_to_out_dir(
 ///         "schemas/messages.xml",
 ///         ergo_sbe::GenerationConfig::new("messages")
-///             .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+///             .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
 ///     )?;
 ///     Ok(())
 /// }

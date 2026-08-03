@@ -1,27 +1,29 @@
 # Trust Boundary
 
-Every SBE buffer crossing a process boundary must be validated. ergo-sbe
-makes this explicit in the type system with two entry-point families:
+Every SBE buffer crossing a process boundary must be validated. In **0.1.10**,
+unsuffixed constructors are the **checked** lane: they return `Result`,
+validate extents once, then enter a shared private zero-check core.
 
-**Untrusted buffers** — use `try_*` constructors:
+There is **no** public `try_wrap*` alias. Public constructor `*_unchecked`
+twins ship only if HFT-008 records `keep=true` (currently all **keep=false** —
+cores stay module-private).
 
-- `try_from(&[u8])` — validates the message header and fixed block length
-  against the schema before giving you a decoder.
-- `try_wrap_and_apply_header(&mut [u8], offset)` — validates and writes the
-  SBE message header before giving you an encoder.
-- `verify()` — walks the complete dynamic tail (groups, var-data) and returns
-  an error if any offset or length is out of bounds.
+## Checked entry points
 
-
-**Trusted buffers** — skip validation for already-proven buffers:
-
-- `wrap(buf, offset, block_length, version)` — constructs a decoder from a
-  buffer you've already validated (e.g. from a `try_*` call earlier this turn,
-  or from a memory-mapped file you control).
+| Entry | Role |
+|-------|------|
+| `Decoder::decode(buf, pos)` / `TryFrom` | Header + template/schema + version-aware fixed extent |
+| `Decoder::wrap(buf, pos, acting_block_length, version)` | External metadata path; still returns `Result` and validates the body extent |
+| `Encoder::wrap` / `wrap_and_apply_header` | Capacity check for header + fixed block, then private unchecked core |
+| `verify(buf)` | Walks the **complete** dynamic tail (groups, var-data); not a header-only peek |
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_try_vs_trusted}}
 ```
+*(From the `sbe-feature-tour` sample.)*
 
-**Never use `wrap` on unvalidated input** — it skips the header check and
-will read garbage as field values rather than returning an error.
+**Do not treat `wrap` as “skip validation.”** A failed extent check is a
+`DecodeError` / `EncodeError`, not silent garbage field values. For
+already-proven hot paths after `decode` / `verify`, use checked field
+accessors (or opt-in field `*_unchecked` only under the documented safety
+contract). See [Trust boundaries (feature tour)](../feature-tour/trust-boundaries.md).
