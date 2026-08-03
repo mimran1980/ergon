@@ -388,7 +388,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
 
 /// When a schema message is literally named `Self`, the generated type name
 /// gets the `keyword_append_token` suffix because `Self` is a Rust keyword.
-/// PascalCase names like `Type` don't collide with the lowercase keyword
+/// `PascalCase` names like `Type` don't collide with the lowercase keyword
 /// `type` — they compile fine without the suffix.
 #[test]
 fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::Error>> {
@@ -432,6 +432,54 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
         let dec = Self_Decoder::try_from(&buf[..len]).expect("decode");
         assert_eq!(dec.value(), 42);
         "#,
+    );
+
+    Ok(())
+}
+
+/// When `keyword_append_token` is set to empty, a schema field named after a
+/// Rust keyword produces generated code that fails to compile. This is the
+/// intended failure mode: the user must either rename the schema field or
+/// keep the default `_` append token. The test proves that the compiler
+/// rejection is clear (mentions the keyword or the field name).
+#[test]
+fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std::error::Error>> {
+    let keyword_schema = r#"<messageSchema package="kwfail" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="8">
+        <field name="type"  id="1" type="uint32" offset="0"/>
+        <field name="fn"    id="2" type="uint32" offset="4"/>
+      </message>
+    </messageSchema>"#;
+
+    let schema = Schema::from_ir(parse(keyword_schema)?);
+    // Empty append token — generated code will have `fn type()` which is
+    // invalid Rust because `type` is a reserved keyword.
+    let config = GenerationConfig::new("kwfail").with_keyword_append_token("");
+    let src = Generator::new(config)
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    // The generated source should contain the diagnostic comment explaining
+    // that the code failed Rust syntax validation.
+    assert!(
+        src.contains("ergo-sbe: generated code failed Rust syntax validation"),
+        "must contain diagnostic comment when generated code won't parse"
+    );
+    assert!(
+        src.contains("keyword") || src.contains("type"),
+        "diagnostic must mention the keyword issue: {src}"
     );
 
     Ok(())

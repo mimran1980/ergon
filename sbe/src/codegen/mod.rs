@@ -1070,8 +1070,23 @@ impl Generator {
             src.push('\n');
         }
 
-        let file =
-            syn::parse_str::<syn::File>(&src).expect("generated code must be valid Rust syntax");
+        let file = match syn::parse_str::<syn::File>(&src) {
+            Ok(f) => f,
+            Err(e) => {
+                // Produce a comment explaining the failure so the user
+                // can diagnose it (e.g. a reserved keyword leaked through).
+                let mut diag = String::from(
+                    "// ergo-sbe: generated code failed Rust syntax validation.\n",
+                );
+                use std::fmt::Write;
+                let _ = writeln!(
+                    diag,
+                    "// This usually means a schema name collides with a Rust keyword.\n// syn error: {e}\n// Raw source follows.\n\n"
+                );
+                diag.push_str(&src);
+                return diag;
+            }
+        };
         prettyplease::unparse(&file)
     }
 }
