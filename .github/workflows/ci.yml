@@ -303,5 +303,6 @@ jobs:
         with:
           submodules: recursive
 
+      - run: cargo install cargo-deny cargo-audit --locked
       - run: cargo deny check
       - run: cargo audit

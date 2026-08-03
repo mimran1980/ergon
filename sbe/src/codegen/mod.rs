@@ -1070,8 +1070,22 @@ impl Generator {
             src.push('\n');
         }
 
-        let file =
-            syn::parse_str::<syn::File>(&src).expect("generated code must be valid Rust syntax");
+        let file = match syn::parse_str::<syn::File>(&src) {
+            Ok(f) => f,
+            Err(e) => {
+                // Produce a comment explaining the failure so the user
+                // can diagnose it (e.g. a reserved keyword leaked through).
+                let mut diag =
+                    String::from("// ergo-sbe: generated code failed Rust syntax validation.\n");
+                use std::fmt::Write;
+                let _ = writeln!(
+                    diag,
+                    "// This usually means a schema name collides with a Rust keyword.\n// syn error: {e}\n// Raw source follows.\n\n"
+                );
+                diag.push_str(&src);
+                return diag;
+            }
+        };
         prettyplease::unparse(&file)
     }
 }
@@ -1541,8 +1555,8 @@ mod tests {
         // (in separate impl blocks). The field accessor is renamed to
         // `remaining_field` and must not appear as `fn remaining(&self)`.
         assert_eq!(
-            remaining_count, 1,
-            "expected exactly 2 'remaining' methods (one decoder + one encoder), found {remaining_count}"
+            remaining_count, 2,
+            "expected 2 'remaining' methods (decoder + DecoderMetadata), found {remaining_count}"
         );
         // The field accessor must be renamed.
         assert!(

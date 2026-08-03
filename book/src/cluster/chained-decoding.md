@@ -27,8 +27,8 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
     // Decode the first message
     let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
 
-    // remaining() returns the bytes after the header (the SessionKeepAlive)
-    let tail = smh.remaining();
+    // get_metadata().remaining() returns bytes after this message
+    let tail = smh.get_metadata().remaining();
     assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
 
     // Decode the next message via AnyMessage
@@ -36,7 +36,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         AnyMessage::SessionKeepAlive(dec) => {
             assert_eq!(dec.cluster_session_id(), 99);
             // Fully decoded — nothing left
-            assert!(dec.remaining().is_empty());
+            assert!(dec.get_metadata().remaining().is_empty());
         }
         _ => panic!("unexpected message type"),
     }
@@ -44,4 +44,6 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`buffer()` returns the entire original buffer (header + payload).
+`get_metadata().buffer()` returns the entire original buffer. `remaining()`
+returns bytes after this message — both scoped in the metadata struct so
+no schema field can ever collide with them.

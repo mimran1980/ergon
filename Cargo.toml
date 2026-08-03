@@ -18,7 +18,7 @@ exclude = ["samples", "sbe/fuzz", "sbe/miri-fixtures"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -27,7 +27,7 @@ homepage = "https://github.com/mimran1980/ergon"
 authors = ["Mohammed Imran"]
 
 [workspace.dependencies]
-ergo-sbe = { version = "0.1.11", path = "sbe" }
+ergo-sbe = { version = "0.1.12", path = "sbe" }
 rusteron-client = "0.2"
 rusteron-media-driver = "0.2"
 rusteron-archive = "0.2"

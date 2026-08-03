@@ -834,6 +834,50 @@ pub(crate) fn generate_message_encoder(
         }
     });
 
+    // ── Metadata facet ──────────────────────────────────────────────────
+    let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
+    ts.extend(quote::quote! {
+        /// Buffer-placement and wire-frame metadata. Holds a reference to the
+        /// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
+        /// `as_bytes_with_header`, `into_remaining_mut`) live here so no
+        /// schema field can collide with them.
+        #[derive(Clone, Copy)]
+        pub struct #enc_metadata_ident<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+            encoder: &'m #name_encoder_ident<'a, H>,
+        }
+
+        impl<'m, 'a, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, 'a, H> {
+            /// Message body bytes (header exclusive).
+            #[inline]
+            pub fn as_body_bytes(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+            }
+            /// Header-inclusive frame bytes.
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+            }
+            /// Absolute offset of this message within the original buffer.
+            #[inline]
+            pub fn message_offset(&self) -> usize {
+                self.encoder.msg_offset
+            }
+        }
+    });
+
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+            /// Metadata accessor: buffer positions, wire-frame boundaries.
+            /// Returns a zero-copy reference to the parent encoder.
+            /// All utility methods are scoped here so no schema field name
+            /// can collide with them.
+            #[inline]
+            pub fn get_metadata(&self) -> #enc_metadata_ident<'_, 'a, H> {
+                #enc_metadata_ident { encoder: self }
+            }
+        }
+    });
+
     if total_tail > 0 {
         let mut tail_idx = 0;
 

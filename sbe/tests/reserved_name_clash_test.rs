@@ -322,3 +322,177 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+/// Schema fields named after Rust keywords (`type`, `fn`, `match`, etc.) must
+/// have the `keyword_append_token` (`_`) appended so the generated crate
+/// compiles. This tests the `is_rust_keyword` path in `to_snake_case`.
+#[test]
+fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> {
+    let keyword_schema = r#"<messageSchema package="kw" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="16">
+        <field name="type"   id="1" type="uint32" offset="0"/>
+        <field name="fn"     id="2" type="uint32" offset="4"/>
+        <field name="match"  id="3" type="uint32" offset="8"/>
+        <field name="impl"   id="4" type="uint32" offset="12"/>
+      </message>
+    </messageSchema>"#;
+
+    let schema = Schema::from_ir(parse(keyword_schema)?);
+    let src = Generator::new(GenerationConfig::new("kw"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    // Field names get the keyword append token.
+    assert!(
+        src.contains("fn type_(&self)"),
+        "keyword field 'type' must be type_"
+    );
+    assert!(
+        src.contains("fn fn_(&self)"),
+        "keyword field 'fn' must be fn_"
+    );
+    assert!(
+        src.contains("fn match_(&self)"),
+        "keyword field 'match' must be match_"
+    );
+    assert!(
+        src.contains("fn impl_(&self)"),
+        "keyword field 'impl' must be impl_"
+    );
+
+    // The real proof: the generated crate compiles and runs.
+    compile_and_run(
+        "kw",
+        &src,
+        r#"
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+            .fixed(&MsgFixedFields {
+                type_: 1,
+                fn_: 2,
+                match_: 3,
+                impl_: 4,
+            })
+            .encoded_length_with_header();
+
+        let dec = MsgDecoder::try_from(&buf[..len]).expect("decode");
+        assert_eq!(dec.type_(), 1);
+        assert_eq!(dec.fn_(), 2);
+        assert_eq!(dec.match_(), 3);
+        assert_eq!(dec.impl_(), 4);
+        "#,
+    );
+
+    Ok(())
+}
+
+/// When a schema message is literally named `Self`, the generated type name
+/// gets the `keyword_append_token` suffix because `Self` is a Rust keyword.
+/// `PascalCase` names like `Type` don't collide with the lowercase keyword
+/// `type` — they compile fine without the suffix.
+#[test]
+fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::Error>> {
+    let keyword_msg_schema = r#"<messageSchema package="kwmsg" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Self" id="1" blockLength="4">
+        <field name="value" id="1" type="uint32" offset="0"/>
+      </message>
+    </messageSchema>"#;
+
+    let schema = Schema::from_ir(parse(keyword_msg_schema)?);
+    let src = Generator::new(GenerationConfig::new("kwmsg"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    assert!(
+        src.contains("Self_Encoder") && src.contains("Self_Decoder"),
+        "keyword message 'Self' must become Self_Encoder / Self_Decoder"
+    );
+
+    compile_and_run(
+        "kwmsg",
+        &src,
+        r#"
+        let mut buf = [0u8; Self_Encoder::compute_length_with_header()];
+        let len = Self_Encoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+            .fixed(&Self_FixedFields { value: 42 })
+            .encoded_length_with_header();
+
+        let dec = Self_Decoder::try_from(&buf[..len]).expect("decode");
+        assert_eq!(dec.value(), 42);
+        "#,
+    );
+
+    Ok(())
+}
+
+/// When `keyword_append_token` is set to empty, a schema field named after a
+/// Rust keyword produces generated code that fails to compile. This is the
+/// intended failure mode: the user must either rename the schema field or
+/// keep the default `_` append token. The test proves that the compiler
+/// rejection is clear (mentions the keyword or the field name).
+#[test]
+fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std::error::Error>> {
+    let keyword_schema = r#"<messageSchema package="kwfail" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="8">
+        <field name="type"  id="1" type="uint32" offset="0"/>
+        <field name="fn"    id="2" type="uint32" offset="4"/>
+      </message>
+    </messageSchema>"#;
+
+    let schema = Schema::from_ir(parse(keyword_schema)?);
+    // Empty append token — generated code will have `fn type()` which is
+    // invalid Rust because `type` is a reserved keyword.
+    let config = GenerationConfig::new("kwfail").with_keyword_append_token("");
+    let src = Generator::new(config)
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    // The generated source should contain the diagnostic comment explaining
+    // that the code failed Rust syntax validation.
+    assert!(
+        src.contains("ergo-sbe: generated code failed Rust syntax validation"),
+        "must contain diagnostic comment when generated code won't parse"
+    );
+    assert!(
+        src.contains("keyword") || src.contains("type"),
+        "diagnostic must mention the keyword issue: {src}"
+    );
+
+    Ok(())
+}

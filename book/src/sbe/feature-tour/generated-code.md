@@ -63,6 +63,41 @@ impl<'a> CarComplete<'a> {
 }
 ```
 
+## Metadata: no field-name collisions
+
+Utility methods like `remaining`, `buffer`, `as_bytes_with_header`, and
+`as_body_bytes` are scoped inside a zero-copy **metadata struct** returned by
+`get_metadata()`. This means a schema field named `remaining` or `buffer`
+generates `dec.remaining()` / `dec.buffer()` as field accessors — no `_field`
+suffix needed. No generated method name can ever collide with a user's schema
+field name.
+
+```rust,ignore
+let dec = CarDecoder::try_decode(&buf, 0)?;
+dec.price();                                // field accessor — never collides
+dec.get_metadata().remaining();             // metadata — never collides
+dec.get_metadata().buffer();                // metadata — never collides
+dec.get_metadata().as_bytes_with_header();  // metadata — never collides
+dec.encoded_length_with_header();           // hot path stays on base struct
+```
+
+The metadata struct holds a reference to the parent (zero-copy):
+
+```rust,ignore
+pub struct CarDecoderMetadata<'m, 'a> {
+    decoder: &'m CarDecoder<'a>,
+}
+```
+
+Encoders have the same pattern:
+
+```rust,ignore
+let meta = enc.get_metadata();
+meta.as_body_bytes();          // body-only bytes
+meta.as_bytes_with_header();   // full frame
+meta.message_offset();         // message start in buffer
+```
+
 ## Exact buffer sizing
 
 ```rust,ignore

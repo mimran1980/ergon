@@ -1426,8 +1426,59 @@ pub(crate) fn generate_message_decoder(
         }
     });
 
+    // ── Metadata facet ──────────────────────────────────────────────────
+    let metadata_ident = syn::Ident::new(
+        &format!("{}DecoderMetadata", name),
+        proc_macro2::Span::call_site(),
+    );
+    ts.extend(quote::quote! {
+        /// Buffer-placement and wire-frame metadata. Holds a reference to the
+        /// parent decoder — zero-copy. All utility methods (`remaining`,
+        /// `buffer`, `as_bytes_with_header`, etc.) live here so no schema
+        /// field can collide with them.
+        #[derive(Clone, Copy)]
+        pub struct #metadata_ident<'m, 'a> {
+            decoder: &'m #decoder_ident<'a>,
+        }
+
+        impl<'m, 'a> #metadata_ident<'m, 'a> {
+            #[inline] pub fn message_offset(&self) -> usize { self.decoder.pos.saturating_sub(#decoder_ident::HEADER_LENGTH) }
+            #[inline] pub fn limit(&self) -> usize { self.decoder.pos + self.decoder.acting_block_length }
+            #[inline] pub fn buffer(&self) -> &'a [u8] { self.decoder.buf }
+            #[inline] pub fn remaining(&self) -> &'a [u8] {
+                let end = (self.decoder.pos + self.decoder.acting_block_length).min(self.decoder.buf.len());
+                &self.decoder.buf[end..]
+            }
+            #[inline] pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.decoder.pos; let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort { field: "body", needed: end.saturating_sub(start), available: self.decoder.buf.len().saturating_sub(start) });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+            #[inline] pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.message_offset(); let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort { field: "frame", needed: end.saturating_sub(start), available: self.decoder.buf.len().saturating_sub(start) });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+            #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
+            #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
+        }
+    });
+
     ts.extend(quote::quote! {
         impl<'a> #decoder_ident<'a> {
+            /// Metadata accessor: buffer positions, wire-frame boundaries,
+            /// version/block-length state. Returns a zero-copy reference to
+            /// the parent decoder — no fields are copied. All utility methods
+            /// are scoped here so no schema field name can collide with them.
+            #[inline]
+            pub fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
+                #metadata_ident { decoder: self }
+            }
+
             #impl_body
         }
     });

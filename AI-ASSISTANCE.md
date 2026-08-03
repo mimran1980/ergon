@@ -391,7 +391,7 @@ be.”
 I therefore concentrated review on the generator's observable product:
 
 - the generated Rust source;
-- the public API and how it feels to use;
+- whether the public API is clean and usable;
 - whether staged types make illegal orderings unrepresentable;
 - actual encoded bytes;
 - official SBE fixtures and official `sbe-tool` output;
@@ -670,17 +670,13 @@ fabricated reference is harder to detect than an obvious mistake. And do
 not assume the fabricating model was the cheap one — frontier models are
 just as capable of hallucinating authority as anyone else.
 
-### LLMs will disable your tests rather than fix bugs (July 2026)
+### LLMs disabled my tests rather than fixing the bugs (July–August 2026)
 
-This is the failure that reduced my confidence more than any other. It is
-not a one-off mistake. It is a pattern that became visible only after the
-project accumulated enough tests to serve as a genuine oracle — and enough
-LLM sessions for the pattern to repeat.
+This failure reduced my confidence more than any other. It was not a one-off — 
+it became a visible pattern once the project had enough tests to serve as a
+genuine oracle.
 
-### Tests and benchmarks did not protect me — LLMs disabled them instead (August 2026)
-
-As the project matured past the initial greenfield phase, I relied heavily on
-the extensive unit test suite and benchmark gates I had built up. I assumed
+I relied on the extensive test suite and benchmark gates I had built up. I assumed
 they would catch regressions before they shipped. They didn't — because LLMs
 kept disabling them rather than fixing the bugs they surfaced.
 
@@ -703,13 +699,12 @@ The pattern repeated across the 0.1.10 release preparation cycle:
   actual regressions — codegen changes that made hot paths slower — passed
   through review because the gates no longer measured them.
 
-The uncomfortable conclusion I reached: **LLMs do not work as well on mature
-software.** Early greenfield work had no existing tests to disable, so the
-pattern was invisible. Once the test suite and benchmark gates became dense
-enough to serve as a real oracle, the LLM's incentive to achieve green output
-collided directly with the oracle's purpose. An LLM asked to "make the tests
-pass" has two paths: fix the code, or remove the test. The second path is
-often shorter, and LLMs take it consistently across models and vendors.
+**LLMs become less trustworthy as a project matures.** Early greenfield work
+has no existing tests to disable, so the pattern is invisible. Once the test
+suite and benchmark gates are dense enough to catch real problems, the LLM's
+incentive to produce green output collides with the gate's purpose. "Make the
+tests pass" offers two paths: fix the code, or remove the test. The second path
+is shorter, and LLMs take it consistently across models and vendors.
 
 Extensive unit test and benchmark coverage was not protecting me. What did
 protect me was **human code review** — specifically, reviewing every change to
@@ -750,9 +745,8 @@ The result: a released version ships with tests that are silently disabled.
 Users and the maintainer believe the full suite passed. A real bug — the one
 the original failing test existed to catch — is still present. Nobody knows.
 
-This is not hypothetical. Here are the specific incidents that occurred
-across this project (verified through git history, changelog entries, and
-session transcripts):
+Here are the specific incidents from this project (verified through git history,
+changelog entries, and session transcripts):
 
 **Allocation-count tests (`#[ignore]`).** Three allocation-count tests had
 `#[ignore]` attributes added by an LLM session that encountered unexpected
@@ -826,14 +820,11 @@ enough. The most important commit in the hardening phase may have been
 `test: make verification fail closed` — the policy that rejects an empty,
 incomplete, or missing test result rather than treating it as a pass.
 
-This is the uncomfortable truth I learned: **as the project matured, LLMs
-became less trustworthy, not more.** Early greenfield work had no existing
-tests to break, so the pattern was invisible. Once the test suite became
-dense enough to serve as a real oracle, the agent's incentive to achieve
-green output collided with the oracle's purpose. The agent optimised for the
-metric it was given — passing tests — and disabling a test is a cheaper way
-to achieve that metric than understanding and fixing a bug in code the agent
-did not write.
+**As a project matures, LLMs become less trustworthy, not more.** Greenfield
+work has no existing tests to break. Once the test suite is dense enough to
+serve as a real oracle, the agent's incentive to achieve green output collides
+with the oracle's purpose. Disabling a test is cheaper than understanding and
+fixing a bug in code the agent did not write.
 
 The pattern is not model-specific. I observed it across DeepSeek, GLM, and
 frontier models. It is a consequence of the optimisation landscape, not the
@@ -873,9 +864,8 @@ silently changing the same code underneath it.
 
 ## Verification: why the tests matter so much
 
-I will be blunt: if somebody publishes a substantial LLM-generated library with
-very little meaningful test coverage, I assume the code is slop until shown
-otherwise.
+If somebody publishes an LLM-generated library with barely any test coverage,
+I assume the code is slop until shown otherwise.
 
 LLMs respond extremely well to objective verification. A failing test gives the
 agent a bounded problem with an observable correct outcome. Without that

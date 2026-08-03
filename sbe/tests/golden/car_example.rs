@@ -1072,7 +1072,79 @@ pub struct CarDecoder<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
+/// Buffer-placement and wire-frame metadata. Holds a reference to the
+/// parent decoder — zero-copy. All utility methods (`remaining`,
+/// `buffer`, `as_bytes_with_header`, etc.) live here so no schema
+/// field can collide with them.
+#[derive(Clone, Copy)]
+pub struct CarDecoderMetadata<'m, 'a> {
+    decoder: &'m CarDecoder<'a>,
+}
+impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
+    #[inline]
+    pub fn message_offset(&self) -> usize {
+        self.decoder.pos.saturating_sub(CarDecoder::HEADER_LENGTH)
+    }
+    #[inline]
+    pub fn limit(&self) -> usize {
+        self.decoder.pos + self.decoder.acting_block_length
+    }
+    #[inline]
+    pub fn buffer(&self) -> &'a [u8] {
+        self.decoder.buf
+    }
+    #[inline]
+    pub fn remaining(&self) -> &'a [u8] {
+        let end = (self.decoder.pos + self.decoder.acting_block_length)
+            .min(self.decoder.buf.len());
+        &self.decoder.buf[end..]
+    }
+    #[inline]
+    pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let start = self.decoder.pos;
+        let end = self.decoder.pos + self.decoder.acting_block_length;
+        if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "body",
+                needed: end.saturating_sub(start),
+                available: self.decoder.buf.len().saturating_sub(start),
+            });
+        }
+        Ok(&self.decoder.buf[start..end])
+    }
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let start = self.message_offset();
+        let end = self.decoder.pos + self.decoder.acting_block_length;
+        if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "frame",
+                needed: end.saturating_sub(start),
+                available: self.decoder.buf.len().saturating_sub(start),
+            });
+        }
+        Ok(&self.decoder.buf[start..end])
+    }
+    #[inline]
+    pub fn acting_version(&self) -> u16 {
+        self.decoder.acting_version
+    }
+    #[inline]
+    pub fn acting_block_length(&self) -> usize {
+        self.decoder.acting_block_length
+    }
+}
 impl<'a> CarDecoder<'a> {
+    /// Metadata accessor: buffer positions, wire-frame boundaries,
+    /// version/block-length state. Returns a zero-copy reference to
+    /// the parent decoder — no fields are copied. All utility methods
+    /// are scoped here so no schema field name can collide with them.
+    #[inline]
+    pub fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
+        CarDecoderMetadata {
+            decoder: self,
+        }
+    }
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
     pub const TEMPLATE_ID: u16 = 1;
@@ -5203,6 +5275,43 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
             buf: &mut self.buf[body_start..],
             msg_offset: 0,
             pos: self.pos - body_start,
+        }
+    }
+}
+/// Buffer-placement and wire-frame metadata. Holds a reference to the
+/// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
+/// `as_bytes_with_header`, `into_remaining_mut`) live here so no
+/// schema field can collide with them.
+#[derive(Clone, Copy)]
+pub struct CarEncoderMetadata<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+    encoder: &'m CarEncoder<'a, H>,
+}
+impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
+    /// Message body bytes (header exclusive).
+    #[inline]
+    pub fn as_body_bytes(&self) -> &[u8] {
+        &self.encoder.buf[self.encoder.msg_offset + 8..self.encoder.pos]
+    }
+    /// Header-inclusive frame bytes.
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &[u8] {
+        &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+    }
+    /// Absolute offset of this message within the original buffer.
+    #[inline]
+    pub fn message_offset(&self) -> usize {
+        self.encoder.msg_offset
+    }
+}
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
+    /// Metadata accessor: buffer positions, wire-frame boundaries.
+    /// Returns a zero-copy reference to the parent encoder.
+    /// All utility methods are scoped here so no schema field name
+    /// can collide with them.
+    #[inline]
+    pub fn get_metadata(&self) -> CarEncoderMetadata<'_, 'a, H> {
+        CarEncoderMetadata {
+            encoder: self,
         }
     }
 }
