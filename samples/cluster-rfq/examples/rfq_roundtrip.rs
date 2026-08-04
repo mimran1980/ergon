@@ -53,19 +53,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect (SessionConnectRequest, schema 111)
     {
-        // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut buf = [0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
+        let channel = INGRESS.as_bytes();
+        let need = SessionConnectRequestEncoder::compute_length_with_header(channel.len(), 0, 0);
+        const PAD: usize = 512;
+        assert!(need <= PAD, "connect frame {need} exceeds pad {PAD}");
+        let mut storage = [0u8; PAD];
+        let buf = &mut storage[..need];
+        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
         let _ = enc.correlation_id(1).response_stream_id(102).version(0);
         let _ = enc
-            .response_channel(INGRESS.as_bytes())
+            .response_channel(channel)
             .unwrap()
             .encoded_credentials(b"")
             .unwrap()
             .client_info(b"")
             .unwrap();
         for _ in 0..30 {
-            if ingress.offer_raw(&buf, rusteron_client::Handlers::NONE) > 0 {
+            if ingress.offer_raw(buf, rusteron_client::Handlers::NONE) > 0 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));

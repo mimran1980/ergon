@@ -123,7 +123,8 @@ pub(crate) fn generate_group_encoder(
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             }
             .into());
@@ -200,7 +201,8 @@ pub(crate) fn generate_group_encoder(
                     .unwrap_or(true)
                 {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                         available: self.buf.len().saturating_sub(self.pos),
                     });
                 }
@@ -319,7 +321,8 @@ pub(crate) fn generate_group_encoder(
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
                     if self.pos + block_len > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                            needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                             available: self.buf.len().saturating_sub(self.pos),
                         });
                     }
@@ -366,6 +369,8 @@ pub(crate) fn generate_group_encoder(
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if end > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "encode",
+
                             needed,
                             available: self.buf.len().saturating_sub(self.pos),
                         });
@@ -551,7 +556,8 @@ pub(crate) fn generate_group_encoder(
             {
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: #ng_dim,
+                                field: "group entry",
+                                needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.pos),
                     }
                     .into());
@@ -591,7 +597,8 @@ pub(crate) fn generate_group_encoder(
             {
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: #ng_dim,
+                                field: "group entry",
+                                needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.pos),
                     }.into());
                 }
@@ -643,7 +650,7 @@ pub(crate) fn generate_group_encoder(
                 #schema_max_check
                 let needed = #pfx + data.len();
                 if self.pos + needed > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len().saturating_sub(self.pos) });
+                    return Err(sbe_rt::EncodeError::BufferTooShort { field: "group entry", needed, available: self.buf.len().saturating_sub(self.pos) });
                 }
                 let wire_length = #len_ty::try_from(data.len()).map_err(|_| {
                     sbe_rt::EncodeError::VarDataTooLong {

@@ -23,7 +23,7 @@ cargo run --example dump_gen        # dump full generated source to stdout
 | Example | Demonstrates |
 |---------|-------------|
 | `flyweight` | `Generator::generate()` with default config — zero-copy flyweights |
-| `domain_objects` | `with_domain_objects(DomainVarData::LossyStrings)` — owned DTOs (`String` var-data) + `From<Decoder>` |
+| `domain_objects` | `with_domain_objects(DomainVarData::Strings)` — owned DTOs (`String` var-data) + `From<Decoder>` |
 | `l3_nested` | The full type graph for 3-level nested groups (L1→L2→L3 entry types) |
 | `dump_gen` | The complete generated Rust source for inspection |
 

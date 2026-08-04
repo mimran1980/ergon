@@ -1,14 +1,11 @@
-//! HFT-008: paired checked/unchecked identity + keep-gate measurement harness.
+//! HFT-008: paired checked/unchecked identity + measurement harness.
 //!
-//! Keep rule (pre-registered, from release spec): public `` only when
-//! instruction evidence + multi-run CI favour the twin. Default product surface
-//! keeps zero-check cores **module-private** (`keep: false`) until that proof
-//! lands. This test:
+//! Product surface (0.1.12+): public three-tier constructors — `try_*`, bare
+//! names (panic after extent proof), and `unsafe fn *_unchecked`. This test:
 //!
-//! 1. Proves checked constructors call the private unchecked core (source).
+//! 1. Proves checked constructors call the unchecked core after extent proof.
 //! 2. Proves byte identity of dual checked encodes (same core path).
-//! 3. Injects an in-module measurement helper (so private cores are callable)
-//!    and records multi-scenario Instant samples for the keep matrix.
+//! 3. Records multi-scenario Instant samples for the keep matrix.
 
 #![allow(
     clippy::all,

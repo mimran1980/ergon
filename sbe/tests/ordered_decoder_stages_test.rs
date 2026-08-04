@@ -153,6 +153,42 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// All three `into_*_as_str()` return `&'a str` tied to the buffer, not the
+/// stage — prove all three `&str` coexist after all three calls complete.
+#[test]
+fn multiple_var_data_strings_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "coexist_strings");
+    compile_and_run(
+        "coexist_strings",
+        &src,
+        r#"
+        let mut buf = [0u8; 4096];
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        car.serial_number(1);
+        let complete = car
+            .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(b"Honda")?
+            .model(b"Civic VTi")?
+            .activation_code(b"abcdef")?;
+        let encoded = complete.as_bytes_with_header();
+
+        let decoder = CarDecoder::try_decode(encoded, 0)?;
+        let after_fuel = decoder.into_fuel_figures()?.finish()?;
+        let after_perf = after_fuel.into_performance_figures()?.finish()?;
+
+        // All three into_*_as_str() calls complete before any assert.
+        let (mfr, decoder) = after_perf.into_manufacturer_as_str()?;
+        let (model, decoder) = decoder.into_model_as_str()?;
+        let (code, _done) = decoder.into_activation_code_as_str()?;
+        // Prove all three &str coexist — each borrows 'a from the original wire buffer.
+        assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
+    "#,
+    );
+
+    Ok(())
+}
+
 /// Empty groups and empty var-data still traverse through the same stages.
 #[test]
 fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Error>> {

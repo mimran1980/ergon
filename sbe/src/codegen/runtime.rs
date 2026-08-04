@@ -23,8 +23,10 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
                 InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
                 InvalidAscii { field: &'static str },
+                /// Boolean wire enum was `NullVal` or an unknown discriminant.
+                InvalidBoolean { field: &'static str },
                 /// Domain `try_*` conversion failed (HFT-003).
-                DomainConversionFailed { field: &'static str },
+                DomainConversionFailed { field: &'static str, reason: &'static str },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -40,7 +42,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
-                        Self::DomainConversionFailed { field } => write!(f, "field '{}': domain conversion failed", field),
+                        Self::InvalidBoolean { field } => write!(f, "field '{}': invalid boolean (null or unknown discriminant)", field),
+                        Self::DomainConversionFailed { field, reason } => write!(f, "field '{}': domain conversion failed: {}", field, reason),
                     }
                 }
             }
@@ -49,7 +52,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
-                BufferTooShort { needed: usize, available: usize },
+                BufferTooShort { field: &'static str, needed: usize, available: usize },
                 /// Claim buffer length does not match ENCODED_LENGTH.
                 ClaimLengthMismatch { expected: usize, actual: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
@@ -65,7 +68,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 /// Checked arithmetic overflow in encoded length computation.
                 EncodedLengthOverflow,
                 /// Domain `try_*` conversion failed (HFT-003).
-                DomainConversionFailed { field: &'static str },
+                DomainConversionFailed { field: &'static str, reason: &'static str },
                 Decode(DecodeError),
             }
 
@@ -73,7 +76,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 #[cold]
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
-                        Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
+                        Self::BufferTooShort { field, needed, available } => write!(f, "buffer too short for {field}: needed {needed}, available {available}"),
                         Self::ClaimLengthMismatch { expected, actual } => write!(f, "claim buffer length mismatch: expected {}, got {}", expected, actual),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::FixedArrayTooLong { field, max_length, actual } => write!(f, "fixed array too long for field {}: max {}, actual {}", field, max_length, actual),
@@ -82,7 +85,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
                         Self::GroupCountOverflow { maximum, actual } => write!(f, "group count overflow: max {maximum}, actual {actual}"),
                         Self::EncodedLengthOverflow => write!(f, "encoded length computation overflowed"),
-                        Self::DomainConversionFailed { field } => write!(f, "domain conversion failed for field {field}"),
+                        Self::DomainConversionFailed { field, reason } => write!(f, "domain conversion failed for field {field}: {reason}"),
                         Self::Decode(e) => write!(f, "decode error: {e}"),
                     }
                 }
@@ -765,10 +768,11 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 }
             }
 
-            impl From<#name_ident> for bool {
+            impl TryFrom<#name_ident> for bool {
+                type Error = ();
                 #[inline]
-                fn from(val: #name_ident) -> bool {
-                    val as #r_type_ty != 0
+                fn try_from(val: #name_ident) -> Result<Self, Self::Error> {
+                    val.as_bool().ok_or(())
                 }
             }
         }
@@ -783,8 +787,8 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             /// Returns `Some(true)` / `Some(false)` for the valid boolean
             /// values. Returns `None` for `NullVal` or any unknown raw
             /// discriminant — the SBE boolean wire type is tri-state
-            /// (F, T, null). Prefer this over the infallible `From`
-            /// conversion, which collapses `NullVal` to `true`.
+            /// (F, T, null). Prefer this (or `TryFrom`) over treating the
+            /// raw discriminant as a Rust `bool`.
             #[inline]
             pub const fn as_bool(self) -> Option<bool> {
                 match self {
@@ -1973,39 +1977,15 @@ pub(crate) fn generate_any_message(
                     }
                 }
 
-                /// Private zero-check dispatch core (HFT-008 keep=false).
-                ///
-                /// # Safety
-                /// Header and the version-readable fixed extent of the selected
-                /// template must be fully in-bounds. Dynamic tails remain checked.
+                /// Trusted multi-template dispatch. Same checks as
+                /// [`Self::try_decode`]; prefer `try_decode` at untrusted
+                /// boundaries. Dynamic tails remain checked on consume.
                 #[inline]
                 pub fn decode(
                     buf: &'a [u8],
                     pos: usize,
                 ) -> Result<Self, sbe_rt::DecodeError> {
-                    let header_bytes = unsafe { read_bytes_unchecked::<#header_size_lit>(buf, pos) };
-                    let header = #header_type_ident(header_bytes);
-                    let template_id = sbe_rt::checked_header_u16(
-                        "templateId",
-                        header.#ti_ident() as u64,
-                    )?;
-                    let schema_id = sbe_rt::checked_header_u16(
-                        "schemaId",
-                        header.#si_ident() as u64,
-                    )?;
-                    let version = sbe_rt::checked_header_u16(
-                        "version",
-                        header.#vr_ident() as u64,
-                    )?;
-                    let block_length = sbe_rt::checked_header_usize(
-                        "blockLength",
-                        header.#bl_ident() as u64,
-                    )?;
-                    #schema_id_validation
-                    match template_id {
-                        #decode_arms_unchecked
-                        _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),
-                    }
+                    Self::try_decode(buf, pos)
                 }
             }
         });
@@ -2169,7 +2149,8 @@ pub(crate) fn generate_any_message(
                     // `len` is header-inclusive; copy the full frame, not body-only.
                     if len > buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                            needed: len,
+                                field: "AnyMessage::encode",
+                                needed: len,
                             available: buf.len(),
                         });
                     }
@@ -2189,7 +2170,8 @@ pub(crate) fn generate_any_message(
                         Self::Unknown { payload, .. } => {
                             if payload.len() > buf.len() {
                                 return Err(sbe_rt::EncodeError::BufferTooShort {
-                                    needed: payload.len(),
+                                field: "AnyMessage::encode",
+                                needed: payload.len(),
                                     available: buf.len(),
                                 });
                             }
@@ -2231,15 +2213,13 @@ pub(crate) fn generate_any_message(
 
                 /// Called for unknown template IDs (not in this schema).
                 /// `header` is the parsed schema-declared MessageHeader; `payload` is
-                /// the full frame (header + body). Default returns `unimplemented!()`.
+                /// the full frame (header + body). Must be implemented — there is no
+                /// panicking default (unknown templates are policy, not a crash).
                 fn visit_unknown(
                     &mut self,
                     header: &#header_type_ident,
                     payload: &[u8],
-                ) -> Self::Output {
-                    unimplemented!("unknown template id {} in schema {}",
-                        header.#ti_ident(), stringify!(#schema_name))
-                }
+                ) -> Self::Output;
             }
 
             impl<'a> AnyMessage<'a> {

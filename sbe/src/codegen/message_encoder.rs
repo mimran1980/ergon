@@ -313,6 +313,7 @@ pub(crate) fn generate_message_encoder(
         #[inline(never)]
         fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
             sbe_rt::EncodeError::BufferTooShort {
+                field: "message header+body",
                 needed,
                 available: buf.len().saturating_sub(pos),
             }
@@ -322,9 +323,11 @@ pub(crate) fn generate_message_encoder(
     // `CarEncoder::wrap_and_apply_header` needs no turbofish (HFT-001).
     impl_consts.extend(cold_check);
 
-    // Unsuffixed names are the safe checked `Result` lane. Zero-check cores are
-    // module-private `unsafe fn *_unchecked` until an HFT-008 keep=true decision
-    // re-publishes them (docs/evidence/unchecked-keep-manifest.json).
+    // Three-tier constructors:
+    //   try_*        — safe, returns Result on short buffers
+    //   bare name    — safe, panics on short buffers (extent proved before
+    //                  unchecked field setters)
+    //   *_unchecked  — unsafe, caller proves HEADER + fixed body extent
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with one bounds/overflow check.
         /// Does **not** write the message header (`HeaderAbsent`).
@@ -342,26 +345,20 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(Self::wrap(buf, msg_offset))
+            Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
         }
 
-        /// Trusted body-only wrap — skips capacity validation. The encoder's
-        /// field setters use slice indexing, so an undersized buffer will
-        /// **panic** rather than invoke UB.
+        /// Trusted body-only wrap. Proves header + fixed-body extent then
+        /// constructs; **panics** if the buffer is too short. Field setters
+        /// use unchecked writes justified by that proof.
         ///
-        /// Prefer [`Self::try_wrap`] at trust boundaries.
+        /// Prefer [`Self::try_wrap`] at untrusted boundaries.
         #[inline]
         pub fn wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-            let body_pos = msg_offset + #header_size_lit;
-            #name_encoder_ident {
-                buf,
-                msg_offset,
-                pos: body_pos + #block_length_lit,
-                _header: core::marker::PhantomData,
-            }
+            Self::try_wrap(buf, msg_offset).unwrap_or_else(|e| panic!("{e}"))
         }
 
         /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
@@ -402,30 +399,22 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(Self::wrap_and_apply_header(buf, pos))
+            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
         }
 
-        /// Trusted full-frame wrap + header — skips capacity validation.
-        /// The header write uses slice indexing, so an undersized buffer will
-        /// **panic** rather than invoke UB.
+        /// Trusted full-frame wrap + header. Proves header + fixed-body extent
+        /// then writes the header; **panics** if the buffer is too short.
+        /// Field setters use unchecked writes justified by that proof.
         ///
-        /// Prefer [`Self::try_wrap_and_apply_header`] at trust boundaries.
-        /// Call [`Self::wrap_and_apply_header_unchecked`] if you have proven
-        /// the buffer is large enough and want to skip even the panic machinery.
+        /// Prefer [`Self::try_wrap_and_apply_header`] at untrusted boundaries.
+        /// Call [`Self::wrap_and_apply_header_unchecked`] only with a proven
+        /// extent when even panic machinery must be avoided.
         #[inline]
         pub fn wrap_and_apply_header(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            buf[pos..pos + #header_size_lit]
-                .copy_from_slice(&Self::HEADER_TEMPLATE);
-            let body_pos = pos + #header_size_lit;
-            #name_encoder_ident {
-                buf,
-                msg_offset: pos,
-                pos: body_pos + #block_length_lit,
-                _header: core::marker::PhantomData,
-            }
+            Self::try_wrap_and_apply_header(buf, pos).unwrap_or_else(|e| panic!("{e}"))
         }
 
         /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
@@ -880,27 +869,50 @@ pub(crate) fn generate_message_encoder(
 
     // ── Metadata facet ──────────────────────────────────────────────────
     let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
+    // Complete-sounding `as_bytes_with_header` only when there are no tails;
+    // otherwise this stage is fixed-block only and must not look like a frame.
+    let meta_bytes = if total_tail == 0 {
+        quote::quote! {
+            /// Message body bytes written so far (header exclusive).
+            #[inline]
+            pub fn as_body_bytes(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+            }
+            /// Header-inclusive frame bytes (message is fixed-only — complete).
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+            }
+        }
+    } else {
+        quote::quote! {
+            /// Fixed-block body bytes only (groups/var-data not yet written).
+            /// For a complete frame use the terminal stage's
+            /// `as_bytes_with_header`.
+            #[inline]
+            pub fn as_fixed_body_bytes(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+            }
+            /// Header + fixed block only — **not** a complete SBE message when
+            /// groups or var-data remain. Prefer the complete stage's
+            /// `as_bytes_with_header`.
+            #[inline]
+            pub fn as_fixed_region_with_header(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+            }
+        }
+    };
     ts.extend(quote::quote! {
-        /// Buffer-placement and wire-frame metadata. Holds a reference to the
-        /// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
-        /// `as_bytes_with_header`, `into_remaining_mut`) live here so no
-        /// schema field can collide with them.
+        /// Buffer-placement metadata. Holds a reference to the parent encoder
+        /// — zero-copy. Utility methods live here so no schema field can
+        /// collide with them.
         #[derive(Clone, Copy)]
         pub struct #enc_metadata_ident<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
             encoder: &'m #name_encoder_ident<'a, H>,
         }
 
         impl<'m, 'a, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, 'a, H> {
-            /// Message body bytes (header exclusive).
-            #[inline]
-            pub fn as_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
-            }
-            /// Header-inclusive frame bytes.
-            #[inline]
-            pub fn as_bytes_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
-            }
+            #meta_bytes
             /// Absolute offset of this message within the original buffer.
             #[inline]
             pub fn message_offset(&self) -> usize {
@@ -949,9 +961,9 @@ pub(crate) fn generate_message_encoder(
 
             ts.extend(quote::quote! {
                 impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
-                    /// Encode this group with a known count up front. Closure may
-                    /// return `()` or `Result<(), E>` (via
-                    /// Closures return `GroupResult`; `?` just works. a
+                    /// Encode this group with a known count up front.
+                    /// Closures return [`sbe_rt::GroupResult`]
+                    /// (`Result<(), EncodeError>`); `?` works — there is no
                     /// separate `try_*` method name.
                     #[inline]
                     #[must_use]
@@ -965,6 +977,7 @@ pub(crate) fn generate_message_encoder(
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }
@@ -1012,6 +1025,7 @@ pub(crate) fn generate_message_encoder(
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }
@@ -1090,6 +1104,7 @@ pub(crate) fn generate_message_encoder(
                 let needed = #prefix_size_lit + data.len();
                 if self.pos + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: stringify!(#vd_snake),
                         needed,
                         available: self.buf.len().saturating_sub(self.pos),
                     });
@@ -1169,6 +1184,7 @@ pub(crate) fn generate_message_encoder(
                         let needed = #prefix_size_lit + exact_len;
                         if self.pos + needed > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#vd_snake),
                                 needed,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }.into());

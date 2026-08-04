@@ -294,13 +294,19 @@ pub(crate) fn generate_domain_recursive(
                             let field_lit = syn::LitStr::new(&f_snake, span);
                             from_exprs.push(quote::quote! {
                                 #f_ident: Some(dec.#try_g().map_err(|_| {
-                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                                 })?)
                             });
                             encode_stmts.push(quote::quote! {
                                 if let Some(v) = self.#f_ident {
                                     enc.#enc_setter(v).map_err(|_| {
-                                        sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                        sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                     })?;
                                 }
                             });
@@ -327,12 +333,18 @@ pub(crate) fn generate_domain_recursive(
                             let field_lit = syn::LitStr::new(&f_snake, span);
                             from_exprs.push(quote::quote! {
                                 #f_ident: dec.#try_g().map_err(|_| {
-                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                                 })?
                             });
                             encode_stmts.push(quote::quote! {
                                 enc.#enc_setter(self.#f_ident).map_err(|_| {
-                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                 })?;
                             });
                         } else {
@@ -386,13 +398,19 @@ pub(crate) fn generate_domain_recursive(
                         let field_lit = syn::LitStr::new(&f_snake, span);
                         from_exprs.push(quote::quote! {
                             #f_ident: Some(dec.#try_g().map_err(|_| {
-                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                             })?)
                         });
                         encode_stmts.push(quote::quote! {
                             if let Some(v) = self.#f_ident {
                                 enc.#enc_setter(v).map_err(|_| {
-                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                 })?;
                             }
                         });
@@ -408,12 +426,18 @@ pub(crate) fn generate_domain_recursive(
                         let field_lit = syn::LitStr::new(&f_snake, span);
                         from_exprs.push(quote::quote! {
                             #f_ident: dec.#try_g().map_err(|_| {
-                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                             })?
                         });
                         encode_stmts.push(quote::quote! {
                             enc.#enc_setter(self.#f_ident).map_err(|_| {
-                                sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                             })?;
                         });
                     } else {
@@ -628,9 +652,10 @@ pub(crate) fn generate_domain_recursive(
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);
         match domain_var_data {
-            crate::config::DomainVarData::LossyStrings => {
+            #[allow(deprecated)]
+            crate::config::DomainVarData::Strings
+            | crate::config::DomainVarData::LossyStrings => {
                 // HFT-003: never manufacture empty/default for invalid UTF-8.
-                // Name retained for API stability; behaviour is strict.
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
                 from_exprs.push(quote::quote! {
@@ -779,8 +804,10 @@ pub(crate) fn generate_domain_recursive(
         }
         // Append synthetic field entries for var-data
         for vd in var_data {
-            let vd_ty = match domain_var_data {
+            let vd_ty = match domain_var_data.canonical() {
                 crate::config::DomainVarData::Bytes => "Vec<u8>",
+                crate::config::DomainVarData::Strings => "String",
+                #[allow(deprecated)]
                 crate::config::DomainVarData::LossyStrings => "String",
             };
             ctx_fields.push(crate::FieldInfo {

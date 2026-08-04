@@ -169,7 +169,7 @@ pub(crate) fn generate_group_decoder(
                 self.count
             }
 
-            /// Private zero-check dimension wrap after the caller has proven
+            /// Dimension wrap after the caller has proven
             /// the dimension header (and, for fixed groups, the full entry
             /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
             ///
@@ -321,6 +321,7 @@ pub(crate) fn generate_group_decoder(
                 /// One bounds check for the whole batch — faster than
                 /// iterating with [`Iterator::next`] when materialising
                 /// the entire group (DTO construction, snapshots).
+                #[inline]
                 pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
                     let mut out = Vec::new();
                     self.bulk_decode_into(&mut out)?;

@@ -90,9 +90,11 @@ impl ConversionSelector {
 /// | Variant | DTO field | Invalid UTF-8 on materialise |
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **`InvalidUtf8` error** (0.1.10; never invents empty) |
+/// | [`Strings`](DomainVarData::Strings) | `String` | **`InvalidUtf8` error** (strict; never invents empty) |
+/// | [`LossyStrings`](DomainVarData::LossyStrings) | same as `Strings` | **deprecated alias** |
 ///
-/// Name historical; 0.1.10 materialisation is strict (HFT-003).
+/// Prefer [`Strings`]; `LossyStrings` is a historical name kept as a deprecated
+/// alias through 0.x (materialisation has been strict since 0.1.10).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
@@ -101,7 +103,22 @@ pub enum DomainVarData {
     /// Text-friendly var-data (`String`). Invalid UTF-8 returns
     /// `DecodeError::InvalidUtf8` (strict; HFT-003). Prefer
     /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
+    Strings,
+    /// Deprecated alias for [`Strings`] (name is historical; behaviour is strict).
+    #[deprecated(since = "0.1.13", note = "renamed to DomainVarData::Strings (strict UTF-8)")]
     LossyStrings,
+}
+
+impl DomainVarData {
+    /// Canonical form (`LossyStrings` → `Strings`).
+    #[must_use]
+    pub const fn canonical(self) -> Self {
+        match self {
+            #[allow(deprecated)]
+            Self::LossyStrings => Self::Strings,
+            other => other,
+        }
+    }
 }
 
 /// Generated-code surface presets (HFT-009).
@@ -520,12 +537,12 @@ impl GenerationConfig {
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
     /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
-    /// | [`DomainVarData::LossyStrings`] | `String` | `InvalidUtf8` error (strict; HFT-003) |
+    /// | [`DomainVarData::Strings`] | `String` | `InvalidUtf8` error (strict; HFT-003) |
     ///
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};
     /// let text = GenerationConfig::new("msgs")
-    ///     .with_domain_objects(DomainVarData::LossyStrings);
+    ///     .with_domain_objects(DomainVarData::Strings);
     /// let bytes = GenerationConfig::new("msgs")
     ///     .with_domain_objects(DomainVarData::Bytes);
     /// let _ = (text, bytes);
@@ -533,12 +550,13 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// `DomainVarData::LossyStrings` → `manufacturer: String`.
+    /// `DomainVarData::Strings` → `manufacturer: String`.
     /// `DomainVarData::Bytes` → `manufacturer: Vec<u8>`.
     ///
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
     pub fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
+        let var_data = var_data.canonical();
         self.domain_objects = true;
         self.domain_var_data = var_data;
         self
@@ -821,9 +839,12 @@ mod tests {
 
     #[test]
     fn with_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
-        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::LossyStrings);
+        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::Strings);
         assert!(text.domain_objects_enabled());
-        assert_eq!(text.domain_var_data, DomainVarData::LossyStrings);
+        assert_eq!(text.domain_var_data, DomainVarData::Strings);
+        #[allow(deprecated)]
+        let alias = GenerationConfig::new("m").with_domain_objects(DomainVarData::LossyStrings);
+        assert_eq!(alias.domain_var_data, DomainVarData::Strings);
         let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);

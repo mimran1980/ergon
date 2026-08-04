@@ -253,6 +253,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
             sbe_rt::EncodeError::BufferTooShort {
                 needed: 28,
                 available: 27,
+                ..
             }
         ));
 

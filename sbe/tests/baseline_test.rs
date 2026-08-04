@@ -1124,8 +1124,12 @@ fn generated_code_has_boolean_from_impls() -> Result<(), Box<dyn std::error::Err
         "BooleanType must implement From<bool>"
     );
     assert!(
-        src.contains("impl From<BooleanType> for bool"),
-        "BooleanType must implement From<BooleanType> for bool"
+        src.contains("impl TryFrom<BooleanType> for bool"),
+        "BooleanType must implement TryFrom (NullVal is not a Rust bool)"
+    );
+    assert!(
+        !src.contains("impl From<BooleanType> for bool"),
+        "infallible From<BooleanType> for bool must not collapse NullVal"
     );
 
     // From<bool> maps true → Self::T and false → Self::F
@@ -1357,9 +1361,9 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         "#,
     );
 
-    // Also verify From<bool> conversion compiles and works
+    // Also verify bool conversions compile
     assert!(src.contains("impl From<bool> for BooleanType"));
-    assert!(src.contains("impl From<BooleanType> for bool"));
+    assert!(src.contains("impl TryFrom<BooleanType> for bool"));
     Ok(())
 }
 
@@ -1587,7 +1591,7 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
         let mut short_header = [0u8; 7];
         assert!(matches!(
             CarEncoder::try_wrap_and_apply_header(&mut short_header, 0),
-            Err(sbe_rt::EncodeError::BufferTooShort { needed, available: 7 })
+            Err(sbe_rt::EncodeError::BufferTooShort { needed, available: 7, .. })
             if needed == total_needed
         ));
 

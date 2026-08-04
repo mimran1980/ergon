@@ -6,28 +6,26 @@ provides a **three-tier** constructor API, ordered from safest to fastest:
 | Tier | Prefix | Behaviour on bad buffer | Use case |
 |------|--------|------------------------|----------|
 | **Checked** | `try_{wrap,decode,…}` | Returns `Result::Err` | Untrusted input, process boundaries |
-| **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** (slice index), safe | Known-good buffers, benchmarks |
+| **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** after the same extent proof | Known-good buffers, benchmarks |
 | **Unchecked** | `unsafe fn *_unchecked` | **UB** (raw pointer ops) | Proven-tight HFT loops |
 
-**The trusted tier (bare name) uses safe Rust primitives.** `wrap_and_apply_header`
-writes the header with `copy_from_slice`; `decode` reads the header with
-`read_bytes`. Both are safe — a mis-sized buffer causes a **panic**, not
-undefined behaviour. LLVM elides the bounds check for fixed-size stack buffers,
-so the runtime cost is zero in practice.
+**The trusted tier is safe Rust.** Bare constructors run the same header +
+fixed-body extent proof as `try_*`, then **panic** on failure. After that proof,
+field accessors/setters use unchecked loads/stores (justified by the
+constructor). Dynamic tails still check on consume.
 
-The `unsafe fn *_unchecked` variants exist for the extreme case where the panic
-machinery is measurable on the critical path and the caller has proven the
-buffer layout independently. They use the same raw-pointer operations that the
-trusted tier replaced.
+The `unsafe fn *_unchecked` variants skip the extent proof entirely — only for
+the case where panic machinery is measurable and the caller has proven the
+layout independently.
 
 ## Encoder entry points
 
 | Entry | Return | Behaviour |
 |-------|--------|-----------|
 | `Encoder::try_wrap(buf, offset)` | `Result<Encoder, EncodeError>` | Validates capacity, returns `Err` |
-| `Encoder::wrap(buf, offset)` | `Encoder` (body-only) | Panics on OOB setter access |
+| `Encoder::wrap(buf, offset)` | `Encoder` (body-only) | Panics if header+fixed body do not fit |
 | `Encoder::try_wrap_and_apply_header(buf, pos)` | `Result<Encoder, EncodeError>` | Validates capacity + writes header, returns `Err` |
-| `Encoder::wrap_and_apply_header(buf, pos)` | `Encoder` (header written) | Panics on OOB header write |
+| `Encoder::wrap_and_apply_header(buf, pos)` | `Encoder` (header written) | Panics if header+fixed body do not fit |
 | `unsafe fn Encoder::wrap_unchecked(buf, offset)` | `Encoder` (body-only) | UB on OOB — raw pointer setters |
 | `unsafe fn Encoder::wrap_and_apply_header_unchecked(buf, pos)` | `Encoder` (header written) | UB on OOB — `copy_nonoverlapping` header |
 
@@ -37,10 +35,10 @@ trusted tier replaced.
 |-------|--------|-----------|
 | `Decoder::try_wrap(buf, offset, bl, ver)` | `Result<Decoder, DecodeError>` | Validates body extent, returns `Err` |
 | `Decoder::try_decode(buf, pos)` | `Result<Decoder, DecodeError>` | Header + template/schema + version-aware fixed extent |
-| `Decoder::wrap(buf, offset, bl, ver)` | `Decoder` | Panics on OOB accessor access |
-| `Decoder::decode(buf, pos)` | `Result<Decoder, DecodeError>` | Validates header identity, panics on OOB header read |
+| `Decoder::wrap(buf, offset, bl, ver)` | `Decoder` | Panics if version-aware fixed body does not fit |
+| `Decoder::decode(buf, pos)` | `Result<Decoder, DecodeError>` | Header identity + extent proof; panics if short, `Err` on wrong template/schema |
 | `unsafe fn Decoder::wrap_unchecked(buf, offset, bl, ver)` | `Decoder` | UB on OOB — raw pointer accessors |
-| `unsafe fn Decoder::decode_unchecked(buf, pos)` | `Result<Decoder, DecodeError>` | Validates header identity, UB on OOB header read (`read_bytes_unchecked`) |
+| `unsafe fn Decoder::decode_unchecked(buf, pos)` | `Result<Decoder, DecodeError>` | Header identity only; UB on OOB header/body (`read_bytes_unchecked`) |
 
 ## Migration from 0.1.10
 

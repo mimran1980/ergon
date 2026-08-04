@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Breaking
+- **Safe constructors prove fixed extent.** Bare `wrap` / `wrap_and_apply_header`
+  / `decode` run the same header+fixed-body proof as `try_*` and **panic** if
+  short. Field accessors remain unchecked after that proof. Only
+  `unsafe fn *_unchecked` skips the proof (UB on OOB). `AnyMessage::decode`
+  matches `try_decode` (no longer uses unchecked header reads in safe code).
+- **`From<BooleanType> for bool` removed.** Use `as_bool()` / `try_*_bool` /
+  `TryFrom` — `NullVal` is not a Rust `bool`.
+- **`EncodeError::BufferTooShort` carries `field`.** Exhaustive matches need
+  the new field (or `..`).
+- **`DomainConversionFailed` carries `reason`.** Bool null/unknown uses
+  `InvalidBoolean` instead.
+- **`MessageVisitor::visit_unknown` has no panicking default** — implementors
+  must handle unknown templates.
+- Encoder metadata on messages with tails: complete-sounding
+  `as_bytes_with_header` replaced by `as_fixed_region_with_header` /
+  `as_fixed_body_bytes` on the initial stage.
+
+### Added
+- `DomainVarData::Strings` (strict UTF-8). `LossyStrings` is a deprecated alias.
+- Restored `docs/SBE_COMPATIBILITY.md` and constructor migration notes.
+- `#[inline]` on `bulk_decode` convenience wrapper.
+
+### Fixed
+- Truncated `# Safety` docs and garbled group-encode rustdoc.
+- Trust-boundary docs/README aligned to three-tier constructors.
+- `decode_unchecked` uses unchecked header reads as documented.
+
 ## [0.1.12] — 2026-08-04
 
 ### Breaking

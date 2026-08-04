@@ -615,7 +615,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
-        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::LossyStrings),
+        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::Strings),
     )
     .generate(&schema)?
     .modules()

@@ -27,8 +27,10 @@ pub mod sbe_rt {
         FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
         InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
         InvalidAscii { field: &'static str },
+        /// Boolean wire enum was `NullVal` or an unknown discriminant.
+        InvalidBoolean { field: &'static str },
         /// Domain `try_*` conversion failed (HFT-003).
-        DomainConversionFailed { field: &'static str },
+        DomainConversionFailed { field: &'static str, reason: &'static str },
     }
     impl core::fmt::Display for DecodeError {
         #[cold]
@@ -84,8 +86,14 @@ pub mod sbe_rt {
                 Self::InvalidAscii { field } => {
                     write!(f, "field '{}': invalid ASCII", field)
                 }
-                Self::DomainConversionFailed { field } => {
-                    write!(f, "field '{}': domain conversion failed", field)
+                Self::InvalidBoolean { field } => {
+                    write!(
+                        f, "field '{}': invalid boolean (null or unknown discriminant)",
+                        field
+                    )
+                }
+                Self::DomainConversionFailed { field, reason } => {
+                    write!(f, "field '{}': domain conversion failed: {}", field, reason)
                 }
             }
         }
@@ -93,7 +101,7 @@ pub mod sbe_rt {
     impl core::error::Error for DecodeError {}
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
-        BufferTooShort { needed: usize, available: usize },
+        BufferTooShort { field: &'static str, needed: usize, available: usize },
         /// Claim buffer length does not match ENCODED_LENGTH.
         ClaimLengthMismatch { expected: usize, actual: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
@@ -109,16 +117,17 @@ pub mod sbe_rt {
         /// Checked arithmetic overflow in encoded length computation.
         EncodedLengthOverflow,
         /// Domain `try_*` conversion failed (HFT-003).
-        DomainConversionFailed { field: &'static str },
+        DomainConversionFailed { field: &'static str, reason: &'static str },
         Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
         #[cold]
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
-                Self::BufferTooShort { needed, available } => {
+                Self::BufferTooShort { field, needed, available } => {
                     write!(
-                        f, "buffer too short: needed {}, available {}", needed, available
+                        f,
+                        "buffer too short for {field}: needed {needed}, available {available}"
                     )
                 }
                 Self::ClaimLengthMismatch { expected, actual } => {
@@ -162,8 +171,8 @@ pub mod sbe_rt {
                 Self::EncodedLengthOverflow => {
                     write!(f, "encoded length computation overflowed")
                 }
-                Self::DomainConversionFailed { field } => {
-                    write!(f, "domain conversion failed for field {field}")
+                Self::DomainConversionFailed { field, reason } => {
+                    write!(f, "domain conversion failed for field {field}: {reason}")
                 }
                 Self::Decode(e) => write!(f, "decode error: {e}"),
             }
@@ -364,8 +373,8 @@ impl BooleanType {
     /// Returns `Some(true)` / `Some(false)` for the valid boolean
     /// values. Returns `None` for `NullVal` or any unknown raw
     /// discriminant — the SBE boolean wire type is tri-state
-    /// (F, T, null). Prefer this over the infallible `From`
-    /// conversion, which collapses `NullVal` to `true`.
+    /// (F, T, null). Prefer this (or `TryFrom`) over treating the
+    /// raw discriminant as a Rust `bool`.
     #[inline]
     pub const fn as_bool(self) -> Option<bool> {
         match self {
@@ -413,10 +422,11 @@ impl From<bool> for BooleanType {
         if val { Self::T } else { Self::F }
     }
 }
-impl From<BooleanType> for bool {
+impl TryFrom<BooleanType> for bool {
+    type Error = ();
     #[inline]
-    fn from(val: BooleanType) -> bool {
-        val as u8 != 0
+    fn try_from(val: BooleanType) -> Result<Self, Self::Error> {
+        val.as_bool().ok_or(())
     }
 }
 #[repr(u8)]
@@ -1246,13 +1256,20 @@ impl<'a> CarDecoder<'a> {
                 available: buf.len().saturating_sub(message_offset),
             });
         }
-        Ok(Self::wrap(buf, message_offset, acting_block_length, acting_version))
+        Ok(unsafe {
+            Self::wrap_unchecked(
+                buf,
+                message_offset,
+                acting_block_length,
+                acting_version,
+            )
+        })
     }
-    /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
+    /// Trusted external-metadata wrap. Proves version-aware fixed extent
+    /// then constructs; **panics** if the buffer is too short. Field
+    /// accessors use unchecked reads justified by that proof.
     ///
-    /// # Safety
-    /// `message_offset + HEADER_LENGTH + max(acting_block_length,
-    /// must be ≤ `buf.len()`.
+    /// Prefer [`Self::try_wrap`] at untrusted boundaries.
     #[inline]
     pub fn wrap(
         buf: &'a [u8],
@@ -1260,18 +1277,11 @@ impl<'a> CarDecoder<'a> {
         acting_block_length: usize,
         acting_version: u16,
     ) -> Self {
-        let body_pos = message_offset + Self::HEADER_LENGTH;
-        Self {
-            buf,
-            pos: body_pos,
-            acting_block_length,
-            acting_version,
-        }
+        Self::try_wrap(buf, message_offset, acting_block_length, acting_version)
+            .unwrap_or_else(|e| panic!("{e}"))
     }
     /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
-    /// Only for proven-tight HFT loops. Identical struct to [`Self::wrap`]
-    /// but the field accessors use raw-pointers; the constructor is the
-    /// same, so the UB comes from calling an accessor on a mis-sized buffer.
+    /// Only for proven-tight HFT loops after an external extent proof.
     ///
     /// # Safety
     /// `message_offset + HEADER_LENGTH + max(acting_block_length,
@@ -1339,11 +1349,12 @@ impl<'a> CarDecoder<'a> {
         )?;
         Self::try_wrap(buf, pos, acting_block_length, acting_version)
     }
-    /// Private zero-check framed decode core (HFT-008 keep=false).
+    /// Trusted framed decode. Validates template/schema identity and
+    /// proves version-aware fixed-body extent; **panics** if the
+    /// header or body region is too short. Protocol mismatches
+    /// (`WrongTemplate` / `WrongSchema`) still return `Err`.
     ///
-    /// # Safety
-    /// Header and version-readable fixed body for this template must
-    /// be fully in-bounds at `pos`.
+    /// Prefer [`Self::try_decode`] at untrusted boundaries.
     #[inline]
     pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
@@ -1391,7 +1402,7 @@ impl<'a> CarDecoder<'a> {
         buf: &'a [u8],
         pos: usize,
     ) -> Result<Self, sbe_rt::DecodeError> {
-        let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
+        let header_bytes: [u8; 8] = unsafe { read_bytes_unchecked::<8>(buf, pos) };
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
             "templateId",
@@ -1502,7 +1513,7 @@ impl<'a> CarDecoder<'a> {
     pub fn try_available_bool(&self) -> Result<bool, sbe_rt::DecodeError> {
         self.available()
             .as_bool()
-            .ok_or(sbe_rt::DecodeError::DomainConversionFailed {
+            .ok_or(sbe_rt::DecodeError::InvalidBoolean {
                 field: stringify!(available),
             })
     }
@@ -2336,7 +2347,7 @@ impl<'a> FuelFiguresDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    /// Private zero-check dimension wrap after the caller has proven
+    /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
     /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
@@ -2927,7 +2938,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    /// Private zero-check dimension wrap after the caller has proven
+    /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
     /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
@@ -3311,7 +3322,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     pub const fn remaining(&self) -> usize {
         self.count
     }
-    /// Private zero-check dimension wrap after the caller has proven
+    /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
     /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
@@ -3411,6 +3422,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     /// One bounds check for the whole batch — faster than
     /// iterating with [`Iterator::next`] when materialising
     /// the entire group (DTO construction, snapshots).
+    #[inline]
     pub fn bulk_decode(
         &mut self,
     ) -> Result<Vec<PerformanceFiguresAccelerationEntry>, sbe_rt::DecodeError> {
@@ -5077,6 +5089,7 @@ impl<'a> CarEncoder<'a> {
     #[inline(never)]
     fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
         sbe_rt::EncodeError::BufferTooShort {
+            field: "message header+body",
             needed,
             available: buf.len().saturating_sub(pos),
         }
@@ -5096,25 +5109,19 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(msg_offset) {
             return Err(Self::buffer_too_short(buf, msg_offset, 53));
         }
-        Ok(Self::wrap(buf, msg_offset))
+        Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
     }
-    /// Trusted body-only wrap — skips capacity validation. The encoder's
-    /// field setters use slice indexing, so an undersized buffer will
-    /// **panic** rather than invoke UB.
+    /// Trusted body-only wrap. Proves header + fixed-body extent then
+    /// constructs; **panics** if the buffer is too short. Field setters
+    /// use unchecked writes justified by that proof.
     ///
-    /// Prefer [`Self::try_wrap`] at trust boundaries.
+    /// Prefer [`Self::try_wrap`] at untrusted boundaries.
     #[inline]
     pub fn wrap(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
-        let body_pos = msg_offset + 8;
-        CarEncoder {
-            buf,
-            msg_offset,
-            pos: body_pos + 45,
-            _header: core::marker::PhantomData,
-        }
+        Self::try_wrap(buf, msg_offset).unwrap_or_else(|e| panic!("{e}"))
     }
     /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
     /// Only for proven-tight HFT loops where the panic machinery is
@@ -5149,28 +5156,21 @@ impl<'a> CarEncoder<'a> {
         if 53 > buf.len().saturating_sub(pos) {
             return Err(Self::buffer_too_short(buf, pos, 53));
         }
-        Ok(Self::wrap_and_apply_header(buf, pos))
+        Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
     }
-    /// Trusted full-frame wrap + header — skips capacity validation.
-    /// The header write uses slice indexing, so an undersized buffer will
-    /// **panic** rather than invoke UB.
+    /// Trusted full-frame wrap + header. Proves header + fixed-body extent
+    /// then writes the header; **panics** if the buffer is too short.
+    /// Field setters use unchecked writes justified by that proof.
     ///
-    /// Prefer [`Self::try_wrap_and_apply_header`] at trust boundaries.
-    /// Call [`Self::wrap_and_apply_header_unchecked`] if you have proven
-    /// the buffer is large enough and want to skip even the panic machinery.
+    /// Prefer [`Self::try_wrap_and_apply_header`] at untrusted boundaries.
+    /// Call [`Self::wrap_and_apply_header_unchecked`] only with a proven
+    /// extent when even panic machinery must be avoided.
     #[inline]
     pub fn wrap_and_apply_header(
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
-        buf[pos..pos + 8].copy_from_slice(&Self::HEADER_TEMPLATE);
-        let body_pos = pos + 8;
-        CarEncoder {
-            buf,
-            msg_offset: pos,
-            pos: body_pos + 45,
-            _header: core::marker::PhantomData,
-        }
+        Self::try_wrap_and_apply_header(buf, pos).unwrap_or_else(|e| panic!("{e}"))
     }
     /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
     /// on OOB. Only for proven-tight HFT loops.
@@ -5490,23 +5490,26 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
         }
     }
 }
-/// Buffer-placement and wire-frame metadata. Holds a reference to the
-/// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
-/// `as_bytes_with_header`, `into_remaining_mut`) live here so no
-/// schema field can collide with them.
+/// Buffer-placement metadata. Holds a reference to the parent encoder
+/// — zero-copy. Utility methods live here so no schema field can
+/// collide with them.
 #[derive(Clone, Copy)]
 pub struct CarEncoderMetadata<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     encoder: &'m CarEncoder<'a, H>,
 }
 impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
-    /// Message body bytes (header exclusive).
+    /// Fixed-block body bytes only (groups/var-data not yet written).
+    /// For a complete frame use the terminal stage's
+    /// `as_bytes_with_header`.
     #[inline]
-    pub fn as_body_bytes(&self) -> &[u8] {
+    pub fn as_fixed_body_bytes(&self) -> &[u8] {
         &self.encoder.buf[self.encoder.msg_offset + 8..self.encoder.pos]
     }
-    /// Header-inclusive frame bytes.
+    /// Header + fixed block only — **not** a complete SBE message when
+    /// groups or var-data remain. Prefer the complete stage's
+    /// `as_bytes_with_header`.
     #[inline]
-    pub fn as_bytes_with_header(&self) -> &[u8] {
+    pub fn as_fixed_region_with_header(&self) -> &[u8] {
         &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
     }
     /// Absolute offset of this message within the original buffer.
@@ -5528,9 +5531,9 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
-    /// Encode this group with a known count up front. Closure may
-    /// return `()` or `Result<(), E>` (via
-    /// Closures return `GroupResult`; `?` just works. a
+    /// Encode this group with a known count up front.
+    /// Closures return [`sbe_rt::GroupResult`]
+    /// (`Result<(), EncodeError>`); `?` works — there is no
     /// separate `try_*` method name.
     #[inline]
     #[must_use]
@@ -5545,6 +5548,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(fuel_figures),
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -5590,6 +5594,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(fuel_figures),
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -5616,9 +5621,9 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
-    /// Encode this group with a known count up front. Closure may
-    /// return `()` or `Result<(), E>` (via
-    /// Closures return `GroupResult`; `?` just works. a
+    /// Encode this group with a known count up front.
+    /// Closures return [`sbe_rt::GroupResult`]
+    /// (`Result<(), EncodeError>`); `?` works — there is no
     /// separate `try_*` method name.
     #[inline]
     #[must_use]
@@ -5633,6 +5638,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(performance_figures),
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -5678,6 +5684,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(performance_figures),
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -5724,6 +5731,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(manufacturer),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -5756,6 +5764,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(manufacturer),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -5823,6 +5832,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
         if self.pos + needed > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(manufacturer),
                     needed,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -5866,6 +5876,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(model),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -5898,6 +5909,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(model),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -5965,6 +5977,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
         if self.pos + needed > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(model),
                     needed,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6008,6 +6021,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(activation_code),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6040,6 +6054,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: stringify!(activation_code),
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6107,6 +6122,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
         if self.pos + needed > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: stringify!(activation_code),
                     needed,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6213,6 +6229,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
                     needed: block_len,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6252,6 +6269,7 @@ impl<'a> FuelFiguresEncoder<'a> {
             .unwrap_or(true)
         {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "group entry",
                 needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6321,6 +6339,7 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
         let needed = 4 + data.len();
         if self.pos + needed > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "group entry",
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6382,6 +6401,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
                     needed: block_len,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6421,6 +6441,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             .unwrap_or(true)
         {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "group entry",
                 needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6480,6 +6501,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6522,6 +6544,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         if self.pos + 4 > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
                     needed: 4,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6594,6 +6617,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         if self.pos + block_len > self.buf.len() {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
                     needed: block_len,
                     available: self.buf.len().saturating_sub(self.pos),
                 }
@@ -6636,6 +6660,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             .unwrap_or(true)
         {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "group entry",
                 needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6681,6 +6706,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "group entry",
                 needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6728,6 +6754,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
         if end > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "encode",
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -7910,49 +7937,12 @@ impl<'a> AnyMessage<'a> {
             }
         }
     }
-    /// Private zero-check dispatch core (HFT-008 keep=false).
-    ///
-    /// # Safety
-    /// Header and the version-readable fixed extent of the selected
-    /// template must be fully in-bounds. Dynamic tails remain checked.
+    /// Trusted multi-template dispatch. Same checks as
+    /// [`Self::try_decode`]; prefer `try_decode` at untrusted
+    /// boundaries. Dynamic tails remain checked on consume.
     #[inline]
     pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-        let header_bytes = unsafe { read_bytes_unchecked::<8>(buf, pos) };
-        let header = MessageHeader(header_bytes);
-        let template_id = sbe_rt::checked_header_u16(
-            "templateId",
-            header.template_id() as u64,
-        )?;
-        let schema_id = sbe_rt::checked_header_u16(
-            "schemaId",
-            header.schema_id() as u64,
-        )?;
-        let version = sbe_rt::checked_header_u16("version", header.version() as u64)?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
-            header.block_length() as u64,
-        )?;
-        if schema_id != 1 {
-            return Err(sbe_rt::DecodeError::WrongSchema {
-                expected: 1,
-                actual: schema_id,
-                expected_name: "baseline",
-            });
-        }
-        match template_id {
-            CarSchema::TEMPLATE_ID => {
-                Ok(
-                    Self::Car(unsafe {
-                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
-                    }),
-                )
-            }
-            _ => {
-                Err(sbe_rt::DecodeError::UnknownTemplateLength {
-                    template_id,
-                })
-            }
-        }
+        Self::try_decode(buf, pos)
     }
 }
 impl<'a> AnyMessage<'a> {
@@ -8061,6 +8051,7 @@ impl<'a> AnyMessage<'a> {
                 let len = d.encoded_length_with_header()?;
                 if len > buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: "AnyMessage::encode",
                         needed: len,
                         available: buf.len(),
                     });
@@ -8072,6 +8063,7 @@ impl<'a> AnyMessage<'a> {
             Self::Unknown { payload, .. } => {
                 if payload.len() > buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: "AnyMessage::encode",
                         needed: payload.len(),
                         available: buf.len(),
                     });
@@ -8087,13 +8079,9 @@ pub trait MessageVisitor {
     fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;
     /// Called for unknown template IDs (not in this schema).
     /// `header` is the parsed schema-declared MessageHeader; `payload` is
-    /// the full frame (header + body). Default returns `unimplemented!()`.
-    fn visit_unknown(&mut self, header: &MessageHeader, payload: &[u8]) -> Self::Output {
-        unimplemented!(
-            "unknown template id {} in schema {}", header.template_id(),
-            stringify!("baseline")
-        )
-    }
+    /// the full frame (header + body). Must be implemented — there is no
+    /// panicking default (unknown templates are policy, not a crash).
+    fn visit_unknown(&mut self, header: &MessageHeader, payload: &[u8]) -> Self::Output;
 }
 impl<'a> AnyMessage<'a> {
     pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {

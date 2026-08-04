@@ -32,7 +32,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(1, |og| {
+                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(1, |og| {
                     og.add_struct(&L3BookBidsOrdersEntry {
                         order_id: 1,
                         quantity: l3_book::Decimal::new(5, 0),
@@ -106,10 +106,10 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .bids(bids.len() as u16, |g| {
             for (_, _, orders) in bids {
                 g.add(|e| {
-                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(orders.len() as u16, |og| {
+                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
                             og.add(|o| {
-                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
+                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(oid)?;
                                 Ok(())
                             })?;
                         }
@@ -123,10 +123,10 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
         .asks(asks.len() as u16, |g| {
             for (_, _, orders) in asks {
                 g.add(|e| {
-                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(orders.len() as u16, |og| {
+                    e.try_price(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(orders.len() as u16, |og| {
                         for (q, oid) in *orders {
                             og.add(|o| {
-                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(oid)?;
+                                o.try_quantity(*q).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" }).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(oid)?;
                                 Ok(())
                             })?;
                         }
@@ -280,13 +280,13 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
         })
         .bids(1, |g| {
             g.add(|e| {
-                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(2, |og| {
+                e.try_price(d(50800)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(15)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(2, |og| {
                     og.add(|o| {
-                        o.try_quantity(d(5)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ORD-1")?;
+                        o.try_quantity(d(5)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ORD-1")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.try_quantity(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ORD-2")?;
+                        o.try_quantity(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ORD-2")?;
                         Ok(())
                     })?;
                     Ok(())
@@ -345,9 +345,9 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(2, |g| {
             g.add(|e| {
-                e.try_price(d(100)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(1, |og| {
+                e.try_price(d(100)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(10)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(1, |og| {
                     og.add(|o| {
-                        o.try_quantity(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ABC")?;
+                        o.try_quantity(d(1)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ABC")?;
                         Ok(())
                     })?;
                     Ok(())
@@ -355,17 +355,17 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })?;
             g.add(|e| {
-                e.try_price(d(200)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price" })?.try_size(d(20)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size" })?.orders(3, |og| {
+                e.try_price(d(200)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "price", reason: "conversion" })?.try_size(d(20)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "size", reason: "conversion" })?.orders(3, |og| {
                     og.add(|o| {
-                        o.try_quantity(d(2)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-AA")?;
+                        o.try_quantity(d(2)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ID-AA")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.try_quantity(d(3)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-BB")?;
+                        o.try_quantity(d(3)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ID-BB")?;
                         Ok(())
                     })?;
                     og.add(|o| {
-                        o.try_quantity(d(4)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity" })?.order_id(b"ID-C")?;
+                        o.try_quantity(d(4)).map_err(|_| sbe_rt::EncodeError::DomainConversionFailed { field: "quantity", reason: "conversion" })?.order_id(b"ID-C")?;
                         Ok(())
                     })?;
                     Ok(())

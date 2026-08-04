@@ -74,10 +74,16 @@ truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
 ## Decode entry
 
 Both ecosystems typically wrap decoders at the **body** for direct field
-access after the header is known. ergon’s `decode` / `try_from` /
-`wrap(buf, message_start, …)` validate at **message start** and return
-`Result`. There is no public `try_wrap*` alias. See
-[Trust boundaries](../feature-tour/trust-boundaries.md).
+access after the header is known. ergon’s entry points take **message start**
+(not sbe-tool’s body offset):
+
+| Need | ergo-sbe |
+|------|----------|
+| Untrusted / network | `try_decode` / `try_wrap` / `try_from` → `Result` |
+| Known-good buffer | bare `decode` / `wrap` (prove extent; panic if short) |
+| Proven-tight HFT | `unsafe fn decode_unchecked` / `wrap_unchecked` |
+
+See [Trust Boundary](../core-concepts/trust-boundary.md).
 
 ## Version handling
 
@@ -97,10 +103,10 @@ reading mixed-version streams.
 
 ## Trust boundary
 
-Safe constructors (`wrap`, `wrap_and_apply_header`, `decode`) validate the
-buffer extent once. After that proof, all field accessors are branch-free.
-The zero-check lane is `unsafe fn *_unchecked`; use it only when you have
-externally proven the extent (benchmarks, pre-validated buffers).
+`try_*` returns `Result` on short buffers; bare `wrap` / `decode` panic after
+the same extent proof; `unsafe fn *_unchecked` skips the proof. After a safe
+constructor succeeds, fixed-field accessors are branch-free. Full detail:
+[Trust Boundary](../core-concepts/trust-boundary.md).
 
 ## Further reading
 

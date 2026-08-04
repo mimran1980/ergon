@@ -374,14 +374,16 @@ pub(crate) fn generate_message_decoder(
                 });
             }
             // SAFETY: body_need bytes after header are in-bounds.
-            Ok(Self::wrap(buf, message_offset, acting_block_length, acting_version))
+            Ok(unsafe {
+                Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version)
+            })
         }
 
-        /// Private zero-check external-metadata wrap core (HFT-008 keep=false).
+        /// Trusted external-metadata wrap. Proves version-aware fixed extent
+        /// then constructs; **panics** if the buffer is too short. Field
+        /// accessors use unchecked reads justified by that proof.
         ///
-        /// # Safety
-        /// `message_offset + HEADER_LENGTH + max(acting_block_length,
-        /// must be ≤ `buf.len()`.
+        /// Prefer [`Self::try_wrap`] at untrusted boundaries.
         #[inline]
         pub fn wrap(
             buf: &'a [u8],
@@ -389,19 +391,12 @@ pub(crate) fn generate_message_decoder(
             acting_block_length: usize,
             acting_version: u16,
         ) -> Self {
-            let body_pos = message_offset + Self::HEADER_LENGTH;
-            Self {
-                buf,
-                pos: body_pos,
-                acting_block_length,
-                acting_version,
-            }
+            Self::try_wrap(buf, message_offset, acting_block_length, acting_version)
+                .unwrap_or_else(|e| panic!("{e}"))
         }
 
         /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
-        /// Only for proven-tight HFT loops. Identical struct to [`Self::wrap`]
-        /// but the field accessors use raw-pointers; the constructor is the
-        /// same, so the UB comes from calling an accessor on a mis-sized buffer.
+        /// Only for proven-tight HFT loops after an external extent proof.
         ///
         /// # Safety
         /// `message_offset + HEADER_LENGTH + max(acting_block_length,
@@ -497,14 +492,15 @@ pub(crate) fn generate_message_decoder(
                 Self::try_wrap(buf, pos, acting_block_length, acting_version)
             }
 
-            /// Private zero-check framed decode core (HFT-008 keep=false).
+            /// Trusted framed decode. Validates template/schema identity and
+            /// proves version-aware fixed-body extent; **panics** if the
+            /// header or body region is too short. Protocol mismatches
+            /// (`WrongTemplate` / `WrongSchema`) still return `Err`.
             ///
-            /// # Safety
-            /// Header and version-readable fixed body for this template must
-            /// be fully in-bounds at `pos`.
+            /// Prefer [`Self::try_decode`] at untrusted boundaries.
             #[inline]
             pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                // Still validates schema/template identity (protocol, not memory).
+                // Header read panics if the header region is short.
                 let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
@@ -525,6 +521,7 @@ pub(crate) fn generate_message_decoder(
                     "version",
                     header.#hvr() as u64,
                 )?;
+                // Body extent: panic (trusted tier), not Err.
                 Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
             }
 
@@ -536,7 +533,8 @@ pub(crate) fn generate_message_decoder(
             /// be fully in-bounds at `pos`.
             #[inline]
             pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
+                // SAFETY: caller guarantees header bytes are in-bounds.
+                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
@@ -994,7 +992,7 @@ pub(crate) fn generate_message_decoder(
                             #[inline]
                             pub fn #fname_bool(&self) -> Result<bool, sbe_rt::DecodeError> {
                                 self.#fname_ident().as_bool().ok_or(
-                                    sbe_rt::DecodeError::DomainConversionFailed {
+                                    sbe_rt::DecodeError::InvalidBoolean {
                                         field: stringify!(#fname_ident),
                                     }
                                 )

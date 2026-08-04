@@ -111,14 +111,14 @@ fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
 fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "hft001_core_share");
     // try_wrap_and_apply_header is the checked constructor; it delegates to
-    // wrap_and_apply_header (the infallible core).
+    // wrap_and_apply_header_unchecked after the extent proof.
     let idx = src
         .find("pub fn try_wrap_and_apply_header")
         .ok_or("missing try_wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(800).min(src.len())];
     assert!(
-        window.contains("wrap_and_apply_header"),
-        "try_wrap_and_apply_header must delegate to wrap_and_apply_header"
+        window.contains("wrap_and_apply_header_unchecked"),
+        "try_wrap_and_apply_header must delegate to wrap_and_apply_header_unchecked"
     );
     Ok(())
 }

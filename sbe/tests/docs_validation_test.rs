@@ -94,7 +94,7 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
         GenerationConfig::new("tour_codec")
-            .with_domain_objects(DomainVarData::LossyStrings)
+            .with_domain_objects(DomainVarData::Strings)
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",
