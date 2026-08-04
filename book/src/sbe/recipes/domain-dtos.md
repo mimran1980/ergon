@@ -81,7 +81,7 @@ SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 | `.with_domain_objects(DomainVarData::Strings)` | `String` | **`InvalidUtf8` error** (strict; 0.1.10) | Text schemas when validity is known |
 | `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
-**`LossyStrings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
+**`Strings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
 for bad bytes; there is no silent empty-string fallback. Use `Bytes` (or stay
 on flyweights) when you need audit / replay fidelity of non-UTF-8 tails.
 

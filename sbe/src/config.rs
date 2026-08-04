@@ -91,10 +91,6 @@ impl ConversionSelector {
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
 /// | [`Strings`](DomainVarData::Strings) | `String` | **`InvalidUtf8` error** (strict; never invents empty) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | same as `Strings` | **deprecated alias** |
-///
-/// Prefer [`Strings`]; `LossyStrings` is a historical name kept as a deprecated
-/// alias through 0.x (materialisation has been strict since 0.1.10).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
@@ -104,21 +100,6 @@ pub enum DomainVarData {
     /// `DecodeError::InvalidUtf8` (strict; HFT-003). Prefer
     /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
     Strings,
-    /// Deprecated alias for [`Strings`] (name is historical; behaviour is strict).
-    #[deprecated(since = "0.1.13", note = "renamed to DomainVarData::Strings (strict UTF-8)")]
-    LossyStrings,
-}
-
-impl DomainVarData {
-    /// Canonical form (`LossyStrings` → `Strings`).
-    #[must_use]
-    pub const fn canonical(self) -> Self {
-        match self {
-            #[allow(deprecated)]
-            Self::LossyStrings => Self::Strings,
-            other => other,
-        }
-    }
 }
 
 /// Generated-code surface presets (HFT-009).
@@ -315,7 +296,7 @@ impl Hooks {
 /// use ergo_sbe::{DomainVarData, GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
-///     .with_domain_objects(DomainVarData::LossyStrings)
+///     .with_domain_objects(DomainVarData::Strings)
 ///     .with_domain_type(
 ///         ConversionSelector::named_type("Decimal"),
 ///         "rust_decimal::Decimal",
@@ -556,7 +537,6 @@ impl GenerationConfig {
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
     pub fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
-        let var_data = var_data.canonical();
         self.domain_objects = true;
         self.domain_var_data = var_data;
         self
@@ -842,9 +822,6 @@ mod tests {
         let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::Strings);
         assert!(text.domain_objects_enabled());
         assert_eq!(text.domain_var_data, DomainVarData::Strings);
-        #[allow(deprecated)]
-        let alias = GenerationConfig::new("m").with_domain_objects(DomainVarData::LossyStrings);
-        assert_eq!(alias.domain_var_data, DomainVarData::Strings);
         let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);

@@ -21,7 +21,8 @@
   `as_fixed_body_bytes` on the initial stage.
 
 ### Added
-- `DomainVarData::Strings` (strict UTF-8). `LossyStrings` is a deprecated alias.
+- **`DomainVarData::Strings`** replaces `LossyStrings` (strict UTF-8; same
+  behaviour as 0.1.10+).
 - Restored `docs/SBE_COMPATIBILITY.md` and constructor migration notes.
 - `#[inline]` on `bulk_decode` convenience wrapper.
 

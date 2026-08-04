@@ -652,9 +652,7 @@ pub(crate) fn generate_domain_recursive(
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);
         match domain_var_data {
-            #[allow(deprecated)]
-            crate::config::DomainVarData::Strings
-            | crate::config::DomainVarData::LossyStrings => {
+            crate::config::DomainVarData::Strings => {
                 // HFT-003: never manufacture empty/default for invalid UTF-8.
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
@@ -804,11 +802,9 @@ pub(crate) fn generate_domain_recursive(
         }
         // Append synthetic field entries for var-data
         for vd in var_data {
-            let vd_ty = match domain_var_data.canonical() {
+            let vd_ty = match domain_var_data {
                 crate::config::DomainVarData::Bytes => "Vec<u8>",
                 crate::config::DomainVarData::Strings => "String",
-                #[allow(deprecated)]
-                crate::config::DomainVarData::LossyStrings => "String",
             };
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),

@@ -455,23 +455,13 @@ S-effort, high value, no hot-path redesign. Land first.
 - Verification plan: `error_validation_test`; no hot-path change
   (`#[cold]` Display already).
 
-## T-15: Rename `DomainVarData::LossyStrings` (strict since 0.1.10)
+## T-15: Rename `DomainVarData::LossyStrings` → `Strings` (strict since 0.1.10)
 
 - Type: API
-- Stage: 0.1.13 (alias) / 1.0 (remove old name)
+- Stage: 0.1.13
 - Priority: P2 · Effort: S
-- Symptom: variant is documented as strict UTF-8 → `InvalidUtf8`
-  (`config.rs:93-104`) but still named **Lossy**. Every book recipe
-  (`domain-dtos.md`, feature-matrix, samples) teaches the wrong
-  expectation first.
-- Change: add `DomainVarData::Strings` (or `StrictStrings`) as the real
-  name; keep `LossyStrings = Strings` deprecated alias through 0.x;
-  delete alias at 1.0. Update book defaults to the new name.
-- What breaks / buys: deprecate-warn on old name; new users do not expect
-  lossy empty strings (HFT-003 already fixed behaviour).
-- Acceptance criteria: new name in config + book; alias emits
-  `#[deprecated]`; tests cover both during 0.x.
-- Verification plan: config/domain_objects tests; no codec hot path.
+- Status: **done** — hard rename to `DomainVarData::Strings`; no deprecated
+  alias (0.1.x may break).
 
 ## T-16: `#[must_use]` on consuming decoder stages and length builders that still miss it
 
@@ -652,13 +642,12 @@ Source: `book/src/project/road-to-1.0.md`.
 - Acceptance: freeze checklist checked; golden is the review artifact;
   no pending renames in REVIEW tickets.
 
-## T-102: Remove deprecated aliases (`LossyStrings`, any 0.1.x shims)
+## T-102: Remove deprecated aliases (any remaining 0.1.x shims)
 
 - Type: API
 - Stage: 1.0
 - Priority: P2 · Effort: S
-- Depends on T-15 landing aliases in 0.1.13.
-- Change: delete deprecated names; major version only.
+- Note: `LossyStrings` already hard-removed in 0.1.13 (no alias).
 
 ## T-103: Cluster 1.0 clock (separate)
 

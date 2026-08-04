@@ -8,7 +8,7 @@ implementations — they move with experimental APIs on purpose.
 
 | Step | Sample | Why |
 |------|--------|-----|
-| **1** | [`sbe-feature-tour/`](sbe-feature-tour/) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::LossyStrings`, both conversion styles |
+| **1** | [`sbe-feature-tour/`](sbe-feature-tour/) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, both conversion styles |
 | **2a** | [`l3-book/`](l3-book/) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
 | **2b** | [`exchange-example/`](exchange-example/) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [`sbe-codegen-examples/`](sbe-codegen-examples/) | Generator **as a library** (no `build.rs`) |
@@ -94,13 +94,12 @@ section and feature-tour `demo_car_size_and_encode`.
 ## Domain DTOs & var-data
 
 ```rust
-.with_domain_objects(DomainVarData::LossyStrings) // String; bad UTF-8 → ""
-.with_domain_objects(DomainVarData::Bytes)        // Vec<u8>; byte-exact
+.with_domain_objects(DomainVarData::Strings) // String; bad UTF-8 → InvalidUtf8 error
+.with_domain_objects(DomainVarData::Bytes)   // Vec<u8>; byte-exact
 ```
 
-`LossyStrings` is **not** lossless on re-encode of invalid UTF-8 (field becomes
-empty). Feature-tour uses `LossyStrings`; l3-book uses `Bytes` where tails are
-byte-oriented.
+`Strings` is strict UTF-8 (no empty-string fallback). Feature-tour uses
+`Strings`; l3-book uses `Bytes` where tails are byte-oriented.
 
 ## Check each sample
 
