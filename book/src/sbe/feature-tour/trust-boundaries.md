@@ -18,7 +18,8 @@ walks the complete dynamic tail before bulk access:
 
 Offsets are **message start** (not sbe-tool body offset). See
 [Trust Boundary (core concepts)](../core-concepts/trust-boundary.md) for the
-full table and migration notes, and [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
+full table, and [Coming from sbe-tool](../getting-started/from-sbe-tool.md) for
+the sbe-tool mapping.
 
 ## Trust boundary
 

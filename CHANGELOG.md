@@ -23,7 +23,7 @@
 ### Added
 - **`DomainVarData::Strings`** replaces `LossyStrings` (strict UTF-8; same
   behaviour as 0.1.10+).
-- Restored `docs/SBE_COMPATIBILITY.md` and constructor migration notes.
+- Restored `docs/SBE_COMPATIBILITY.md`.
 - `#[inline]` on `bulk_decode` convenience wrapper.
 
 ### Fixed

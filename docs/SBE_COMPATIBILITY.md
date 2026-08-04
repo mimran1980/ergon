@@ -22,7 +22,7 @@ venue schema.”
 - Self-describing total message length on the wire (SBE has none — use
   `decode_frame` with an external frame length when framing is external).
 
-## Constructor trust boundary (0.1.12+)
+## Constructor trust boundary
 
 Three tiers (see book [Trust Boundary](../book/src/sbe/core-concepts/trust-boundary.md)):
 
@@ -33,13 +33,5 @@ Three tiers (see book [Trust Boundary](../book/src/sbe/core-concepts/trust-bound
 | Unchecked | `unsafe fn *_unchecked` | **UB** — caller proves extent |
 
 Offsets are **message start** (first byte of the header), not sbe-tool’s body
-offset.
-
-## Migration notes
-
-- 0.1.10 introduced fallible constructors; see historical notes in
-  `CHANGELOG.md` and [Coming from sbe-tool](../book/src/sbe/getting-started/from-sbe-tool.md).
-- 0.1.12 restored public `try_*` as the checked lane and public `*_unchecked`
-  as the unsafe lane; bare names are the panicking trusted lane.
-- 0.1.13: safe constructors always prove fixed extent before unchecked field
-  accessors; `AnyMessage::decode` matches `try_decode`.
+offset. Safe constructors prove header + fixed body before unchecked field
+accessors; `AnyMessage::decode` matches `try_decode`.

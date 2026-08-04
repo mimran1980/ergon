@@ -40,21 +40,5 @@ layout independently.
 | `unsafe fn Decoder::wrap_unchecked(buf, offset, bl, ver)` | `Decoder` | UB on OOB — raw pointer accessors |
 | `unsafe fn Decoder::decode_unchecked(buf, pos)` | `Result<Decoder, DecodeError>` | Header identity only; UB on OOB header/body (`read_bytes_unchecked`) |
 
-## Migration from 0.1.10
-
-| 0.1.10 | 0.1.12 |
-|--------|--------|
-| `wrap(buf, pos)` returning `Result` | `try_wrap(buf, pos)` — same semantics |
-| `wrap_and_apply_header(buf, pos)` returning `Result` | `try_wrap_and_apply_header(buf, pos)` — same semantics |
-| `try_decode(buf, pos)` | `try_decode(buf, pos)` — unchanged |
-| `wrap(buf, pos)` infallible (was `unsafe`) | `wrap(buf, pos)` infallible (now safe, panics on OOB) |
-| N/A | `unsafe fn wrap_unchecked(buf, pos)` — original raw-pointer behaviour |
-
-**The short name `wrap` / `wrap_and_apply_header` no longer returns `Result`.**
-If your code relied on `wrap` returning `Result`, change it to `try_wrap`. If
-your code used `wrap` for performance (skipping validation), it continues to
-work — and is now safe because the inner operations panic on OOB instead of
-invoking UB.
-
 See [Trust boundaries (feature tour)](../feature-tour/trust-boundaries.md) for
 worked examples.

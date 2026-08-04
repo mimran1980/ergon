@@ -30,9 +30,7 @@ guide for ergo-sbe (also linked from this crate on
 [`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
 — do not claim unqualified “SBE binary compatibility.”
 
-**Constructor / migration notes:**
-[`docs/MIGRATION_0_1_TO_0_1_10.md`](https://github.com/mimran1980/ergon/blob/main/docs/MIGRATION_0_1_TO_0_1_10.md)
-and the book [Trust Boundary](https://mimran1980.github.io/ergon/sbe/core-concepts/trust-boundary.html)
+**Constructors:** book [Trust Boundary](https://mimran1980.github.io/ergon/sbe/core-concepts/trust-boundary.html)
 — three tiers: `try_*` (Result), bare names (panic if short), `unsafe *_unchecked`.
 
 ## Quick Example
