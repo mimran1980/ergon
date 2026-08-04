@@ -967,7 +967,10 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
 
     assert!(src.contains("fn len"), "missing group len()");
     assert!(src.contains("fn is_empty"), "missing group is_empty()");
-    assert!(src.contains("fn entry_at") || src.contains("fn scan_entry_at"), "missing group entry_at()/scan_entry_at()");
+    assert!(
+        src.contains("fn entry_at") || src.contains("fn scan_entry_at"),
+        "missing group entry_at()/scan_entry_at()"
+    );
     assert!(src.contains("fn skip_n"), "missing group skip_n()");
     assert!(src.contains("fn rewind"), "missing group rewind()");
     assert!(src.contains("fn remaining"), "missing group remaining()");

@@ -1224,7 +1224,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 let prim_size = encoding_type.size();
                 let prim_size_lit =
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
-                let raw_ident = syn::Ident::new(&format!("raw_{}", field_name), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(
+                    &format!("raw_{}", field_name),
+                    proc_macro2::Span::call_site(),
+                );
 
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 

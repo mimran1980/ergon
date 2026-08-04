@@ -15,10 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let car_schema = sbe_root.join("tests/fixtures/schemas/example-schema.xml");
     // Benchmarks measure flyweights only — no domain objects.
     // Enable unchecked companions for single-binary checked vs unchecked comparison.
-    ergo_sbe::generate_to_out_dir(
-        &car_schema,
-        ergo_sbe::GenerationConfig::new("car_bench"),
-    )?;
+    ergo_sbe::generate_to_out_dir(&car_schema, ergo_sbe::GenerationConfig::new("car_bench"))?;
 
     let large_schema = manifest.join("schemas/large-composite.xml");
     ergo_sbe::generate_to_out_dir(

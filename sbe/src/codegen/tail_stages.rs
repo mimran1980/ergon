@@ -222,9 +222,11 @@ pub(crate) fn generate_owner_consuming_stages(
         // Text var-data: into_<field>_as_str() for schema-declared characterEncoding.
         if let Some(ref enc) = vd.character_encoding {
             let is_utf8 = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8");
-            let is_ascii = enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
+            let is_ascii =
+                enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
             if is_utf8 || is_ascii {
-                let as_str_ident = syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
+                let as_str_ident =
+                    syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
                 let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
                 if is_ascii {
                     ts.extend(quote::quote! {
@@ -259,7 +261,10 @@ pub(crate) fn generate_owner_consuming_stages(
                     });
                 }
 
-                let as_str_unchecked = syn::Ident::new(&format!("into_{}_as_str_unchecked", vd.accessor_snake), span);
+                let as_str_unchecked = syn::Ident::new(
+                    &format!("into_{}_as_str_unchecked", vd.accessor_snake),
+                    span,
+                );
                 ts.extend(quote::quote! {
                     impl<'a> #current_stage<'a> {
                         /// Consume this stage, read the next text var-data field as
