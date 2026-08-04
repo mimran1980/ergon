@@ -491,7 +491,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 
     // Consuming stages: trades group before var-data (wire order)
     let trades = decoder.into_trades().expect("trades group decode");
-    let entry = trades.nth(0).expect("first trade entry");
+    let entry = trades.entry_at(0).expect("first trade entry");
     assert_eq!(entry.ts(), 0, "entry ts");
     assert_eq!(entry.exec_id(), 0, "entry exec_id");
     assert_eq!(entry.price(), 0, "entry price");

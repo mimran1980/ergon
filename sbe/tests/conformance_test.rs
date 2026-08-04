@@ -329,10 +329,10 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         let dec = NestedGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.exchange_id(), 8888, "exchange_id");
 
-        // nth() must walk the first entry's nested group and var-data rather
-        // than assuming root blockLength is the complete entry stride.
+        // scan_entry_at() must walk the first entry's nested group and var-data
+        // rather than assuming root blockLength is the complete entry stride.
         let mut bids = dec.into_bids()?;
-        let b1 = bids.nth(1)?;
+        let b1 = bids.scan_entry_at(1)?;
         assert_eq!(b1.price(), 4999, "random bid[1].price");
         assert_eq!(b1.venue()?, b"X", "random bid[1].venue");
 
@@ -751,10 +751,10 @@ fn conformance_error_group_count_mismatch() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
+fn conformance_error_wrong_template() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
     compile_and_run(
-        "conformance_err_schema",
+        "conformance_err_template",
         &src,
         r#"
         let mut buf = [0u8; 256];
@@ -767,14 +767,14 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
 
         let result = FixedOnlyDecoder::try_from(encoded);
         match result {
-            Err(sbe_rt::DecodeError::WrongSchema { expected, actual, .. }) => {
+            Err(sbe_rt::DecodeError::WrongTemplate { expected, actual, .. }) => {
                 assert_eq!(expected, 1, "expected template id 1");
                 assert_eq!(actual, 2, "actual template id 2");
             }
-            other => panic!("expected WrongSchema, got: {other:?}"),
+            other => panic!("expected WrongTemplate, got: {other:?}"),
         }
 
-        println!("PASS: conformance_error_wrong_schema");
+        println!("PASS: conformance_error_wrong_template");
         "#,
     );
     Ok(())

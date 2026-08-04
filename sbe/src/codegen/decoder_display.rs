@@ -35,7 +35,6 @@ pub(crate) fn generate_decoder_display(
             "encoded_length_with_header",
             "as_body_bytes",
             "as_bytes_with_header",
-            "as_ref_opt",
             "verify",
             "acting_version",
             "acting_block_length",

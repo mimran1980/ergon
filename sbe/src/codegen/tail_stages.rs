@@ -221,31 +221,45 @@ pub(crate) fn generate_owner_consuming_stages(
 
         // Text var-data: into_<field>_as_str() for schema-declared characterEncoding.
         if let Some(ref enc) = vd.character_encoding {
-            let is_text = enc.eq_ignore_ascii_case("UTF-8")
-                || enc.eq_ignore_ascii_case("UTF8")
-                || enc.eq_ignore_ascii_case("ASCII")
-                || enc.eq_ignore_ascii_case("US-ASCII");
-            if is_text {
+            let is_utf8 = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8");
+            let is_ascii =
+                enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
+            if is_utf8 || is_ascii {
                 let as_str_ident =
                     syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
                 let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
-                ts.extend(quote::quote! {
-                    impl<'a> #current_stage<'a> {
-                        /// Consume this stage, read the next text var-data field as
-                        /// a validated `&str`, and advance to the following stage.
-                        #[inline]
-                        pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
-                            let (bytes, next) = self.#into_ident()?;
-                            let s = core::str::from_utf8(bytes).map_err(|e| {
-                                sbe_rt::DecodeError::InvalidUtf8 {
-                                    field: #vd_name_lit,
-                                    error: e,
+                if is_ascii {
+                    ts.extend(quote::quote! {
+                        impl<'a> #current_stage<'a> {
+                            /// Consume this stage, read the next ASCII var-data
+                            /// field as a validated `&str`, and advance.
+                            #[inline]
+                            pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
+                                let (bytes, next) = self.#into_ident()?;
+                                if !bytes.is_ascii() {
+                                    return Err(sbe_rt::DecodeError::InvalidAscii { field: #vd_name_lit });
                                 }
-                            })?;
-                            Ok((s, next))
+                                let s = unsafe { core::str::from_utf8_unchecked(bytes) };
+                                Ok((s, next))
+                            }
                         }
-                    }
-                });
+                    });
+                } else {
+                    ts.extend(quote::quote! {
+                        impl<'a> #current_stage<'a> {
+                            /// Consume this stage, read the next UTF-8 var-data
+                            /// field as a validated `&str`, and advance.
+                            #[inline]
+                            pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
+                                let (bytes, next) = self.#into_ident()?;
+                                let s = core::str::from_utf8(bytes).map_err(|e| {
+                                    sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
+                                })?;
+                                Ok((s, next))
+                            }
+                        }
+                    });
+                }
 
                 let as_str_unchecked = syn::Ident::new(
                     &format!("into_{}_as_str_unchecked", vd.accessor_snake),
@@ -254,17 +268,14 @@ pub(crate) fn generate_owner_consuming_stages(
                 ts.extend(quote::quote! {
                     impl<'a> #current_stage<'a> {
                         /// Consume this stage, read the next text var-data field as
-                        /// a `&str` without UTF-8 validation, and advance to the
-                        /// following stage.
+                        /// a `&str` without encoding validation, and advance.
                         ///
                         /// # Safety
-                        ///
-                        /// The wire bytes must be valid UTF-8. For schema-declared
-                        /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+                        /// The wire bytes must be valid for the schema-declared
+                        /// character encoding (UTF-8 or ASCII).
                         #[inline]
                         pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
                             let (bytes, next) = unsafe { self.#into_ident().unwrap() };
-                            // SAFETY: caller guarantees valid UTF-8
                             let s = unsafe { core::str::from_utf8_unchecked(bytes) };
                             (s, next)
                         }

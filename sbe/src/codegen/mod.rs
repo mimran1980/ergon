@@ -217,7 +217,6 @@ pub(crate) struct GenerationContext {
     pub multi_message: bool,
     pub conversions: Vec<crate::ConversionSelector>,
     pub domain_types: Vec<(crate::ConversionSelector, String)>,
-    pub unchecked_companions: bool,
     pub domain_objects: bool,
     pub domain_var_data: crate::config::DomainVarData,
     pub enable_display_debug: bool,
@@ -245,7 +244,6 @@ impl GenerationContext {
             multi_message,
             conversions: config.conversions.clone(),
             domain_types: config.domain_types.clone(),
-            unchecked_companions: config.unchecked_companions,
             domain_objects: config.domain_objects,
             domain_var_data: config.domain_var_data,
             enable_display_debug: config.enable_display_debug,
@@ -773,7 +771,7 @@ impl Generator {
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
                        clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                       unused_assignments, unused_comparisons, unused_unsafe)]\n",
+                       unused_unsafe)]\n",
         );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
@@ -781,10 +779,7 @@ impl Generator {
         src.push_str("#[allow(clippy::eq_op)]\n");
         src.push_str("#[allow(clippy::needless_borrow)]\n");
         src.push_str("#[allow(clippy::manual_range_contains)]\n");
-        src.push_str("#[allow(unused_imports)]\n");
-        src.push_str("#[allow(unused_variables)]\n");
-        src.push_str("#[allow(unused_mut)]\n");
-        src.push_str("#[allow(dead_code)]\n\n");
+        src.push_str("#[allow(unused_imports)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.
@@ -886,7 +881,6 @@ impl Generator {
                 self.config.domain_var_data,
                 &conv_sels,
                 domain_types,
-                self.config.unchecked_companions,
                 &self.config.hooks,
                 schema,
             );
@@ -908,7 +902,6 @@ impl Generator {
                 multi,
                 &conv_sels,
                 domain_types,
-                self.config.unchecked_companions,
                 self.config.enable_meta_attributes,
                 self.config.enable_display_debug,
             );
@@ -1762,7 +1755,7 @@ mod tests {
         // name stays as the wire-type accessor.
         let consumer_src = &collected[1].source;
         assert!(
-            consumer_src.contains("fn enabled_bool(&self) -> bool"),
+            consumer_src.contains("fn try_enabled_bool"),
             "with_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
         );
         Ok(())

@@ -282,6 +282,11 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
       - name: Check ergo-sbe semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:

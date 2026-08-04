@@ -254,6 +254,7 @@ fn generate_staged(
                 if is_flat_nested {
                     // Flat nested group: adds dim + count * block, restores multiplier.
                     entry_tail_methods.extend(quote::quote! {
+                        #[inline]
                         pub const fn #ng_snake(
                             mut self, count: #ng_count_ty,
                         ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -286,6 +287,7 @@ fn generate_staged(
                     });
 
                     entry_tail_methods.extend(quote::quote! {
+                        #[inline]
                         pub const fn #ng_snake(
                             mut self, count: #ng_count_ty,
                         ) -> #nested_pending {
@@ -946,6 +948,7 @@ pub(super) fn generate_support() -> TokenStream {
             }
 
             /// Register one entry (adds entry block for unknown-size groups).
+            #[inline]
             pub fn add(&mut self) -> sbe_rt::GroupResult {
                 self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
                 self.written += 1;
@@ -953,6 +956,7 @@ pub(super) fn generate_support() -> TokenStream {
             }
 
             /// Register N flat entries at once (for fixed-width unknown-size groups).
+            #[inline]
             pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
                 for _ in 0..n {
                     self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
@@ -962,6 +966,7 @@ pub(super) fn generate_support() -> TokenStream {
             }
 
             /// Add a nested group dimension + entries.
+            #[inline]
             pub fn group(&mut self, dim: usize, block: usize, count: usize) -> sbe_rt::GroupResult {
                 let pm = self.state.enter_group(count, dim, block);
                 self.state.leave_group(pm);
@@ -1029,6 +1034,7 @@ fn generate_ragged_wrappers(
 
     methods.push(quote::quote! {
         /// Register one entry. Returns `&mut Self` for chaining.
+        #[inline]
         pub fn add(&mut self) -> Result<&mut Self, sbe_rt::EncodeError> {
             self.b.add()?;
             Ok(self)
@@ -1036,6 +1042,7 @@ fn generate_ragged_wrappers(
         /// Register `count` identical entries at once (uniform shape — no
         /// per-entry var-data or nested-group differences). Shortcut for
         /// calling `add()` in a loop.
+        #[inline]
         pub fn uniform(&mut self, count: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
             self.b.entries(count)?;
             Ok(self)
@@ -1061,6 +1068,7 @@ fn generate_ragged_wrappers(
         methods.push(quote::quote! {
             /// Enter a nested ragged group. The closure receives a sub-builder
             /// with field-named methods for the nested entries.
+            #[inline]
             pub fn #ng_ident<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #sub_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
@@ -1084,6 +1092,7 @@ fn generate_ragged_wrappers(
         methods.push(quote::quote! {
             /// Record a var-data field's length for the current entry.
             /// The prefix size is baked in — just pass the data length.
+            #[inline]
             pub fn #vd_ident(&mut self, len: usize) -> Result<&mut Self, sbe_rt::EncodeError> {
                 self.b.var_data(#vd_prefix_lit, len)?;
                 Ok(self)

@@ -152,7 +152,7 @@ fn small_width_message_header_is_byte_identical_and_cross_decodable() {
         let ergo_dec = PingDecoder::try_from(&tool_buf[..tool_len]).unwrap();
         assert_eq!(ergo_dec.acting_version(), 1);
         assert_eq!(ergo_dec.acting_block_length(), 0);
-        assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((0, 2001)));
+        assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some(PeekedHeader { template_id: 0, schema_id: 2001 }));
         assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(2001));
         match AnyMessage::decode(&tool_buf[..tool_len], 0).unwrap() {
             AnyMessage::Ping(_) => {}
@@ -235,7 +235,7 @@ fn custom_message_header_layout_is_byte_identical_and_cross_decodable() {
             let ergo_dec =
                 CustomMessageDecoder::try_from(&tool_buf[..tool_len]).unwrap();
             assert_eq!(ergo_dec.value(), value);
-            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((7, 258)));
+            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some(PeekedHeader { template_id: 7, schema_id: 258 }));
             assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(258));
         }
         println!("PASS: custom_message_header_layout");
@@ -310,7 +310,7 @@ fn custom_big_endian_message_header_layout_is_byte_identical_and_cross_decodable
             let ergo_dec =
                 CustomBeMessageDecoder::try_from(&tool_buf[..tool_len]).unwrap();
             assert_eq!(ergo_dec.value(), value);
-            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some((8, 259)));
+            assert_eq!(MessageHeader::peek_header(&tool_buf[..tool_len]), Some(PeekedHeader { template_id: 8, schema_id: 259 }));
             assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(259));
         }
         println!("PASS: custom_big_endian_message_header_layout");
@@ -416,7 +416,7 @@ fn constant_schema_id_header_is_byte_identical_and_cross_decodable() {
             assert_eq!(ergo_dec.tag40001(), tag);
             assert_eq!(
                 MessageHeader::peek_header(&tool_buf[..tool_len]),
-                Some((50001, 1)),
+                Some(PeekedHeader { template_id: 50001, schema_id: 1 }),
             );
             assert_eq!(schema_id_from_header(&tool_buf[..tool_len]), Some(1));
             assert_eq!(schema_id_from_header(&[]), None);

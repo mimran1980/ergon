@@ -426,16 +426,17 @@ pub(crate) fn generate_domain_recursive(
                 name: enum_name, ..
             } => {
                 if crate::structured_ir::is_bool_enum(elements, enum_name) {
-                    // bool enums → plain bool in DTO
-                    let bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
+                    // bool enums → plain bool in DTO; NullVal rejected at decode time
+                    let try_bool_ident = syn::Ident::new(&format!("try_{f_snake}_bool"), span);
+                    let opt_bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
-                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#bool_ident(v); } });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident() });
+                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#bool_ident() });
-                        encode_stmts.push(quote::quote! { enc.#bool_ident(self.#f_ident); });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident().expect("null or invalid bool value") });
+                        encode_stmts.push(quote::quote! { enc.#opt_bool_ident(self.#f_ident); });
                     }
                 } else {
                     let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
@@ -688,7 +689,7 @@ pub(crate) fn generate_domain_recursive(
                 message_offset: usize,
             ) -> Result<Self, sbe_rt::DecodeError> {
                 Self::try_from_decoder(
-                    #decoder_ident::try_decode(buf, message_offset)?,
+                    #decoder_ident::decode(buf, message_offset)?,
                 )
             }
         }
@@ -920,7 +921,7 @@ pub(crate) fn generate_domain_recursive(
             });
         }
     } else {
-        // Message domains: full encode via wrap_and_apply_header
+        // Message domains: full encode via try_wrap_and_apply_header (checked)
         let has_optional = fields
             .iter()
             .any(|f| f.presence == Presence::Optional && f.null_value.is_some());

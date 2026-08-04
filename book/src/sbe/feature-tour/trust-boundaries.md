@@ -20,24 +20,11 @@ constructor twin unless HFT-008 records `keep=true` (currently all keep=false:
 cores are module-private). Offsets are **message start** (not sbe-tool body
 offset). See [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
 
-## `_unchecked` field accessors (supported opt-in)
+## Trust boundary
 
-With `GenerationConfig::with_unchecked_companions(true)`, each field getter
-gains a `*_unchecked` companion that skips a *redundant* per-field bounds
-check **after** a checked constructor / `verify` has accepted the buffer.
-
-**Intended use:** production HFT hot loops only on a proven extent.
-
-**Contract (caller’s responsibility):**
-
-1. Validate with `decode` / `try_from` / `wrap` / `verify` before any
-   field-level `_unchecked` call.
-2. Do not carry unchecked access across a consuming stage transition
-   (`into_fuel_figures()`, etc.) — position advances and the prior guard
-   no longer applies.
-3. Calling field `_unchecked` without a proven extent is a programmer bug:
-   out-of-bounds raw reads are **undefined behaviour**, not “garbage but
-   safe”. Prefer checked accessors at every untrusted seam.
-
-Checked accessors remain the default surface. Full wording:
-`GenerationConfig::with_unchecked_companions` rustdoc.
+The constructor is the single trust checkpoint. Safe constructors (`wrap`,
+`wrap_and_apply_header`, `decode`) validate the buffer extent once. After that
+proof, all field accessors and setters are branch-free. The zero-check lane is
+explicitly `unsafe fn *_unchecked`, with the complete extent precondition in
+rustdoc. No per-field bounds checks exist; the single constructor proof
+justifies branch-free accessors.

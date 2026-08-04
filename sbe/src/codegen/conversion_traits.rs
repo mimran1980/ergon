@@ -52,7 +52,7 @@ pub(crate) fn generate_conversion_impl_blocks(
                 type Error = &'static str;
                 #[inline]
                 fn try_from_sbe(wire: #bt_ident) -> Result<Self, Self::Error> {
-                    Ok(bool::from(wire))
+                    wire.as_bool().ok_or("null or unknown boolean discriminant")
                 }
             }
             impl TryToSbe<#bt_ident> for bool {

@@ -477,7 +477,7 @@ pub fn dual_header_decode_run(test_name: &str, schema: &Path, tool_key: &str, bi
             assert_eq!(ergo_header.version(), version, "ergo version");
             assert_eq!(
                 MessageHeader::peek_header(&wire),
-                Some((template_id, schema_id)),
+                Some(PeekedHeader {{ template_id, schema_id }}),
                 "ergo header peek",
             );
 

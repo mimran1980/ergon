@@ -49,6 +49,13 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
+    // Bulk decode is only safe when every non-constant entry field is
+    // present in all supported versions (sinceVersion == 0) and required.
+    let bulk_decode_eligible = total_tail == 0
+        && g.fields.iter().all(|f| {
+            f.presence == Presence::Constant
+                || (f.presence != Presence::Optional && f.since_version == 0)
+        });
     let fixed_extent_validation = if total_tail == 0 {
         quote::quote! {
             let entries_length = count.checked_mul(block_length).ok_or(
@@ -73,6 +80,17 @@ pub(crate) fn generate_group_decoder(
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
+    }
+    // T-5: when entries have nested groups or var-data, there is no constant
+    // stride, so nth() O(1) is not available. The iterator or skip_n() must be
+    // used instead.
+    if total_tail > 0 {
+        ts.extend(quote::quote! {
+            #[doc = " This group has entries with nested groups or var-data —"]
+            #[doc = " there is no constant stride, so `nth()` (O(1) random access)"]
+            #[doc = " is **not** available. Use the [`Iterator`] implementation or"]
+            #[doc = " [`Self::skip_n`] to advance positionally instead."]
+        });
     }
     ts.extend(quote::quote! {
         pub struct #decoder_ident<'a> {
@@ -161,7 +179,7 @@ pub(crate) fn generate_group_decoder(
             /// `pos + dim + count * acting_block_length` must also fit. Entry
             /// accessors then use unchecked fixed-field reads under that proof.
             #[inline]
-            pub fn wrap_trusted(
+            pub(crate) unsafe fn wrap_trusted(
                 buf: &'a [u8], pos: usize, acting_version: u16,
                 parent_pos: usize, parent_block_length: usize,
             ) -> Self {
@@ -265,11 +283,14 @@ pub(crate) fn generate_group_decoder(
                     Ok(())
                 }
 
-                /// Bulk-decode all remaining entries into a `Vec`.
-                /// One bounds check for the whole batch — faster than
-                /// iterating with [`Iterator::next`] when materialising
-                /// the entire group (DTO construction, snapshots).
-                pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
+                /// Bulk-decode all remaining entries into a caller-owned `Vec`.
+                /// Zero-allocation after warm-up — the caller reuses the
+                /// destination buffer across messages.
+                #[inline]
+                pub fn bulk_decode_into(
+                    &mut self,
+                    dst: &mut Vec<#entry_struct_ident>,
+                ) -> Result<usize, sbe_rt::DecodeError> {
                     let needed = self.count.checked_mul(self.acting_block_length)
                         .ok_or(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
@@ -284,13 +305,25 @@ pub(crate) fn generate_group_decoder(
                         });
                     }
                     let cap = self.count;
-                    let mut out = Vec::with_capacity(cap);
+                    dst.clear();
+                    dst.reserve(cap);
                     for _ in 0..cap {
                         let pos = self.pos;
                         self.pos += self.acting_block_length;
-                        out.push(#entry_struct_ident { #field_reads });
+                        dst.push(#entry_struct_ident { #field_reads });
                     }
                     self.count = 0;
+                    Ok(cap)
+                }
+
+                /// Bulk-decode all remaining entries into a new `Vec`.
+                /// Convenience wrapper around [`Self::bulk_decode_into`].
+                /// One bounds check for the whole batch — faster than
+                /// iterating with [`Iterator::next`] when materialising
+                /// the entire group (DTO construction, snapshots).
+                pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
+                    let mut out = Vec::new();
+                    self.bulk_decode_into(&mut out)?;
                     Ok(out)
                 }
             }
@@ -333,7 +366,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
-                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
@@ -378,7 +411,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
-                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn scan_entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,

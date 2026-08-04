@@ -46,7 +46,7 @@ Rationale: [Type-state design note](type-state.md).
 “benchmarking only” framing.
 
 - Default generation can enable companions via
-  `GenerationConfig::with_unchecked_companions(true)`.
+  the two-lane trust boundary (safe checked constructors + `unsafe` unchecked lane).
 - Safety contract lives on that method and in generated docs: validate with
   `decode` / `try_from` / `wrap` / `verify` first; do not carry unchecked
   access across stage transitions; calling field `_unchecked` without a

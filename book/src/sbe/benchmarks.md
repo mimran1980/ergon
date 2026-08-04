@@ -296,17 +296,15 @@ offset):
 The aligned buffer did not improve the aggregate result, so this release adds
 no mandatory aligned-buffer or pooling API.
 
-### Stable instruction counts
+### Amplified timing diagnostic (`instruction_counts`)
 
-`instruction_counts` uses Iai-Callgrind for checked entry, trusted scalar
-access, full verification, metadata lookup, and amplified ergon/sbe-tool scalar
-and composite parity. This avoids treating sub-nanosecond wall-clock noise as
-an instruction regression. The suite is runnable on Linux with Valgrind; there
-is not yet a checked-in scheduled Iai workflow or instruction baseline, so no
-automated instruction-regression claim is made here.
+`instruction_counts` is an amplified Criterion timing harness, not a Valgrind
+or Iai-Callgrind instruction counter. Each operation is repeated
+`ACCESS_REPETITIONS` times inside a single Criterion iteration to amplify
+sub-nanosecond differences. For deterministic instruction evidence use
+`perf`, `samply`, or iai-callgrind (Linux).
 
 ```sh
-# Linux with Valgrind and iai-callgrind-runner 0.16.1 installed
 just bench-instructions
 ```
 
@@ -394,7 +392,7 @@ work.
 
 ## Benchmark-only APIs
 
-`GenerationConfig::with_unchecked_companions` exists for explicit comparison
+The `unsafe` unchecked constructor lane exists for explicit comparison
 work. Application code should use checked generated entry points for untrusted
 buffers and reserve trusted-buffer methods for data whose complete bounds have
 already been established.

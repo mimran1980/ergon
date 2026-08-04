@@ -33,7 +33,6 @@
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
 //! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
-//! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` opt-in after validation (HFT hot path) |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
 //! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
 
@@ -329,7 +328,6 @@ pub struct GenerationConfig {
     /// each — saves boilerplate on schemas with many boolean flags.
     pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
-    pub(crate) unchecked_companions: bool,
     /// Appended when a name is a Rust keyword (default `"_"`).
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
@@ -357,7 +355,6 @@ impl std::fmt::Debug for GenerationConfig {
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
             .field("error_from_path", &self.error_from_path)
             .field("auto_bool_domain", &self.auto_bool_domain)
-            .field("unchecked_companions", &self.unchecked_companions)
             .field("keyword_append_token", &self.keyword_append_token)
             .field("deprecated_attrs", &self.deprecated_attrs)
             .field("enable_display_debug", &self.enable_display_debug)
@@ -386,7 +383,6 @@ impl GenerationConfig {
             domain_types: Vec::new(),
             external_sbe_rt_path: None,
             error_from_path: None,
-            unchecked_companions: false,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             auto_bool_domain: false,
@@ -558,37 +554,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `_unchecked` companion field accessors as a **supported opt-in**
-    /// for hot loops after independent validation (not “bench-only” theatre).
-    ///
-    /// Each field accessor `dec.serial_number()` gains a companion
-    /// `dec.serial_number_unchecked()` that skips the redundant per-field
-    /// bounds check. After `decode` / `try_from` / `wrap` / `verify` has
-    /// accepted the buffer, that check is pure overhead on the critical path.
-    ///
-    /// # Safety contract (caller's responsibility)
-    ///
-    /// - The buffer must have been validated by `decode` / `try_from` /
-    ///   `wrap` / `verify` (or an equivalent application check) before any
-    ///   `_unchecked` accessor is called.
-    /// - After any stage transition (`into_fuel_figures()`, etc.), the
-    ///   decoder's position advances and the unchecked guard is lost —
-    ///   do not carry an unchecked reference across a stage boundary.
-    /// - Calling `_unchecked` without a proven extent is a **programmer bug**:
-    ///   out-of-bounds raw reads are **undefined behaviour**, not “safe
-    ///   garbage”. Prefer checked accessors at every untrusted seam.
-    ///
-    /// Checked accessors remain the default API surface; `_unchecked` is
-    /// opt-in via this config flag. HFT production use after a proven
-    /// trust boundary is an intended use case — not a misuse of a bench
-    /// hack. See the book trust-boundary page.
-    #[must_use]
-    pub fn with_unchecked_companions(mut self, enable: bool) -> Self {
-        self.unchecked_companions = enable;
-        self
-    }
-
-    /// Token appended when a schema name is a Rust keyword (default `"_"`).
+    /// Token appended when a schema name is a Rust keyword (default `”_”`).
     ///
     /// Schema field `name="type"` becomes method `type_()`; with token `"x"`,
     /// it becomes `typex()`.
@@ -876,14 +842,12 @@ mod tests {
         let config = GenerationConfig::new("m")
             .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
-            .with_unchecked_companions(true)
             .with_keyword_append_token("x")
             .with_bool_domain_type(true)
             .with_deprecated_attrs(true);
 
         assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
         assert_eq!(config.shared_module.as_deref(), Some("shared"));
-        assert!(config.unchecked_companions);
         assert_eq!(config.keyword_append_token, "x");
         assert!(config.auto_bool_domain);
         assert!(config.deprecated_attrs);

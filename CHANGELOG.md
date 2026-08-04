@@ -1,5 +1,84 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.12] — 2026-08-04
+
+### Breaking
+- **Two-lane trust boundary.** Safe checked constructors (`try_wrap`,
+  `try_wrap_and_apply_header`, `try_decode`) validate the buffer extent and
+  return `Result`. The zero-check lane (`wrap_unchecked`,
+  `wrap_and_apply_header_unchecked`, `decode_unchecked`) is `unsafe` with the
+  extent precondition in `# Safety`. Group dimension zero-check wrap
+  (`wrap_trusted`) is now `pub(crate) unsafe`.
+- **`wrap_into_claim` requires exact-length buffer.** Uses new
+  `ClaimLengthMismatch` error instead of `BufferTooShort`. Aeron claim
+  buffers must be sliced to exactly `ENCODED_LENGTH`.
+- **`WrongTemplate` error variant.** Template-ID mismatches now report the
+  expected message name, not the schema name. `WrongSchema` is reserved for
+  `schemaId` mismatches.
+- **`as_bool()` on boolean enums.** `From<BooleanType> for bool` is kept but
+  collapses `NullVal` to `true`. Prefer `as_bool() -> Option<bool>` or
+  `try_<field>_bool() -> Result<bool, DecodeError>` for required fields.
+- **Group random access renamed.** `nth(&self)` → `entry_at(&self)` (O(1)
+  fixed-stride) and `scan_entry_at(&self)` (O(n) dynamic entries). The old
+  name shadowed `Iterator::nth(&mut self, n)`.
+- **Removed `with_unchecked_companions`.** The option was a documented no-op.
+  The unchecked lane is the constructor-level `*_unchecked` API instead.
+
+### Added
+- **`raw_<field>()` on message decoders and composite members.** Returns the
+  raw wire discriminant alongside the typed enum getter. Use for logging,
+  relaying, or version-negotiating unknown enum values.
+- **Text var-data helpers gated on `characterEncoding`.** Public checked
+  `_as_str()` and unsafe `_as_str_unchecked()` only emitted for UTF-8/ASCII.
+  ASCII accessors use `InvalidAscii` error. Consuming `into_<field>_as_str()`
+  handles both UTF-8 and ASCII correctly.
+- **`#[inline]` on staged encoded-length transitions.** Ragged builder
+  methods (`add`, `entries`, `group`), nested group/var-data forwarding, and
+  `bulk_decode` wrapper.
+- **`ClaimLengthMismatch` encode error** for exact-claim buffer validation.
+
+### Fixed
+- **`bulk_decode_into` restricted to version-stable flat groups.** No longer
+  emitted for groups with `sinceVersion > 0` or optional fields, preventing
+  cross-entry reads and fabricated values.
+- **`decode_frame` uses external `frame_len` as authoritative boundary.**
+  No longer rescans all group/var-data tails. Decoder is bounded to the
+  frame slice.
+
+### Performance
+- **`#[inline]`** on entries/counts, ragged builders, stage transitions,
+  and `bulk_decode` wrapper (no-LTO evidence).
+
+### Docs
+- `instruction_counts` described as amplified Criterion timing (Iai removed).
+- Crate rustdoc describes the two-lane trust boundary.
+- Removed all `with_unchecked_companions` references from book and docs.
+
+## [0.1.11] — 2026-08-03
+
+### Breaking
+- **`get_metadata()` zero-copy metadata struct.** Decoder utility methods (`limit()`,
+  `buffer()`, `message_offset()`, `as_body_bytes()`, `as_bytes_with_header()`,
+  `acting_version()`, `remaining()`) moved from the decoder to a zero-copy
+  `XxxDecoderMetadata` struct returned by `dec.get_metadata()`. Encoder gains the
+  equivalent. This prevents schema field names from colliding with utility methods.
+  Migrate: `dec.limit()` → `dec.get_metadata().limit()`.
+
+### Added
+- `ENCODED_LENGTH` constant emitted for all messages (was only emitted for
+  messages without var-data/groups)
+- Codegen produces a readable diagnostic (field names + suggested rename) on
+  keyword collisions
+- `union` added to Rust keyword list
+- Expanded error-message quality tests
+- Generated-code showcase in book with `get_metadata()` example
+
+### Fixed
+- Keyword collision handling with custom append token verified end-to-end
+- Reserved keyword field test covers both with and without `with_keyword_append_token`
+
 ## [0.1.10] — 2026-08-02
 
 Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and
