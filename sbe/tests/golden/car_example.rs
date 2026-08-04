@@ -19,6 +19,7 @@ pub mod sbe_rt {
     pub enum DecodeError {
         BufferTooShort { field: &'static str, needed: usize, available: usize },
         WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+        WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
         UnknownTemplateLength { template_id: u16 },
         InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
         InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
@@ -42,6 +43,12 @@ pub mod sbe_rt {
                 Self::WrongSchema { expected, actual, expected_name } => {
                     write!(
                         f, "wrong schema: expected id {} ({}), got id {}", expected,
+                        expected_name, actual
+                    )
+                }
+                Self::WrongTemplate { expected, actual, expected_name } => {
+                    write!(
+                        f, "wrong template: expected id {} ({}), got id {}", expected,
                         expected_name, actual
                     )
                 }
@@ -87,6 +94,8 @@ pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
         BufferTooShort { needed: usize, available: usize },
+        /// Claim buffer length does not match ENCODED_LENGTH.
+        ClaimLengthMismatch { expected: usize, actual: usize },
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
         /// Fixed char/byte array source longer than the schema length.
         FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
@@ -110,6 +119,12 @@ pub mod sbe_rt {
                 Self::BufferTooShort { needed, available } => {
                     write!(
                         f, "buffer too short: needed {}, available {}", needed, available
+                    )
+                }
+                Self::ClaimLengthMismatch { expected, actual } => {
+                    write!(
+                        f, "claim buffer length mismatch: expected {}, got {}", expected,
+                        actual
                     )
                 }
                 Self::VarDataTooLong { field, max_length, actual } => {
@@ -344,6 +359,19 @@ impl BooleanType {
             0 => Self::F,
             1 => Self::T,
             _ => Self::NullVal,
+        }
+    }
+    /// Returns `Some(true)` / `Some(false)` for the valid boolean
+    /// values. Returns `None` for `NullVal` or any unknown raw
+    /// discriminant — the SBE boolean wire type is tri-state
+    /// (F, T, null). Prefer this over the infallible `From`
+    /// conversion, which collapses `NullVal` to `true`.
+    #[inline]
+    pub const fn as_bool(self) -> Option<bool> {
+        match self {
+            Self::F => Some(false),
+            Self::T => Some(true),
+            _ => None,
         }
     }
 }
@@ -907,6 +935,11 @@ impl Booster {
     pub fn boost_type(&self) -> BoostType {
         BoostType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 0)))
     }
+    /// Raw wire discriminant — bypasses enum mapping.
+    #[inline]
+    pub fn raw_boost_type(&self) -> u8 {
+        u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
+    }
     #[inline]
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
@@ -978,6 +1011,11 @@ impl Engine {
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
         BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 7)))
+    }
+    /// Raw wire discriminant — bypasses enum mapping.
+    #[inline]
+    pub fn raw_booster_enabled(&self) -> u8 {
+        u8::from_le_bytes(read_bytes::<1>(&self.0, 7))
     }
     #[inline]
     pub fn booster(&self) -> Booster {
@@ -1274,10 +1312,10 @@ impl<'a> CarDecoder<'a> {
             header.template_id() as u64,
         )?;
         if template_id != Self::TEMPLATE_ID {
-            return Err(sbe_rt::DecodeError::WrongSchema {
+            return Err(sbe_rt::DecodeError::WrongTemplate {
                 expected: Self::TEMPLATE_ID,
                 actual: template_id,
-                expected_name: "baseline",
+                expected_name: "Car",
             });
         }
         let schema_id = sbe_rt::checked_header_u16(
@@ -1315,10 +1353,10 @@ impl<'a> CarDecoder<'a> {
             header.template_id() as u64,
         )?;
         if template_id != Self::TEMPLATE_ID {
-            return Err(sbe_rt::DecodeError::WrongSchema {
+            return Err(sbe_rt::DecodeError::WrongTemplate {
                 expected: Self::TEMPLATE_ID,
                 actual: template_id,
-                expected_name: "baseline",
+                expected_name: "Car",
             });
         }
         let schema_id = sbe_rt::checked_header_u16(
@@ -1360,10 +1398,10 @@ impl<'a> CarDecoder<'a> {
             header.template_id() as u64,
         )?;
         if template_id != Self::TEMPLATE_ID {
-            return Err(sbe_rt::DecodeError::WrongSchema {
+            return Err(sbe_rt::DecodeError::WrongTemplate {
                 expected: Self::TEMPLATE_ID,
                 actual: template_id,
-                expected_name: "baseline",
+                expected_name: "Car",
             });
         }
         let schema_id = sbe_rt::checked_header_u16(
@@ -1450,9 +1488,23 @@ impl<'a> CarDecoder<'a> {
             u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
         )
     }
+    /// Raw wire discriminant — bypasses enum mapping.
+    /// Use to inspect unknown/forward enum values without losing the original byte.
     #[inline]
-    pub fn available_bool(&self) -> bool {
-        bool::from(self.available())
+    pub fn raw_available(&self) -> u8 {
+        let offset = self.pos + 10;
+        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+    }
+    /// Returns `true` / `false` for valid boolean values.
+    /// Rejects `NullVal` or unknown raw discriminants —
+    /// the SBE boolean wire type is tri-state (F, T, null).
+    #[inline]
+    pub fn try_available_bool(&self) -> Result<bool, sbe_rt::DecodeError> {
+        self.available()
+            .as_bool()
+            .ok_or(sbe_rt::DecodeError::DomainConversionFailed {
+                field: stringify!(available),
+            })
     }
     pub const AVAILABLE_ID: u16 = 3;
     pub const AVAILABLE_SINCE_VERSION: u16 = 0;
@@ -1476,6 +1528,13 @@ impl<'a> CarDecoder<'a> {
         Model::from_raw(
             u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
         )
+    }
+    /// Raw wire discriminant — bypasses enum mapping.
+    /// Use to inspect unknown/forward enum values without losing the original byte.
+    #[inline]
+    pub fn raw_code(&self) -> u8 {
+        let offset = self.pos + 11;
+        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
     }
     pub const CODE_ID: u16 = 4;
     pub const CODE_SINCE_VERSION: u16 = 0;
@@ -2287,7 +2346,7 @@ impl<'a> FuelFiguresDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    pub fn wrap_trusted(
+    pub(crate) unsafe fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2344,7 +2403,7 @@ impl<'a> FuelFiguresDecoder<'a> {
 }
 impl<'a> FuelFiguresDecoder<'a> {
     #[inline]
-    pub fn nth(
+    pub fn scan_entry_at(
         &self,
         idx: usize,
     ) -> Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError> {
@@ -2690,32 +2749,29 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
-    /// Consume this stage, read the next text var-data field as
-    /// a validated `&str`, and advance to the following stage.
+    /// Consume this stage, read the next ASCII var-data
+    /// field as a validated `&str`, and advance.
     #[inline]
     pub fn into_usage_description_as_str(
         self,
     ) -> Result<(&'a str, FuelFiguresEntryDecoderComplete<'a>), sbe_rt::DecodeError> {
         let (bytes, next) = self.into_usage_description()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "usageDescription",
-                    error: e,
-                }
-            })?;
+        if !bytes.is_ascii() {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "usageDescription",
+            });
+        }
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         Ok((s, next))
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
     /// Consume this stage, read the next text var-data field as
-    /// a `&str` without UTF-8 validation, and advance to the
-    /// following stage.
+    /// a `&str` without encoding validation, and advance.
     ///
     /// # Safety
-    ///
-    /// The wire bytes must be valid UTF-8. For schema-declared
-    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    /// The wire bytes must be valid for the schema-declared
+    /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_usage_description_as_str_unchecked(
         self,
@@ -2881,7 +2937,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    pub fn wrap_trusted(
+    pub(crate) unsafe fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -2938,7 +2994,7 @@ impl<'a> PerformanceFiguresDecoder<'a> {
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
     #[inline]
-    pub fn nth(
+    pub fn scan_entry_at(
         &self,
         idx: usize,
     ) -> Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError> {
@@ -3265,7 +3321,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     /// `pos + dim + count * acting_block_length` must also fit. Entry
     /// accessors then use unchecked fixed-field reads under that proof.
     #[inline]
-    pub fn wrap_trusted(
+    pub(crate) unsafe fn wrap_trusted(
         buf: &'a [u8],
         pos: usize,
         acting_version: u16,
@@ -3365,7 +3421,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     #[inline]
-    pub fn nth(
+    pub fn entry_at(
         &self,
         idx: usize,
     ) -> Result<PerformanceFiguresAccelerationEntryDecoder<'a>, sbe_rt::DecodeError> {
@@ -3854,8 +3910,8 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
-    /// Consume this stage, read the next text var-data field as
-    /// a validated `&str`, and advance to the following stage.
+    /// Consume this stage, read the next UTF-8 var-data
+    /// field as a validated `&str`, and advance.
     #[inline]
     pub fn into_manufacturer_as_str(
         self,
@@ -3873,13 +3929,11 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     /// Consume this stage, read the next text var-data field as
-    /// a `&str` without UTF-8 validation, and advance to the
-    /// following stage.
+    /// a `&str` without encoding validation, and advance.
     ///
     /// # Safety
-    ///
-    /// The wire bytes must be valid UTF-8. For schema-declared
-    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    /// The wire bytes must be valid for the schema-declared
+    /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_manufacturer_as_str_unchecked(
         self,
@@ -4014,8 +4068,8 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
-    /// Consume this stage, read the next text var-data field as
-    /// a validated `&str`, and advance to the following stage.
+    /// Consume this stage, read the next UTF-8 var-data
+    /// field as a validated `&str`, and advance.
     #[inline]
     pub fn into_model_as_str(
         self,
@@ -4033,13 +4087,11 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, read the next text var-data field as
-    /// a `&str` without UTF-8 validation, and advance to the
-    /// following stage.
+    /// a `&str` without encoding validation, and advance.
     ///
     /// # Safety
-    ///
-    /// The wire bytes must be valid UTF-8. For schema-declared
-    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    /// The wire bytes must be valid for the schema-declared
+    /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_model_as_str_unchecked(
         self,
@@ -4165,32 +4217,29 @@ impl<'a> CarDecoderAfterModel<'a> {
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
-    /// Consume this stage, read the next text var-data field as
-    /// a validated `&str`, and advance to the following stage.
+    /// Consume this stage, read the next ASCII var-data
+    /// field as a validated `&str`, and advance.
     #[inline]
     pub fn into_activation_code_as_str(
         self,
     ) -> Result<(&'a str, CarDecoderComplete<'a>), sbe_rt::DecodeError> {
         let (bytes, next) = self.into_activation_code()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "activationCode",
-                    error: e,
-                }
-            })?;
+        if !bytes.is_ascii() {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "activationCode",
+            });
+        }
+        let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         Ok((s, next))
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
     /// Consume this stage, read the next text var-data field as
-    /// a `&str` without UTF-8 validation, and advance to the
-    /// following stage.
+    /// a `&str` without encoding validation, and advance.
     ///
     /// # Safety
-    ///
-    /// The wire bytes must be valid UTF-8. For schema-declared
-    /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
+    /// The wire bytes must be valid for the schema-declared
+    /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_activation_code_as_str_unchecked(
         self,
@@ -4610,7 +4659,7 @@ impl CarDomain {
         Ok(Self {
             serial_number: dec.serial_number(),
             model_year: dec.model_year(),
-            available: dec.available_bool(),
+            available: dec.try_available_bool().expect("null or invalid bool value"),
             code: dec.code(),
             some_numbers: dec.some_numbers(),
             vehicle_code: dec.vehicle_code(),
@@ -6790,6 +6839,7 @@ impl<'a> CarFuelFiguresRaggedBuilder<'a> {
     }
     /// Record a var-data field's length for the current entry.
     /// The prefix size is baked in — just pass the data length.
+    #[inline]
     pub fn usage_description(
         &mut self,
         len: usize,
@@ -6841,6 +6891,7 @@ impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     }
     /// Enter a nested ragged group. The closure receives a sub-builder
     /// with field-named methods for the nested entries.
+    #[inline]
     pub fn acceleration<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
     where
         F: FnOnce(
@@ -7086,6 +7137,7 @@ pub struct CarPerformanceFiguresUniformEncodedLength {
     declared_count: u32,
 }
 impl CarPerformanceFiguresUniformEncodedLength {
+    #[inline]
     pub const fn acceleration(
         mut self,
         count: u16,
@@ -7575,12 +7627,14 @@ impl RaggedEntryBuilder {
         }
     }
     /// Register one entry (adds entry block for unknown-size groups).
+    #[inline]
     pub fn add(&mut self) -> sbe_rt::GroupResult {
         self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
         self.written += 1;
         Ok(())
     }
     /// Register N flat entries at once (for fixed-width unknown-size groups).
+    #[inline]
     pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
         for _ in 0..n {
             self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
@@ -7589,6 +7643,7 @@ impl RaggedEntryBuilder {
         Ok(())
     }
     /// Add a nested group dimension + entries.
+    #[inline]
     pub fn group(
         &mut self,
         dim: usize,
@@ -7886,7 +7941,11 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                Ok(Self::Car(CarDecoder::wrap(buf, pos, block_length, version)))
+                Ok(
+                    Self::Car(unsafe {
+                        CarDecoder::wrap_unchecked(buf, pos, block_length, version)
+                    }),
+                )
             }
             _ => {
                 Err(sbe_rt::DecodeError::UnknownTemplateLength {
@@ -7935,19 +7994,25 @@ impl<'a> AnyMessage<'a> {
         }
         match template_id {
             CarSchema::TEMPLATE_ID => {
-                let decoder = CarDecoder::try_wrap(buf, pos, block_length, version)?;
-                let total_len = decoder.encoded_length_with_header()?;
-                if total_len > frame_len {
+                let frame_end = pos
+                    .checked_add(frame_len)
+                    .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                        field: "Car",
+                        needed: frame_len,
+                        available: buf.len().saturating_sub(pos),
+                    })?;
+                if frame_end > buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "Car",
-                        needed: total_len,
-                        available: frame_len,
+                        needed: frame_len,
+                        available: buf.len().saturating_sub(pos),
                     });
                 }
+                let decoder = CarDecoder::try_decode(&buf[..frame_end], pos)?;
                 Ok(DecodedFrame {
                     message: Self::Car(decoder),
-                    range: pos..pos + total_len,
-                    len: total_len,
+                    range: pos..frame_end,
+                    len: frame_len,
                 })
             }
             _ => {

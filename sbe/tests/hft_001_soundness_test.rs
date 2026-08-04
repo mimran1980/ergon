@@ -200,7 +200,7 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
         full[2..4].copy_from_slice(&2u16.to_le_bytes());
         full[4..6].copy_from_slice(&30u16.to_le_bytes()); // mph entry0
         let g = PerformanceFiguresAccelerationDecoder::wrap(&full, 0, 0).expect("full group");
-        let e0 = g.nth(0).expect("nth 0");
+        let e0 = g.entry_at(0).expect("entry_at 0");
         assert_eq!(e0.mph(), 30);
         for len in 0..20usize {
             let buf = vec![0xAAu8; len];

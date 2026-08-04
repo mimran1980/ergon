@@ -217,7 +217,6 @@ pub(crate) struct GenerationContext {
     pub multi_message: bool,
     pub conversions: Vec<crate::ConversionSelector>,
     pub domain_types: Vec<(crate::ConversionSelector, String)>,
-    pub unchecked_companions: bool,
     pub domain_objects: bool,
     pub domain_var_data: crate::config::DomainVarData,
     pub enable_display_debug: bool,
@@ -245,7 +244,6 @@ impl GenerationContext {
             multi_message,
             conversions: config.conversions.clone(),
             domain_types: config.domain_types.clone(),
-            unchecked_companions: config.unchecked_companions,
             domain_objects: config.domain_objects,
             domain_var_data: config.domain_var_data,
             enable_display_debug: config.enable_display_debug,
@@ -883,7 +881,6 @@ impl Generator {
                 self.config.domain_var_data,
                 &conv_sels,
                 domain_types,
-                self.config.unchecked_companions,
                 &self.config.hooks,
                 schema,
             );
@@ -905,7 +902,6 @@ impl Generator {
                 multi,
                 &conv_sels,
                 domain_types,
-                self.config.unchecked_companions,
                 self.config.enable_meta_attributes,
                 self.config.enable_display_debug,
             );
@@ -1759,7 +1755,7 @@ mod tests {
         // name stays as the wire-type accessor.
         let consumer_src = &collected[1].source;
         assert!(
-            consumer_src.contains("fn enabled_bool(&self) -> bool"),
+            consumer_src.contains("fn try_enabled_bool"),
             "with_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
         );
         Ok(())

@@ -30,7 +30,6 @@ pub(crate) fn generate_message_encoder(
     multi_message: bool,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
-    unchecked_companions: bool,
     enable_meta_attributes: bool,
     enable_display_debug: bool,
 ) -> proc_macro2::TokenStream {
@@ -470,10 +469,10 @@ pub(crate) fn generate_message_encoder(
             pub fn wrap_into_claim(
                 buf: &'a mut [u8],
             ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
-                if buf.len() < Self::ENCODED_LENGTH {
-                    return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: Self::ENCODED_LENGTH,
-                        available: buf.len(),
+                if buf.len() != Self::ENCODED_LENGTH {
+                    return Err(sbe_rt::EncodeError::ClaimLengthMismatch {
+                        expected: Self::ENCODED_LENGTH,
+                        actual: buf.len(),
                     });
                 }
                 Ok(Self::wrap_and_apply_header(buf, 0))

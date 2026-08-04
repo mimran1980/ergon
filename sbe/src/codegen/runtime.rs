@@ -15,6 +15,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             pub enum DecodeError {
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
                 WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+                WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
                 UnknownTemplateLength { template_id: u16 },
                 InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
                 InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
@@ -32,6 +33,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     match self {
                         Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
+                        Self::WrongTemplate { expected, actual, expected_name } => write!(f, "wrong template: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidHeaderValue { field, value, maximum } => write!(f, "message header field '{}': value {} exceeds supported maximum {}", field, value, maximum),
                         Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}': length {} exceeds max {}", field, length, max_length),
@@ -48,6 +50,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
                 BufferTooShort { needed: usize, available: usize },
+                /// Claim buffer length does not match ENCODED_LENGTH.
+                ClaimLengthMismatch { expected: usize, actual: usize },
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Fixed char/byte array source longer than the schema length.
                 FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
@@ -70,6 +74,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
+                        Self::ClaimLengthMismatch { expected, actual } => write!(f, "claim buffer length mismatch: expected {}, got {}", expected, actual),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::FixedArrayTooLong { field, max_length, actual } => write!(f, "fixed array too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::ValueOutOfRange { field, min, max, actual } => write!(f, "value out of range for field {}: min {}, max {}, actual {}", field, min, max, actual),
@@ -751,7 +756,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     };
 
     // From<bool> / From<Name> for bool impls for boolean types
-    let from_bool_impl = if let (Some(ref fv), Some(ref tv)) = (false_ident, true_ident) {
+    let from_bool_impl = if let (Some(fv), Some(tv)) = (&false_ident, &true_ident) {
         quote::quote! {
             impl From<bool> for #name_ident {
                 #[inline]
@@ -764,6 +769,28 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 #[inline]
                 fn from(val: #name_ident) -> bool {
                     val as #r_type_ty != 0
+                }
+            }
+        }
+    } else {
+        quote::quote! {}
+    };
+
+    // as_bool() merged into the main impl block to avoid a separate impl
+    // block that shifts code layout (LTO alignment regression).
+    let as_bool_method = if let (Some(fv), Some(tv)) = (&false_ident, &true_ident) {
+        quote::quote! {
+            /// Returns `Some(true)` / `Some(false)` for the valid boolean
+            /// values. Returns `None` for `NullVal` or any unknown raw
+            /// discriminant — the SBE boolean wire type is tri-state
+            /// (F, T, null). Prefer this over the infallible `From`
+            /// conversion, which collapses `NullVal` to `true`.
+            #[inline]
+            pub const fn as_bool(self) -> Option<bool> {
+                match self {
+                    Self::#fv => Some(false),
+                    Self::#tv => Some(true),
+                    _ => None,
                 }
             }
         }
@@ -827,6 +854,8 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                     _ => Self::NullVal,
                 }
             }
+
+            #as_bool_method
         }
 
         impl From<#name_ident> for #r_type_ty {
@@ -1195,6 +1224,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 let prim_size = encoding_type.size();
                 let prim_size_lit =
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(&format!("raw_{}", field_name), proc_macro2::Span::call_site());
 
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
@@ -1204,6 +1234,13 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         #target_ident::from_raw(#r_type_ty::#from_method(
                             read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
                         ))
+                    }
+                    /// Raw wire discriminant — bypasses enum mapping.
+                    #[inline]
+                    pub fn #raw_ident(&self) -> #r_type_ty {
+                        #r_type_ty::#from_method(
+                            read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
+                        )
                     }
                 });
 
@@ -1889,7 +1926,7 @@ pub(crate) fn generate_any_message(
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
+                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, pos, block_length, version) }))
                 }
             });
         }
@@ -1987,19 +2024,25 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let decoder = #decoder::try_wrap(buf, pos, block_length, version)?;
-                    let total_len = decoder.encoded_length_with_header()?;
-                    if total_len > frame_len {
+                    let frame_end = pos.checked_add(frame_len).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: #field_name,
+                            needed: frame_len,
+                            available: buf.len().saturating_sub(pos),
+                        }
+                    )?;
+                    if frame_end > buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
-                            needed: total_len,
-                            available: frame_len,
+                            needed: frame_len,
+                            available: buf.len().saturating_sub(pos),
                         });
                     }
+                    let decoder = #decoder::try_decode(&buf[..frame_end], pos)?;
                     Ok(DecodedFrame {
                         message: Self::#name(decoder),
-                        range: pos .. pos + total_len,
-                        len: total_len,
+                        range: pos .. frame_end,
+                        len: frame_len,
                     })
                 }
             });

@@ -1022,9 +1022,9 @@ fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn st
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         let mut ff = car2.into_fuel_figures().unwrap();
-        // nth() bounds check is ALWAYS present (trust boundary — external idx input)
-        let result = ff.nth(999);
-        assert!(result.is_err(), "nth(999) on 0-entry group must return Err");
+        // scan_entry_at() bounds check is ALWAYS present (trust boundary — external idx input)
+        let result = ff.scan_entry_at(999);
+        assert!(result.is_err(), "scan_entry_at(999) on 0-entry group must return Err");
     "#,
     );
     Ok(())
@@ -1606,7 +1606,7 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
         assert!(CarEncoder::try_wrap(&mut scratch, usize::MAX).is_err());
         assert!(CarEncoder::try_wrap_and_apply_header(&mut scratch, usize::MAX).is_err());
         assert!(CarDecoder::try_decode(&scratch, usize::MAX).is_err());
-        assert!(AnyMessage::decode(&scratch, usize::MAX).is_err());
+        assert!(AnyMessage::try_decode(&scratch, usize::MAX).is_err());
         assert!(AnyMessage::decode_frame(&scratch, usize::MAX, 1).is_err());
 
         let mut exact_storage = [0u8; 8192];
@@ -1775,7 +1775,7 @@ fn anymessage_decode_dispatches_by_template_id() -> Result<(), Box<dyn std::erro
         let encoded = car.as_bytes_with_header();
 
         // decode dispatches on templateId
-        let msg = AnyMessage::decode(encoded, 0).unwrap();
+        let msg = AnyMessage::try_decode(encoded, 0).unwrap();
         match msg {
             AnyMessage::Car(d) => {
                 assert_eq!(d.serial_number(), 42);
@@ -1847,7 +1847,7 @@ fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::err
         buf[6..8].copy_from_slice(&0u16.to_le_bytes());    // version
         buf[8..24].fill(0xAB);                             // 16 bytes of payload
 
-        let result = AnyMessage::decode(&buf, 0);
+        let result = AnyMessage::try_decode(&buf, 0);
         assert!(result.is_err(), "bare decode of unknown template must error");
 
         // decode_frame with frame_len → Unknown variant

@@ -95,13 +95,12 @@ reading mixed-version streams.
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |
 | Always-on meta / Display noise | Opt-out size knobs: `with_display_debug(false)`, `with_meta_attributes(false)`, `with_dispatch(false)` |
 
-## `_unchecked` accessors
+## Trust boundary
 
-Optional via `with_unchecked_companions(true)`. Supported **after**
-`decode` / `try_from` / `wrap` / `verify` (or equivalent). Not a bench-only
-secret; HFT hot loops after validation are intended. Calling field
-`_unchecked` without a proven extent is a programmer bug (UB on OOB). Safety
-contract is on `GenerationConfig::with_unchecked_companions`.
+Safe constructors (`wrap`, `wrap_and_apply_header`, `decode`) validate the
+buffer extent once. After that proof, all field accessors are branch-free.
+The zero-check lane is `unsafe fn *_unchecked`; use it only when you have
+externally proven the extent (benchmarks, pre-validated buffers).
 
 ## Further reading
 

@@ -49,6 +49,13 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
+    // Bulk decode is only safe when every non-constant entry field is
+    // present in all supported versions (sinceVersion == 0) and required.
+    let bulk_decode_eligible = total_tail == 0
+        && g.fields.iter().all(|f| {
+            f.presence == Presence::Constant
+                || (f.presence != Presence::Optional && f.since_version == 0)
+        });
     let fixed_extent_validation = if total_tail == 0 {
         quote::quote! {
             let entries_length = count.checked_mul(block_length).ok_or(
@@ -172,7 +179,7 @@ pub(crate) fn generate_group_decoder(
             /// `pos + dim + count * acting_block_length` must also fit. Entry
             /// accessors then use unchecked fixed-field reads under that proof.
             #[inline]
-            pub fn wrap_trusted(
+            pub(crate) unsafe fn wrap_trusted(
                 buf: &'a [u8], pos: usize, acting_version: u16,
                 parent_pos: usize, parent_block_length: usize,
             ) -> Self {
@@ -359,7 +366,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
-                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
@@ -404,7 +411,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #[inline]
-                pub fn nth(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn scan_entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,

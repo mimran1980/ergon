@@ -32,8 +32,10 @@
 //! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
 //! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
 //!   Aeron `try_claim`
-//! - **Checked entry points** — `decode` / `try_from` / `wrap` return `Result`
-//!   and validate extents; zero-check cores stay private until an HFT-008 keep
+//! - **Two-lane trust boundary** — `try_wrap` / `try_wrap_and_apply_header` /
+//!   `try_decode` validate the buffer extent and return `Result`. The zero-check
+//!   lane (`wrap_unchecked` / `wrap_and_apply_header_unchecked` /
+//!   `decode_unchecked`) is `unsafe` with the extent precondition in `# Safety`
 //! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
 //! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
 //!   line of config
