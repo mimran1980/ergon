@@ -391,6 +391,7 @@ fn generate_staged(
 
                     /// Complete this group when the entry count is zero.
                     /// Returns an error if the declared count is non-zero.
+                    #[inline]
                     pub fn finish_empty(self)
                         -> Result<#next_name, sbe_rt::EncodeError>
                     {
@@ -979,6 +980,7 @@ pub(super) fn generate_support() -> TokenStream {
             /// then the closure describes each entry (`sub.add()` for the entry
             /// block, `sub.var_data(...)` for per-entry var-data). The closure
             /// receives a sub-builder scoped to this group's parent multiplier.
+            #[inline]
             pub fn group_ragged<F>(
                 &mut self, dim: usize, entry_block: usize, f: F,
             ) -> sbe_rt::GroupResult
@@ -996,6 +998,7 @@ pub(super) fn generate_support() -> TokenStream {
             }
 
             /// Add a varData field for the current entry.
+            #[inline]
             pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
                 self.state.add_scaled(prefix, self.parent_multiplier);
                 self.state.add_scaled(byte_len, self.parent_multiplier);

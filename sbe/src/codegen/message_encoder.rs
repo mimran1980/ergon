@@ -358,7 +358,11 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-            Self::try_wrap(buf, msg_offset).unwrap_or_else(|e| panic!("{e}"))
+            if #needed_lit > buf.len().saturating_sub(msg_offset) {
+                panic!("{}", Self::buffer_too_short(buf, msg_offset, #needed_lit));
+            }
+            // SAFETY: extent check above proved header + fixed body fit.
+            unsafe { Self::wrap_unchecked(buf, msg_offset) }
         }
 
         /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
@@ -414,7 +418,11 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            Self::try_wrap_and_apply_header(buf, pos).unwrap_or_else(|e| panic!("{e}"))
+            if #needed_lit > buf.len().saturating_sub(pos) {
+                panic!("{}", Self::buffer_too_short(buf, pos, #needed_lit));
+            }
+            // SAFETY: extent check above proved header + fixed body fit.
+            unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) }
         }
 
         /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**

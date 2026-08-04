@@ -483,13 +483,16 @@ fn bench_encode_scalar(c: &mut Criterion) {
             WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
         };
 
-        let mut ergon = [0u8; 18];
+        // Constructor proves HEADER+BLOCK_LENGTH (8+45); compare only the
+        // touched prefix (header + serial_number + model_year = 18 bytes).
+        const NEED: usize = 8 + 45;
+        let mut ergon = [0u8; NEED];
         black_box(
             CarEncoder::wrap_and_apply_header(&mut ergon, 0)
                 .serial_number(1234)
                 .model_year(2013),
         );
-        let mut sbe_tool = [0u8; 18];
+        let mut sbe_tool = [0u8; NEED];
         black_box(
             ToolCarEncoder::default()
                 .wrap(WriteBuf::new(&mut sbe_tool), 8)
@@ -499,7 +502,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
                 .serial_number(1234)
                 .model_year(2013),
         );
-        assert_eq!(ergon, sbe_tool, "scalar header+body bytes");
+        assert_eq!(&ergon[..18], &sbe_tool[..18], "scalar header+body bytes");
     }
 
     // Header-inclusive API comparison.

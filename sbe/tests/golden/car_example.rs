@@ -4,16 +4,13 @@
     clippy::double_must_use,
     clippy::erasing_op,
     clippy::identity_op,
-    clippy::unnecessary_cast,
-    unused_unsafe
+    clippy::unnecessary_cast
 )]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
-#[allow(clippy::identity_op)]
 #[allow(clippy::eq_op)]
 #[allow(clippy::needless_borrow)]
 #[allow(clippy::manual_range_contains)]
-#[allow(unused_imports)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
@@ -178,7 +175,14 @@ pub mod sbe_rt {
             }
         }
     }
-    impl core::error::Error for EncodeError {}
+    impl core::error::Error for EncodeError {
+        fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+            match self {
+                Self::Decode(e) => Some(e),
+                _ => None,
+            }
+        }
+    }
     impl From<DecodeError> for EncodeError {
         fn from(e: DecodeError) -> Self {
             Self::Decode(e)
@@ -247,7 +251,14 @@ pub mod sbe_rt {
             VerifyError::DecodeError(e)
         }
     }
-    impl core::error::Error for VerifyError {}
+    impl core::error::Error for VerifyError {
+        fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+            match self {
+                Self::DecodeError(e) => Some(e),
+                _ => None,
+            }
+        }
+    }
     /// Convert a wire var-data length without truncation and validate
     /// the complete region with overflow-safe offset arithmetic.
     #[inline]
@@ -360,9 +371,13 @@ pub enum BooleanType {
     NullVal = 255,
 }
 impl BooleanType {
+    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
+    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
     pub fn raw(self) -> u8 {
         self as u8
     }
+    /// Reconstruct from a wire discriminant (`NullVal` for unknown).
+    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
     pub const fn from_raw(val: u8) -> Self {
         match val {
             0 => Self::F,
@@ -439,9 +454,13 @@ pub enum Model {
     NullVal = 0,
 }
 impl Model {
+    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
+    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
     pub fn raw(self) -> u8 {
         self as u8
     }
+    /// Reconstruct from a wire discriminant (`NullVal` for unknown).
+    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'A' => Self::A,
@@ -496,9 +515,13 @@ pub enum BoostType {
     NullVal = 0,
 }
 impl BoostType {
+    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
+    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
     pub fn raw(self) -> u8 {
         self as u8
     }
+    /// Reconstruct from a wire discriminant (`NullVal` for unknown).
+    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'T' => Self::TURBO,
@@ -1123,6 +1146,7 @@ impl CarSchema {
     pub const HEADER_LENGTH: usize = 8;
 }
 ///Description of a basic Car
+#[must_use = "decoder must be read or advanced; dropping is fine only after use"]
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -1130,9 +1154,11 @@ pub struct CarDecoder<'a> {
     pub(crate) acting_block_length: usize,
 }
 /// Buffer-placement and wire-frame metadata. Holds a reference to the
-/// parent decoder — zero-copy. All utility methods (`remaining`,
-/// `buffer`, `as_bytes_with_header`, etc.) live here so no schema
-/// field can collide with them.
+/// parent decoder — zero-copy. Utility methods live here so no schema
+/// field can collide with them. Byte views on this facet span the
+/// **acting fixed block only**; complete frames use the complete stage
+/// or the decoder's tail-rescan helpers when the message has groups
+/// or var-data.
 #[derive(Clone, Copy)]
 pub struct CarDecoderMetadata<'m, 'a> {
     decoder: &'m CarDecoder<'a>,
@@ -1156,8 +1182,13 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
             .min(self.decoder.buf.len());
         &self.decoder.buf[end..]
     }
+    /// Fixed-block body only (groups/var-data not included).
+    /// For a complete frame walk tails then use the complete stage's
+    /// `as_bytes_with_header`, or the decoder's inherent
+    /// `as_bytes_with_header` which rescans tails without consuming
+    /// the stage.
     #[inline]
-    pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.decoder.pos;
         let end = self.decoder.pos + self.decoder.acting_block_length;
         if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
@@ -1169,8 +1200,11 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
         }
         Ok(&self.decoder.buf[start..end])
     }
+    /// Header + fixed block only — **not** a complete SBE message when
+    /// groups or var-data remain. Prefer the complete stage's
+    /// `as_bytes_with_header` after finishing the walk.
     #[inline]
-    pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+    pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.message_offset();
         let end = self.decoder.pos + self.decoder.acting_block_length;
         if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
@@ -1182,10 +1216,15 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
         }
         Ok(&self.decoder.buf[start..end])
     }
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub fn acting_version(&self) -> u16 {
         self.decoder.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub fn acting_block_length(&self) -> usize {
         self.decoder.acting_block_length
@@ -1269,7 +1308,9 @@ impl<'a> CarDecoder<'a> {
     /// then constructs; **panics** if the buffer is too short. Field
     /// accessors use unchecked reads justified by that proof.
     ///
-    /// Prefer [`Self::try_wrap`] at untrusted boundaries.
+    /// Prefer [`Self::try_wrap`] at untrusted boundaries. Uses a direct
+    /// extent check (not `try_wrap` + match) so the hot success path does
+    /// not construct a `Result` — same contract as encoder bare `wrap`.
     #[inline]
     pub fn wrap(
         buf: &'a [u8],
@@ -1277,8 +1318,35 @@ impl<'a> CarDecoder<'a> {
         acting_block_length: usize,
         acting_version: u16,
     ) -> Self {
-        Self::try_wrap(buf, message_offset, acting_block_length, acting_version)
-            .unwrap_or_else(|e| panic!("{e}"))
+        let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+            panic!(
+                "{}", sbe_rt::DecodeError::BufferTooShort { field : "message header",
+                needed : Self::HEADER_LENGTH, available : buf.len()
+                .saturating_sub(message_offset), }
+            );
+        };
+        let available_body = buf.len().saturating_sub(body_pos);
+        let min_fixed = Self::min_readable_fixed_extent(acting_version);
+        let body_need = if acting_block_length > min_fixed {
+            acting_block_length
+        } else {
+            min_fixed
+        };
+        if body_need > available_body {
+            panic!(
+                "{}", sbe_rt::DecodeError::BufferTooShort { field : "message body",
+                needed : Self::HEADER_LENGTH.saturating_add(body_need), available : buf
+                .len().saturating_sub(message_offset), }
+            );
+        }
+        unsafe {
+            Self::wrap_unchecked(
+                buf,
+                message_offset,
+                acting_block_length,
+                acting_version,
+            )
+        }
     }
     /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
     /// Only for proven-tight HFT loops after an external extent proof.
@@ -1438,10 +1506,15 @@ impl<'a> CarDecoder<'a> {
             Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
         })
     }
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
@@ -2665,6 +2738,9 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct FuelFiguresEntryDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3623,6 +3699,9 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct PerformanceFiguresEntryDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3723,6 +3802,9 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct CarDecoderAfterFuelFigures<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3730,6 +3812,9 @@ pub struct CarDecoderAfterFuelFigures<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct CarDecoderAfterPerformanceFigures<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3737,6 +3822,9 @@ pub struct CarDecoderAfterPerformanceFigures<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct CarDecoderAfterManufacturer<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3744,6 +3832,9 @@ pub struct CarDecoderAfterManufacturer<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct CarDecoderAfterModel<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -3751,6 +3842,9 @@ pub struct CarDecoderAfterModel<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
+/// Consuming decoder stage — drop without `into_*` / `finish` skips
+/// remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
 pub struct CarDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) pos: usize,
@@ -4418,6 +4512,7 @@ impl CarFuelFiguresEntryDomain {
     ///
     /// Propagates decode errors from malformed group entries and var-data
     /// instead of panicking. Prefer this over `From`/`TryFrom`.
+    #[inline]
     pub fn try_from_decoder(
         dec: FuelFiguresEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4432,6 +4527,7 @@ impl CarFuelFiguresEntryDomain {
     }
 }
 impl CarFuelFiguresEntryDomain {
+    #[inline]
     pub fn encode_into<'a>(
         &self,
         enc: &mut FuelFiguresEntryEncoder<'a>,
@@ -4454,6 +4550,7 @@ impl CarFuelFiguresEntryDomain {
     }
     /// Compute this entry's contribution to the total encoded length
     /// (entry block + nested groups + entry var-data).
+    #[inline]
     pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
         let mut len: usize = 6;
         if self.usage_description.len() > 1073741824 {
@@ -4487,6 +4584,7 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     ///
     /// Propagates decode errors from malformed group entries and var-data
     /// instead of panicking. Prefer this over `From`/`TryFrom`.
+    #[inline]
     pub fn try_from_decoder(
         dec: PerformanceFiguresAccelerationEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4497,6 +4595,7 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     }
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    #[inline]
     pub fn encode_into<'a>(
         &self,
         enc: &mut PerformanceFiguresAccelerationEntryEncoder<'a>,
@@ -4518,6 +4617,7 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     }
     /// Compute this entry's contribution to the total encoded length
     /// (entry block + nested groups + entry var-data).
+    #[inline]
     pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
         let mut len: usize = 6;
         Ok(len)
@@ -4579,6 +4679,7 @@ impl CarPerformanceFiguresEntryDomain {
     ///
     /// Propagates decode errors from malformed group entries and var-data
     /// instead of panicking. Prefer this over `From`/`TryFrom`.
+    #[inline]
     pub fn try_from_decoder(
         dec: PerformanceFiguresEntryDecoder<'_>,
     ) -> Result<Self, sbe_rt::DecodeError> {
@@ -4597,6 +4698,7 @@ impl CarPerformanceFiguresEntryDomain {
     }
 }
 impl CarPerformanceFiguresEntryDomain {
+    #[inline]
     pub fn encode_into<'a>(
         &self,
         enc: &mut PerformanceFiguresEntryEncoder<'a>,
@@ -4627,6 +4729,7 @@ impl CarPerformanceFiguresEntryDomain {
     }
     /// Compute this entry's contribution to the total encoded length
     /// (entry block + nested groups + entry var-data).
+    #[inline]
     pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
         let mut len: usize = 6;
         len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
@@ -4667,6 +4770,7 @@ impl CarDomain {
     /// instead of panicking. Prefer this over `From`/`TryFrom`: the companion
     /// entry point is [`Self::try_from_slice_with_header`] (when generated),
     /// and named methods make the two sources unambiguous.
+    #[inline]
     pub fn try_from_decoder(dec: CarDecoder<'_>) -> Result<Self, sbe_rt::DecodeError> {
         Ok(Self {
             serial_number: dec.serial_number(),
@@ -4727,6 +4831,7 @@ impl CarDomain {
     }
 }
 impl CarDomain {
+    #[inline]
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
         {
@@ -4808,6 +4913,7 @@ impl CarDomain {
     }
     /// Compute the exact SBE message body length from this domain object.
     /// Matches the length returned by [`Self::encode`].
+    #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
         let mut len: usize = 45;
         len = len.checked_add(4).ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
@@ -4859,6 +4965,7 @@ impl CarDomain {
     }
     /// Compute the exact SBE message length including the message header.
     /// Matches `encode()` return value for non-fixed messages.
+    #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
         Ok(self.encoded_length()? + CarEncoder::HEADER_LENGTH)
     }
@@ -5121,7 +5228,10 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
-        Self::try_wrap(buf, msg_offset).unwrap_or_else(|e| panic!("{e}"))
+        if 53 > buf.len().saturating_sub(msg_offset) {
+            panic!("{}", Self::buffer_too_short(buf, msg_offset, 53));
+        }
+        unsafe { Self::wrap_unchecked(buf, msg_offset) }
     }
     /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
     /// Only for proven-tight HFT loops where the panic machinery is
@@ -5170,7 +5280,10 @@ impl<'a> CarEncoder<'a> {
         buf: &'a mut [u8],
         pos: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
-        Self::try_wrap_and_apply_header(buf, pos).unwrap_or_else(|e| panic!("{e}"))
+        if 53 > buf.len().saturating_sub(pos) {
+            panic!("{}", Self::buffer_too_short(buf, pos, 53));
+        }
+        unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) }
     }
     /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
     /// on OOB. Only for proven-tight HFT loops.
@@ -6754,7 +6867,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
         if end > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "encode",
+                field: "group entry",
                 needed,
                 available: self.buf.len().saturating_sub(self.pos),
             });
@@ -6999,6 +7112,7 @@ impl CarFuelFiguresUniformEncodedLength {
     }
     /// Complete this group when the entry count is zero.
     /// Returns an error if the declared count is non-zero.
+    #[inline]
     pub fn finish_empty(
         self,
     ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
@@ -7182,6 +7296,7 @@ impl CarPerformanceFiguresUniformEncodedLength {
     }
     /// Complete this group when the entry count is zero.
     /// Returns an error if the declared count is non-zero.
+    #[inline]
     pub fn finish_empty(
         self,
     ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
@@ -7687,6 +7802,7 @@ impl RaggedEntryBuilder {
     /// then the closure describes each entry (`sub.add()` for the entry
     /// block, `sub.var_data(...)` for per-entry var-data). The closure
     /// receives a sub-builder scoped to this group's parent multiplier.
+    #[inline]
     pub fn group_ragged<F>(
         &mut self,
         dim: usize,
@@ -7709,6 +7825,7 @@ impl RaggedEntryBuilder {
         Ok(())
     }
     /// Add a varData field for the current entry.
+    #[inline]
     pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
         self.state.add_scaled(prefix, self.parent_multiplier);
         self.state.add_scaled(byte_len, self.parent_multiplier);
@@ -8084,6 +8201,7 @@ pub trait MessageVisitor {
     fn visit_unknown(&mut self, header: &MessageHeader, payload: &[u8]) -> Self::Output;
 }
 impl<'a> AnyMessage<'a> {
+    #[inline]
     pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
         match self {
             Self::Car(d) => visitor.visit_car(d),

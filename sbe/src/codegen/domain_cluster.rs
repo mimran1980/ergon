@@ -766,6 +766,7 @@ pub(crate) fn generate_domain_recursive(
 
         impl #domain_ident {
             #try_from_decoder_doc
+            #[inline]
             pub fn try_from_decoder(
                 dec: #decoder_ident<'_>,
             ) -> Result<Self, sbe_rt::DecodeError> {
@@ -895,6 +896,7 @@ pub(crate) fn generate_domain_recursive(
 
         ts.extend(quote::quote! {
             impl #domain_ident {
+                #[inline]
                 pub fn encode_into<'a>(
                     &self,
                     enc: &mut #entry_encoder_ident<'a>,
@@ -904,6 +906,7 @@ pub(crate) fn generate_domain_recursive(
 
                 /// Compute this entry's contribution to the total encoded length
                 /// (entry block + nested groups + entry var-data).
+                #[inline]
                 pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
                     #len_stmts
                 }
@@ -1016,18 +1019,21 @@ pub(crate) fn generate_domain_recursive(
         };
         ts.extend(quote::quote! {
             impl #domain_ident {
+                #[inline]
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     #encode_body
                 }
 
                 /// Compute the exact SBE message body length from this domain object.
                 /// Matches the length returned by [`Self::encode`].
+                #[inline]
                 pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
                     #msg_len_stmts
                 }
 
                 /// Compute the exact SBE message length including the message header.
                 /// Matches `encode()` return value for non-fixed messages.
+                #[inline]
                 pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
                     Ok(self.encoded_length()? + #encoder_ident::HEADER_LENGTH)
                 }

@@ -203,42 +203,71 @@ pub struct FieldInfo {
 /// hook body to return tokens appended after the generated item.
 // manual Debug/Clone because &Schema in every variant makes derive unhappy
 #[derive(Clone)]
-#[allow(missing_docs)]
 pub enum ItemContext<'a> {
+    /// An SBE enum after codegen of its Rust type.
     Enum {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Enum type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Variants in schema order.
         variants: Vec<EnumVariantInfo>,
     },
+    /// An SBE bitset after codegen.
     Set {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Set type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Bit choices in schema order.
         choices: Vec<SetChoiceInfo>,
     },
+    /// An SBE composite after codegen.
     Composite {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Composite type name (PascalCase).
         name: String,
+        /// Member fields in wire order.
         fields: Vec<FieldInfo>,
     },
+    /// A message decoder flyweight.
     MessageDecoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// A message encoder stage root.
     MessageEncoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// An owned domain DTO (`*Domain`) when domain objects are enabled.
     DomainStruct {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// DTO type name (PascalCase).
         name: String,
+        /// Fields on the DTO (including groups/var-data as owned types).
         fields: Vec<FieldInfo>,
     },
 }

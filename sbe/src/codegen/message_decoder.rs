@@ -176,6 +176,7 @@ pub(crate) fn generate_message_decoder(
     }
     ts.extend(quote::quote! {
         #derive_attr
+        #[must_use = "decoder must be read or advanced; dropping is fine only after use"]
         pub struct #decoder_ident<'a> {
             pub(crate) buf: &'a [u8],
             pub(crate) pos: usize,
@@ -383,7 +384,9 @@ pub(crate) fn generate_message_decoder(
         /// then constructs; **panics** if the buffer is too short. Field
         /// accessors use unchecked reads justified by that proof.
         ///
-        /// Prefer [`Self::try_wrap`] at untrusted boundaries.
+        /// Prefer [`Self::try_wrap`] at untrusted boundaries. Uses a direct
+        /// extent check (not `try_wrap` + match) so the hot success path does
+        /// not construct a `Result` — same contract as encoder bare `wrap`.
         #[inline]
         pub fn wrap(
             buf: &'a [u8],
@@ -391,8 +394,37 @@ pub(crate) fn generate_message_decoder(
             acting_block_length: usize,
             acting_version: u16,
         ) -> Self {
-            Self::try_wrap(buf, message_offset, acting_block_length, acting_version)
-                .unwrap_or_else(|e| panic!("{e}"))
+            let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+                panic!(
+                    "{}",
+                    sbe_rt::DecodeError::BufferTooShort {
+                        field: "message header",
+                        needed: Self::HEADER_LENGTH,
+                        available: buf.len().saturating_sub(message_offset),
+                    }
+                );
+            };
+            let available_body = buf.len().saturating_sub(body_pos);
+            let min_fixed = Self::min_readable_fixed_extent(acting_version);
+            let body_need = if acting_block_length > min_fixed {
+                acting_block_length
+            } else {
+                min_fixed
+            };
+            if body_need > available_body {
+                panic!(
+                    "{}",
+                    sbe_rt::DecodeError::BufferTooShort {
+                        field: "message body",
+                        needed: Self::HEADER_LENGTH.saturating_add(body_need),
+                        available: buf.len().saturating_sub(message_offset),
+                    }
+                );
+            }
+            // SAFETY: extent check above proved header + version-aware fixed body fit.
+            unsafe {
+                Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version)
+            }
         }
 
         /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
@@ -562,11 +594,16 @@ pub(crate) fn generate_message_decoder(
     }
 
     impl_body.extend(quote::quote! {
+        /// Schema version from the message header (or wrap args), not the
+        /// compiled schema constant. Fields with `sinceVersion` and optional
+        /// presence depend on this value.
         #[inline]
         pub const fn acting_version(&self) -> u16 {
             self.acting_version
         }
 
+        /// Block length from the wire header / wrap args. Tail offsets use
+        /// this acting length, not only the compiled `BLOCK_LENGTH`.
         #[inline]
         pub const fn acting_block_length(&self) -> usize {
             self.acting_block_length
@@ -598,6 +635,9 @@ pub(crate) fn generate_message_decoder(
             "encoded_length_with_header",
             "as_body_bytes",
             "as_bytes_with_header",
+            // Metadata partial-frame names when the message has tails (T-15).
+            "as_fixed_body_bytes",
+            "as_fixed_region_with_header",
             "verify",
             "acting_version",
             "acting_block_length",
@@ -1534,11 +1574,87 @@ pub(crate) fn generate_message_decoder(
         &format!("{}DecoderMetadata", name),
         proc_macro2::Span::call_site(),
     );
+    // Metadata only spans the acting fixed block (header + body at wrap).
+    // Complete-sounding names only when there are no tails; otherwise mirror
+    // encoder `as_fixed_region_with_header` so mid-decode metadata cannot be
+    // mistaken for a publishable full frame (T-15).
+    let meta_bytes = if total_tail == 0 {
+        quote::quote! {
+            /// Message body bytes (header exclusive). Fixed-only message —
+            /// this is the complete body.
+            #[inline]
+            pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.decoder.pos;
+                let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "body",
+                        needed: end.saturating_sub(start),
+                        available: self.decoder.buf.len().saturating_sub(start),
+                    });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+            /// Header-inclusive frame bytes (fixed-only message — complete).
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.message_offset();
+                let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "frame",
+                        needed: end.saturating_sub(start),
+                        available: self.decoder.buf.len().saturating_sub(start),
+                    });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+        }
+    } else {
+        quote::quote! {
+            /// Fixed-block body only (groups/var-data not included).
+            /// For a complete frame walk tails then use the complete stage's
+            /// `as_bytes_with_header`, or the decoder's inherent
+            /// `as_bytes_with_header` which rescans tails without consuming
+            /// the stage.
+            #[inline]
+            pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.decoder.pos;
+                let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "body",
+                        needed: end.saturating_sub(start),
+                        available: self.decoder.buf.len().saturating_sub(start),
+                    });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+            /// Header + fixed block only — **not** a complete SBE message when
+            /// groups or var-data remain. Prefer the complete stage's
+            /// `as_bytes_with_header` after finishing the walk.
+            #[inline]
+            pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                let start = self.message_offset();
+                let end = self.decoder.pos + self.decoder.acting_block_length;
+                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: "frame",
+                        needed: end.saturating_sub(start),
+                        available: self.decoder.buf.len().saturating_sub(start),
+                    });
+                }
+                Ok(&self.decoder.buf[start..end])
+            }
+        }
+    };
     ts.extend(quote::quote! {
         /// Buffer-placement and wire-frame metadata. Holds a reference to the
-        /// parent decoder — zero-copy. All utility methods (`remaining`,
-        /// `buffer`, `as_bytes_with_header`, etc.) live here so no schema
-        /// field can collide with them.
+        /// parent decoder — zero-copy. Utility methods live here so no schema
+        /// field can collide with them. Byte views on this facet span the
+        /// **acting fixed block only**; complete frames use the complete stage
+        /// or the decoder's tail-rescan helpers when the message has groups
+        /// or var-data.
         #[derive(Clone, Copy)]
         pub struct #metadata_ident<'m, 'a> {
             decoder: &'m #decoder_ident<'a>,
@@ -1552,21 +1668,13 @@ pub(crate) fn generate_message_decoder(
                 let end = (self.decoder.pos + self.decoder.acting_block_length).min(self.decoder.buf.len());
                 &self.decoder.buf[end..]
             }
-            #[inline] pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.pos; let end = self.decoder.pos + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: "body", needed: end.saturating_sub(start), available: self.decoder.buf.len().saturating_sub(start) });
-                }
-                Ok(&self.decoder.buf[start..end])
-            }
-            #[inline] pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.message_offset(); let end = self.decoder.pos + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: "frame", needed: end.saturating_sub(start), available: self.decoder.buf.len().saturating_sub(start) });
-                }
-                Ok(&self.decoder.buf[start..end])
-            }
+            #meta_bytes
+            /// Schema version from the message header (or wrap args), not the
+            /// compiled schema constant. Fields with `sinceVersion` and optional
+            /// presence depend on this value.
             #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
+            /// Block length from the wire header / wrap args. Tail offsets use
+            /// this acting length, not only the compiled `BLOCK_LENGTH`.
             #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
     });

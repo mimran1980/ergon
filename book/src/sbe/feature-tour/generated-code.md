@@ -74,11 +74,14 @@ field name.
 
 ```rust,ignore
 let dec = CarDecoder::try_decode(&buf, 0)?;
-dec.price();                                // field accessor — never collides
-dec.get_metadata().remaining();             // metadata — never collides
-dec.get_metadata().buffer();                // metadata — never collides
-dec.get_metadata().as_bytes_with_header();  // metadata — never collides
-dec.encoded_length_with_header();           // hot path stays on base struct
+dec.serial_number();                              // field accessor — never collides
+dec.get_metadata().remaining();                   // metadata — never collides
+dec.get_metadata().buffer();                      // metadata — never collides
+// Car has groups/var-data: metadata is fixed-block only (not a full frame).
+dec.get_metadata().as_fixed_region_with_header()?;
+// Complete frame after walking tails, or rescan without consuming:
+// complete.as_bytes_with_header() / dec.as_bytes_with_header()?
+dec.encoded_length_with_header()?;                // hot path stays on base struct
 ```
 
 The metadata struct holds a reference to the parent (zero-copy):
@@ -89,13 +92,15 @@ pub struct CarDecoderMetadata<'m, 'a> {
 }
 ```
 
-Encoders have the same pattern:
+Encoders have the same pattern. Fixed-only messages keep complete-sounding
+`as_body_bytes` / `as_bytes_with_header` on metadata; messages with tails use
+`as_fixed_body_bytes` / `as_fixed_region_with_header` until the complete stage.
 
 ```rust,ignore
 let meta = enc.get_metadata();
-meta.as_body_bytes();          // body-only bytes
-meta.as_bytes_with_header();   // full frame
-meta.message_offset();         // message start in buffer
+meta.as_fixed_body_bytes();            // fixed block only when message has tails
+meta.as_fixed_region_with_header();    // header + fixed block — not full frame
+meta.message_offset();                 // message start in buffer
 ```
 
 ## Exact buffer sizing

@@ -48,40 +48,26 @@ pub mod hft008_probe {
 
     /// Run all declared constructor/decode pairs on exact + opaque buffers.
     pub fn run_matrix() {
-        // ── wrap_and_apply_header: constructor-only, exact stack array ──
+        // Three distinct tiers: try_* (Result) vs bare (panic) vs *_unchecked (UB).
+        // ── wrap_and_apply_header: exact stack ──
         {
             let mut buf = [0u8; 256];
             let checked = time_ns(|| {
                 let enc = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
                 black_box(enc);
             });
+            let trusted = time_ns(|| {
+                let enc = CarEncoder::wrap_and_apply_header(black_box(&mut buf), 0);
+                black_box(enc);
+            });
             let unchecked = time_ns(|| {
                 // SAFETY: 256 >= HEADER+BLOCK for Car.
                 let enc = unsafe {
-                    CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+                    CarEncoder::wrap_and_apply_header_unchecked(black_box(&mut buf), 0)
                 };
                 black_box(enc);
             });
-            emit("wrap_and_apply_header", "exact_ctor", checked, unchecked);
-        }
-
-        // ── wrap_and_apply_header: constructor-only, opaque runtime slice ──
-        {
-            let need = 8 + CarEncoder::BLOCK_LENGTH + 32;
-            let mut va = vec![0u8; need];
-            let mut vb = vec![0u8; need];
-            let checked = time_ns(|| {
-                let enc = CarEncoder::try_wrap_and_apply_header(black_box(&mut va[..]), 0).unwrap();
-                black_box(enc);
-            });
-            let unchecked = time_ns(|| {
-                // SAFETY: va sized to HEADER+BLOCK+pad.
-                let enc = unsafe {
-                    CarEncoder::try_wrap_and_apply_header(black_box(&mut vb[..]), 0)
-                };
-                black_box(enc);
-            });
-            emit("wrap_and_apply_header", "opaque_ctor", checked, unchecked);
+            emit3("wrap_and_apply_header", "exact_ctor", checked, trusted, unchecked);
         }
 
         // ── wrap (body only): exact ──
@@ -91,30 +77,18 @@ pub mod hft008_probe {
                 let enc = CarEncoder::try_wrap(black_box(&mut buf), 0).unwrap();
                 black_box(enc);
             });
-            let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::try_wrap(black_box(&mut buf), 0) };
-                black_box(enc);
-            });
-            emit("wrap", "exact_ctor", checked, unchecked);
-        }
-
-        // ── wrap: opaque ──
-        {
-            let need = 8 + CarEncoder::BLOCK_LENGTH + 32;
-            let mut va = vec![0u8; need];
-            let mut vb = vec![0u8; need];
-            let checked = time_ns(|| {
-                let enc = CarEncoder::try_wrap(black_box(&mut va[..]), 0).unwrap();
+            let trusted = time_ns(|| {
+                let enc = CarEncoder::wrap(black_box(&mut buf), 0);
                 black_box(enc);
             });
             let unchecked = time_ns(|| {
-                let enc = unsafe { CarEncoder::try_wrap(black_box(&mut vb[..]), 0) };
+                let enc = unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) };
                 black_box(enc);
             });
-            emit("wrap", "opaque_ctor", checked, unchecked);
+            emit3("wrap", "exact_ctor", checked, trusted, unchecked);
         }
 
-        // ── decode: constructor-only on a valid frame ──
+        // ── decode + scalar on a valid frame ──
         {
             let mut frame = [0u8; 512];
             let n = {
@@ -127,11 +101,7 @@ pub mod hft008_probe {
                     .vehicle_code([0; 6])
                     .extras(OptionalExtras::default())
                     .engine(Engine::new(
-                        1,
-                        1,
-                        [0; 3],
-                        0i8,
-                        BooleanType::F,
+                        1, 1, [0; 3], 0i8, BooleanType::F,
                         Booster::new(BoostType::TURBO, 0),
                     ));
                 enc.fuel_figures(0, |_| Ok(()))
@@ -151,91 +121,36 @@ pub mod hft008_probe {
                 let d = CarDecoder::try_decode(black_box(slice), 0).unwrap();
                 black_box(d.serial_number());
             });
+            let trusted = time_ns(|| {
+                let d = CarDecoder::decode(black_box(slice), 0).unwrap();
+                black_box(d.serial_number());
+            });
             let unchecked = time_ns(|| {
                 // SAFETY: frame just produced by encoder with matching length.
-                let d = unsafe { CarDecoder::try_decode(black_box(slice), 0).unwrap() };
+                let d = unsafe { CarDecoder::decode_unchecked(black_box(slice), 0).unwrap() };
                 black_box(d.serial_number());
             });
-            emit("decode", "exact_ctor_plus_scalar", checked, unchecked);
-
-            // Opaque Vec copy of the same frame.
-            let owned = slice.to_vec();
-            let checked = time_ns(|| {
-                let d = CarDecoder::try_decode(black_box(owned.as_slice()), 0).unwrap();
-                black_box(d.serial_number());
-            });
-            let unchecked = time_ns(|| {
-                let d = unsafe {
-                    CarDecoder::try_decode(black_box(owned.as_slice()), 0).unwrap()
-                };
-                black_box(d.serial_number());
-            });
-            emit("decode", "opaque_ctor_plus_scalar", checked, unchecked);
+            emit3("decode", "exact_ctor_plus_scalar", checked, trusted, unchecked);
         }
 
-        // ── AnyMessage::decode ──
-        {
-            let mut frame = [0u8; 512];
-            let n = {
-                let mut enc = CarEncoder::try_wrap_and_apply_header(&mut frame, 0).unwrap();
-                enc.serial_number(2)
-                    .model_year(2002)
-                    .available(BooleanType::F)
-                    .code(Model::B)
-                    .some_numbers([1; 4])
-                    .vehicle_code([1; 6])
-                    .extras(OptionalExtras::default())
-                    .engine(Engine::new(
-                        2,
-                        2,
-                        [1; 3],
-                        0i8,
-                        BooleanType::F,
-                        Booster::new(BoostType::TURBO, 0),
-                    ));
-                enc.fuel_figures(0, |_| Ok(()))
-                    .unwrap()
-                    .performance_figures(0, |_| Ok(()))
-                    .unwrap()
-                    .manufacturer(b"x")
-                    .unwrap()
-                    .model(b"y")
-                    .unwrap()
-                    .activation_code(b"z")
-                    .unwrap()
-                    .encoded_length_with_header()
-            };
-            let slice = &frame[..n];
-            let checked = time_ns(|| {
-                let any = AnyMessage::try_decode(black_box(slice), 0).unwrap();
-                black_box(core::mem::discriminant(&any));
-            });
-            let unchecked = time_ns(|| {
-                let any = unsafe { AnyMessage::try_decode(black_box(slice), 0).unwrap() };
-                black_box(core::mem::discriminant(&any));
-            });
-            emit("AnyMessage::decode", "exact_dispatch", checked, unchecked);
-        }
-
-        // Byte identity: checked vs private unchecked produce the same header+body.
+        // Byte identity: try vs unchecked write the same header template.
         {
             let mut a = [0u8; 256];
             let mut b = [0u8; 256];
             let enc_a = CarEncoder::try_wrap_and_apply_header(&mut a, 0).unwrap();
             // SAFETY: 256 >= HEADER+BLOCK.
-            let enc_b = unsafe { CarEncoder::try_wrap_and_apply_header(&mut b, 0) };
+            let enc_b = unsafe { CarEncoder::wrap_and_apply_header_unchecked(&mut b, 0) };
             drop(enc_a);
             drop(enc_b);
-            // Header template bytes must match after both constructors.
             assert_eq!(&a[..8], &b[..8], "checked/unchecked header identity");
         }
     }
 
-    fn emit(pair: &str, shape: &str, checked_ns: f64, unchecked_ns: f64) {
+    fn emit3(pair: &str, shape: &str, checked_ns: f64, trusted_ns: f64, unchecked_ns: f64) {
         let ratio = checked_ns / unchecked_ns.max(1e-12);
         let improvement_pct = (1.0 - unchecked_ns / checked_ns.max(1e-12)) * 100.0;
         println!(
-            "HFT008_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over={ratio:.6} improvement_pct={improvement_pct:.4}"
+            "HFT008_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} trusted_ns_per_op={trusted_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over_unchecked={ratio:.6} improvement_pct={improvement_pct:.4}"
         );
     }
 }

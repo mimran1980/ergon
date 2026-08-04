@@ -20,6 +20,24 @@ Two styles — pick whichever fits:
   assert_eq!(dec.seq(), 7);
 ```
 
+## Optional fields and `apply_nulls`
+
+`try_wrap_and_apply_header` / `wrap_and_apply_header` write the message header
+only — they do **not** fill optional fixed fields with schema null sentinels
+(sbe-tool parity). Unwritten optional bytes retain whatever was already in the
+buffer (often zero, sometimes stale).
+
+If you leave any optional field unset, call **`apply_nulls()`** after wrap so
+every optional carries its schema null:
+
+```rust,ignore
+// Schematic — call after wrap_and_apply_header when any optional may be unset:
+// enc.apply_nulls();
+// then fixed(...) / required setters only
+```
+
+See [Why NullVal Instead of Option](../design-notes/nullval.md).
+
 **Character arrays:** fixed-width `char` fields become `[u8; N]`. Pass a shorter
 `&str` via the `_str` setter — auto-padded with NULs. On decode, `copy_*`
 copies the raw bytes into your buffer:

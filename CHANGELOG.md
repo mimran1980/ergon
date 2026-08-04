@@ -16,20 +16,33 @@
   `InvalidBoolean` instead.
 - **`MessageVisitor::visit_unknown` has no panicking default** — implementors
   must handle unknown templates.
-- Encoder metadata on messages with tails: complete-sounding
+- Encoder **and decoder** metadata on messages with tails: complete-sounding
   `as_bytes_with_header` replaced by `as_fixed_region_with_header` /
-  `as_fixed_body_bytes` on the initial stage.
+  `as_fixed_body_bytes` on the metadata facet (fixed block only). Complete
+  stages and decoder inherent tail-rescan helpers keep full-frame names.
 
 ### Added
 - **`DomainVarData::Strings`** replaces `LossyStrings` (strict UTF-8; same
   behaviour as 0.1.10+).
 - Restored `docs/SBE_COMPATIBILITY.md`.
-- `#[inline]` on `bulk_decode` convenience wrapper.
+- `#[inline]` on `bulk_decode`, staged `finish_empty` / ragged length builders,
+  domain DTO thin methods, and `AnyMessage::visit`.
+- `Error::source` on `EncodeError::Decode` and `VerifyError::DecodeError`.
+- `#[must_use]` on message/consuming decoder stage structs.
+- Documented `ItemContext` hook fields; `acting_version` / `acting_block_length`
+  rustdoc; book guidance for `apply_nulls`, claim sizing for non-fixed messages,
+  and `AnyMessage::try_decode` teaching.
 
 ### Fixed
 - Truncated `# Safety` docs and garbled group-encode rustdoc.
 - Trust-boundary docs/README aligned to three-tier constructors.
 - `decode_unchecked` uses unchecked header reads as documented.
+- Generic encode `BufferTooShort` labels now use group-field names.
+- HFT-008 keep matrix times three constructor tiers (try / bare / unchecked).
+- Narrower generated `#[allow]` list (no blanket `unused_unsafe` /
+  `unused_imports`).
+- Bare decoder `wrap` uses a direct extent check (no `Result` on the success
+  path), matching encoder bare wrap — restores no-LTO batch decode parity.
 
 ## [0.1.12] — 2026-08-04
 

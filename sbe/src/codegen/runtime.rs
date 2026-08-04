@@ -91,7 +91,14 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
-            impl core::error::Error for EncodeError {}
+            impl core::error::Error for EncodeError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::Decode(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
 
             impl From<DecodeError> for EncodeError {
                 fn from(e: DecodeError) -> Self {
@@ -142,7 +149,14 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
-            impl core::error::Error for VerifyError {}
+            impl core::error::Error for VerifyError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::DecodeError(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
 
             /// Convert a wire var-data length without truncation and validate
             /// the complete region with overflow-safe offset arithmetic.
@@ -848,10 +862,14 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl #name_ident {
+            /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
+            /// regression when forced (see REVIEW T-9 / 0.1.12 history).
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
+            /// Reconstruct from a wire discriminant (`NullVal` for unknown).
+            /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
             pub const fn from_raw(val: #r_type_ty) -> Self {
                 match val {
                     #(#from_raw_arms,)*
@@ -2223,6 +2241,7 @@ pub(crate) fn generate_any_message(
             }
 
             impl<'a> AnyMessage<'a> {
+                #[inline]
                 pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
                     match self {
                         #(#visit_arms)*

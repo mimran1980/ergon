@@ -19,15 +19,21 @@ let claim = publication
     .try_claim(header_len + HB_LEN as i32)
     .expect("claim failed");
 
-// 3. Encode directly into the claimed buffer.
-HeartbeatEncoder::wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)
+// 3. Encode into an exact-length claim slice.
+// Fixed-only messages also get `wrap_into_claim` when the buffer is *exactly*
+// ENCODED_LENGTH (no Aeron framing prefix in the slice).
+let slot = &mut claim.buffer_mut()[header_len..header_len + HB_LEN];
+HeartbeatEncoder::try_wrap_and_apply_header(slot, 0)?
     .fixed(&HeartbeatFixedFields { sequence: 7, timestamp: 0 });
 
 // 4. Commit — Aeron sends it.
 claim.commit()?;
 ```
 
-For variable-length messages, size first with the staged `EncodedLength` builder:
+For **variable-length** messages (groups / var-data), there is **no**
+`wrap_into_claim` — that helper is fixed-only. Size with the staged
+`EncodedLength` builder, claim that exact length, then
+`try_wrap_and_apply_header` on a slice of length `len`:
 
 ```rust,ignore
 let len = CarEncoder::compute_length()
@@ -43,11 +49,14 @@ let len = CarEncoder::compute_length()
     .encoded_length_with_header();
 
 let claim = publication.try_claim(header_len + len as i32)?;
-CarEncoder::wrap_and_apply_header(&mut claim.buffer_mut()[header_len..], 0)
+let slot = &mut claim.buffer_mut()[header_len..header_len + len];
+assert_eq!(slot.len(), len); // claim boundary == EncodedLength
+let written = CarEncoder::try_wrap_and_apply_header(slot, 0)?
     .fixed(&fields)
-    // ...
+    // ... groups/var-data ...
     .manufacturer(b"Honda")?
     .encoded_length_with_header();
+debug_assert_eq!(written, len);
 claim.commit()?;
 ```
 
@@ -56,6 +65,10 @@ claim.commit()?;
 - `compute_length_with_header()` and the staged `EncodedLength` builder give the
   exact byte count before any byte is written — no guesswork, no oversized
   scratch `vec![0u8; 4096]`.
+- `wrap_into_claim` (fixed messages only) requires `buf.len() == ENCODED_LENGTH`
+  and returns `ClaimLengthMismatch` otherwise.
+- For ragged messages, **you** own the claim length from EncodedLength; the
+  encoder still validates capacity via `try_wrap_*`.
 - The encoder writes directly into the slice you hand it — the claim buffer IS
   the encode buffer.
 - The `encoded_length_with_header()` return value on the terminal encoder stage

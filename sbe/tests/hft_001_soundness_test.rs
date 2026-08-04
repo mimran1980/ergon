@@ -223,3 +223,32 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
     );
     Ok(())
 }
+
+/// EncodeError::Decode and VerifyError::DecodeError implement Error::source.
+#[test]
+fn encode_verify_error_source_chains() -> Result<(), Box<dyn Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "hft001_err_src");
+    compile_and_run(
+        "hft001_err_src",
+        &src,
+        r#"
+        use std::error::Error;
+        let inner = sbe_rt::DecodeError::WrongTemplate {
+            expected: 1,
+            actual: 2,
+            expected_name: "Car",
+        };
+        let enc = sbe_rt::EncodeError::Decode(inner);
+        let src = enc.source().expect("EncodeError::Decode must expose source");
+        assert!(src.to_string().contains("template") || src.to_string().contains("wrong"));
+        let ver = sbe_rt::VerifyError::DecodeError(sbe_rt::DecodeError::WrongSchema {
+            expected: 1,
+            actual: 9,
+            expected_name: "baseline",
+        });
+        let src = ver.source().expect("VerifyError::DecodeError must expose source");
+        assert!(src.to_string().contains("schema") || src.to_string().contains("wrong"));
+    "#,
+    );
+    Ok(())
+}

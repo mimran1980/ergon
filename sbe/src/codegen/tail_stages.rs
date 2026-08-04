@@ -45,6 +45,9 @@ pub(crate) fn generate_owner_consuming_stages(
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
+            /// Consuming decoder stage — drop without `into_*` / `finish` skips
+            /// remaining wire tails.
+            #[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
             pub struct #stage<'a> {
                 pub(crate) buf: &'a [u8],
                 pub(crate) pos: usize,

@@ -7,6 +7,8 @@ Cargo.lock
 CLAUDE.md
 .claude/
 tmp/
+# Local cargo registry when sandbox/host blocks ~/.cargo (do not commit).
+.cargo-local/
 /aeron/
 /simple-binary-encoding/
 

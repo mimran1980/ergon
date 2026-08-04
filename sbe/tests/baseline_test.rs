@@ -36,7 +36,7 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         "generated code must suppress non_snake_case"
     );
     assert!(
-        src.contains("#[allow(clippy::identity_op)]"),
+        src.contains("clippy::identity_op"),
         "generated code must suppress clippy::identity_op"
     );
     assert!(
@@ -51,9 +51,14 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         src.contains("#[allow(clippy::manual_range_contains)]"),
         "generated code must suppress clippy::manual_range_contains"
     );
+    // T-14 (0.1.13): unused_imports / unused_unsafe removed — they mask generator bugs.
     assert!(
-        src.contains("#[allow(unused_imports)]"),
-        "generated code must suppress unused_imports"
+        !src.contains("#[allow(unused_imports)]"),
+        "generated code must NOT suppress unused_imports at module level"
+    );
+    assert!(
+        !src.contains("unused_unsafe"),
+        "generated code must NOT suppress unused_unsafe at module level"
     );
     // QW-8 (0.1.12): unused_variables, unused_mut, dead_code, unused_assignments
     // removed from module-level allows — they mask generator bugs. The generator

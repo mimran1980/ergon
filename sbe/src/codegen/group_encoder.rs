@@ -369,8 +369,7 @@ pub(crate) fn generate_group_encoder(
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if end > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "encode",
-
+                            field: "group entry",
                             needed,
                             available: self.buf.len().saturating_sub(self.pos),
                         });
