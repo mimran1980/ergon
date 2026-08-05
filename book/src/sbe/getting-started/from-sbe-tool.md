@@ -79,9 +79,9 @@ access after the header is known. ergon’s entry points take **message start**
 
 | Need | ergo-sbe |
 |------|----------|
-| Untrusted / network | `try_decode` / `try_wrap` / `try_from` → `Result` |
-| Known-good buffer | bare `decode` / `wrap` (prove extent; panic if short) |
-| Proven-tight HFT | `unsafe fn decode_unchecked` / `wrap_unchecked` |
+| Untrusted / network | `try_decode` / `try_wrap` / `try_from` → `Result` (all failures) |
+| Known-good buffer | bare `wrap` → panic if short; bare `decode` → **hybrid** (panic if short, `Err` on wrong template/schema) |
+| Proven-tight HFT | `unsafe wrap_unchecked`; `decode_unchecked` = unchecked extent + checked identity |
 
 See [Trust Boundary](../core-concepts/trust-boundary.md).
 
@@ -103,9 +103,11 @@ reading mixed-version streams.
 
 ## Trust boundary
 
-`try_*` returns `Result` on short buffers; bare `wrap` / `decode` panic after
-the same extent proof; `unsafe fn *_unchecked` skips the proof. After a safe
-constructor succeeds, fixed-field accessors are branch-free. Full detail:
+`try_*` returns `Result` on short buffers (and identity mismatches). Bare
+`wrap` panics if short. Bare `decode` is a **hybrid**: panics if short, but
+still returns `Err` on wrong template/schema. `decode_unchecked` is unchecked
+extent + checked identity. After a safe constructor succeeds, fixed-field
+accessors are branch-free. Full detail:
 [Trust Boundary](../core-concepts/trust-boundary.md).
 
 ## Further reading

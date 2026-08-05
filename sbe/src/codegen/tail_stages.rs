@@ -63,8 +63,13 @@ pub(crate) fn generate_owner_consuming_stages(
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             impl<'a> #stage<'a> {
+                /// Schema version from the message header (or wrap args), not the
+                /// compiled schema constant. Fields with `sinceVersion` and optional
+                /// presence depend on this value.
                 #[inline]
                 pub const fn acting_version(&self) -> u16 { self.acting_version }
+                /// Block length from the wire header / wrap args. Tail offsets use
+                /// this acting length, not only the compiled `BLOCK_LENGTH`.
                 #[inline]
                 pub const fn acting_block_length(&self) -> usize { self.acting_block_length }
             }

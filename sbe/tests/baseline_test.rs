@@ -44,14 +44,15 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         "generated code must suppress clippy::eq_op"
     );
     assert!(
-        src.contains("#[allow(clippy::needless_borrow)]"),
-        "generated code must suppress clippy::needless_borrow"
-    );
-    assert!(
         src.contains("#[allow(clippy::manual_range_contains)]"),
         "generated code must suppress clippy::manual_range_contains"
     );
-    // T-14 (0.1.13): unused_imports / unused_unsafe removed — they mask generator bugs.
+    // T-11 (0.1.13): needless_borrow removed from module allows.
+    assert!(
+        !src.contains("#[allow(clippy::needless_borrow)]"),
+        "generated code must NOT suppress needless_borrow at module level"
+    );
+    // unused_imports / unused_unsafe removed — they mask generator bugs.
     assert!(
         !src.contains("#[allow(unused_imports)]"),
         "generated code must NOT suppress unused_imports at module level"
@@ -71,6 +72,85 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         !src.contains("#[allow(unused_mut)]"),
         "generated code must NOT suppress unused_mut at module level"
     );
+    Ok(())
+}
+
+#[test]
+fn reserved_name_lists_have_no_duplicates() -> Result<(), Box<dyn std::error::Error>> {
+    // ENCODER_RESERVED / DECODER_RESERVED live once in conversion_helpers.rs.
+    // Placement utils (remaining/buffer/limit/message_offset/as_fixed_*) must
+    // not appear — they are only on get_metadata().
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let helpers = std::fs::read_to_string(root.join("src/codegen/conversion_helpers.rs"))?;
+    for (label, marker) in [
+        ("ENCODER_RESERVED", "const ENCODER_RESERVED"),
+        ("DECODER_RESERVED", "const DECODER_RESERVED"),
+    ] {
+        let start = helpers
+            .find(marker)
+            .ok_or_else(|| format!("missing {marker} in conversion_helpers.rs"))?;
+        let rest = &helpers[start..];
+        let end = rest
+            .find("];")
+            .ok_or_else(|| format!("unterminated {marker}"))?;
+        let block = &rest[..end];
+        let mut names: Vec<&str> = Vec::new();
+        for line in block.lines() {
+            let t = line.trim();
+            if let Some(s) = t.strip_prefix('"') {
+                if let Some(name) = s.split('"').next() {
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut dups = Vec::new();
+        for n in &names {
+            if !seen.insert(*n) {
+                dups.push(*n);
+            }
+        }
+        assert!(
+            dups.is_empty(),
+            "{label} has duplicate reserved names: {dups:?} (all={names:?})"
+        );
+        assert!(
+            names.len() >= 8,
+            "{label} parsed too few names ({}); block may have moved",
+            names.len()
+        );
+        for placement in [
+            "remaining",
+            "buffer",
+            "limit",
+            "message_offset",
+            "as_fixed_body_bytes",
+            "as_fixed_region_with_header",
+        ] {
+            assert!(
+                !names.contains(&placement),
+                "{label} must not reserve placement util `{placement}` (lives on get_metadata())"
+            );
+        }
+        assert!(
+            !names.contains(&"header"),
+            "{label} must not reserve stale `header` (never emitted as inherent method)"
+        );
+    }
+    // No local copies left in decoder/encoder/display modules.
+    for rel in [
+        "src/codegen/message_decoder.rs",
+        "src/codegen/message_encoder.rs",
+        "src/codegen/decoder_display.rs",
+    ] {
+        let src = std::fs::read_to_string(root.join(rel))?;
+        assert!(
+            !src.contains("const DECODER_RESERVED") && !src.contains("const ENCODER_RESERVED"),
+            "{rel} must import shared reserved lists from conversion_helpers, not redefine them"
+        );
+    }
     Ok(())
 }
 

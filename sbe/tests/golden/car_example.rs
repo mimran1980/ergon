@@ -9,20 +9,27 @@
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 #[allow(clippy::eq_op)]
-#[allow(clippy::needless_borrow)]
 #[allow(clippy::manual_range_contains)]
 pub mod sbe_rt {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
+        /// Buffer shorter than needed for `field` (`needed` vs `available` bytes).
         BufferTooShort { field: &'static str, needed: usize, available: usize },
+        /// Wire `schemaId` does not match this codec (`expected` name/id vs `actual`).
         WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+        /// Wire `templateId` does not match this message (`expected` name/id vs `actual`).
         WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
+        /// Multi-template stream saw an id with no registered length/decoder.
         UnknownTemplateLength { template_id: u16 },
+        /// Header field value exceeds the supported maximum for this platform.
         InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
+        /// Length-prefix for var-data exceeds schema max or platform size.
         InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
         /// Field/group/data was added in a schema version later than the wire message.
         FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
+        /// Text var-data is not valid UTF-8.
         InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+        /// Text var-data is not valid ASCII.
         InvalidAscii { field: &'static str },
         /// Boolean wire enum was `NullVal` or an unknown discriminant.
         InvalidBoolean { field: &'static str },
@@ -98,14 +105,17 @@ pub mod sbe_rt {
     impl core::error::Error for DecodeError {}
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
+        /// Encode buffer shorter than needed for `field` (`needed` vs `available`).
         BufferTooShort { field: &'static str, needed: usize, available: usize },
         /// Claim buffer length does not match ENCODED_LENGTH.
         ClaimLengthMismatch { expected: usize, actual: usize },
+        /// Var-data payload longer than the schema max for `field`.
         VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
         /// Fixed char/byte array source longer than the schema length.
         FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
         /// Domain/DTO value outside the schema min/max range.
         ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
+        /// Tried to write more group entries than the declared count.
         GroupFull { declared: u32, attempted: u32 },
         /// Known-size group closure returned without adding enough entries.
         GroupCountMismatch { declared: u32, actual: u32 },
@@ -115,6 +125,7 @@ pub mod sbe_rt {
         EncodedLengthOverflow,
         /// Domain `try_*` conversion failed (HFT-003).
         DomainConversionFailed { field: &'static str, reason: &'static str },
+        /// Nested decode failure during encode/verify paths.
         Decode(DecodeError),
     }
     impl core::fmt::Display for EncodeError {
@@ -202,11 +213,17 @@ pub mod sbe_rt {
     }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum VerifyError {
+        /// Buffer shorter than the message header.
         HeaderTooShort,
+        /// Wire block length below the minimum readable for this version.
         InvalidBlockLength { expected_min: usize, actual: usize },
+        /// Group dimension header for `field` lies past the buffer end.
         GroupDimOutOfBounds { field: &'static str, offset: usize },
+        /// Var-data region for `field` lies past the buffer end.
         VarDataOutOfBounds { field: &'static str, offset: usize, length: u64 },
+        /// Full message (header + tails) longer than available bytes.
         MessageTooShort { needed: usize, available: usize },
+        /// Nested decode error while verifying.
         DecodeError(DecodeError),
     }
     impl core::fmt::Display for VerifyError {
@@ -1164,18 +1181,26 @@ pub struct CarDecoderMetadata<'m, 'a> {
     decoder: &'m CarDecoder<'a>,
 }
 impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
+    /// Absolute offset of this message's frame start (first header byte)
+    /// within the underlying buffer.
     #[inline]
     pub fn message_offset(&self) -> usize {
         self.decoder.pos.saturating_sub(CarDecoder::HEADER_LENGTH)
     }
+    /// End of the **acting fixed block** (body start + acting block length).
+    /// Not the full message end when groups/var-data follow — use a complete
+    /// stage or inherent `encoded_length_with_header` after walking tails.
     #[inline]
     pub fn limit(&self) -> usize {
         self.decoder.pos + self.decoder.acting_block_length
     }
+    /// The full underlying buffer slice this decoder was wrapped on.
     #[inline]
     pub fn buffer(&self) -> &'a [u8] {
         self.decoder.buf
     }
+    /// Bytes after the acting fixed block end. May still contain unread
+    /// groups/var-data of **this** message until the consuming walk finishes.
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         let end = (self.decoder.pos + self.decoder.acting_block_length)
@@ -1319,11 +1344,7 @@ impl<'a> CarDecoder<'a> {
         acting_version: u16,
     ) -> Self {
         let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
-            panic!(
-                "{}", sbe_rt::DecodeError::BufferTooShort { field : "message header",
-                needed : Self::HEADER_LENGTH, available : buf.len()
-                .saturating_sub(message_offset), }
-            );
+            panic!("buffer too short for message header");
         };
         let available_body = buf.len().saturating_sub(body_pos);
         let min_fixed = Self::min_readable_fixed_extent(acting_version);
@@ -1333,11 +1354,7 @@ impl<'a> CarDecoder<'a> {
             min_fixed
         };
         if body_need > available_body {
-            panic!(
-                "{}", sbe_rt::DecodeError::BufferTooShort { field : "message body",
-                needed : Self::HEADER_LENGTH.saturating_add(body_need), available : buf
-                .len().saturating_sub(message_offset), }
-            );
+            panic!("buffer too short for message body");
         }
         unsafe {
             Self::wrap_unchecked(
@@ -1417,12 +1434,17 @@ impl<'a> CarDecoder<'a> {
         )?;
         Self::try_wrap(buf, pos, acting_block_length, acting_version)
     }
-    /// Trusted framed decode. Validates template/schema identity and
-    /// proves version-aware fixed-body extent; **panics** if the
-    /// header or body region is too short. Protocol mismatches
-    /// (`WrongTemplate` / `WrongSchema`) still return `Err`.
+    /// Trusted framed decode — **hybrid return** (freeze-friendly):
     ///
-    /// Prefer [`Self::try_decode`] at untrusted boundaries.
+    /// - **Extent (short buffer):** panics after the same proof as
+    ///   [`Self::wrap`] (trusted tier).
+    /// - **Identity (wrong template/schema):** still returns `Err`
+    ///   so session demux can recover without catch_unwind.
+    ///
+    /// Signature therefore looks like [`Self::try_decode`], but short
+    /// buffers do **not** yield `BufferTooShort` — they panic. Prefer
+    /// [`Self::try_decode`] at untrusted boundaries when every failure
+    /// must be a `Result`.
     #[inline]
     pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, pos);
@@ -1459,8 +1481,11 @@ impl<'a> CarDecoder<'a> {
         )?;
         Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
     }
-    /// Zero-check framed decode — raw pointer header read, **UB** on
-    /// OOB. Only for proven-tight HFT loops.
+    /// Unchecked **extent**, checked **identity**.
+    ///
+    /// Header/body bytes are read without bounds checks (**UB** if the
+    /// caller has not proven the frame fits). Template/schema identity
+    /// still returns `Err` (same hybrid policy as [`Self::decode`]).
     ///
     /// # Safety
     /// Header and version-readable fixed body for this template must
@@ -2416,6 +2441,8 @@ impl<'a> FuelFiguresDecoder<'a> {
     }
 }
 impl<'a> FuelFiguresDecoder<'a> {
+    /// Entries not yet advanced (count), not a byte slice.
+    /// For message-level byte tails use `get_metadata().remaining()`.
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -2749,10 +2776,15 @@ pub struct FuelFiguresEntryDecoderComplete<'a> {
     pub(crate) acting_block_length: usize,
 }
 impl<'a> FuelFiguresEntryDecoderComplete<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
@@ -3010,6 +3042,8 @@ impl<'a> PerformanceFiguresDecoder<'a> {
     }
 }
 impl<'a> PerformanceFiguresDecoder<'a> {
+    /// Entries not yet advanced (count), not a byte slice.
+    /// For message-level byte tails use `get_metadata().remaining()`.
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -3394,6 +3428,8 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
     }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a> {
+    /// Entries not yet advanced (count), not a byte slice.
+    /// For message-level byte tails use `get_metadata().remaining()`.
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -3710,10 +3746,15 @@ pub struct PerformanceFiguresEntryDecoderComplete<'a> {
     pub(crate) acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
@@ -3853,50 +3894,75 @@ pub struct CarDecoderComplete<'a> {
     pub(crate) acting_block_length: usize,
 }
 impl<'a> CarDecoderAfterFuelFigures<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
 }
 impl<'a> CarDecoderComplete<'a> {
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
@@ -4823,6 +4889,7 @@ impl CarDomain {
     /// Distinct from [`Self::try_from_decoder`]: this path owns header
     /// validation + offset; that path starts from an already-wrapped decoder.
     /// Named methods (not `TryFrom`/`From`) keep the two sources obvious.
+    #[inline]
     pub fn try_from_slice_with_header(
         buf: &[u8],
         message_offset: usize,
@@ -5447,22 +5514,6 @@ impl<'a> CarEncoder<'a> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
-    /// Absolute offset of this message within the original buffer
-    /// (the `msg_offset` argument passed to `wrap`).
-    #[inline]
-    pub const fn message_offset(&self) -> usize {
-        self.msg_offset
-    }
-    /// Absolute current write cursor within the original buffer.
-    #[inline]
-    pub const fn limit(&self) -> usize {
-        self.pos
-    }
-    /// The complete original buffer this encoder wraps.
-    #[inline]
-    pub fn buffer(&self) -> &[u8] {
-        self.buf
-    }
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.msg_offset + 8;
@@ -5625,10 +5676,21 @@ impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
     pub fn as_fixed_region_with_header(&self) -> &[u8] {
         &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
     }
-    /// Absolute offset of this message within the original buffer.
+    /// Absolute offset of this message within the original buffer
+    /// (the `msg_offset` argument passed to `wrap`).
     #[inline]
     pub fn message_offset(&self) -> usize {
         self.encoder.msg_offset
+    }
+    /// Absolute current write cursor within the original buffer.
+    #[inline]
+    pub fn limit(&self) -> usize {
+        self.encoder.pos
+    }
+    /// The complete original buffer this encoder wraps.
+    #[inline]
+    pub fn buffer(&self) -> &[u8] {
+        self.encoder.buf
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
@@ -6280,7 +6342,12 @@ impl<'a, H: sbe_rt::HeaderState> CarComplete<'a, H> {
     pub fn encoded_length_with_header(&self) -> usize {
         self.pos - self.msg_offset
     }
-    /// Unwritten region after this message.
+    /// Unwritten region after this message's write cursor to the end of
+    /// the original buffer. Use for multi-message packing, e.g.
+    /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
+    /// the payload of the current message — for the absolute write
+    /// cursor while keeping the encoder alive, use
+    /// `get_metadata().limit()`.
     #[inline]
     pub fn into_remaining_mut(self) -> &'a mut [u8] {
         &mut self.buf[self.pos..]
@@ -7053,22 +7120,27 @@ impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
     }
 }
 #[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterPerformanceFigures {
     state: EncodedLengthAccumulator,
 }
 #[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterManufacturer {
     state: EncodedLengthAccumulator,
 }
 #[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterModel {
     state: EncodedLengthAccumulator,
 }
 #[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterActivationCode {
     state: EncodedLengthAccumulator,
 }
 #[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthComplete {
     state: EncodedLengthAccumulator,
 }
@@ -7080,6 +7152,7 @@ pub struct CarFuelFiguresUniformEncodedLength {
     declared_count: u32,
 }
 impl CarFuelFiguresUniformEncodedLength {
+    #[inline]
     pub const fn usage_description(
         mut self,
         byte_len: usize,
@@ -7135,6 +7208,8 @@ impl CarFuelFiguresUniformEncodedLength {
     }
 }
 impl CarFuelFiguresUniformEncodedLength {
+    /// Zero-count forwarder to the next group/var-data stage.
+    #[inline]
     pub fn performance_figures(
         self,
         count: u16,
@@ -7174,6 +7249,7 @@ impl CarEncodedLength {
     /// single entry shape multiplied by `count`, so no per-entry
     /// description is needed. This is the fastest path; prefer it
     /// whenever all entries are identical.
+    #[inline]
     pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
         let mut state = self.state;
         let pm = state.enter_group(count as usize, 4 as usize, 6 as usize);
@@ -7194,6 +7270,7 @@ impl CarEncodedLength {
     /// `count` times. Each entry's fixed block is pre-counted, so
     /// `add()` only registers the entry — describe its variable tail
     /// with `group()`/`var_data()`.
+    #[inline]
     pub fn fuel_figures_ragged<F>(
         mut self,
         count: u16,
@@ -7236,6 +7313,7 @@ impl CarEncodedLength {
     /// of the wire count type (`#count_ty`). Each `add()` contributes
     /// the entry's fixed block, plus any `group()`/`var_data()` you
     /// record for that entry.
+    #[inline]
     pub fn fuel_figures_unknown_size<F>(
         mut self,
         f: F,
@@ -7319,6 +7397,8 @@ impl CarPerformanceFiguresUniformEncodedLength {
     }
 }
 impl CarPerformanceFiguresUniformEncodedLength {
+    /// Zero-count forwarder to the next group/var-data stage.
+    #[inline]
     pub fn manufacturer(self, byte_len: usize) -> CarEncodedLengthAfterManufacturer {
         if self.declared_count != 0 {
             let mut state = self.state;
@@ -7355,6 +7435,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     /// single entry shape multiplied by `count`, so no per-entry
     /// description is needed. This is the fastest path; prefer it
     /// whenever all entries are identical.
+    #[inline]
     pub const fn performance_figures(
         self,
         count: u16,
@@ -7378,6 +7459,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     /// `count` times. Each entry's fixed block is pre-counted, so
     /// `add()` only registers the entry — describe its variable tail
     /// with `group()`/`var_data()`.
+    #[inline]
     pub fn performance_figures_ragged<F>(
         mut self,
         count: u16,
@@ -7420,6 +7502,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     /// of the wire count type (`#count_ty`). Each `add()` contributes
     /// the entry's fixed block, plus any `group()`/`var_data()` you
     /// record for that entry.
+    #[inline]
     pub fn performance_figures_unknown_size<F>(
         mut self,
         f: F,
@@ -7455,6 +7538,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     }
 }
 impl CarEncodedLengthAfterManufacturer {
+    #[inline]
     pub const fn manufacturer(
         self,
         byte_len: usize,
@@ -7484,6 +7568,7 @@ impl CarEncodedLengthAfterManufacturer {
     }
 }
 impl CarEncodedLengthAfterModel {
+    #[inline]
     pub const fn model(
         self,
         byte_len: usize,
@@ -7513,6 +7598,7 @@ impl CarEncodedLengthAfterModel {
     }
 }
 impl CarEncodedLengthAfterActivationCode {
+    #[inline]
     pub const fn activation_code(
         self,
         byte_len: usize,
@@ -7542,9 +7628,11 @@ impl CarEncodedLengthAfterActivationCode {
     }
 }
 impl CarEncodedLengthComplete {
+    #[inline]
     pub const fn encoded_length(&self) -> usize {
         self.state.len
     }
+    #[inline]
     pub const fn encoded_length_with_header(&self) -> usize {
         self.state.len + 8 as usize
     }

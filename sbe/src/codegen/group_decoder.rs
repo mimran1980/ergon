@@ -164,6 +164,8 @@ pub(crate) fn generate_group_decoder(
     // remaining(), rewind()
     ts.extend(quote::quote! {
         impl<'a> #decoder_ident<'a> {
+            /// Entries not yet advanced (count), not a byte slice.
+            /// For message-level byte tails use `get_metadata().remaining()`.
             #[inline]
             pub const fn remaining(&self) -> usize {
                 self.count

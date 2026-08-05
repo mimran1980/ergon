@@ -13,7 +13,9 @@ use quote::format_ident;
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{field_has_conversion_free, resolve_field_ident};
+use super::conversion_helpers::{
+    field_has_conversion_free, resolve_field_ident, DECODER_RESERVED,
+};
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
@@ -209,36 +211,9 @@ pub(crate) fn generate_message_decoder(
                 }
                 Some(&frame[Self::ENCODED_LENGTH..])
             }
-
-            /// Absolute offset of this message within the original buffer
-            /// (the `message_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.pos.saturating_sub(Self::HEADER_LENGTH)
-            }
-
-            /// Absolute current read cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.pos + self.acting_block_length
-            }
-
-            /// The complete original buffer this decoder wraps.
-            #[inline]
-            pub fn buffer(&self) -> &'a [u8] {
-                self.buf
-            }
-
-            /// Bytes after this message in the original buffer
-            /// (e.g. the application payload following a SessionMessageHeader).
-            /// Returns the slice starting after header + block body.
-            /// Clamps to `buf.len()` so truncated/invalid data returns
-            /// an empty slice rather than panicking.
-            #[inline]
-            pub fn remaining(&self) -> &'a [u8] {
-                let end = (self.pos + self.acting_block_length).min(self.buf.len());
-                &self.buf[end..]
-            }
+            // Placement utils (`message_offset` / `limit` / `buffer` /
+            // `remaining`) live only on `{Name}DecoderMetadata` via
+            // `get_metadata()` so schema fields may use those names.
         });
     } else {
         const STACK_LIMIT: usize = 65536;
@@ -394,15 +369,10 @@ pub(crate) fn generate_message_decoder(
             acting_block_length: usize,
             acting_version: u16,
         ) -> Self {
+            // Cold panics use static strings so the success path stays free of
+            // DecodeError/Display monomorphisation (batch decode no-LTO).
             let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
-                panic!(
-                    "{}",
-                    sbe_rt::DecodeError::BufferTooShort {
-                        field: "message header",
-                        needed: Self::HEADER_LENGTH,
-                        available: buf.len().saturating_sub(message_offset),
-                    }
-                );
+                panic!("buffer too short for message header");
             };
             let available_body = buf.len().saturating_sub(body_pos);
             let min_fixed = Self::min_readable_fixed_extent(acting_version);
@@ -412,14 +382,7 @@ pub(crate) fn generate_message_decoder(
                 min_fixed
             };
             if body_need > available_body {
-                panic!(
-                    "{}",
-                    sbe_rt::DecodeError::BufferTooShort {
-                        field: "message body",
-                        needed: Self::HEADER_LENGTH.saturating_add(body_need),
-                        available: buf.len().saturating_sub(message_offset),
-                    }
-                );
+                panic!("buffer too short for message body");
             }
             // SAFETY: extent check above proved header + version-aware fixed body fit.
             unsafe {
@@ -524,12 +487,17 @@ pub(crate) fn generate_message_decoder(
                 Self::try_wrap(buf, pos, acting_block_length, acting_version)
             }
 
-            /// Trusted framed decode. Validates template/schema identity and
-            /// proves version-aware fixed-body extent; **panics** if the
-            /// header or body region is too short. Protocol mismatches
-            /// (`WrongTemplate` / `WrongSchema`) still return `Err`.
+            /// Trusted framed decode — **hybrid return** (freeze-friendly):
             ///
-            /// Prefer [`Self::try_decode`] at untrusted boundaries.
+            /// - **Extent (short buffer):** panics after the same proof as
+            ///   [`Self::wrap`] (trusted tier).
+            /// - **Identity (wrong template/schema):** still returns `Err`
+            ///   so session demux can recover without catch_unwind.
+            ///
+            /// Signature therefore looks like [`Self::try_decode`], but short
+            /// buffers do **not** yield `BufferTooShort` — they panic. Prefer
+            /// [`Self::try_decode`] at untrusted boundaries when every failure
+            /// must be a `Result`.
             #[inline]
             pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Header read panics if the header region is short.
@@ -557,8 +525,11 @@ pub(crate) fn generate_message_decoder(
                 Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
             }
 
-            /// Zero-check framed decode — raw pointer header read, **UB** on
-            /// OOB. Only for proven-tight HFT loops.
+            /// Unchecked **extent**, checked **identity**.
+            ///
+            /// Header/body bytes are read without bounds checks (**UB** if the
+            /// caller has not proven the frame fits). Template/schema identity
+            /// still returns `Err` (same hybrid policy as [`Self::decode`]).
             ///
             /// # Safety
             /// Header and version-readable fixed body for this template must
@@ -620,30 +591,8 @@ pub(crate) fn generate_message_decoder(
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&fname_snake);
-        const DECODER_RESERVED: &[&str] = &[
-            "remaining",
-            "message_offset",
-            "limit",
-            "buffer",
-            "wrap",
-            "wrap",
-            "decode",
-            "decode",
-            "min_readable_fixed_extent",
-            "header",
-            "encoded_length",
-            "encoded_length_with_header",
-            "as_body_bytes",
-            "as_bytes_with_header",
-            // Metadata partial-frame names when the message has tails (T-15).
-            "as_fixed_body_bytes",
-            "as_fixed_region_with_header",
-            "verify",
-            "acting_version",
-            "acting_block_length",
-            // Consuming stage transition (self → Self).
-            "rewind",
-        ];
+        // Placement utils live only on DecoderMetadata via get_metadata() —
+        // see DECODER_RESERVED in conversion_helpers (inherent methods only).
         let fname_ident = resolve_field_ident(&fname_snake, &wire_name, DECODER_RESERVED);
 
         match &f.field_type {
@@ -1661,10 +1610,28 @@ pub(crate) fn generate_message_decoder(
         }
 
         impl<'m, 'a> #metadata_ident<'m, 'a> {
-            #[inline] pub fn message_offset(&self) -> usize { self.decoder.pos.saturating_sub(#decoder_ident::HEADER_LENGTH) }
-            #[inline] pub fn limit(&self) -> usize { self.decoder.pos + self.decoder.acting_block_length }
-            #[inline] pub fn buffer(&self) -> &'a [u8] { self.decoder.buf }
-            #[inline] pub fn remaining(&self) -> &'a [u8] {
+            /// Absolute offset of this message's frame start (first header byte)
+            /// within the underlying buffer.
+            #[inline]
+            pub fn message_offset(&self) -> usize {
+                self.decoder.pos.saturating_sub(#decoder_ident::HEADER_LENGTH)
+            }
+            /// End of the **acting fixed block** (body start + acting block length).
+            /// Not the full message end when groups/var-data follow — use a complete
+            /// stage or inherent `encoded_length_with_header` after walking tails.
+            #[inline]
+            pub fn limit(&self) -> usize {
+                self.decoder.pos + self.decoder.acting_block_length
+            }
+            /// The full underlying buffer slice this decoder was wrapped on.
+            #[inline]
+            pub fn buffer(&self) -> &'a [u8] {
+                self.decoder.buf
+            }
+            /// Bytes after the acting fixed block end. May still contain unread
+            /// groups/var-data of **this** message until the consuming walk finishes.
+            #[inline]
+            pub fn remaining(&self) -> &'a [u8] {
                 let end = (self.decoder.pos + self.decoder.acting_block_length).min(self.decoder.buf.len());
                 &self.decoder.buf[end..]
             }

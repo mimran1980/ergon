@@ -209,13 +209,21 @@ fn strip_line_comments(src: &str) -> String {
 fn arm_writes_message_header(arm: &str) -> bool {
     // Ignore // comments — body-only arms may mention header(0) in notes.
     let code = strip_line_comments(arm);
+    // wrap_and_apply_header / wrap_and_apply_header_unchecked write the
+    // MessageHeader; bare wrap / wrap_unchecked do not.
     code.contains("wrap_and_apply_header") || code.contains(".header(")
 }
 
 fn arm_is_body_only_encode(arm: &str) -> bool {
     // Body-only: wraps without applying/writing the MessageHeader.
-    let has_wrap =
-        arm.contains("::wrap(") || arm.contains(".wrap(") || arm.contains("Encoder::wrap(");
+    // Prefer wrap_unchecked when matching sbe-tool's zero-check wrap (equal work).
+    let code = strip_line_comments(arm);
+    let has_wrap = code.contains("wrap_unchecked(")
+        || code.contains("::wrap(")
+        || code.contains(".wrap(")
+        || code.contains("Encoder::wrap(");
+    // Exclude wrap_and_apply_header* false positives: those contain "wrap(" after
+    // stripping only if we match too loosely — header writer check covers them.
     has_wrap && !arm_writes_message_header(arm)
 }
 

@@ -768,8 +768,16 @@ impl Generator {
             schema.package, schema.id, schema.version
         )
         .unwrap();
-        // Schema-constant comparisons trip clippy; do not blanket-allow
-        // unused_unsafe / unused_imports / dead_code — those hide generator bugs.
+        // Lint allow list is intentionally narrow — do not re-add
+        // unused_unsafe / unused_imports / dead_code (hide generator bugs).
+        // Remaining allows (schema reality):
+        // - absurd_extreme_comparisons / identity_op / erasing_op / unnecessary_cast:
+        //   schema min/max/const offsets can be tautological after folding.
+        // - double_must_use: staged builders return must_use types from must_use methods.
+        // - eq_op: schema-driven `x == x` style checks in generated matches.
+        // - manual_range_contains: generated version gates prefer explicit compares
+        //   that stay readable next to sinceVersion literals.
+        // - non_camel_case_types / non_snake_case: SBE identifiers as emitted.
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
                        clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast)]\n",
@@ -777,7 +785,7 @@ impl Generator {
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
         src.push_str("#[allow(clippy::eq_op)]\n");
-        src.push_str("#[allow(clippy::needless_borrow)]\n");
+        // needless_borrow removed (T-11): emission should not produce them.
         src.push_str("#[allow(clippy::manual_range_contains)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
@@ -1515,12 +1523,10 @@ mod tests {
         }
     }
 
-    /// When a flat message has a field whose name clashes with a reserved
-    /// decoder method (e.g. "remaining"), the generated accessor must be
-    /// renamed to `{name}_field` so it doesn't collide with
-    /// `pub fn remaining(&self) -> &[u8]`.
+    /// Placement utils live on metadata only — a field named `remaining` keeps
+    /// its natural accessor name and does not force `_field`.
     #[test]
-    fn field_named_remaining_is_renamed_to_remaining_field()
+    fn field_named_remaining_keeps_name_placement_on_metadata()
     -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
           <types>
@@ -1542,18 +1548,22 @@ mod tests {
             crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
         let src = modules.modules().next().expect("one module").source.clone();
 
-        let remaining_count = src.matches("fn remaining(&self)").count();
-        // The decoder and encoder each have a generated `remaining()` method
-        // (in separate impl blocks). The field accessor is renamed to
-        // `remaining_field` and must not appear as `fn remaining(&self)`.
-        assert_eq!(
-            remaining_count, 2,
-            "expected 2 'remaining' methods (decoder + DecoderMetadata), found {remaining_count}"
-        );
-        // The field accessor must be renamed.
         assert!(
-            src.contains("fn remaining_field"),
-            "field accessor 'remaining' must be renamed to 'remaining_field'. src:\n{src}"
+            src.contains("fn remaining(&self) -> i64") || src.contains("fn remaining(&self) -> i64,"),
+            "field accessor must keep name remaining() as i64. src snippet check failed"
+        );
+        assert!(
+            !src.contains("fn remaining_field"),
+            "placement-name fields must not be renamed to remaining_field"
+        );
+        assert!(
+            src.contains("fn get_metadata("),
+            "placement utils must be on get_metadata()"
+        );
+        // Metadata still exposes remaining() as a byte slice utility.
+        assert!(
+            src.contains("DecoderMetadata"),
+            "DecoderMetadata type must be emitted"
         );
 
         Ok(())

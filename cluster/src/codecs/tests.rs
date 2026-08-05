@@ -16,7 +16,10 @@ fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Err
     assert_eq!(dec.leadership_term_id(), 42);
     assert_eq!(dec.cluster_session_id(), 99);
     assert_eq!(dec.timestamp(), 1234567890);
-    assert!(dec.remaining().is_empty(), "remaining must be empty after full decode");
+    assert!(
+        dec.get_metadata().remaining().is_empty(),
+        "remaining must be empty after full decode"
+    );
     Ok(())
 }
 
@@ -91,7 +94,7 @@ fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(dec.timestamp(), 100);
     // No payload — remaining must be empty
     assert!(
-        dec.remaining().is_empty(),
+        dec.get_metadata().remaining().is_empty(),
         "remaining must be empty when there is no payload"
     );
     Ok(())
@@ -112,11 +115,11 @@ fn test_remaining_returns_payload_after_header() -> Result<(), Box<dyn std::erro
     buf[SessionMessageHeaderEncoder::ENCODED_LENGTH..].copy_from_slice(payload);
 
     let dec = SessionMessageHeaderDecoder::decode(&buf, 0)?;
-    assert_eq!(dec.remaining(), payload);
+    assert_eq!(dec.get_metadata().remaining(), payload);
     Ok(())
 }
 
-/// `whole_buffer()` returns the entire original frame (header + payload).
+/// `get_metadata().buffer()` returns the entire original frame (header + payload).
 #[test]
 fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Error>> {
     let payload: &[u8] = b"data";
@@ -130,8 +133,9 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
     buf[SessionMessageHeaderEncoder::ENCODED_LENGTH..].copy_from_slice(payload);
 
     let dec = SessionMessageHeaderDecoder::decode(&buf, 0)?;
-    assert_eq!(dec.buffer().len(), total);
-    assert_eq!(dec.buffer(), buf.as_slice());
+    let meta = dec.get_metadata();
+    assert_eq!(meta.buffer().len(), total);
+    assert_eq!(meta.buffer(), buf.as_slice());
     Ok(())
 }
 
@@ -158,8 +162,8 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
     assert_eq!(smh.cluster_session_id(), 99);
 
-    // remaining() is the SessionKeepAlive bytes
-    let tail = smh.remaining();
+    // get_metadata().remaining() is the SessionKeepAlive bytes
+    let tail = smh.get_metadata().remaining();
     assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
 
     // Decode the second message via AnyMessage
@@ -169,7 +173,10 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
             assert_eq!(dec.leadership_term_id(), 7);
             assert_eq!(dec.cluster_session_id(), 99);
             // After fully decoding, remaining should be empty
-            assert!(dec.remaining().is_empty(), "remaining after keep-alive must be empty");
+            assert!(
+                dec.get_metadata().remaining().is_empty(),
+                "remaining after keep-alive must be empty"
+            );
         }
         _other => panic!("expected SessionKeepAlive"),
     }

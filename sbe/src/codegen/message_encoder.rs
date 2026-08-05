@@ -12,7 +12,9 @@
 use crate::ir::{ByteOrder, Presence};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{field_has_conversion_free, resolve_field_ident};
+use super::conversion_helpers::{
+    field_has_conversion_free, resolve_field_ident, ENCODER_RESERVED,
+};
 use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;
@@ -219,26 +221,7 @@ pub(crate) fn generate_message_encoder(
             const _HEADER_TEMPLATE_LEN: () =
                 assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
         });
-        impl_contents.extend(quote::quote! {
-            /// Absolute offset of this message within the original buffer
-            /// (the `msg_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.msg_offset
-            }
-
-            /// Absolute current write cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.pos
-            }
-
-            /// The complete original buffer this encoder wraps.
-            #[inline]
-            pub fn buffer(&self) -> &[u8] {
-                self.buf
-            }
-        });
+        // Placement utils live only on EncoderMetadata via get_metadata().
     } else {
         let impl_consts_suffix = if is_capped {
             // When theoretical max exceeds 64KB, do NOT emit MAX_ENCODED_LENGTH —
@@ -279,26 +262,7 @@ pub(crate) fn generate_message_encoder(
                 }
             });
         }
-        impl_contents.extend(quote::quote! {
-            /// Absolute offset of this message within the original buffer
-            /// (the `msg_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.msg_offset
-            }
-
-            /// Absolute current write cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.pos
-            }
-
-            /// The complete original buffer this encoder wraps.
-            #[inline]
-            pub fn buffer(&self) -> &[u8] {
-                self.buf
-            }
-        });
+        // Placement utils live only on EncoderMetadata via get_metadata().
     }
 
     // ── Hot-path bounds check: one cmp, cold error construction ──
@@ -511,36 +475,8 @@ pub(crate) fn generate_message_encoder(
         }
     }
 
-    const ENCODER_RESERVED: &[&str] = &[
-        "message_offset",
-        "limit",
-        "buffer",
-        "wrap",
-        "wrap",
-        "wrap_and_apply_header",
-        "wrap_and_apply_header",
-        "wrap_into_claim",
-        "compute_length_with_header",
-        // Complete-stage inherent methods emitted on the encoder struct — a
-        // field named after any of these would otherwise collide (matches the
-        // corresponding names in DECODER_RESERVED).
-        "as_body_bytes",
-        "as_bytes_with_header",
-        "into_remaining_mut",
-        "encoded_length",
-        "encoded_length_with_header",
-        // Emitted when the message has optional fields.
-        "apply_nulls",
-        // Stage transitions taking `self` (encoded-length struct wraps into
-        // a stage, so they always exist on the main encoder struct).
-        "fixed",
-        "raw_fixed",
-        // Associated fn (no receiver) — a field-named setter with `&mut self`
-        // collides with this because Rust does not separate associated fns from
-        // methods in the inherent namespace.
-        "buffer_too_short",
-    ];
-
+    // Placement utils live only on EncoderMetadata via get_metadata() —
+    // see ENCODER_RESERVED in conversion_helpers (inherent methods only).
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         // Offset of this field from the message header start (header + body offset).
@@ -921,10 +857,21 @@ pub(crate) fn generate_message_encoder(
 
         impl<'m, 'a, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, 'a, H> {
             #meta_bytes
-            /// Absolute offset of this message within the original buffer.
+            /// Absolute offset of this message within the original buffer
+            /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
             pub fn message_offset(&self) -> usize {
                 self.encoder.msg_offset
+            }
+            /// Absolute current write cursor within the original buffer.
+            #[inline]
+            pub fn limit(&self) -> usize {
+                self.encoder.pos
+            }
+            /// The complete original buffer this encoder wraps.
+            #[inline]
+            pub fn buffer(&self) -> &[u8] {
+                self.encoder.buf
             }
         }
     });
@@ -1242,7 +1189,12 @@ pub(crate) fn generate_message_encoder(
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
                 }
-                /// Unwritten region after this message.
+                /// Unwritten region after this message's write cursor to the end of
+                /// the original buffer. Use for multi-message packing, e.g.
+                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
+                /// the payload of the current message — for the absolute write
+                /// cursor while keeping the encoder alive, use
+                /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
                     &mut self.buf[self.pos..]
@@ -1278,7 +1230,12 @@ pub(crate) fn generate_message_encoder(
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
                 }
-                /// Unwritten region after this message.
+                /// Unwritten region after this message's write cursor to the end of
+                /// the original buffer. Use for multi-message packing, e.g.
+                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
+                /// the payload of the current message — for the absolute write
+                /// cursor while keeping the encoder alive, use
+                /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
                     &mut self.buf[self.pos..]

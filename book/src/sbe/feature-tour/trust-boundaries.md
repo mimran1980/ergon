@@ -12,14 +12,16 @@ walks the complete dynamic tail before bulk access:
 
 | Tier | Entry | Bad buffer |
 |------|-------|------------|
-| **Checked** | `try_wrap` / `try_wrap_and_apply_header` / `try_decode` | `Result::Err` |
-| **Trusted** | bare `wrap` / `wrap_and_apply_header` / `decode` | **panic** after the same extent proof |
-| **Unchecked** | `unsafe fn *_unchecked` | **UB** — prove extent first |
+| **Checked** | `try_wrap` / `try_wrap_and_apply_header` / `try_decode` | `Result::Err` (all failures) |
+| **Trusted** | bare `wrap` / `wrap_and_apply_header` | **panic** after the same extent proof |
+| **Trusted hybrid** | bare `decode` | **panic** if short; **`Err`** on wrong template/schema only |
+| **Unchecked** | `unsafe wrap_unchecked` / `wrap_and_apply_header_unchecked` | **UB** — prove extent first |
+| **Unchecked hybrid** | `unsafe decode_unchecked` | **UB** on OOB extent; **`Err`** on wrong template/schema |
 
-Offsets are **message start** (not sbe-tool body offset). See
-[Trust Boundary (core concepts)](../core-concepts/trust-boundary.md) for the
-full table, and [Coming from sbe-tool](../getting-started/from-sbe-tool.md) for
-the sbe-tool mapping.
+Bare `decode` looks like `try_decode` (`Result`) but short buffers still panic
+— prefer `try_decode` when every failure must be a `Result`. Full table:
+[Trust Boundary (core concepts)](../core-concepts/trust-boundary.md). sbe-tool
+offsets: [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
 
 ## Trust boundary
 

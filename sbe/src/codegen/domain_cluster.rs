@@ -707,6 +707,7 @@ pub(crate) fn generate_domain_recursive(
             /// Distinct from [`Self::try_from_decoder`]: this path owns header
             /// validation + offset; that path starts from an already-wrapped decoder.
             /// Named methods (not `TryFrom`/`From`) keep the two sources obvious.
+            #[inline]
             pub fn try_from_slice_with_header(
                 buf: &[u8],
                 message_offset: usize,

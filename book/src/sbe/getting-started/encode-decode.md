@@ -9,6 +9,12 @@ Two styles — pick whichever fits:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
+`{Msg}FixedFields` has **no** `Default`. Every required scalar must appear in
+the struct literal (optional fields use `Option` only when schema
+`presence="optional"`). That is intentional: zero-filling required IDs hides
+bugs. For large messages, build the literal next to the encode call in wire
+order — there is no staged builder in 0.1.13.
+
 **Individual setters** (chainable, set only what you need):
 
 ```rust,no_run

@@ -72,6 +72,17 @@ generates `dec.remaining()` / `dec.buffer()` as field accessors — no `_field`
 suffix needed. No generated method name can ever collide with a user's schema
 field name.
 
+### What does `remaining()` mean?
+
+| Receiver | `remaining()` means |
+|----------|---------------------|
+| Group decoder (e.g. `FuelFiguresDecoder`) | **Entry count** left (`usize`) — not bytes |
+| `dec.get_metadata()` / `enc.get_metadata()` | **Byte slice** after the acting fixed block (`&[u8]`) |
+| Schema field named `remaining` | Ordinary **field accessor** (natural name, no rename) |
+
+Session framing (header then app payload) must use
+`get_metadata().remaining()` for the payload bytes.
+
 ```rust,ignore
 let dec = CarDecoder::try_decode(&buf, 0)?;
 dec.serial_number();                              // field accessor — never collides
@@ -102,6 +113,27 @@ meta.as_fixed_body_bytes();            // fixed block only when message has tail
 meta.as_fixed_region_with_header();    // header + fixed block — not full frame
 meta.message_offset();                 // message start in buffer
 ```
+
+### Metadata limits (tailed messages)
+
+| API | Span | Full Car frame? |
+|-----|------|-----------------|
+| `meta.limit()` | body start + **acting** block length | **No** — stops at fixed block end |
+| `meta.as_fixed_region_with_header()?` | header + acting fixed block | **No** |
+| `meta.remaining()` | bytes after that fixed end | May still include unread tails of *this* message |
+| complete stage `as_bytes_with_header()` | header through last var-data | **Yes** (after walking tails) |
+| `dec.as_bytes_with_header()?` (inherent rescan) | same full frame without consuming stages | **Yes** (rescans tails) |
+
+Do **not** use `meta.limit()` as the next-message offset in a multi-message
+buffer for Car-shaped schemas — that truncates at the fixed block.
+
+### `acting_version` / `acting_block_length` (dual surface)
+
+These remain **inherent** on the message decoder for the hot path
+(`dec.acting_version()`, `dec.acting_block_length()`) and are also exposed on
+metadata (`dec.get_metadata().acting_version()`) for a uniform placement facet.
+Both paths return the same values. They are reserved method names: a schema
+field named `actingVersion` becomes `acting_version_field` on the decoder.
 
 ## Exact buffer sizing
 

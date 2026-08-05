@@ -359,13 +359,20 @@ fn bench_throughput_batch(c: &mut Criterion) {
 
     // Equal work: both arms stride absolute offsets into one prebuilt buffer
     // (no per-message re-slice). Body starts at off+8 after the LE header.
+    // sbe-tool `wrap` does no extent check — use ergon `wrap_unchecked` so the
+    // gated pair measures equal logical work (field loads), not product bare
+    // wrap's intentional version-aware bounds proof on every message.
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut total_year: u64 = 0;
             let mut off = 0;
             for _ in 0..BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(buf.as_slice()), off, bl_e, ver_e);
+                // SAFETY: `buf` is a prebuilt concat of full baseline frames;
+                // each `off` is a message start with proven header+body extent.
+                let car = unsafe {
+                    CarDecoder::wrap_unchecked(black_box(buf.as_slice()), off, bl_e, ver_e)
+                };
                 total += car.serial_number();
                 total_year += car.model_year() as u64;
                 off += msg_len;
@@ -563,14 +570,16 @@ fn bench_encode_scalar(c: &mut Criterion) {
         });
     });
 
-    // Body-only isolates the two scalar setters. ergon `wrap` takes the
-    // message start and reserves its header internally; sbe-tool `wrap` takes
-    // the absolute body offset.
+    // Body-only isolates the two scalar setters. ergon wrap takes the message
+    // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
+    // no extent check — use wrap_unchecked so the gated pair is equal work
+    // (same unfairness class as batch decode; product bare wrap still proves).
     group.bench_function("ergo-sbe_body_only", |b| {
         let mut buf = [0u8; 512];
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                CarEncoder::wrap(black_box(&mut buf), 0)
+                // SAFETY: fixed [0u8; 512] holds header+fixed body at offset 0.
+                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
                     .serial_number(black_box(1234))
                     .model_year(black_box(2013));
             }

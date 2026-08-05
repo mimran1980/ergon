@@ -33,6 +33,12 @@ guide for ergo-sbe (also linked from this crate on
 **Constructors:** book [Trust Boundary](https://mimran1980.github.io/ergon/sbe/core-concepts/trust-boundary.html)
 — three tiers: `try_*` (Result), bare names (panic if short), `unsafe *_unchecked`.
 
+**Placement utils:** buffer positions (`remaining` / `buffer` / `limit` /
+`message_offset`) live on `dec.get_metadata()`, not the decoder type — migrate
+`dec.remaining()` → `dec.get_metadata().remaining()`. A schema field named
+`remaining` keeps the natural accessor `dec.remaining()`. See book
+[Generated code — metadata](https://mimran1980.github.io/ergon/sbe/feature-tour/generated-code.html).
+
 ## Quick Example
 
 ```rust

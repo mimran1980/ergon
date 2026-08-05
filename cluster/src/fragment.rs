@@ -79,7 +79,7 @@ impl<'a> Fragment<'a> {
                         reason: "session message too short".into(),
                     });
                 }
-                let payload = decoder.remaining();
+                let payload = decoder.get_metadata().remaining();
                 Self::Message {
                     cluster_session_id: decoder.cluster_session_id(),
                     timestamp: decoder.timestamp(),

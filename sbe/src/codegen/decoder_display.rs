@@ -1,6 +1,6 @@
 //! `Display` / `Debug` impl codegen for message decoders.
 
-use super::conversion_helpers::{find_domain_type, resolve_field_ident};
+use super::conversion_helpers::{find_domain_type, resolve_field_ident, DECODER_RESERVED};
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::Presence;
 use crate::structured_ir::{FieldType, MessageStructure};
@@ -23,28 +23,11 @@ pub(crate) fn generate_decoder_display(
     });
     let mut out_idx = 0usize;
     for f in &msg.fields {
-        const DECODER_RESERVED: &[&str] = &[
-            "remaining",
-            "message_offset",
-            "limit",
-            "buffer",
-            "wrap",
-            "decode",
-            "header",
-            "encoded_length",
-            "encoded_length_with_header",
-            "as_body_bytes",
-            "as_bytes_with_header",
-            "verify",
-            "acting_version",
-            "acting_block_length",
-            // Consuming stage transition (self → Self).
-            "rewind",
-        ];
         let snake = to_snake_case(&f.name);
         // Domain-converted fields use `try_<name>` (HFT-003); Display must not
         // call the old infallible name.
         let wire_name = find_domain_type(f, domain_types).map(|_| format!("{snake}_wire"));
+        // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
         let domain_try = find_domain_type(f, domain_types)
             .map(|_| syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site()));

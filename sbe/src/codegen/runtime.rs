@@ -13,15 +13,23 @@ pub(crate) fn generate_sbe_rt_src() -> String {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum DecodeError {
+                /// Buffer shorter than needed for `field` (`needed` vs `available` bytes).
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
+                /// Wire `schemaId` does not match this codec (`expected` name/id vs `actual`).
                 WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+                /// Wire `templateId` does not match this message (`expected` name/id vs `actual`).
                 WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
+                /// Multi-template stream saw an id with no registered length/decoder.
                 UnknownTemplateLength { template_id: u16 },
+                /// Header field value exceeds the supported maximum for this platform.
                 InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
+                /// Length-prefix for var-data exceeds schema max or platform size.
                 InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
                 /// Field/group/data was added in a schema version later than the wire message.
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
+                /// Text var-data is not valid UTF-8.
                 InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+                /// Text var-data is not valid ASCII.
                 InvalidAscii { field: &'static str },
                 /// Boolean wire enum was `NullVal` or an unknown discriminant.
                 InvalidBoolean { field: &'static str },
@@ -52,14 +60,17 @@ pub(crate) fn generate_sbe_rt_src() -> String {
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
+                /// Encode buffer shorter than needed for `field` (`needed` vs `available`).
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
                 /// Claim buffer length does not match ENCODED_LENGTH.
                 ClaimLengthMismatch { expected: usize, actual: usize },
+                /// Var-data payload longer than the schema max for `field`.
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Fixed char/byte array source longer than the schema length.
                 FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Domain/DTO value outside the schema min/max range.
                 ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
+                /// Tried to write more group entries than the declared count.
                 GroupFull { declared: u32, attempted: u32 },
                 /// Known-size group closure returned without adding enough entries.
                 GroupCountMismatch { declared: u32, actual: u32 },
@@ -69,6 +80,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 EncodedLengthOverflow,
                 /// Domain `try_*` conversion failed (HFT-003).
                 DomainConversionFailed { field: &'static str, reason: &'static str },
+                /// Nested decode failure during encode/verify paths.
                 Decode(DecodeError),
             }
 
@@ -121,11 +133,17 @@ pub(crate) fn generate_sbe_rt_src() -> String {
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum VerifyError {
+                /// Buffer shorter than the message header.
                 HeaderTooShort,
+                /// Wire block length below the minimum readable for this version.
                 InvalidBlockLength { expected_min: usize, actual: usize },
+                /// Group dimension header for `field` lies past the buffer end.
                 GroupDimOutOfBounds { field: &'static str, offset: usize },
+                /// Var-data region for `field` lies past the buffer end.
                 VarDataOutOfBounds { field: &'static str, offset: usize, length: u64 },
+                /// Full message (header + tails) longer than available bytes.
                 MessageTooShort { needed: usize, available: usize },
+                /// Nested decode error while verifying.
                 DecodeError(DecodeError),
             }
 

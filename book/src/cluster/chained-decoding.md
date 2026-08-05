@@ -1,7 +1,7 @@
 # Chained Message Decoding
 
 A `SessionMessageHeader` is followed by application payload bytes (another SBE
-message). Use the decoder's `remaining()` to get the payload, then
+message). Use `get_metadata().remaining()` to get the payload byte slice, then
 `AnyMessage::decode` to parse the next message. This uses the non-stable
 `cluster_codec_types` seam described above:
 

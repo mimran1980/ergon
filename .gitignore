@@ -22,3 +22,4 @@ aeron-cluster-[0-9]/
 .superpowers/
 docs/superpowers/
 mutants.out*/
+.cargo-home/

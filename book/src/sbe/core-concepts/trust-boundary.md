@@ -34,11 +34,18 @@ layout independently.
 | Entry | Return | Behaviour |
 |-------|--------|-----------|
 | `Decoder::try_wrap(buf, offset, bl, ver)` | `Result<Decoder, DecodeError>` | Validates body extent, returns `Err` |
-| `Decoder::try_decode(buf, pos)` | `Result<Decoder, DecodeError>` | Header + template/schema + version-aware fixed extent |
+| `Decoder::try_decode(buf, pos)` | `Result<Decoder, DecodeError>` | Header + template/schema + version-aware fixed extent (all failures are `Err`) |
 | `Decoder::wrap(buf, offset, bl, ver)` | `Decoder` | Panics if version-aware fixed body does not fit |
-| `Decoder::decode(buf, pos)` | `Result<Decoder, DecodeError>` | Header identity + extent proof; panics if short, `Err` on wrong template/schema |
+| `Decoder::decode(buf, pos)` | `Result<Decoder, DecodeError>` | **Hybrid:** panics if short; `Err` on wrong template/schema only |
 | `unsafe fn Decoder::wrap_unchecked(buf, offset, bl, ver)` | `Decoder` | UB on OOB — raw pointer accessors |
-| `unsafe fn Decoder::decode_unchecked(buf, pos)` | `Result<Decoder, DecodeError>` | Header identity only; UB on OOB header/body (`read_bytes_unchecked`) |
+| `unsafe fn Decoder::decode_unchecked(buf, pos)` | `Result<Decoder, DecodeError>` | **Unchecked extent** (UB on OOB) + **checked identity** (`Err` on wrong template/schema) |
+
+### Why `decode` returns `Result` but still panics
+
+Bare `decode` keeps a freeze-friendly hybrid so feed handlers can `?` on
+`WrongTemplate` / `WrongSchema` after demux, while short buffers remain a
+trusted-tier panic (same extent proof as `wrap`). Prefer `try_decode` when
+**every** failure — including short buffers — must be a `Result`.
 
 See [Trust boundaries (feature tour)](../feature-tour/trust-boundaries.md) for
 worked examples.

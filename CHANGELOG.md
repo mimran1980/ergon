@@ -26,23 +26,44 @@
   behaviour as 0.1.10+).
 - Restored `docs/SBE_COMPATIBILITY.md`.
 - `#[inline]` on `bulk_decode`, staged `finish_empty` / ragged length builders,
-  domain DTO thin methods, and `AnyMessage::visit`.
+  domain DTO thin methods, `AnyMessage::visit`, staged `EncodedLength`
+  transitions / complete length getters, EncodedLength zero-count group
+  forwarders, and `try_from_slice_with_header`.
 - `Error::source` on `EncodeError::Decode` and `VerifyError::DecodeError`.
-- `#[must_use]` on message/consuming decoder stage structs.
+- `#[must_use]` on message/consuming decoder stage structs and on EncodedLength
+  After/Complete stages (`length builder must be completed`).
+- Reserved ⊆ emitted enforcement test; crate README + feature-matrix placement
+  metadata row; group vs metadata `remaining()` table; dual
+  `acting_version` docs; expanded `into_remaining_mut` / group `remaining`
+  rustdoc.
 - Documented `ItemContext` hook fields; `acting_version` / `acting_block_length`
-  rustdoc; book guidance for `apply_nulls`, claim sizing for non-fixed messages,
-  and `AnyMessage::try_decode` teaching.
+  on decoders and consuming stages; metadata
+  `message_offset` / `limit` / `buffer` / `remaining`; field-level error
+  variant rustdoc; book guidance for `apply_nulls`, claim sizing, decode
+  stages (`finish` / `skip_remaining` / must_use), metadata limits, FixedFields
+  (no Default), hybrid bare `decode`, and parity-gate artifact archiving.
 
 ### Fixed
 - Truncated `# Safety` docs and garbled group-encode rustdoc.
-- Trust-boundary docs/README aligned to three-tier constructors.
+- Trust-boundary docs/README aligned to three-tier constructors; bare
+  `decode` / `decode_unchecked` rustdoc describe the hybrid identity+extent
+  contract.
 - `decode_unchecked` uses unchecked header reads as documented.
 - Generic encode `BufferTooShort` labels now use group-field names.
 - HFT-008 keep matrix times three constructor tiers (try / bare / unchecked).
 - Narrower generated `#[allow]` list (no blanket `unused_unsafe` /
-  `unused_imports`).
+  `unused_imports` / `needless_borrow`); remaining allows documented in codegen.
 - Bare decoder `wrap` uses a direct extent check (no `Result` on the success
-  path), matching encoder bare wrap — restores no-LTO batch decode parity.
+  path), matching encoder bare wrap; cold panics use static strings.
+- Deduped encoder/decoder reserved method-name lists into a single source of
+  truth (`codegen/conversion_helpers.rs`). Placement utils (`remaining` /
+  `buffer` / `limit` / `message_offset` / fixed-block-only `as_fixed_*`) are
+  **only** on `get_metadata()` and are **not** reserved field renames — schema
+  fields may use those names without a `_field` suffix. Migrate
+  `dec.remaining()` → `dec.get_metadata().remaining()`. Stale reserved entry
+  `header` (never emitted) removed.
+- Bench fairness: batch decode arm uses `wrap_unchecked` to match sbe-tool's
+  zero-check wrap (equal work).
 
 ## [0.1.12] — 2026-08-04
 

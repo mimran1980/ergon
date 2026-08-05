@@ -187,6 +187,7 @@ fn generate_staged(
         let sid = syn::Ident::new(sn, span);
         standalone.extend(quote::quote! {
             #[doc(hidden)]
+            #[must_use = "length builder must be completed"]
             pub struct #sid {
                 state: EncodedLengthAccumulator,
             }
@@ -279,6 +280,7 @@ fn generate_staged(
 
                     standalone.extend(quote::quote! {
                         #[doc(hidden)]
+                        #[must_use = "complete the nested shape or call finish_empty()"]
                         pub struct #nested_pending {
                             state: EncodedLengthAccumulator,
                             parent_multiplier: usize,
@@ -369,6 +371,7 @@ fn generate_staged(
                 }
 
                 entry_tail_methods.extend(quote::quote! {
+                    #[inline]
                     pub const fn #vd_snake(
                         mut self, byte_len: usize,
                     ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -450,6 +453,8 @@ fn generate_staged(
                         // and continue the chain. Error surfaces at next fallible boundary.
                         standalone.extend(quote::quote! {
                             impl #pending_ident {
+                                /// Zero-count forwarder to the next group/var-data stage.
+                                #[inline]
                                 pub fn #next_method_name(
                                     self, #next_param_name: #next_param_ty,
                                 ) -> #next_name {
@@ -503,6 +508,7 @@ fn generate_staged(
                     /// single entry shape multiplied by `count`, so no per-entry
                     /// description is needed. This is the fastest path; prefer it
                     /// whenever all entries are identical.
+                    #[inline]
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> #pending_ident {
@@ -528,6 +534,7 @@ fn generate_staged(
                     /// `count` times. Each entry's fixed block is pre-counted, so
                     /// `add()` only registers the entry — describe its variable tail
                     /// with `group()`/`var_data()`.
+                    #[inline]
                     pub fn #g_ragged<F>(
                         mut self, count: #count_ty, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
@@ -563,6 +570,7 @@ fn generate_staged(
                     /// of the wire count type (`#count_ty`). Each `add()` contributes
                     /// the entry's fixed block, plus any `group()`/`var_data()` you
                     /// record for that entry.
+                    #[inline]
                     pub fn #g_unknown<F>(
                         mut self, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
@@ -593,6 +601,7 @@ fn generate_staged(
             // Flat group — simple, no pending stage.
             standalone.extend(quote::quote! {
                 impl #pending_name {
+                    #[inline]
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -648,6 +657,7 @@ fn generate_staged(
 
         standalone.extend(quote::quote! {
             impl #pending_name {
+                #[inline]
                 pub const fn #vd_snake(
                     self, byte_len: usize,
                 ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -672,7 +682,9 @@ fn generate_staged(
     let complete_ident = syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span);
     standalone.extend(quote::quote! {
         impl #complete_ident {
+            #[inline]
             pub const fn encoded_length(&self) -> usize { self.state.len }
+            #[inline]
             pub const fn encoded_length_with_header(&self) -> usize {
                 self.state.len + #hs_lit as usize
             }
