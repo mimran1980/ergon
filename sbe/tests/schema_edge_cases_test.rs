@@ -869,7 +869,9 @@ fn multi_nested_group_compiles_and_roundtrips() -> Result<(), Box<dyn std::error
         let len = enc.encoded_length_with_header();
 
         let dec = MultiNestedDecoder::try_from(&buf[..len])?;
-        assert_eq!(dec.header_field(), 0u32);
+        // Field name `header` is not reserved (no inherent header() method) —
+        // natural accessor keeps the schema name.
+        assert_eq!(dec.header(), 0u32);
 
         let mut entries = dec.into_parent()?;
         let mut count = 0usize;
