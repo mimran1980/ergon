@@ -918,7 +918,7 @@ impl Generator {
                 self.run_hooks(&ctx, &mut src);
             }
 
-            // Converter seam: domain-type / with_conversion / auto_bool (HFT-003).
+            // Converter seam: domain-type / with_conversion / auto_bool.
             if !conv_sels.is_empty() {
                 let converter_ts = generate_converter_impls(msg, &conv_sels, domain_types, multi);
                 src.push_str(&converter_ts);
@@ -1003,7 +1003,7 @@ impl Generator {
             src.push('\n');
         }
         // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
-        // private + unsafe (HFT-001) — never a safe public memory-safety
+        // private + unsafe — never a safe public memory-safety
         // precondition for callers.
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.

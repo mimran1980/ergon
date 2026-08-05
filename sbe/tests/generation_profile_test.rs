@@ -1,4 +1,4 @@
-//! HFT-009: GenerationProfile::HftLean vs Full feature matrix + core consumer.
+//! GenerationProfile::HftLean vs Full feature matrix + core consumer.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;

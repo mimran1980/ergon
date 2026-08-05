@@ -163,7 +163,7 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                // Domain-converted composites use fallible `try_*` (HFT-003).
+                // Domain-converted composites use fallible `try_*`.
                 // Wire-only composites use the *_value() accessor.
                 if find_domain_type(f, domain_types).is_some() {
                     let try_ident =

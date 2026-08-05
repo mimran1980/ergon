@@ -740,7 +740,7 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
     );
     assert!(
         src.contains("InvalidUtf8"),
-        "expected strict InvalidUtf8 on invalid UTF-8 (HFT-003):\n{src}"
+        "expected strict InvalidUtf8 on invalid UTF-8:\n{src}"
     );
     compile_and_run(
         "car_dom_str",

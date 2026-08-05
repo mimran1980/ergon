@@ -1,4 +1,4 @@
-//! HFT-001 soundness regressions: safe constructors never UB on short/hostile
+//! Soundness regressions: safe constructors never UB on short/hostile
 //! frames; zero-check paths are `unsafe`; raw byte helpers are not public safe.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
@@ -9,9 +9,9 @@ use common::{Paths, compile_and_run, generate};
 
 #[test]
 fn public_safe_api_rejects_header_only_car_frame() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_hdr_only");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_hdr_only");
     compile_and_run(
-        "hft001_hdr_only",
+        "soundness_hdr_only",
         &src,
         r#"
         // Header only: 8 bytes with blockLength=0. Checked decode must error.
@@ -32,9 +32,9 @@ fn public_safe_api_rejects_header_only_car_frame() -> Result<(), Box<dyn Error>>
 
 #[test]
 fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_empty_enc");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_empty_enc");
     compile_and_run(
-        "hft001_empty_enc",
+        "soundness_empty_enc",
         &src,
         r#"
         let mut empty = [];
@@ -49,7 +49,7 @@ fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), B
 
 #[test]
 fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_raw_vis");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_raw_vis");
     // Post-safe-ification: read_bytes / write_bytes are pub fn.
     // No unsafe in the generated public API surface.
     assert!(
@@ -77,10 +77,10 @@ fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error
 
 #[test]
 fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_unwind");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_unwind");
     // Drive inside the generated crate so we exercise real codecs.
     compile_and_run(
-        "hft001_unwind",
+        "soundness_unwind",
         &src,
         r#"
         use std::panic::{self, AssertUnwindSafe};
@@ -108,7 +108,7 @@ fn catch_unwind_hostile_decode_does_not_panic() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_core_share");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_core_share");
     // try_wrap_and_apply_header is the checked constructor; it delegates to
     // wrap_and_apply_header_unchecked after the extent proof.
     let idx = src
@@ -125,7 +125,7 @@ fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
 /// Group/entry constructors that skip extent checks must not be public safe.
 #[test]
 fn group_and_entry_zero_check_wraps_are_private_unsafe() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_group_vis");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_group_vis");
     // 0.1.12: three-tier API adds unsafe fn *_unchecked variants.
     // Expect at least wrap_unchecked + wrap_and_apply_header_unchecked + decode_unchecked
     // plus the existing _as_str_unchecked accessors.
@@ -147,12 +147,12 @@ fn group_and_entry_zero_check_wraps_are_private_unsafe() -> Result<(), Box<dyn E
 }
 
 /// start_entry must reject a buffer too short for the fixed entry block
-/// before advancing pos/written (HFT-004 pre-mutation capacity check).
+/// before advancing pos/written.
 #[test]
 fn start_entry_rejects_short_buffer_before_mutation() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_start_entry");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_start_entry");
     compile_and_run(
-        "hft001_start_entry",
+        "soundness_start_entry",
         &src,
         r#"
         // Acceleration is fixed-block (no entry var-data). count=1, only 5 bytes
@@ -175,9 +175,9 @@ fn start_entry_rejects_short_buffer_before_mutation() -> Result<(), Box<dyn Erro
 /// Fixed-block group wrap validates count*block_length before yielding entries.
 #[test]
 fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_group_short");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_group_short");
     compile_and_run(
-        "hft001_group_short",
+        "soundness_group_short",
         &src,
         r#"
         use std::panic::{self, AssertUnwindSafe};
@@ -226,9 +226,9 @@ fn fixed_group_wrap_rejects_short_entries_region() -> Result<(), Box<dyn Error>>
 /// EncodeError::Decode and VerifyError::DecodeError implement Error::source.
 #[test]
 fn encode_verify_error_source_chains() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft001_err_src");
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_err_src");
     compile_and_run(
-        "hft001_err_src",
+        "soundness_err_src",
         &src,
         r#"
         use std::error::Error;

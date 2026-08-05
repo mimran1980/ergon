@@ -1,4 +1,4 @@
-//! HFT-008: paired checked/unchecked identity + measurement harness.
+//! Paired checked/unchecked identity + measurement harness.
 //!
 //! Product surface (0.1.12+): public three-tier constructors — `try_*`, bare
 //! names (panic after extent proof), and `unsafe fn *_unchecked`. This test:
@@ -23,11 +23,11 @@ use common::{Paths, compile_and_run, compile_and_run_capture, generate};
 /// Append in-module keep-matrix helpers that can call private `*`.
 fn with_in_module_probe(src: &str) -> String {
     // Injected into the generated module so private `unsafe fn *`
-    // cores are in scope. Emits machine-readable HFT008_KEEP_SAMPLE lines.
+    // cores are in scope. Emits machine-readable THREE_TIER_KEEP_SAMPLE lines.
     let probe = r#"
 
-/// HFT-008 keep-matrix probe (not part of the public product API).
-pub mod hft008_probe {
+/// Three-tier keep-matrix probe (not part of the public product API).
+pub mod soundness_probe {
     use super::*;
     use std::hint::black_box;
     use std::time::Instant;
@@ -150,7 +150,7 @@ pub mod hft008_probe {
         let ratio = checked_ns / unchecked_ns.max(1e-12);
         let improvement_pct = (1.0 - unchecked_ns / checked_ns.max(1e-12)) * 100.0;
         println!(
-            "HFT008_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} trusted_ns_per_op={trusted_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over_unchecked={ratio:.6} improvement_pct={improvement_pct:.4}"
+            "THREE_TIER_KEEP_SAMPLE pair={pair} shape={shape} checked_ns_per_op={checked_ns:.6} trusted_ns_per_op={trusted_ns:.6} unchecked_ns_per_op={unchecked_ns:.6} ratio_checked_over_unchecked={ratio:.6} improvement_pct={improvement_pct:.4}"
         );
     }
 }
@@ -247,13 +247,13 @@ fn keep_gate_multi_scenario_samples() -> Result<(), Box<dyn Error>> {
         "hft8_matrix",
         &src,
         r#"
-        hft008_probe::run_matrix();
+        soundness_probe::run_matrix();
     "#,
     );
     // Re-print so `cargo test -- --nocapture` and multi-run harnesss capture samples.
     print!("{out}");
     assert!(
-        out.contains("HFT008_KEEP_SAMPLE"),
+        out.contains("THREE_TIER_KEEP_SAMPLE"),
         "expected keep-matrix samples in probe stdout"
     );
     let _ = Instant::now();

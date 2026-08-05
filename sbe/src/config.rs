@@ -97,12 +97,12 @@ pub enum DomainVarData {
     #[default]
     Bytes,
     /// Text-friendly var-data (`String`). Invalid UTF-8 returns
-    /// `DecodeError::InvalidUtf8` (strict; HFT-003). Prefer
+    /// `DecodeError::InvalidUtf8` (strict). Prefer
     /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
     Strings,
 }
 
-/// Generated-code surface presets (HFT-009).
+/// Generated-code surface presets.
 ///
 /// Individual knobs (`with_display_debug`, …) still override after
 /// [`GenerationConfig::profile`].
@@ -547,7 +547,7 @@ impl GenerationConfig {
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
     /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
-    /// | [`DomainVarData::Strings`] | `String` | `InvalidUtf8` error (strict; HFT-003) |
+    /// | [`DomainVarData::Strings`] | `String` | `InvalidUtf8` error (strict) |
     ///
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};
@@ -647,7 +647,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Apply a product profile that sets the size knobs together (HFT-009).
+    /// Apply a product profile that sets the size knobs together.
     ///
     /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
     /// |---------|---------------|------------|----------|----------------|

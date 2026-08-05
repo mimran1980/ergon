@@ -1,4 +1,4 @@
-//! HFT-010: reject stale 0.1 dual-lane teaching in generated code AND inventory docs.
+//! Reject stale 0.1 dual-lane teaching in generated code and inventory docs.
 //!
 //! Generated sources: no public `try_wrap*` / safe raw unchecked helpers.
 //! Inventory surfaces: forbid teaching phrases that reintroduce the 0.1
@@ -45,9 +45,9 @@ fn allowlisted(path: &Path) -> bool {
         || s.contains("SBE_HFT_0_1_10_RELEASE_SPEC")
         || s.contains("docs/research/")
         || s.contains("sbe-hft-architecture-primary-sources")
-        || s.ends_with("hft_stale_interface_test.rs")
-        || s.ends_with("hft_001_soundness_test.rs")
-        || s.ends_with("hft_005_warning_free_consumer_test.rs")
+        || s.ends_with("stale_interface_test.rs")
+        || s.ends_with("soundness_hostile_constructors_test.rs")
+        || s.ends_with("warning_free_consumer_test.rs")
         || s.ends_with("fix_sbe_conformance_test.rs")
 }
 
@@ -128,7 +128,7 @@ fn line_is_negation(line: &str) -> bool {
         || l.contains("associated `decoder::verify")
         || l.contains("associated decoder::verify")
         || l.contains("use associated")
-        || l.contains("hft-010")
+        || l.contains("stale-interface")
             && (l.contains("reject") || l.contains("forbid") || l.contains("stale"))
 }
 
@@ -196,7 +196,7 @@ fn inventory_docs_reject_0_1_dual_lane_teaching() -> Result<(), Box<dyn Error>> 
 
     assert!(
         failures.is_empty(),
-        "HFT-010 inventory still teaches 0.1 dual-lane / wrong APIs ({} hits):\n{}",
+        " inventory still teaches 0.1 dual-lane / wrong APIs ({} hits):\n{}",
         failures.len(),
         failures.join("\n")
     );

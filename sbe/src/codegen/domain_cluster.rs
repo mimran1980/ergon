@@ -285,7 +285,7 @@ pub(crate) fn generate_domain_recursive(
                         }
                     });
                 } else {
-                    // Domain-typed scalars use fallible `try_*` (HFT-003).
+                    // Domain-typed scalars use fallible `try_*`.
                     // Conversion-only renames the raw flyweight getter to *_wire.
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#scalar_ty> });
@@ -653,7 +653,7 @@ pub(crate) fn generate_domain_recursive(
         let vd_ident = syn::Ident::new(&vd_snake, span);
         match domain_var_data {
             crate::config::DomainVarData::Strings => {
-                // HFT-003: never manufacture empty/default for invalid UTF-8.
+                // never manufacture empty/default for invalid UTF-8.
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
                 from_exprs.push(quote::quote! {

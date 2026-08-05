@@ -1,7 +1,7 @@
 //! Null-sentinel write generation for optional fields.
 //!
 //! Wire bytes must be exactly the declared primitive width in the schema
-//! byte order (HFT-002). Never copy a full `u64` LE/BE array into a shorter
+//! byte order. Never copy a full `u64` LE/BE array into a shorter
 //! field (panics on group optionals) or take the first `N` LE bytes of a BE
 //! encoding (wrong high-order bytes).
 

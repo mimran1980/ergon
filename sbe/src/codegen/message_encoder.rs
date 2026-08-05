@@ -284,7 +284,7 @@ pub(crate) fn generate_message_encoder(
         }
     };
     // Constructors + cold helper on the concrete (default-H) impl so
-    // `CarEncoder::wrap_and_apply_header` needs no turbofish (HFT-001).
+    // `CarEncoder::wrap_and_apply_header` needs no turbofish.
     impl_consts.extend(cold_check);
 
     // Three-tier constructors:
@@ -1307,7 +1307,7 @@ pub(crate) fn generate_message_encoder(
     }
 
     // Checked + unsafe unchecked constructors are emitted once on the
-    // concrete impl above (HFT-001). Do not re-emit a second safe zero-check
+    // concrete impl above. Do not re-emit a second safe zero-check
     // pair here — that reintroduced UB from safe Rust.
 
     ts.extend(encoded_len_gen.standalone);

@@ -95,7 +95,7 @@ pub(crate) fn generate_group_encoder(
         if size == 0 || size > 8 {
             continue;
         }
-        // Exact width in schema endianness (HFT-002) — not a full u64 array.
+        // Exact width in schema endianness — not a full u64 array.
         let null_bytes = super::nullification::null_sentinel_bytes(null_val, size, byte_order);
         let f_offset = syn::Index::from(f.offset);
         let size_lit = syn::LitInt::new(&size.to_string(), span);

@@ -277,7 +277,7 @@ pub(crate) fn find_domain_type<'a>(
 /// Encoder setter name used by domain DTOs.
 ///
 /// - Conversion-only (no domain type): flyweight is `*_wire`.
-/// - Concrete domain type (HFT-003): fallible `try_*` setter.
+/// - Concrete domain type: fallible `try_*` setter.
 /// - Otherwise: bare field name.
 pub(crate) fn domain_encode_setter_name(
     field: &MessageField,

@@ -1,4 +1,4 @@
-//! HFT-006: type-state compile-fail coverage + size_of / Send budgets.
+//! type-state compile-fail coverage + size_of / Send budgets.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;

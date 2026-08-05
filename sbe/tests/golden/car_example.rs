@@ -33,7 +33,7 @@ pub mod sbe_rt {
         InvalidAscii { field: &'static str },
         /// Boolean wire enum was `NullVal` or an unknown discriminant.
         InvalidBoolean { field: &'static str },
-        /// Domain `try_*` conversion failed (HFT-003).
+        /// Domain `try_*` conversion failed.
         DomainConversionFailed { field: &'static str, reason: &'static str },
     }
     impl core::fmt::Display for DecodeError {
@@ -123,7 +123,7 @@ pub mod sbe_rt {
         GroupCountOverflow { maximum: u32, actual: u32 },
         /// Checked arithmetic overflow in encoded length computation.
         EncodedLengthOverflow,
-        /// Domain `try_*` conversion failed (HFT-003).
+        /// Domain `try_*` conversion failed.
         DomainConversionFailed { field: &'static str, reason: &'static str },
         /// Nested decode failure during encode/verify paths.
         Decode(DecodeError),

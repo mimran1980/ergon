@@ -253,7 +253,7 @@ pub(crate) fn generate_message_decoder(
     }
 
     // Version-aware minimum fixed extent: every field readable at
-    // `acting_version` must fit in the body buffer (HFT-001).
+    // `acting_version` must fit in the body buffer.
     let mut min_extent_arms = proc_macro2::TokenStream::new();
     {
         // Collect unique since_version thresholds and the max end offset

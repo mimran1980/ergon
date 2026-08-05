@@ -61,7 +61,7 @@ pub(crate) fn generate_converter_impls(
                 syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
             let domain_ident = syn::Ident::new(&field_snake, span);
 
-            // HFT-003: checked domain accessors are fallible — no `.expect`.
+            // checked domain accessors are fallible — no `.expect`.
             let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
             decoder_methods.extend(quote::quote! {
                 #[inline]
