@@ -1,13 +1,11 @@
-//! Canonical bids/asks dual-group proof (DECISIONS.md §3, Tasks A/D) on the
-//! L3 orderbook fixture.
+//! Canonical bids/asks dual-group proof on the L3 orderbook fixture.
 //!
 //! Runtime: decode `bids` then `asks` through the consuming stage API
 //! (`into_bids` -> `finish` -> `into_asks` -> `finish` -> complete), reading
 //! nested `orders` + `orderId` inside each level.
 //!
-//! Compile-fail: the NEW consuming API enforces wire order even while the
-//! legacy `&self` surface still coexists — `into_asks` lives only on
-//! `L3BookDecoderAfterBids`, and `finish` consumes the group decoder.
+//! Compile-fail: the consuming API enforces wire order — `into_asks` lives only
+//! on `L3BookDecoderAfterBids`, and `finish` consumes the group decoder.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -61,7 +59,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
             Ok(())
         }).unwrap();
         let encoded = c.as_bytes_with_header();
-        // DECISIONS.md §2: as_bytes_with_header() is the explicit header-inclusive view.
+        // as_bytes_with_header() is the explicit header-inclusive view.
         assert_eq!(c.as_bytes_with_header(), encoded);
         let total_len = encoded.len();
 

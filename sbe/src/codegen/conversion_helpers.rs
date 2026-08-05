@@ -156,7 +156,7 @@ pub(crate) fn resolve_field_ident(
     let resolved: &str = match () {
         _ if wire_name.is_some() => method_name,
         _ if reserved.contains(&snake_name) => {
-            // ponytail: allocate only on collision (rare, build-time only).
+            // Allocate only on collision (rare, build-time only).
             Box::leak(format!("{snake_name}_field").into_boxed_str())
         }
         _ => snake_name,

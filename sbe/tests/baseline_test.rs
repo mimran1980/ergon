@@ -47,12 +47,12 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         src.contains("#[allow(clippy::manual_range_contains)]"),
         "generated code must suppress clippy::manual_range_contains"
     );
-    // T-11 (0.1.13): needless_borrow removed from module allows.
+    // Module-level allows must not include needless_borrow (emission should not need it).
     assert!(
         !src.contains("#[allow(clippy::needless_borrow)]"),
         "generated code must NOT suppress needless_borrow at module level"
     );
-    // unused_imports / unused_unsafe removed — they mask generator bugs.
+    // Module-level allows must not hide unused_imports / unused_unsafe / unused_variables.
     assert!(
         !src.contains("#[allow(unused_imports)]"),
         "generated code must NOT suppress unused_imports at module level"
@@ -61,9 +61,6 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         !src.contains("unused_unsafe"),
         "generated code must NOT suppress unused_unsafe at module level"
     );
-    // QW-8 (0.1.12): unused_variables, unused_mut, dead_code, unused_assignments
-    // removed from module-level allows — they mask generator bugs. The generator
-    // must not emit code that triggers these.
     assert!(
         !src.contains("#[allow(unused_variables)]"),
         "generated code must NOT suppress unused_variables at module level"
@@ -653,7 +650,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
         // Write empty tails to reach the complete stage (as_bytes is
-        // completion-only per DECISIONS.md §2).
+        // completion-only).
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -791,15 +788,6 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// iter_fast was removed. For groups with var-data tails (total_tail > 0),
-// advancing by ENTRY_BLOCK_LENGTH produces wrong positions because
-// entries are not contiguous in the buffer — var-data of previous entries
-// pushes later entries forward. For total_tail == 0, the standard Iterator
-// already uses ENTRY_BLOCK_LENGTH. iter_fast was redundant.
-// Test coverage: the standard Iterator's ENTRY_BLOCK_LENGTH fast path
-// is verified by decode_baseline_fixture (fuel_figures[0].speed == 30 etc.)
-// and group_decoder_is_empty.
-
 #[test]
 fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "pre_encode_len");
@@ -830,8 +818,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         let empty_full = car.encoded_length_with_header();
         assert_eq!(empty_full, 73); // 65 + 8-byte header
 
-        // DECISIONS.md §2: header-inclusive length must use the dedicated helper.
-        // Use large buffer pattern instead of staged EncodedLength builders
+        // Header-inclusive length must use the dedicated helper.
         let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
@@ -1386,8 +1373,7 @@ fn vardata_maxlength_runtime() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Civic").unwrap();
         assert!(car.activation_code(b"12345").is_ok(), "activationCode within maxLength via checked");
 
-        // All var-data fields encode successfully via the checked path
-        // (unchecked paths removed — checked path is canonical)
+        // All var-data fields encode successfully via the checked path.
         "#,
     );
     Ok(())
@@ -2258,7 +2244,7 @@ fn generated_code_uses_one_slice_indexing() -> Result<(), Box<dyn std::error::Er
 #[test]
 fn generated_decoder_has_consuming_stages_and_rewind() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-    // DECISIONS.md §10: the out-of-order skip_to_<later>() surface is removed.
+    // Out-of-order skip_to_<later>() surface is not generated.
     assert!(
         !src.contains("skip_to_fuel_figures"),
         "decoder must NOT emit the removed skip_to_<later>() out-of-order surface"
@@ -2895,7 +2881,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
 fn fixed_fields_struct_exists_and_requires_all_required_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_fields_req");
-    // Task 4 implemented: CarFixedFields is generated.
+
     assert!(
         src.contains("struct CarFixedFields"),
         "CarFixedFields must be generated"
@@ -2910,8 +2896,6 @@ fn fixed_fields_struct_exists_and_requires_all_required_fields()
 #[test]
 fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_method_done");
-    // Task 4: fixed(), raw_fixed(), and CarFixedFields are generated.
-    // finish_unchecked() is intentionally removed — no bypass of the fixed phase.
     assert!(
         src.contains("pub fn fixed("),
         "fixed() method must be generated"
@@ -2934,7 +2918,6 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_sym_done");
-    // Task 4: engine_value() is the renamed _as_struct accessor.
     assert!(
         src.contains("fn engine_value("),
         "engine_value() must be generated"
@@ -2949,7 +2932,6 @@ fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::er
 #[test]
 fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_replaces_try");
-    // Task 4: fixed() + raw_fixed() dedicated writer replace try_fixed.
     assert!(src.contains("pub fn fixed("), "fixed() must be generated");
     assert!(
         src.contains("pub fn raw_fixed("),
@@ -2959,7 +2941,6 @@ fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Err
         src.contains("RawFixedWriter"),
         "RawFixedWriter struct must be generated"
     );
-    // try_fixed is removed
     assert!(
         !src.contains("try_fixed"),
         "try_fixed must NOT be generated"
@@ -3156,7 +3137,7 @@ fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::erro
 }
 
 /// Group-entry Decimal fields get generic converted methods plus raw
-/// `*_wire`, exactly like ordinary fields (Task 2).
+/// `*_wire`, exactly like ordinary fields.
 #[test]
 fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -3248,7 +3229,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Independent exact fixed-scale adapter matrix (Task 2): positive/negative
+/// Independent exact fixed-scale adapter matrix: positive/negative
 /// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection —
 /// implemented in a temporary crate against the generated trait only.
 #[test]

@@ -24,8 +24,7 @@ pub(crate) fn generate_decoder_display(
     let mut out_idx = 0usize;
     for f in &msg.fields {
         let snake = to_snake_case(&f.name);
-        // Domain-converted fields use `try_<name>` (HFT-003); Display must not
-        // call the old infallible name.
+        // Domain-converted fields use fallible `try_<name>` for Display.
         let wire_name = find_domain_type(f, domain_types).map(|_| format!("{snake}_wire"));
         // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);

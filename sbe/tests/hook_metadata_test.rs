@@ -1,14 +1,11 @@
 //! Regression tests for hook metadata correctness.
 //!
-//! These guard three findings the earlier serde test did not exercise:
-//!   * enum discriminants above `i64::MAX` must still reach the hook
-//!     (previously `parse::<i64>()` silently dropped them → empty variant list);
-//!   * composite hook metadata must list real primitive fields with correct
-//!     Rust types, and report nested composites/enums by their type name — not
-//!     omit the primitive and mislabel containers as `u8`;
-//!   * `DomainStruct` hooks must fire for the top-level DTO *and* every
-//!     generated `*EntryDomain`, and the top-level context must include group
-//!     and var-data fields (not just fixed fields).
+//! Guards hook metadata correctness:
+//!   * enum discriminants above `i64::MAX` must reach the hook;
+//!   * composite hooks list real primitive fields with correct Rust types and
+//!     report nested composites/enums by type name;
+//!   * `DomainStruct` hooks fire for the top-level DTO and every
+//!     `*EntryDomain`, including group and var-data fields.
 
 #![allow(clippy::expect_used)]
 
@@ -123,9 +120,7 @@ fn capture_all() -> Result<Vec<Captured>, Box<dyn std::error::Error>> {
     Ok(out)
 }
 
-/// A `uint64` enum discriminant above `i64::MAX` must still reach the hook —
-/// previously `parse::<i64>()` returned `Err` and the variant was silently
-/// dropped from the context, so the hook saw an empty/short variant list.
+/// A `uint64` enum discriminant above `i64::MAX` must still reach the hook.
 #[test]
 fn enum_discriminant_above_i64_max_reaches_hook() -> Result<(), Box<dyn std::error::Error>> {
     let captured = capture_all()?;

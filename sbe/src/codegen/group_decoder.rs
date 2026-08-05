@@ -81,9 +81,8 @@ pub(crate) fn generate_group_decoder(
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
     }
-    // T-5: when entries have nested groups or var-data, there is no constant
-    // stride, so nth() O(1) is not available. The iterator or skip_n() must be
-    // used instead.
+    // When entries have nested groups or var-data, there is no constant stride,
+    // so O(1) random access is not available — use the iterator or skip_n().
     if total_tail > 0 {
         ts.extend(quote::quote! {
             #[doc = " This group has entries with nested groups or var-data —"]
@@ -101,10 +100,9 @@ pub(crate) fn generate_group_decoder(
             total: usize,
             acting_version: u16,
             acting_block_length: usize,
-            // Parent message body position + acting block length, remembered so
-            // `finish()` can reconstruct the next message decoder stage
-            // (DECISIONS.md §3 consuming tail stages). Unused by the legacy
-            // `&self` random-access accessors.
+            // Parent message body position + acting block length, so `finish()`
+            // can reconstruct the next message decoder stage. Unused by
+            // random-access entry accessors.
             parent_pos: usize,
             parent_block_length: usize,
         }
@@ -1438,10 +1436,9 @@ pub(crate) fn generate_group_decoder(
         ));
     }
 
-    // Concrete consuming entry-level tail stages (DECISIONS.md §3, Task D) for
-    // entries that have nested groups and/or var-data. Additive: the legacy
-    // `&self` entry accessors remain. Emitted after the nested group decoders
-    // above so `finish()` can name them.
+    // Consuming entry-level tail stages for entries with nested groups and/or
+    // var-data. Random-access `&self` entry accessors remain. Emitted after the
+    // nested group decoders above so `finish()` can name them.
     ts.extend(generate_entry_consuming_stages(
         g,
         elements,

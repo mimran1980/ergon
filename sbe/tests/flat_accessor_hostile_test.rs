@@ -1,4 +1,4 @@
-//! Hostile-input test for flat var-data accessors (T-1 in REVIEW_TICKETS.md).
+//! Hostile-input test for flat var-data accessors.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction)]
 use std::error::Error;

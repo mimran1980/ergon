@@ -389,7 +389,7 @@ pub enum BooleanType {
 }
 impl BooleanType {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
+    /// regression when forced.
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -472,7 +472,7 @@ pub enum Model {
 }
 impl Model {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
+    /// regression when forced.
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -533,7 +533,7 @@ pub enum BoostType {
 }
 impl BoostType {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced (see REVIEW T-9 / 0.1.12 history).
+    /// regression when forced.
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -1390,7 +1390,7 @@ impl<'a> CarDecoder<'a> {
     /// Decode a framed message at **message start** (`pos` = first
     /// byte of the header). Validates header fields and the
     /// version-aware fixed body extent. See [`Self::wrap`] for the
-    /// message-start vs sbe-tool body-offset migration note.
+    /// message-start coordinate system.
     #[inline]
     pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
         if 8 > buf.len().saturating_sub(pos) {

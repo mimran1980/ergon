@@ -785,7 +785,6 @@ impl Generator {
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
         src.push_str("#[allow(clippy::eq_op)]\n");
-        // needless_borrow removed (T-11): emission should not produce them.
         src.push_str("#[allow(clippy::manual_range_contains)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.

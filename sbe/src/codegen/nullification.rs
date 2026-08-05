@@ -127,10 +127,9 @@ mod tests {
         assert_eq!(&b[..4], &[0xff, 0xff, 0xff, 0xff]);
         let b1 = null_sentinel_bytes(0xff, 1, ByteOrder::BigEndian);
         assert_eq!(&b1[..1], &[0xff]);
-        // Value 0x00FF as u16 BE is 00 ff, not ff 00 (old LE-slice bug).
+        // Value 0x00FF as u16 BE is 00 ff, not ff 00.
         let b2 = null_sentinel_bytes(0x00ff, 2, ByteOrder::BigEndian);
         assert_eq!(&b2[..2], &[0x00, 0xff]);
-        // Value that would wrongfully zero under "first N of BE u64":
         // null 0xFF as u16 BE is 00 ff (low 16 bits), not the high two BE bytes of u64.
         let b2b = null_sentinel_bytes(0xff, 2, ByteOrder::BigEndian);
         assert_eq!(&b2b[..2], &[0x00, 0xff]);

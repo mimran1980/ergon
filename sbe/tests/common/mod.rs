@@ -104,8 +104,8 @@ impl Paths {
     }
 
     /// L3 orderbook: two sequential top-level groups (`bids` then `asks`), each
-    /// with a nested `orders` group + `orderId` var-data. The canonical
-    /// dual-group fixture for DECISIONS.md §3 consuming-stage proofs.
+    /// with a nested `orders` group + `orderId` var-data. Canonical dual-group
+    /// fixture for consuming-stage proofs.
     pub fn l3_orderbook_schema() -> PathBuf {
         Self::fixtures_dir().join("l3-orderbook-schema.xml")
     }

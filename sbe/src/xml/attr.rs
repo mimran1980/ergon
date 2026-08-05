@@ -49,7 +49,7 @@ pub(crate) fn element_children<'a, 'input>(
 }
 
 /// Collect all documentation sources for an element and merge them into a
-/// single description string (DECISIONS.md §9 / reopened). Handles:
+/// single description string. Handles:
 ///
 /// - `description="..."` attribute
 /// - `<description>text</description>` child element

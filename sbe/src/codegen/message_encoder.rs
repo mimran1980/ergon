@@ -669,9 +669,7 @@ pub(crate) fn generate_message_encoder(
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length
-    // views exist only on the terminal complete stage (DECISIONS.md §2).
-    // Callers that genuinely need partial inspection should use an explicit
-    // name such as `written_prefix()`."
+    // views exist only on the terminal complete stage.
 
     // Encoded-length support: strategy-classified (computed above).
     // Length helpers are associated functions — keep on concrete impl for

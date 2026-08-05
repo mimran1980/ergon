@@ -881,7 +881,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
 
         impl #name_ident {
             /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-            /// regression when forced (see REVIEW T-9 / 0.1.12 history).
+            /// regression when forced.
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
@@ -989,7 +989,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         });
     }
 
-    // Emit set doc from the type's XML description (DECISIONS.md §9).
+    // Emit set doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     }
@@ -1323,7 +1323,6 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         }
     }
 
-    // manual String param parsing instead of syn::FnArg, refactor when generated code interface stabilises
 
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
@@ -1344,8 +1343,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
             }
         }
 
-        // DECISIONS.md §10: compile-time proof that the Rust struct matches the
-        // wire size — catches generator bugs at compile time, zero runtime cost.
+        // Compile-time proof that the Rust struct matches the wire size.
         const _: () = assert!(core::mem::size_of::<#name_ident>() == #size_lit);
     };
 
@@ -1572,10 +1570,9 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     src.push('\n');
 }
 
-/// Core generator for concrete consuming tail stages (DECISIONS.md §3), shared
-/// by message-level and entry-level tails. Emits non-`Copy` stage structs plus
-/// `into_*`, `finish`, and `skip_remaining` methods. Additive: does not touch
-/// the legacy `&self` random-access surface.
+/// Core generator for consuming tail stages, shared by message-level and
+/// entry-level tails. Emits non-`Copy` stage structs plus `into_*`, `finish`,
+/// and `skip_remaining`. Does not remove random-access `&self` accessors.
 ///
 /// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
 /// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.
@@ -2309,8 +2306,7 @@ pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStre
 
 /// Append `///` rustdoc lines for a schema description (doctest-safe).
 ///
-/// Single-line style is `///Text` (no forced space) so existing provenance
-/// tests that match `///Description…` keep passing. Multi-line content is
+/// Single-line style is `///Text` (no forced space). Multi-line content is
 /// first fenced as `text` by [`sanitize_description_for_doc`].
 pub(crate) fn push_description_doc(src: &mut String, desc: &str) {
     for line in sanitize_description_for_doc(desc).lines() {

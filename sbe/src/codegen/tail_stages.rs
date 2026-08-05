@@ -1,4 +1,4 @@
-//! Message/entry consuming tail-stage codegen (DECISIONS.md §3).
+//! Message/entry consuming tail-stage codegen.
 //!
 //! `generate_owner_consuming_stages` emits the type-state tail stages that own
 //! sequential access to an owner's (message or entry) tail groups + var-data.
@@ -58,7 +58,7 @@ pub(crate) fn generate_owner_consuming_stages(
         });
     }
 
-    // acting_version() / acting_block_length() on every stage (DECISIONS.md §3).
+    // acting_version() / acting_block_length() on every stage.
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
@@ -426,9 +426,9 @@ pub(crate) fn generate_owner_consuming_stages(
     ts
 }
 
-/// Message-level consuming tail stages (DECISIONS.md §3): thin wrapper that
-/// resolves the message's tail groups + var-data into descriptors and delegates
-/// to `generate_owner_consuming_stages`.
+/// Message-level consuming tail stages: thin wrapper that resolves the
+/// message's tail groups + var-data into descriptors and delegates to
+/// `generate_owner_consuming_stages`.
 pub(crate) fn generate_decoder_consuming_stages(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -484,8 +484,8 @@ pub(crate) fn generate_decoder_consuming_stages(
 }
 
 /// Entry-level consuming tail stages for a group whose entries have nested
-/// groups and/or var-data (DECISIONS.md §3, Task D). `name` is the group's
-/// scoped name; nested group decoder names are `{name}{Ng}Decoder`.
+/// groups and/or var-data. `name` is the group's scoped name; nested group
+/// decoder names are `{name}{Ng}Decoder`.
 pub(crate) fn generate_entry_consuming_stages(
     g: &MessageGroup,
     elements: &SchemaElements,

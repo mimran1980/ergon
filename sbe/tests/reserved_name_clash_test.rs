@@ -510,7 +510,7 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// T-9: every reserved name must be emitted as an inherent method on some
+/// Every reserved name must be emitted as an inherent method on some
 /// representative message shape; placement names must never be reserved and
 /// must appear on the metadata facet.
 #[test]

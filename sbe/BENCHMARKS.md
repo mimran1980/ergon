@@ -342,13 +342,11 @@ no mandatory aligned-buffer or pooling API.
 
 ### Amplified timing diagnostic (`instruction_counts`)
 
-`instruction_counts` is an amplified Criterion timing harness, not a Valgrind or
-Iai-Callgrind instruction counter. Iai-Callgrind was removed (HFT-005) because
-it pulled in the unmaintained `proc-macro-error2` crate. Each operation is
-repeated `ACCESS_REPETITIONS` times inside a single Criterion iteration to
-amplify sub-nanosecond differences. Results are wall-clock estimates, not
-stable instruction counts — use `perf`, `samply`, or iai-callgrind (on Linux)
-when deterministic instruction evidence is needed.
+`instruction_counts` is an amplified Criterion timing harness, not a Valgrind
+instruction counter. Each operation is repeated `ACCESS_REPETITIONS` times
+inside a single Criterion iteration to amplify sub-nanosecond differences.
+Results are wall-clock estimates, not stable instruction counts — use `perf`
+or `samply` when deterministic instruction evidence is needed.
 
 ```sh
 just bench-instructions

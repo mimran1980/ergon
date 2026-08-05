@@ -14,8 +14,7 @@ fn public_safe_api_rejects_header_only_car_frame() -> Result<(), Box<dyn Error>>
         "hft001_hdr_only",
         &src,
         r#"
-        // Header only: 8 bytes. Declaring blockLength=0 used to wrap and then
-        // UB on serial_number(). Checked decode must error.
+        // Header only: 8 bytes with blockLength=0. Checked decode must error.
         let mut hdr = [0u8; 8];
         // templateId=1, schemaId from schema, blockLength=0, version=0
         hdr[0..2].copy_from_slice(&0u16.to_le_bytes()); // blockLength

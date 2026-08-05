@@ -453,7 +453,7 @@ pub(crate) fn generate_message_decoder(
             /// Decode a framed message at **message start** (`pos` = first
             /// byte of the header). Validates header fields and the
             /// version-aware fixed body extent. See [`Self::wrap`] for the
-            /// message-start vs sbe-tool body-offset migration note.
+            /// message-start coordinate system.
             #[inline]
             pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                 if #hs > buf.len().saturating_sub(pos) {
@@ -1526,7 +1526,7 @@ pub(crate) fn generate_message_decoder(
     // Metadata only spans the acting fixed block (header + body at wrap).
     // Complete-sounding names only when there are no tails; otherwise mirror
     // encoder `as_fixed_region_with_header` so mid-decode metadata cannot be
-    // mistaken for a publishable full frame (T-15).
+    // mistaken for a publishable full frame.
     let meta_bytes = if total_tail == 0 {
         quote::quote! {
             /// Message body bytes (header exclusive). Fixed-only message —
@@ -1706,10 +1706,9 @@ pub(crate) fn generate_message_decoder(
         ));
     }
 
-    // 14b. Concrete consuming decoder tail stages (DECISIONS.md §3):
-    //      NameDecoder --into_<g>()--> GroupDecoder --finish()--> NameDecoderAfter<G>
-    //      -> ... -> NameDecoderComplete. Additive: leaves the legacy `&self`
-    //      random-access surface in place so existing call sites stay green.
+    // Consuming decoder tail stages:
+    //   NameDecoder --into_<g>()--> GroupDecoder --finish()--> NameDecoderAfter<G>
+    //   -> ... -> NameDecoderComplete. Random-access `&self` accessors remain.
     ts.extend(generate_decoder_consuming_stages(
         msg,
         elements,

@@ -1,4 +1,4 @@
-//! Concrete consuming decoder tail stages (DECISIONS.md §3, Tasks A–C).
+//! Concrete consuming decoder tail stages.
 //!
 //! These tests prove the new sequential decoder API end-to-end:
 //!
@@ -11,8 +11,8 @@
 //!
 //! Wire order is enforced by consumption: each `into_*`/`finish`/`skip_remaining`
 //! takes `self`, so a later tail component is unreachable until the current one
-//! is consumed. The legacy `&self` random-access surface still coexists for now;
-//! these tests exercise only the new consuming path.
+//! is consumed. Random-access `&self` accessors remain; these tests exercise
+//! only the consuming path.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]

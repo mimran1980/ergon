@@ -48,11 +48,11 @@ pub struct SessionBuilder {
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
-    /// Ingress publication mode — always exclusive (`true`) for now; shared
+    /// Ingress publication mode — always exclusive (`true`); shared
     /// ingress is deferred (Java default: exclusive). See the parity matrix.
     pub(crate) is_ingress_exclusive: bool,
-    /// Owns the Aeron client — always `true` for now; external-Aeron injection
-    /// is deferred (Java default: `true`). See the parity matrix.
+    /// Owns the Aeron client — always `true`; external-Aeron injection is
+    /// deferred (Java default: `true`). See the parity matrix.
     pub(crate) owns_aeron: bool,
     /// Idle strategy for the sync-connect retry loop (Java
     /// `Context.idleStrategy`). `None` = default `thread::sleep(50ms)`;
