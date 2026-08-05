@@ -7,7 +7,7 @@ provides a **three-tier** constructor API, ordered from safest to fastest:
 |------|--------|------------------------|----------|
 | **Checked** | `try_{wrap,decode,…}` | Returns `Result::Err` | Untrusted input, process boundaries |
 | **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** after the same extent proof | Known-good buffers, benchmarks |
-| **Unchecked** | `unsafe fn *_unchecked` | **UB** (raw pointer ops) | Proven-tight HFT loops |
+| **Unchecked** | `unsafe fn *_unchecked` | **UB** (raw pointer ops) | Proven-tight hot loops |
 
 **The trusted tier is safe Rust.** Bare constructors run the same header +
 fixed-body extent proof as `try_*`, then **panic** on failure. After that proof,

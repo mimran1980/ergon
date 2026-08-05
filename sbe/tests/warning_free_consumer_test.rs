@@ -9,11 +9,11 @@ mod common;
 use common::{Paths, generate};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
-/// Compile a minimal HftLean + Full consumer with `-D warnings`.
+/// Compile a minimal Lean + Full consumer with `-D warnings`.
 #[test]
-fn generated_hft_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Error>> {
+fn generated_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Error>> {
     for (label, profile) in [
-        ("wf_lean", GenerationProfile::HftLean),
+        ("wf_lean", GenerationProfile::Lean),
         ("wf_full", GenerationProfile::Full),
     ] {
         let ir = ergo_sbe::parse_file(&Paths::example_schema())?;

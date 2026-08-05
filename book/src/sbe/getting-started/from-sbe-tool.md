@@ -81,7 +81,7 @@ access after the header is known. ergon’s entry points take **message start**
 |------|----------|
 | Untrusted / network | `try_decode` / `try_wrap` / `try_from` → `Result` (all failures) |
 | Known-good buffer | bare `wrap` → panic if short; bare `decode` → **hybrid** (panic if short, `Err` on wrong template/schema) |
-| Proven-tight HFT | `unsafe wrap_unchecked`; `decode_unchecked` = unchecked extent + checked identity |
+| Proven-tight hot path | `unsafe wrap_unchecked`; `decode_unchecked` = unchecked extent + checked identity |
 
 See [Trust Boundary](../core-concepts/trust-boundary.md).
 

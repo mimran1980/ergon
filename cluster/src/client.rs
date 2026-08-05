@@ -798,7 +798,7 @@ impl AeronCluster {
     ///
     /// # Hot path
     ///
-    /// This is the HFT publish path. On success there is no temp buffer copy of
+    /// This is the hot publish path. On success there is no temp buffer copy of
     /// the application payload — fill [`ClusterClaim::payload_mut`] then
     /// [`ClusterClaim::commit`]. Abort with [`ClusterClaim::abort`] (or drop).
     ///

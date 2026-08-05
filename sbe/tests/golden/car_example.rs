@@ -1366,7 +1366,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
-    /// Only for proven-tight HFT loops after an external extent proof.
+    /// Only for proven-tight hot loops after an external extent proof.
     ///
     /// # Safety
     /// `message_offset + HEADER_LENGTH + max(acting_block_length,
@@ -5301,7 +5301,7 @@ impl<'a> CarEncoder<'a> {
         unsafe { Self::wrap_unchecked(buf, msg_offset) }
     }
     /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
-    /// Only for proven-tight HFT loops where the panic machinery is
+    /// Only for proven-tight hot loops where the panic machinery is
     /// measurable in the critical path.
     ///
     /// # Safety
@@ -5353,7 +5353,7 @@ impl<'a> CarEncoder<'a> {
         unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) }
     }
     /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
-    /// on OOB. Only for proven-tight HFT loops.
+    /// on OOB. Only for proven-tight hot loops.
     ///
     /// # Safety
     /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be

@@ -42,9 +42,9 @@ fn allowlisted(path: &Path) -> bool {
     let s = path.to_string_lossy().replace('\\', "/");
     s.contains("MIGRATION_0_1_TO_0_1_10")
         || s.contains("CHANGELOG.md")
-        || s.contains("SBE_HFT_0_1_10_RELEASE_SPEC")
+        || s.contains("SBE_0_1_10_RELEASE_SPEC")
         || s.contains("docs/research/")
-        || s.contains("sbe-hft-architecture-primary-sources")
+        || s.contains("sbe-architecture-primary-sources")
         || s.ends_with("stale_interface_test.rs")
         || s.ends_with("soundness_hostile_constructors_test.rs")
         || s.ends_with("warning_free_consumer_test.rs")

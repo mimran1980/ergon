@@ -391,7 +391,7 @@ pub(crate) fn generate_message_decoder(
         }
 
         /// Zero-check wrap — raw pointer accessors, **UB** on OOB.
-        /// Only for proven-tight HFT loops after an external extent proof.
+        /// Only for proven-tight hot loops after an external extent proof.
         ///
         /// # Safety
         /// `message_offset + HEADER_LENGTH + max(acting_block_length,

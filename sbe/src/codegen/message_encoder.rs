@@ -330,7 +330,7 @@ pub(crate) fn generate_message_encoder(
         }
 
         /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
-        /// Only for proven-tight HFT loops where the panic machinery is
+        /// Only for proven-tight hot loops where the panic machinery is
         /// measurable in the critical path.
         ///
         /// # Safety
@@ -390,7 +390,7 @@ pub(crate) fn generate_message_encoder(
         }
 
         /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
-        /// on OOB. Only for proven-tight HFT loops.
+        /// on OOB. Only for proven-tight hot loops.
         ///
         /// # Safety
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be

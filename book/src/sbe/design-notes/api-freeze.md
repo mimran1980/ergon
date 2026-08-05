@@ -50,7 +50,7 @@ Rationale: [Type-state design note](type-state.md).
 - Safety contract: validate with `try_decode` / `try_from` / `try_wrap` /
   `verify` at trust edges; bare constructors also prove fixed extent before
   returning; only `*_unchecked` may skip that proof (UB if wrong).
-- HFT hot loops after validation are an **intended** use case for the
+- Hot loops after validation are an **intended** use case for the
   unchecked lane. Checked constructors remain the default for untrusted input.
 
 See [Trust boundaries](../feature-tour/trust-boundaries.md).

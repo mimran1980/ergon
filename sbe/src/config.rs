@@ -115,7 +115,7 @@ pub enum GenerationProfile {
     /// Byte codec + typed stages + exact sizing only. Omits Display/Debug,
     /// meta-attribute constants, and `AnyMessage`/`FrameCursor` dispatch.
     /// Domain DTOs and conversions stay off unless re-enabled explicitly.
-    HftLean,
+    Lean,
 }
 
 // ── Hook types ────────────────────────────────────────────────────────────
@@ -652,14 +652,14 @@ impl GenerationConfig {
     /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
     /// |---------|---------------|------------|----------|----------------|
     /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
-    /// | [`GenerationProfile::HftLean`] | off | off | off | forced off |
+    /// | [`GenerationProfile::Lean`] | off | off | off | forced off |
     ///
     /// Chain further `with_*` calls after `profile` to override individual
     /// knobs. Example:
     ///
     /// ```rust
     /// use ergo_sbe::{GenerationConfig, GenerationProfile};
-    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::HftLean);
+    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::Lean);
     /// ```
     #[must_use]
     pub fn profile(mut self, profile: GenerationProfile) -> Self {
@@ -669,7 +669,7 @@ impl GenerationConfig {
                 self.enable_meta_attributes = true;
                 self.enable_dispatch = true;
             }
-            GenerationProfile::HftLean => {
+            GenerationProfile::Lean => {
                 self.enable_display_debug = false;
                 self.enable_meta_attributes = false;
                 self.enable_dispatch = false;
@@ -763,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_hft_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>>
+    fn profile_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>>
     {
         let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
         assert!(full.enable_display_debug);
@@ -773,7 +773,7 @@ mod tests {
         let lean = GenerationConfig::new("m")
             .with_domain_objects(DomainVarData::Bytes)
             .with_conversion(ConversionSelector::named_type("Decimal"))
-            .profile(GenerationProfile::HftLean);
+            .profile(GenerationProfile::Lean);
         assert!(!lean.enable_display_debug);
         assert!(!lean.enable_meta_attributes);
         assert!(!lean.enable_dispatch);
@@ -783,7 +783,7 @@ mod tests {
 
         // Later overrides still win.
         let override_dispatch = GenerationConfig::new("m")
-            .profile(GenerationProfile::HftLean)
+            .profile(GenerationProfile::Lean)
             .with_dispatch(true);
         assert!(override_dispatch.enable_dispatch);
         Ok(())

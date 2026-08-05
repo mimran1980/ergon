@@ -161,7 +161,7 @@ pub mod soundness_probe {
 /// Checked constructors call the private unchecked core in generated source.
 #[test]
 fn source_checked_delegates_to_core() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft8_core");
+    let (_schema, src) = generate(&Paths::example_schema(), "cu_core");
     // 0.1.12: three-tier API — safe trusted core (bare name), unsafe _unchecked variant.
     assert!(
         src.contains("pub fn wrap_and_apply_header(")
@@ -191,9 +191,9 @@ fn source_checked_delegates_to_core() -> Result<(), Box<dyn Error>> {
 /// (shared core path; private unchecked is not a public product API).
 #[test]
 fn checked_encode_byte_identity() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft8_id");
+    let (_schema, src) = generate(&Paths::example_schema(), "cu_id");
     compile_and_run(
-        "hft8_id",
+        "cu_id",
         &src,
         r#"
         fn finish(mut enc: CarEncoder<'_>) -> usize {
@@ -241,10 +241,10 @@ fn checked_encode_byte_identity() -> Result<(), Box<dyn Error>> {
 /// machine-readable samples and asserts identity inside the probe.
 #[test]
 fn keep_gate_multi_scenario_samples() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft8_matrix");
+    let (_schema, src) = generate(&Paths::example_schema(), "cu_matrix");
     let src = with_in_module_probe(&src);
     let out = compile_and_run_capture(
-        "hft8_matrix",
+        "cu_matrix",
         &src,
         r#"
         soundness_probe::run_matrix();
@@ -263,9 +263,9 @@ fn keep_gate_multi_scenario_samples() -> Result<(), Box<dyn Error>> {
 /// Opaque-slice checked encode is a supported production shape (no public unchecked).
 #[test]
 fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft8_opaque");
+    let (_schema, src) = generate(&Paths::example_schema(), "cu_opaque");
     compile_and_run(
-        "hft8_opaque",
+        "cu_opaque",
         &src,
         r#"
         fn encode(buf: &mut [u8]) -> usize {

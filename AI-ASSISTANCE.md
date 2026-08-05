@@ -970,7 +970,7 @@ Official-style codecs often separate checked setup from a trusted hot path. For
 - unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
   lane — they return `Result`, validate extents once, then enter a private
   zero-check core (`try_wrap*` aliases are removed);
-- public constructor `*_unchecked` twins only if measured HFT-008 keep rules
+- public constructor `*_unchecked` twins only if measured  keep rules
   pass (currently **keep=false** — cores stay module-private); and
 - no repeated dynamic bounds check for every constant schema offset after the
   required block length has already been proved on the checked entry path.

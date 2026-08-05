@@ -50,7 +50,7 @@
   contract.
 - `decode_unchecked` uses unchecked header reads as documented.
 - Generic encode `BufferTooShort` labels now use group-field names.
-- HFT-008 keep matrix times three constructor tiers (try / bare / unchecked).
+- Keep-matrix times three constructor tiers (try / bare / unchecked).
 - Narrower generated `#[allow]` list (no blanket `unused_unsafe` /
   `unused_imports` / `needless_borrow`); remaining allows documented in codegen.
 - Bare decoder `wrap` uses a direct extent check (no `Result` on the success
@@ -161,10 +161,10 @@ Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and
 
 ### Added
 - `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_1_10.md`
-- `hft_001_soundness_test` hostile/safe-constructor gates
-- `GenerationProfile::{Full, HftLean}` preset (`GenerationConfig::profile`)
-- HFT-006 typestate compile-fail + size_of/Send budgets; HFT-008 checked/unchecked
-  identity + keep-sample harness; HFT-009 lean profile matrix tests
+- `soundness_hostile_constructors_test` hostile/safe-constructor gates
+- `GenerationProfile::{Full, Lean}` preset (`GenerationConfig::profile`)
+- Typestate compile-fail + size_of/Send budgets; checked/unchecked
+  identity + keep-sample harness; lean profile matrix tests
 - Book: type-state design note, API freeze decisions, Coming from sbe-tool,
   Road to 1.0, generated-code showcase, benchmarks methodology split
 - Crate READMEs and crate-level rustdoc link the ergo-sbe book (visible on docs.rs)

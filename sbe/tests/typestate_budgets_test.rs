@@ -9,9 +9,9 @@ use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 /// Wrong group order: encode asks before bids must not compile.
 #[test]
 fn cf_encode_asks_before_bids() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "hft6_enc_order");
+    let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "ts_enc_order");
     compile_fails_with_diagnostics(
-        "hft6_enc_order",
+        "ts_enc_order",
         &src,
         r#"
         let mut buf = [0u8; 256];
@@ -28,9 +28,9 @@ fn cf_encode_asks_before_bids() -> Result<(), Box<dyn Error>> {
 /// Header-absent complete stage has no as_bytes_with_header.
 #[test]
 fn cf_header_absent_no_as_bytes_with_header() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft6_hdr_absent");
+    let (_schema, src) = generate(&Paths::example_schema(), "ts_hdr_absent");
     compile_fails_with_diagnostics(
-        "hft6_hdr_absent",
+        "ts_hdr_absent",
         &src,
         r#"
         let mut buf = [0u8; 512];
@@ -66,9 +66,9 @@ fn cf_header_absent_no_as_bytes_with_header() -> Result<(), Box<dyn Error>> {
 /// Consumed encoder stage cannot be reused (moved).
 #[test]
 fn cf_consumed_encoder_stage_reuse() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft6_enc_moved");
+    let (_schema, src) = generate(&Paths::example_schema(), "ts_enc_moved");
     compile_fails_with_diagnostics(
-        "hft6_enc_moved",
+        "ts_enc_moved",
         &src,
         r#"
         let mut buf = [0u8; 512];
@@ -95,9 +95,9 @@ fn cf_consumed_encoder_stage_reuse() -> Result<(), Box<dyn Error>> {
 /// size_of / Send / Sync / ZST marker budgets for generated Car stages.
 #[test]
 fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft6_size");
+    let (_schema, src) = generate(&Paths::example_schema(), "ts_size");
     compile_and_run(
-        "hft6_size",
+        "ts_size",
         &src,
         r#"
         use core::mem::{size_of, align_of};
@@ -145,7 +145,7 @@ fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
 /// Generated source-size budget for the default Full Car module (pinned noise band).
 #[test]
 fn car_full_generated_source_size_budget() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "hft6_budget");
+    let (_schema, src) = generate(&Paths::example_schema(), "ts_budget");
     let bytes = src.len();
     // Full Car has historically been hundreds of KiB of pretty source. Bound
     // growth without inventing a tiny number that fails on every docstring.
