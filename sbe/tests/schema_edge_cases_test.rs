@@ -17,6 +17,7 @@
 
 mod common;
 use common::{Paths, assert_source_ok, compile_and_run, generate};
+use std::path::PathBuf;
 
 fn assert_tool_schema(name: &str, filename: &str, expected: &[&str]) {
     let (_schema, src) = generate(&Paths::sbe_tool_test_resource(filename), name);
@@ -920,5 +921,51 @@ fn group_entry_display_includes_fields() -> Result<(), Box<dyn std::error::Error
         "#,
     );
 
+    Ok(())
+}
+
+/// A `presence="constant"` field carries no wire bytes — its value comes from
+/// the schema. A message whose only field is constant therefore encodes to a
+/// bare header with a zero-length body.
+///
+/// The message-level readable-extent calculation used to count constant fields,
+/// so it demanded body space the wire format never contains and the decoder
+/// rejected frames its own encoder had just produced. A group with a tail
+/// masked this — the dimension header supplied the missing byte — so the
+/// regression only shows on a tail-free message.
+#[test]
+fn a_constant_only_message_round_trips_through_an_empty_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(
+        &PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/schemas/constant-only-message.xml"
+        )),
+        "const_only_body",
+    );
+
+    compile_and_run(
+        "const_only_body",
+        &src,
+        r#"
+        // Constant fields occupy no wire space, so the body is empty.
+        assert_eq!(ConstOnlyEncoder::BLOCK_LENGTH, 0, "a constant field is not on the wire");
+        assert_eq!(
+            ConstOnlyDecoder::min_readable_fixed_extent(0),
+            0,
+            "no wire byte is required to read a schema-supplied constant"
+        );
+
+        let mut buf = [0u8; ConstOnlyEncoder::compute_length_with_header()];
+        let len = ConstOnlyEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ConstOnlyFixedFields {})
+            .encoded_length_with_header();
+        assert_eq!(len, ConstOnlyEncoder::HEADER_LENGTH, "header only, empty body");
+
+        // The decoder must accept what the encoder just produced.
+        let decoded = ConstOnlyDecoder::try_from(&buf[..len])?;
+        assert_eq!(decoded.c(), Model::C, "the constant reads from the schema");
+        "#,
+    );
     Ok(())
 }

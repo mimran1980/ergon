@@ -256,42 +256,44 @@ pub(crate) fn generate_message_decoder(
     // `acting_version` must fit in the body buffer.
     let mut min_extent_arms = proc_macro2::TokenStream::new();
     {
-        // Collect unique since_version thresholds and the max end offset
-        // of fields at that version.
-        let mut by_version: Vec<(u16, usize)> = Vec::new();
-        for f in &msg.fields {
-            let end = f.offset.saturating_add(f.field_type.size());
-            by_version.push((f.since_version, end));
-        }
-        by_version.sort_by_key(|(v, _)| *v);
-        // Build a stepwise max: for each distinct version V, extent is max of
-        // all fields with since_version <= V.
-        let mut versions: Vec<u16> = by_version.iter().map(|(v, _)| *v).collect();
+        // A `presence="constant"` field carries no wire bytes at all — its
+        // value comes from the schema — so demanding body space for one
+        // rejects frames this schema's own encoder produces. Constants are
+        // excluded here for the same reason the group-entry extent excludes
+        // them (`generate_group_decoder`).
+        let on_the_wire = |f: &&MessageField| f.presence != Presence::Constant;
+        let extent_at = |max_version: u16| -> usize {
+            msg.fields
+                .iter()
+                .filter(on_the_wire)
+                .filter(|f| f.since_version <= max_version)
+                .map(|f| f.offset.saturating_add(f.field_type.size()))
+                .max()
+                .unwrap_or(0)
+        };
+
+        let mut versions: Vec<u16> = msg
+            .fields
+            .iter()
+            .filter(on_the_wire)
+            .map(|f| f.since_version)
+            .collect();
         versions.sort_unstable();
         versions.dedup();
-        // Seed with v0 extent (always present for acting_version in range).
-        let mut m0 = 0usize;
-        for f in &msg.fields {
-            if f.since_version == 0 {
-                m0 = m0.max(f.offset.saturating_add(f.field_type.size()));
-            }
-        }
-        let m0_lit = syn::LitInt::new(&m0.to_string(), proc_macro2::Span::call_site());
+
+        // Seed with the v0 extent, then step it up per distinct version.
+        let m0_lit =
+            syn::LitInt::new(&extent_at(0).to_string(), proc_macro2::Span::call_site());
         min_extent_arms.extend(quote::quote! {
             let mut m = #m0_lit;
         });
-        for &v in &versions {
+        for v in versions {
             if v == 0 {
                 continue; // already seeded; avoid `acting_version >= 0` (always true)
             }
-            let mut m = 0usize;
-            for f in &msg.fields {
-                if f.since_version <= v {
-                    m = m.max(f.offset.saturating_add(f.field_type.size()));
-                }
-            }
             let v_lit = syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site());
-            let m_lit = syn::LitInt::new(&m.to_string(), proc_macro2::Span::call_site());
+            let m_lit =
+                syn::LitInt::new(&extent_at(v).to_string(), proc_macro2::Span::call_site());
             min_extent_arms.extend(quote::quote! {
                 if acting_version >= #v_lit {
                     m = #m_lit;
