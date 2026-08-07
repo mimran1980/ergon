@@ -5,9 +5,12 @@
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
 [![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
-`ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
-wire-order enforcement, closure-based groups, exact buffer sizing, and zero
-heap allocation on hot paths.
+`ergo-sbe` generates Rust SBE codecs with compile-time wire-order enforcement,
+closure-based groups, exact buffer sizing, and zero heap allocation on hot
+paths. Wire compatibility with official SBE is claimed for the shapes the
+dual-encode parity suite exercises — see the normative
+[compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— not as an unqualified "implements every SBE edge case".
 
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
