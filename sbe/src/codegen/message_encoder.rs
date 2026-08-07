@@ -828,7 +828,7 @@ pub(crate) fn generate_message_encoder(
     let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
     // Complete-sounding `as_bytes_with_header` only when there are no tails;
     // otherwise this stage is fixed-block only and must not look like a frame.
-    let meta_bytes = if total_tail == 0 {
+    let meta_bytes = if msg.is_fixed() {
         quote::quote! {
             /// Message body bytes written so far (header exclusive).
             #[inline]
@@ -1270,7 +1270,7 @@ pub(crate) fn generate_message_encoder(
         });
     }
 
-    if total_tail > 0 {
+    if msg.has_tails() {
         ts.extend(quote::quote! {
             impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
 

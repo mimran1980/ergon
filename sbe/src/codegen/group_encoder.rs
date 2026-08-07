@@ -281,7 +281,7 @@ pub(crate) fn generate_group_encoder(
 
     // add_struct: when the entry has no nested groups or var-data, generate
     // a named value struct so callers can write whole entries in one call.
-    if g.groups.is_empty() && g.var_data.is_empty() {
+    if g.has_fixed_stride() {
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
         let mut struct_fields = proc_macro2::TokenStream::new();
         let mut struct_write = proc_macro2::TokenStream::new();

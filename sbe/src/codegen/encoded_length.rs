@@ -30,13 +30,10 @@ pub(super) struct GeneratedEncodedLength {
 
 /// Classify a message into one of the three length strategies.
 pub(super) fn strategy(message: &MessageStructure) -> LengthStrategy {
-    if message.groups.is_empty() && message.var_data.is_empty() {
+    if message.is_fixed() {
         return LengthStrategy::Fixed;
     }
-    let has_dynamic_entry = message
-        .groups
-        .iter()
-        .any(|group| !group.groups.is_empty() || !group.var_data.is_empty());
+    let has_dynamic_entry = message.groups.iter().any(|group| group.has_dynamic_entries());
     if has_dynamic_entry {
         LengthStrategy::Staged
     } else {
@@ -207,7 +204,7 @@ fn generate_staged(
         let ds = syn::LitInt::new(&dim_size.to_string(), span);
         let g_bl = syn::LitInt::new(&g.block_length.to_string(), span);
 
-        let has_dynamic_entry = !g.groups.is_empty() || !g.var_data.is_empty();
+        let has_dynamic_entry = g.has_dynamic_entries();
         let tail_after_group = tail_idx + 1;
         let next_name = if tail_after_group < total_tail {
             let next_pascal = if tail_after_group < msg.groups.len() {
@@ -252,7 +249,7 @@ fn generate_staged(
                 let ng_ds = syn::LitInt::new(&ng_dim.to_string(), span);
                 let ng_bl = syn::LitInt::new(&ng.block_length.to_string(), span);
 
-                let is_flat_nested = ng.groups.is_empty() && ng.var_data.is_empty();
+                let is_flat_nested = ng.has_fixed_stride();
                 if is_flat_nested {
                     // Flat nested group: adds dim + count * block, restores multiplier.
                     entry_tail_methods.extend(quote::quote! {

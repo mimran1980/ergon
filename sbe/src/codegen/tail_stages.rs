@@ -480,7 +480,7 @@ pub(crate) fn generate_decoder_consuming_stages(
             field_pascal: to_pascal_case(&g.name),
             group_decoder_ident: format!("{}Decoder", group_unique_names[gi]),
             entry_decoder_ident: format!("{}EntryDecoder", group_unique_names[gi]),
-            entries_have_tails: !g.groups.is_empty() || !g.var_data.is_empty(),
+            entries_have_tails: g.has_dynamic_entries(),
         })
         .collect();
     let vardata: Vec<OwnerTailVarData> = msg
@@ -535,7 +535,7 @@ pub(crate) fn generate_entry_consuming_stages(
                 accessor_snake: to_snake_case(&ng.name),
                 field_pascal: to_pascal_case(&ng.name),
                 group_decoder_ident: format!("{ng_pascal}Decoder"),
-                entries_have_tails: !ng.groups.is_empty() || !ng.var_data.is_empty(),
+                entries_have_tails: ng.has_dynamic_entries(),
                 entry_decoder_ident: format!("{ng_pascal}EntryDecoder"),
             }
         })

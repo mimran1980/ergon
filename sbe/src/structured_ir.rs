@@ -240,6 +240,29 @@ impl MessageGroup {
         });
         self.block_length.max(computed)
     }
+
+    /// Entries have nested groups or var-data — no constant stride, so
+    /// `entry_at` is not available and the iterator is poisoned on error.
+    pub(crate) fn has_dynamic_entries(&self) -> bool {
+        !self.groups.is_empty() || !self.var_data.is_empty()
+    }
+
+    /// Constant stride — every entry is exactly `ENTRY_BLOCK_LENGTH` bytes.
+    pub(crate) fn has_fixed_stride(&self) -> bool {
+        !self.has_dynamic_entries()
+    }
+}
+
+impl MessageStructure {
+    /// The message has groups or var-data beyond its fixed block.
+    pub(crate) fn has_tails(&self) -> bool {
+        !self.groups.is_empty() || !self.var_data.is_empty()
+    }
+
+    /// No tails — the message body is exactly its fixed block.
+    pub(crate) fn is_fixed(&self) -> bool {
+        !self.has_tails()
+    }
 }
 
 #[derive(Clone)]

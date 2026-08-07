@@ -1325,7 +1325,7 @@ pub(crate) fn generate_message_decoder(
     // 9b. rewind() — consume any current stage and return a fresh initial
     // decoder at the original message position. Enforces consumption: the
     // old stage is moved and cannot be reused.
-    if total_tail > 0 {
+    if msg.has_tails() {
         impl_body.extend(quote::quote! {
             /// Consume this stage and return a fresh decoder at the initial
             /// message position. The consumed stage cannot be reused.
@@ -1531,7 +1531,7 @@ pub(crate) fn generate_message_decoder(
     // Complete-sounding names only when there are no tails; otherwise mirror
     // encoder `as_fixed_region_with_header` so mid-decode metadata cannot be
     // mistaken for a publishable full frame.
-    let meta_bytes = if total_tail == 0 {
+    let meta_bytes = if msg.is_fixed() {
         quote::quote! {
             /// Message body bytes (header exclusive). Fixed-only message —
             /// this is the complete body.

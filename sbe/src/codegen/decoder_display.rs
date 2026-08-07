@@ -194,8 +194,7 @@ pub(crate) fn generate_decoder_display(
         let g_snake = to_snake_case(&g.name);
         let g_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        let g_total_tail = g.groups.len() + g.var_data.len();
-        if g_total_tail == 0 {
+        if g.has_fixed_stride() {
             let fmt_open = format!("{sep}{g_snake}: [");
             body.extend(quote::quote! {
                 if let Ok(g) = self.#g_ident() {
@@ -226,7 +225,7 @@ pub(crate) fn generate_decoder_display(
         out_idx += 1;
         // Debug: format group entries as a Vec<String> via Display.
         let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
-        if g_total_tail == 0 {
+        if g.has_fixed_stride() {
             debug_body.extend(quote::quote! {
                 if let Ok(_g) = self.#g_ident() {
                     let entries: Vec<String> = _g.map(|e| format!("{e}")).collect();

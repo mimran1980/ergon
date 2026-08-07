@@ -516,7 +516,7 @@ pub(crate) fn generate_domain_recursive(
         struct_fields.push(quote::quote! { pub #g_field_ident: Vec<#entry_domain_ident> });
         // Fixed-entry groups (no tail) yield entries directly;
         // tailed-entry groups yield Result<EntryDecoder, _>.
-        let has_tail = !g.var_data.is_empty() || !g.groups.is_empty();
+        let has_tail = g.has_dynamic_entries();
         if has_tail {
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()

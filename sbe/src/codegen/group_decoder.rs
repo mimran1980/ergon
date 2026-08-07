@@ -51,7 +51,7 @@ pub(crate) fn generate_group_decoder(
     let total_tail = g.groups.len() + g.var_data.len();
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
-    let bulk_decode_eligible = total_tail == 0
+    let bulk_decode_eligible = g.has_fixed_stride()
         && g.fields.iter().all(|f| {
             f.presence == Presence::Constant
                 || (f.presence != Presence::Optional && f.since_version == 0)
@@ -60,7 +60,7 @@ pub(crate) fn generate_group_decoder(
     let min_extent_arms =
         crate::codegen::runtime::emit_readable_extent_body(&g.fields);
 
-    let fixed_extent_validation = if total_tail == 0 {
+    let fixed_extent_validation = if g.has_fixed_stride() {
         quote::quote! {
             let entries_length = count.checked_mul(block_length).ok_or(
                 sbe_rt::DecodeError::BufferTooShort {
@@ -90,7 +90,7 @@ pub(crate) fn generate_group_decoder(
     // resolved once at wrap and stored, so the per-entry cost in the iteration
     // hot path is one subtraction and one comparison, not a re-run of the
     // version-branch chain in `min_readable_fixed_extent`.
-    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if total_tail > 0
+    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g.has_dynamic_entries()
     {
         (
             quote::quote! { min_entry_extent: usize, },
@@ -128,12 +128,12 @@ pub(crate) fn generate_group_decoder(
     // it can neither yield another entry nor construct a later message stage.
     // Fixed-stride groups have a constant, already-proven stride, so they carry
     // no poison state and no extra field.
-    let clear_poison = if total_tail > 0 {
+    let clear_poison = if g.has_dynamic_entries() {
         quote::quote! { self.poisoned = None; }
     } else {
         proc_macro2::TokenStream::new()
     };
-    let (poison_field, poison_init) = if total_tail > 0 {
+    let (poison_field, poison_init) = if g.has_dynamic_entries() {
         (
             quote::quote! { poisoned: Option<sbe_rt::DecodeError>, },
             quote::quote! { poisoned: None, },
@@ -151,7 +151,7 @@ pub(crate) fn generate_group_decoder(
     }
     // When entries have nested groups or var-data, there is no constant stride,
     // so O(1) random access is not available — use the iterator or skip_n().
-    if total_tail > 0 {
+    if g.has_dynamic_entries() {
         ts.extend(quote::quote! {
             #[doc = " This group has entries with nested groups or var-data —"]
             #[doc = " there is no constant stride, so `entry_at` (O(1) random"]
@@ -366,7 +366,9 @@ pub(crate) fn generate_group_decoder(
     });
 
     // skip_n()
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
+        // no tails: tail_offset_0 is a no-op
+        // (count-based total_tail remains for index use below)
         // Build field read expressions for bulk_decode (reverse of
         // add_struct's struct_write in generate_group_encoder).
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
@@ -538,7 +540,7 @@ pub(crate) fn generate_group_decoder(
 
     // Random access is direct for fixed entries. Entries with nested tails
     // must be walked because their encoded lengths are not a constant stride.
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
         ts.extend(quote::quote! {
             impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
@@ -630,7 +632,7 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
         ts.extend(quote::quote! {
             impl<'a, C: sbe_rt::GroupContext> Iterator for #decoder_ident<'a, C> {
                 type Item = #entry_decoder_ident<'a>;
@@ -1606,8 +1608,7 @@ pub(crate) fn generate_group_decoder(
         let ng_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
         let sep = if entry_display_out_idx == 0 { "" } else { ", " };
         let fmt_open = format!("{sep}{}: [", ng.name);
-        let ng_total_tail = ng.groups.len() + ng.var_data.len();
-        if ng_total_tail == 0 {
+        if ng.has_fixed_stride() {
             entry_display_body.extend(quote::quote! {
                 write!(f, #fmt_open)?;
                 if let Ok(ng_decoder) = self.#ng_ident() {
