@@ -8,27 +8,28 @@ buffer, no copy.
 ## Pattern
 
 ```rust,ignore
-use ergo_sbe::HeartbeatEncoder;
+use messages::{HeartbeatEncoder, HeartbeatFixedFields};
 
 // 1. Exact size before claiming — const, no allocation.
 const HB_LEN: usize = HeartbeatEncoder::compute_length_with_header();
-let header_len = 8; // Aeron message framing header
 
-// 2. Claim exactly enough space.
-let claim = publication
-    .try_claim(header_len + HB_LEN as i32)
-    .expect("claim failed");
+// 2. Claim exactly that many bytes. `data()` is the claimed region — Aeron's
+//    own framing sits outside it, so there is no prefix to skip.
+let mut claim = publication.try_claim_owned(HB_LEN)?;
 
-// 3. Encode into an exact-length claim slice.
-// Fixed-only messages also get `wrap_into_claim` when the buffer is *exactly*
-// ENCODED_LENGTH (no Aeron framing prefix in the slice).
-let slot = &mut claim.buffer_mut()[header_len..header_len + HB_LEN];
-HeartbeatEncoder::try_wrap_and_apply_header(slot, 0)?
+// 3. Encode straight into the claim. `wrap_into_claim` is fixed-only and
+//    requires the slice to be *exactly* ENCODED_LENGTH.
+HeartbeatEncoder::wrap_into_claim(claim.data())?
     .fixed(&HeartbeatFixedFields { sequence: 7, timestamp: 0 });
 
 // 4. Commit — Aeron sends it.
 claim.commit()?;
 ```
+
+Cluster clients do not claim from the publication directly: use
+[`AeronCluster::try_claim`](../../cluster/overview.md), which claims
+`SessionMessageHeader + payload` and hands back the payload region via
+`ClusterClaim::payload_mut()`.
 
 For **variable-length** messages (groups / var-data), there is **no**
 `wrap_into_claim` — that helper is fixed-only. Size with the staged
@@ -48,13 +49,12 @@ let len = CarEncoder::compute_length()
     .activation_code(6)?
     .encoded_length_with_header();
 
-let claim = publication.try_claim(header_len + len as i32)?;
-let slot = &mut claim.buffer_mut()[header_len..header_len + len];
-assert_eq!(slot.len(), len); // claim boundary == EncodedLength
-let written = CarEncoder::try_wrap_and_apply_header(slot, 0)?
+let mut claim = publication.try_claim_owned(len)?;
+debug_assert_eq!(claim.data().len(), len); // claim boundary == EncodedLength
+let written = CarEncoder::try_wrap_and_apply_header(claim.data(), 0)?
     .fixed(&fields)
-    // ... groups/var-data ...
-    .manufacturer(b"Honda")?
+    // ... fuel_figures / performance_figures / manufacturer / model ...
+    .activation_code(b"abcdef")?
     .encoded_length_with_header();
 debug_assert_eq!(written, len);
 claim.commit()?;

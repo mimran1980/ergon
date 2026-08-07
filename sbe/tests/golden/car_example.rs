@@ -6171,17 +6171,17 @@ impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
     /// Absolute offset of this message within the original buffer
     /// (the `msg_offset` argument passed to `wrap`).
     #[inline]
-    pub fn message_offset(&self) -> usize {
+    pub const fn message_offset(&self) -> usize {
         self.encoder.msg_offset
     }
     /// Absolute current write cursor within the original buffer.
     #[inline]
-    pub fn limit(&self) -> usize {
+    pub const fn limit(&self) -> usize {
         self.encoder.pos
     }
     /// The complete original buffer this encoder wraps.
     #[inline]
-    pub fn buffer(&self) -> &[u8] {
+    pub const fn buffer(&self) -> &[u8] {
         self.encoder.buf
     }
 }
@@ -7787,6 +7787,11 @@ impl<'a> CarPerformanceFiguresRaggedBuilder<'a> {
 }
 #[doc(hidden)]
 #[must_use = "length builder must be completed"]
+pub struct CarEncodedLengthAfterFuelFigures {
+    state: EncodedLengthAccumulator,
+}
+#[doc(hidden)]
+#[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterPerformanceFigures {
     state: EncodedLengthAccumulator,
 }
@@ -7798,11 +7803,6 @@ pub struct CarEncodedLengthAfterManufacturer {
 #[doc(hidden)]
 #[must_use = "length builder must be completed"]
 pub struct CarEncodedLengthAfterModel {
-    state: EncodedLengthAccumulator,
-}
-#[doc(hidden)]
-#[must_use = "length builder must be completed"]
-pub struct CarEncodedLengthAfterActivationCode {
     state: EncodedLengthAccumulator,
 }
 #[doc(hidden)]
@@ -7822,7 +7822,7 @@ impl CarFuelFiguresUniformEncodedLength {
     pub const fn usage_description(
         mut self,
         byte_len: usize,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError> {
         if byte_len > 1073741824 {
             self.state
                 .fail(sbe_rt::EncodeError::VarDataTooLong {
@@ -7842,7 +7842,7 @@ impl CarFuelFiguresUniformEncodedLength {
         self.state.leave_group(self.parent_multiplier);
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterPerformanceFigures {
+                Ok(CarEncodedLengthAfterFuelFigures {
                     state: self.state,
                 })
             }
@@ -7854,7 +7854,7 @@ impl CarFuelFiguresUniformEncodedLength {
     #[inline]
     pub fn finish_empty(
         self,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError> {
         if self.declared_count != 0 {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                 declared: self.declared_count,
@@ -7865,7 +7865,7 @@ impl CarFuelFiguresUniformEncodedLength {
         state.leave_group(self.parent_multiplier);
         match state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterPerformanceFigures {
+                Ok(CarEncodedLengthAfterFuelFigures {
                     state,
                 })
             }
@@ -7906,7 +7906,7 @@ impl CarEncodedLength {
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
     where
         F: FnOnce(
             &mut CarFuelFiguresRaggedBuilder<'_>,
@@ -7929,7 +7929,7 @@ impl CarEncodedLength {
         self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterPerformanceFigures {
+                Ok(CarEncodedLengthAfterFuelFigures {
                     state: self.state,
                 })
             }
@@ -7941,7 +7941,7 @@ impl CarEncodedLength {
     pub fn fuel_figures_unknown_size<F>(
         mut self,
         f: F,
-    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
+    ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError>
     where
         F: FnOnce(
             &mut CarFuelFiguresRaggedBuilder<'_>,
@@ -7964,7 +7964,7 @@ impl CarEncodedLength {
         self.state = builder.state;
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterPerformanceFigures {
+                Ok(CarEncodedLengthAfterFuelFigures {
                     state: self.state,
                 })
             }
@@ -7984,12 +7984,12 @@ impl CarPerformanceFiguresUniformEncodedLength {
     pub const fn acceleration(
         mut self,
         count: u16,
-    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
         let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
         self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterManufacturer {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
                     state: self.state,
                 })
             }
@@ -8001,7 +8001,7 @@ impl CarPerformanceFiguresUniformEncodedLength {
     #[inline]
     pub fn finish_empty(
         self,
-    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
         if self.declared_count != 0 {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                 declared: self.declared_count,
@@ -8012,7 +8012,7 @@ impl CarPerformanceFiguresUniformEncodedLength {
         state.leave_group(self.parent_multiplier);
         match state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterManufacturer {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
                     state,
                 })
             }
@@ -8020,7 +8020,7 @@ impl CarPerformanceFiguresUniformEncodedLength {
         }
     }
 }
-impl CarEncodedLengthAfterPerformanceFigures {
+impl CarEncodedLengthAfterFuelFigures {
     /// **Uniform** group — every one of the `count` entries shares
     /// exactly the same wire shape (same fixed block AND the same
     /// nested-group counts / var-data lengths). The length is the
@@ -8056,7 +8056,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
         mut self,
         count: u16,
         f: F,
-    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
     where
         F: FnOnce(
             &mut CarPerformanceFiguresRaggedBuilder<'_>,
@@ -8079,7 +8079,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
         self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterManufacturer {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
                     state: self.state,
                 })
             }
@@ -8091,7 +8091,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     pub fn performance_figures_unknown_size<F>(
         mut self,
         f: F,
-    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError>
+    ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError>
     where
         F: FnOnce(
             &mut CarPerformanceFiguresRaggedBuilder<'_>,
@@ -8114,7 +8114,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
         self.state = builder.state;
         match self.state.check() {
             Ok(()) => {
-                Ok(CarEncodedLengthAfterManufacturer {
+                Ok(CarEncodedLengthAfterPerformanceFigures {
                     state: self.state,
                 })
             }
@@ -8122,15 +8122,45 @@ impl CarEncodedLengthAfterPerformanceFigures {
         }
     }
 }
-impl CarEncodedLengthAfterManufacturer {
+impl CarEncodedLengthAfterPerformanceFigures {
     #[inline]
     pub const fn manufacturer(
+        self,
+        byte_len: usize,
+    ) -> Result<CarEncodedLengthAfterManufacturer, sbe_rt::EncodeError> {
+        if byte_len > 1073741824 {
+            return Err(sbe_rt::EncodeError::VarDataTooLong {
+                field: "manufacturer",
+                max_length: 1073741824,
+                actual: byte_len,
+            });
+        }
+        let len = match self.state.len.checked_add(4 as usize) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        let len = match len.checked_add(byte_len) {
+            Some(v) => v,
+            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+        };
+        Ok(CarEncodedLengthAfterManufacturer {
+            state: EncodedLengthAccumulator {
+                len,
+                multiplier: 1,
+                error: None,
+            },
+        })
+    }
+}
+impl CarEncodedLengthAfterManufacturer {
+    #[inline]
+    pub const fn model(
         self,
         byte_len: usize,
     ) -> Result<CarEncodedLengthAfterModel, sbe_rt::EncodeError> {
         if byte_len > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
-                field: "manufacturer",
+                field: "model",
                 max_length: 1073741824,
                 actual: byte_len,
             });
@@ -8153,36 +8183,6 @@ impl CarEncodedLengthAfterManufacturer {
     }
 }
 impl CarEncodedLengthAfterModel {
-    #[inline]
-    pub const fn model(
-        self,
-        byte_len: usize,
-    ) -> Result<CarEncodedLengthAfterActivationCode, sbe_rt::EncodeError> {
-        if byte_len > 1073741824 {
-            return Err(sbe_rt::EncodeError::VarDataTooLong {
-                field: "model",
-                max_length: 1073741824,
-                actual: byte_len,
-            });
-        }
-        let len = match self.state.len.checked_add(4 as usize) {
-            Some(v) => v,
-            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
-        };
-        let len = match len.checked_add(byte_len) {
-            Some(v) => v,
-            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
-        };
-        Ok(CarEncodedLengthAfterActivationCode {
-            state: EncodedLengthAccumulator {
-                len,
-                multiplier: 1,
-                error: None,
-            },
-        })
-    }
-}
-impl CarEncodedLengthAfterActivationCode {
     #[inline]
     pub const fn activation_code(
         self,

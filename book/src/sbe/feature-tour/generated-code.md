@@ -15,7 +15,7 @@ pub struct CarDecoder<'a> {
 
 impl<'a> CarDecoder<'a> {
     pub const SCHEMA_ID: u16 = 77;
-    pub const TEMPLATE_ID: u16 = 2;
+    pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
 

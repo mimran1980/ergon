@@ -1,8 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.13] — 2026-08-07
 
 ### Breaking
+- **`SbeMessage` is a sealed trait.** Only types emitted by
+  `ergo_sbe::Generator` can implement it — the supertrait lives in a private
+  generated module. Hand-rolled `impl SbeMessage for MyType` no longer compiles;
+  use the generated decoder/encoder types.
+- **Staged `EncodedLength` types are named for the stage just completed**, not
+  the next one, matching the encoder's `{Msg}After{Element}` convention.
+  `CarEncodedLength::fuel_figures_ragged(…)` now returns
+  `CarEncodedLengthAfterFuelFigures` (was `…AfterPerformanceFigures`). The
+  chain and the type count are unchanged; only the names shift by one. These
+  types are `#[doc(hidden)]` and reached by chaining, so code that never names
+  a stage explicitly is unaffected.
+- **Generated group decoders no longer expose `wrap_with_parent`.** It was an
+  `unsafe` constructor that only the generated tail stages can call correctly;
+  it is now private. Use `wrap` / the group accessor on the parent stage.
 - **Safe constructors prove fixed extent.** Bare `wrap` / `wrap_and_apply_header`
   / `decode` run the same header+fixed-body proof as `try_*` and **panic** if
   short. Field accessors remain unchecked after that proof. Only
@@ -22,6 +36,18 @@
   stages and decoder inherent tail-rescan helpers keep full-frame names.
 
 ### Added
+- **`add_checked` — group entries proven complete at compile time.** The
+  closure takes the entry encoder by value and must return the entry's
+  `{Group}EntryComplete`, a type reachable only by writing every required tail
+  in wire order. An entry that skips, reorders, or repeats a tail fails to
+  compile instead of emitting a short entry at run time. Flat entries reach it
+  through `EntryEncoder::complete()`. `add` stays for entries checked
+  elsewhere.
+- **Group decoders poison themselves on a malformed entry.** A dynamic-entry
+  group that hits a bad entry can neither yield another entry nor construct a
+  later message stage, so a truncated tail cannot be mistaken for a short
+  group. Fixed-stride groups keep a constant proven stride and carry no poison
+  state or extra field.
 - **`DomainVarData::Strings`** replaces `LossyStrings` (strict UTF-8; same
   behaviour as 0.1.10+).
 - Restored `docs/SBE_COMPATIBILITY.md`.
@@ -44,6 +70,18 @@
   (no Default), hybrid bare `decode`, and parity-gate artifact archiving.
 
 ### Fixed
+- Encoder metadata `message_offset` / `limit` / `buffer` are `const fn` again;
+  moving them onto the metadata facet had dropped the qualifier.
+- A `presence="constant"` field no longer counts toward the readable fixed
+  extent. Constants carry no wire bytes, so a message whose fields are all
+  constant encodes to a bare header — and the decoder used to reject the frame
+  its own encoder had just produced. A group with a tail masked this, so it
+  only showed on a tail-free message.
+- Aeron `try_claim` recipe rewritten against the real API — the previous
+  snippets mixed `usize` and `i32` for the same binding, called a
+  `buffer_mut()` that does not exist, imported generated codecs from
+  `ergo_sbe`, and hand-rolled an 8-byte framing prefix that the claimed region
+  already excludes.
 - Truncated `# Safety` docs and garbled group-encode rustdoc.
 - Trust-boundary docs/README aligned to three-tier constructors; bare
   `decode` / `decode_unchecked` rustdoc describe the hybrid identity+extent

@@ -873,17 +873,17 @@ pub(crate) fn generate_message_encoder(
             /// Absolute offset of this message within the original buffer
             /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
-            pub fn message_offset(&self) -> usize {
+            pub const fn message_offset(&self) -> usize {
                 self.encoder.msg_offset
             }
             /// Absolute current write cursor within the original buffer.
             #[inline]
-            pub fn limit(&self) -> usize {
+            pub const fn limit(&self) -> usize {
                 self.encoder.pos
             }
             /// The complete original buffer this encoder wraps.
             #[inline]
-            pub fn buffer(&self) -> &[u8] {
+            pub const fn buffer(&self) -> &[u8] {
                 self.encoder.buf
             }
         }

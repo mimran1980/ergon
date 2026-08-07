@@ -153,36 +153,33 @@ fn generate_staged(
         generate_ragged_wrappers(&msg_name, "", g, elements, &mut standalone);
     }
 
-    let mut stage_names: Vec<String> = Vec::new();
-    let total_tail = msg.groups.len() + msg.var_data.len();
-    {
-        let mut idx = 0;
-        for g in &msg.groups {
-            idx += 1;
-            if idx < total_tail {
-                let next_pascal = if idx < msg.groups.len() {
-                    crate::codegen::to_pascal_case(&msg.groups[idx].name)
-                } else {
-                    crate::codegen::to_pascal_case(&msg.var_data[idx - msg.groups.len()].name)
-                };
-                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
-            } else {
-                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
-            }
+    // Stage reached *after* a tail element is recorded, named for the element
+    // just consumed — the same convention as the encoder's `{Msg}After{Element}`
+    // stages. The final element yields `…Complete` instead.
+    let tail_pascal: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| crate::codegen::to_pascal_case(&g.name))
+        .chain(
+            msg.var_data
+                .iter()
+                .map(|vd| crate::codegen::to_pascal_case(&vd.name)),
+        )
+        .collect();
+    let total_tail = tail_pascal.len();
+    let stage_after = |tail_idx: usize| -> syn::Ident {
+        if tail_idx + 1 < total_tail {
+            syn::Ident::new(
+                &format!("{msg_name}EncodedLengthAfter{}", tail_pascal[tail_idx]),
+                span,
+            )
+        } else {
+            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
         }
-        for (vi, _vd) in msg.var_data.iter().enumerate() {
-            let gi = msg.groups.len() + vi;
-            idx = gi + 1;
-            if idx < total_tail {
-                let next_pascal = crate::codegen::to_pascal_case(&msg.var_data[vi + 1].name);
-                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
-            } else {
-                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
-            }
-        }
-    }
-    for sn in &stage_names {
-        let sid = syn::Ident::new(sn, span);
+    };
+
+    for idx in 0..total_tail {
+        let sid = stage_after(idx);
         standalone.extend(quote::quote! {
             #[doc(hidden)]
             #[must_use = "length builder must be completed"]
@@ -193,7 +190,6 @@ fn generate_staged(
     }
 
     let mut pending_name = entry_ident.clone();
-    let total_tail = msg.groups.len() + msg.var_data.len();
     let mut tail_idx: usize = 0;
 
     for g in &msg.groups {
@@ -205,19 +201,7 @@ fn generate_staged(
         let g_bl = syn::LitInt::new(&g.block_length.to_string(), span);
 
         let has_dynamic_entry = g.has_dynamic_entries();
-        let tail_after_group = tail_idx + 1;
-        let next_name = if tail_after_group < total_tail {
-            let next_pascal = if tail_after_group < msg.groups.len() {
-                crate::codegen::to_pascal_case(&msg.groups[tail_after_group].name)
-            } else {
-                crate::codegen::to_pascal_case(
-                    &msg.var_data[tail_after_group - msg.groups.len()].name,
-                )
-            };
-            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
-        } else {
-            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
-        };
+        let next_name = stage_after(tail_idx);
 
         let mut entry_tail_methods = TokenStream::new();
 
@@ -572,14 +556,7 @@ fn generate_staged(
         let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
         let field_name = &vd.name;
 
-        let tail_after = tail_idx + 1;
-        let next_name = if tail_after < total_tail {
-            let next_pascal =
-                crate::codegen::to_pascal_case(&msg.var_data[tail_after - msg.groups.len()].name);
-            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
-        } else {
-            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
-        };
+        let next_name = stage_after(tail_idx);
 
         let mut max_chk = TokenStream::new();
         if let Some(max) = vd.max_length {
