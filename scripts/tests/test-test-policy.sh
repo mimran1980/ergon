@@ -176,4 +176,37 @@ printf '%s\n' \
 git -C "$fixture" add justfile .github/workflows/ci.yml
 expect_failure 'continue-on-error'
 
+# Back to a clean slate: the cases below assert on shell scripts, so nothing
+# left over from the justfile/workflow cases above may still be failing.
+write_valid_fixture
+"$checker" --root "$fixture" --manifest test-lanes.tsv
+
+# A conditional that genuinely gates a benchmark must still be caught.
+mkdir -p "$fixture/scripts"
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [ "$MODE" = fast ]; then' \
+    '    cargo bench -p thing' \
+    'fi' \
+    >"$fixture/scripts/conditional.sh"
+git -C "$fixture" add scripts/conditional.sh
+expect_failure 'may not be conditionally executed'
+git -C "$fixture" rm -qf scripts/conditional.sh
+
+# …but an `if` inside a heredoc belongs to the embedded language, not the
+# shell. It has no `fi`, so a naive scanner leaves the block open and flags
+# every later command in the file.
+mkdir -p "$fixture/scripts"  # `git rm` prunes the now-empty directory above
+cat >"$fixture/scripts/heredoc.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+python3 - <<'PY'
+if 1 == 0:
+    raise SystemExit("unreachable")
+PY
+cargo bench -p thing
+FIXTURE
+git -C "$fixture" add scripts/heredoc.sh
+"$checker" --root "$fixture" --manifest test-lanes.tsv
+git -C "$fixture" rm -qf scripts/heredoc.sh
+
 echo "test policy self-test: PASS"
