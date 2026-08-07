@@ -1,6 +1,6 @@
 //! `Display` / `Debug` impl codegen for message decoders.
 
-use super::conversion_helpers::{find_domain_type, resolve_field_ident, DECODER_RESERVED};
+use super::conversion_helpers::{DECODER_RESERVED, find_domain_type, resolve_field_ident};
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::Presence;
 use crate::structured_ir::{FieldType, MessageStructure};

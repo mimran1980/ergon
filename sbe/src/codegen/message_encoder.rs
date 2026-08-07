@@ -90,6 +90,7 @@ pub(crate) fn generate_message_encoder(
     let span = proc_macro2::Span::call_site();
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
+    let fixed_encoder_ident = syn::Ident::new(&format!("{}FixedEncoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
     // Pre-compute the exact schema-declared header wire image. Composite
@@ -120,6 +121,7 @@ pub(crate) fn generate_message_encoder(
     let to_endian = syn::Ident::new(&format!("to_{}_bytes", order_suffix), span);
 
     let mut ts = proc_macro2::TokenStream::new();
+    let sealed_path = super::runtime::sealed_path_tokens();
 
     let tail_pascal: Vec<String> = msg
         .groups
@@ -751,10 +753,16 @@ pub(crate) fn generate_message_encoder(
                 });
             }
         }
+        // `format!`, not `///`: a doc comment inside `quote!` is already a
+        // string literal when interpolation runs, so `#fixed_name` in one would
+        // reach the generated docs verbatim.
+        let fixed_doc = format!(
+            "Set all fixed fields at once from a [`{fixed_name}`] value.\n\n\
+             Required fields are always written; optional fields are written \
+             when `Some`. Returns the encoder for tail methods."
+        );
         impl_contents.extend(quote::quote! {
-            /// Set all fixed fields at once from a [`#fixed_name`] value.
-            /// Required fields are always written; optional fields are
-            /// written when `Some`. Returns the encoder for tail methods.
+            #[doc = #fixed_doc]
             #[inline]
             #[must_use]
             pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
@@ -766,10 +774,19 @@ pub(crate) fn generate_message_encoder(
 
     {
         let raw_name = syn::Ident::new(&format!("{name}RawFixedWriter"), span);
+        let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
+        let raw_struct_doc = format!(
+            "Raw fixed-field writer. Individual field setters are available \
+             only on this writer. When done, embed the fields in a \
+             [`{fixed_name}`] and call the encoder's `fixed()`."
+        );
+        let raw_fixed_doc = format!(
+            "Return a dedicated raw fixed-field writer. All individual field \
+             setters are available on the writer. To advance to tail stages, \
+             collect the values into a [`{fixed_name}`] and call `fixed()`."
+        );
         ts.extend(quote::quote! {
-            /// Raw fixed-field writer. Individual field setters are available
-            /// only on this writer. When done, embed the fields in a
-            /// `#fixed_name` and call the encoder's `fixed()`.
+            #[doc = #raw_struct_doc]
             #[must_use = "raw fixed writer must be embedded in FixedFields"]
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
@@ -778,9 +795,7 @@ pub(crate) fn generate_message_encoder(
             }
         });
         impl_contents.extend(quote::quote! {
-            /// Return a dedicated raw fixed-field writer. All individual field
-            /// setters are available on the writer. To advance to tail stages,
-            /// collect the values into a `#fixed_name` and call `fixed()`.
+            #[doc = #raw_fixed_doc]
             #[inline]
             #[must_use]
             pub fn raw_fixed(self) -> #raw_name<'a> {
@@ -911,6 +926,17 @@ pub(crate) fn generate_message_encoder(
 
             let g_snake_unknown =
                 syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
+            // `format!`, not `///`: `#g_snake` inside a `quote!` doc comment
+            // would be emitted verbatim instead of the sibling method's name.
+            let unknown_count_doc = format!(
+                "Encode this group without knowing the count up front.\n\n\
+                 The dimension header is written with a zero placeholder; after \
+                 the closure returns, the actual entry count is back-patched \
+                 into the header. No `GroupFull` check — overflow is the \
+                 caller's responsibility.\n\n\
+                 Prefer [`Self::{g_snake}`] when the count is known at compile \
+                 time or from a small input."
+            );
 
             ts.extend(quote::quote! {
                 impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
@@ -959,14 +985,7 @@ pub(crate) fn generate_message_encoder(
                         })
                     }
 
-                    /// Encode this group without knowing the count up front.
-                    /// The dimension header is written with a zero placeholder;
-                    /// after the closure returns, the actual entry count is
-                    /// back-patched into the header. No `GroupFull` check —
-                    /// overflow is the caller's responsibility.
-                    ///
-                    /// Prefer [`Self::#g_snake`] when the count is known at
-                    /// compile time or from a small input.
+                    #[doc = #unknown_count_doc]
                     #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
@@ -1253,7 +1272,7 @@ pub(crate) fn generate_message_encoder(
 
     if total_tail > 0 {
         ts.extend(quote::quote! {
-            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
+            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
 
             impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
                 const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -1264,7 +1283,7 @@ pub(crate) fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
+            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
 
             impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
                 const TEMPLATE_ID: u16 = #msg_id_lit;

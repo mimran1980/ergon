@@ -13,9 +13,7 @@ use quote::format_ident;
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{
-    field_has_conversion_free, resolve_field_ident, DECODER_RESERVED,
-};
+use super::conversion_helpers::{DECODER_RESERVED, field_has_conversion_free, resolve_field_ident};
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
@@ -136,6 +134,8 @@ pub(crate) fn generate_message_decoder(
     let _header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
     let _header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
     let _header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
+
+    let sealed_path = super::runtime::sealed_path_tokens();
 
     let mut ts = proc_macro2::TokenStream::new();
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());
@@ -951,8 +951,16 @@ pub(crate) fn generate_message_decoder(
                             /// boolean values, or `None` when the field is absent
                             /// from the acting version or the wire carries `NullVal`.
                             #[inline]
-                            pub fn #fname_bool(&self) -> Option<bool> {
-                                self.#fname_ident().and_then(|v| v.as_bool())
+                            pub fn #fname_bool(&self) -> Result<Option<bool>, sbe_rt::DecodeError> {
+                                match self.#fname_ident() {
+                                    None => Ok(None),
+                                    Some(v) => v.as_bool().map(Some).ok_or(
+                                        sbe_rt::DecodeError::InvalidBoolean {
+                                            field: stringify!(#fname_ident),
+                                            discriminant: v as u64,
+                                        }
+                                    ),
+                                }
                             }
                         });
                     }
@@ -983,6 +991,7 @@ pub(crate) fn generate_message_decoder(
                                 self.#fname_ident().as_bool().ok_or(
                                     sbe_rt::DecodeError::InvalidBoolean {
                                         field: stringify!(#fname_ident),
+                                        discriminant: self.#raw_ident() as u64,
                                     }
                                 )
                             }
@@ -1277,43 +1286,83 @@ pub(crate) fn generate_message_decoder(
             }
         });
 
-        // Fallible UTF-8/ASCII str accessor (characterEncoding-aware).
-        let str_ident = syn::Ident::new(
-            &format!("{vd_snake}_as_str"),
-            proc_macro2::Span::call_site(),
-        );
-        let vd_snake_str = vd_snake.clone();
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                let bytes = self.#vd_snake_ident()?;
-                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
-                    field: #vd_snake_str,
-                    error: e,
-                })
-            }
-        });
-
-        // Unchecked str accessor — zero validation, trusts the wire.
-        let str_unchecked = syn::Ident::new(
-            &format!("{vd_snake}_as_str_unchecked"),
-            proc_macro2::Span::call_site(),
-        );
-        impl_body.extend(quote::quote! {
-            /// View this text var-data field as `&str` without UTF-8
-            /// validation.
-            ///
-            /// # Safety
-            ///
-            /// The wire bytes must be valid UTF-8. For schema-declared
-            /// ASCII encoding this is always true (ASCII ⊂ UTF-8).
-            #[inline]
-            pub unsafe fn #str_unchecked(&self) -> &'a str {
-                let bytes = unsafe { self.#vd_snake_ident().unwrap() };
-                // SAFETY: caller guarantees valid UTF-8
-                unsafe { core::str::from_utf8_unchecked(bytes) }
-            }
-        });
+        #[allow(clippy::collapsible_else_if)]
+        if vd.character_encoding.as_deref() == Some("UTF-8") {
+            let str_ident = syn::Ident::new(
+                &format!("{vd_snake}_as_str"),
+                proc_macro2::Span::call_site(),
+            );
+            let vd_snake_str = vd_snake.clone();
+            impl_body.extend(quote::quote! {
+                /// View this UTF-8 var-data field as `&str`.
+                #[inline]
+                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                        field: #vd_snake_str,
+                        error: e,
+                    })
+                }
+            });
+            let str_unchecked = syn::Ident::new(
+                &format!("{vd_snake}_as_str_unchecked"),
+                proc_macro2::Span::call_site(),
+            );
+            impl_body.extend(quote::quote! {
+                /// View this text var-data field as `&str` without UTF-8
+                /// validation.
+                ///
+                /// # Safety
+                ///
+                /// The wire bytes must be valid UTF-8.
+                #[inline]
+                pub unsafe fn #str_unchecked(&self) -> &'a str {
+                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
+                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                }
+            });
+        } else if vd.character_encoding.as_deref() == Some("ASCII") {
+            let str_ident = syn::Ident::new(
+                &format!("{vd_snake}_as_str"),
+                proc_macro2::Span::call_site(),
+            );
+            let vd_snake_str = vd_snake.clone();
+            impl_body.extend(quote::quote! {
+                /// View this ASCII var-data field as `&str`.
+                #[inline]
+                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    if bytes.iter().any(|b| *b > 0x7F) {
+                        return Err(sbe_rt::DecodeError::InvalidAscii {
+                            field: #vd_snake_str,
+                        });
+                    }
+                    // Valid 7-bit ASCII is always valid UTF-8.
+                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+                }
+            });
+            let str_unchecked = syn::Ident::new(
+                &format!("{vd_snake}_as_str_unchecked"),
+                proc_macro2::Span::call_site(),
+            );
+            impl_body.extend(quote::quote! {
+                /// View this text var-data field as `&str` without ASCII
+                /// validation.
+                ///
+                /// # Safety
+                ///
+                /// The wire bytes must be 7-bit ASCII. For ASCII-declared
+                /// fields from a trusted source this is always true.
+                #[inline]
+                pub unsafe fn #str_unchecked(&self) -> &'a str {
+                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
+                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                }
+            });
+        }
+        // Binary / unspecified encoding: no string helper at all. The caller
+        // has the raw `_slice` / `into_<field>` accessors and can interpret
+        // the bytes as needed.
 
         vd_idx += 1;
     }
@@ -1670,12 +1719,13 @@ pub(crate) fn generate_message_decoder(
         impl<'a> TryFrom<&'a [u8]> for #decoder_ident<'a> {
             type Error = sbe_rt::DecodeError;
 
+            #[inline]
             fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
                 Self::try_decode(buf, 0)
             }
         }
 
-        impl<'a> sbe_rt::private::Sealed for #decoder_ident<'a> {}
+        impl<'a> #sealed_path::Sealed for #decoder_ident<'a> {}
 
         impl<'a> sbe_rt::SbeMessage for #decoder_ident<'a> {
             const TEMPLATE_ID: u16 = #msg_id_lit;

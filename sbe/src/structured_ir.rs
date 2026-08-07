@@ -809,6 +809,10 @@ pub(crate) struct OwnerTailGroup {
     pub(crate) field_pascal: String,
     pub(crate) group_decoder_ident: String,
     pub(crate) entry_decoder_ident: String,
+    /// Entries carry nested groups or var-data, so the group has no constant
+    /// stride: it decodes entry lengths as it walks, and can therefore be
+    /// poisoned by a malformed entry.
+    pub(crate) entries_have_tails: bool,
 }
 
 /// One tail var-data component of an owner, resolved for codegen.

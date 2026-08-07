@@ -1907,7 +1907,7 @@ fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::error::Error>> {
+fn anymessage_unknown_template_forwards_the_complete_frame() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_unknown");
     compile_and_run(
         "am_unknown",
@@ -1928,11 +1928,11 @@ fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::err
         // decode_frame with frame_len → Unknown variant
         let frame = AnyMessage::decode_frame(&buf, 0, 24).unwrap();
         match frame.message {
-            AnyMessage::Unknown { header, payload } => {
+            AnyMessage::Unknown { header, frame } => {
                 assert_eq!(header.template_id(), 99);
-                // payload = &buf[pos..pos+frame_len] = &buf[0..24] = 24 bytes incl header
-                assert_eq!(payload.len(), 24);
-                assert_eq!(payload[8], 0xAB); // body starts at offset 8
+                // frame = &buf[pos..pos+frame_len] = &buf[0..24] — header + body
+                assert_eq!(frame.len(), 24);
+                assert_eq!(frame[8], 0xAB); // body starts at offset 8
             }
             _ => panic!("expected Unknown"),
         }
@@ -1987,7 +1987,7 @@ fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::erro
         framed.extend_from_slice(&(e2.len() as u32).to_le_bytes());
         framed.extend_from_slice(&e2);
 
-        let cursor = FrameCursor::new(&framed, FramingPolicy::LengthPrefixU32);
+        let cursor = FrameCursor::new(&framed, FramingPolicy::LengthPrefixU32Le);
         let frames: Vec<_> = cursor.collect::<Result<Vec<_>, _>>().unwrap();
 
         assert_eq!(frames.len(), 2, "FrameCursor should yield 2 frames");

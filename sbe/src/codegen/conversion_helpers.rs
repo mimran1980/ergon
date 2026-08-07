@@ -164,42 +164,6 @@ pub(crate) fn resolve_field_ident(
     syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
-#[cfg(test)]
-mod reserved_list_tests {
-    use super::*;
-
-    #[test]
-    fn placement_names_are_not_reserved() {
-        for name in PLACEMENT_NOT_RESERVED {
-            assert!(
-                !DECODER_RESERVED.contains(name),
-                "placement util `{name}` must not be in DECODER_RESERVED — it lives on get_metadata()"
-            );
-            assert!(
-                !ENCODER_RESERVED.contains(name),
-                "placement util `{name}` must not be in ENCODER_RESERVED — it lives on get_metadata()"
-            );
-        }
-    }
-
-    #[test]
-    fn reserved_lists_have_no_duplicates() {
-        for (label, list) in [
-            ("DECODER_RESERVED", DECODER_RESERVED),
-            ("ENCODER_RESERVED", ENCODER_RESERVED),
-        ] {
-            let mut seen = std::collections::BTreeSet::new();
-            let mut dups = Vec::new();
-            for n in list {
-                if !seen.insert(*n) {
-                    dups.push(*n);
-                }
-            }
-            assert!(dups.is_empty(), "{label} has duplicates: {dups:?}");
-        }
-    }
-}
-
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
 ///
 /// Version numbers are per-schema. A shared type with members added in a later
@@ -291,5 +255,41 @@ pub(crate) fn domain_encode_setter_name(
         format!("{field_snake}_wire")
     } else {
         field_snake.to_string()
+    }
+}
+
+#[cfg(test)]
+mod reserved_list_tests {
+    use super::*;
+
+    #[test]
+    fn placement_names_are_not_reserved() {
+        for name in PLACEMENT_NOT_RESERVED {
+            assert!(
+                !DECODER_RESERVED.contains(name),
+                "placement util `{name}` must not be in DECODER_RESERVED — it lives on get_metadata()"
+            );
+            assert!(
+                !ENCODER_RESERVED.contains(name),
+                "placement util `{name}` must not be in ENCODER_RESERVED — it lives on get_metadata()"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_lists_have_no_duplicates() {
+        for (label, list) in [
+            ("DECODER_RESERVED", DECODER_RESERVED),
+            ("ENCODER_RESERVED", ENCODER_RESERVED),
+        ] {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut dups = Vec::new();
+            for n in list {
+                if !seen.insert(*n) {
+                    dups.push(*n);
+                }
+            }
+            assert!(dups.is_empty(), "{label} has duplicates: {dups:?}");
+        }
     }
 }

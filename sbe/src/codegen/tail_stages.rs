@@ -101,15 +101,24 @@ pub(crate) fn generate_owner_consuming_stages(
                 /// enforcing wire order. The returned group decoder owns the
                 /// right to advance to the following stage via `finish()`.
                 #[inline]
-                pub fn #into_ident(self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn #into_ident(
+                    self,
+                ) -> Result<#g_decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                     let group_start = #se;
-                    #g_decoder_ident::wrap_with_parent(
-                        self.buf,
-                        group_start,
-                        self.acting_version,
-                        self.pos,
-                        self.acting_block_length,
-                    )
+                    // SAFETY: this stage was reached by consuming the message in
+                    // wire order, so `self.pos` and `self.acting_block_length`
+                    // describe the real parent body and `group_start` is this
+                    // group's genuine dimension-header offset. The header,
+                    // block length, and extent are still validated inside.
+                    unsafe {
+                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
+                            self.buf,
+                            group_start,
+                            self.acting_version,
+                            self.pos,
+                            self.acting_block_length,
+                        )
+                    }
                 }
             }
         });
@@ -126,6 +135,11 @@ pub(crate) fn generate_owner_consuming_stages(
         let next_stage = stage_after_ident(i);
         let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
         let slice_ident = syn::Ident::new(&format!("{}_slice", vd.accessor_snake), span);
+        let slice_doc = format!(
+            "Non-consuming variant: read this var-data field as `&[u8]` without \
+             advancing or constructing the next stage.\n\n\
+             Cheaper than [`Self::{into_ident}`] when only the bytes are needed."
+        );
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
@@ -193,9 +207,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     Ok((data, next))
                 }
 
-                /// Non-consuming variant: read this var-data field as `&[u8]`
-                /// without advancing or constructing the next stage. Cheaper
-                /// than [`Self::#into_ident`] when only the bytes are needed.
+                #[doc = #slice_doc]
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = #se;
@@ -356,12 +368,29 @@ pub(crate) fn generate_owner_consuming_stages(
         let next_stage = stage_after_ident(i);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
+        let poisoned_finish_guard = if tg.entries_have_tails {
+            quote::quote! {
+                if let Some(error) = self.poisoned {
+                    return Err(error);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         ts.extend(quote::quote! {
-            impl<'a> #g_decoder_ident<'a> {
+            impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                 /// Scan past any unread entries (including nested tails) in wire
                 /// order and return the next decoder stage.
+                ///
+                /// Only an *attached* group — one reached through its message's
+                /// tail — can complete into a message stage. A standalone
+                /// [`Self::wrap`] has no parent to return to.
                 #[inline]
                 pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                    // A poisoned group's position came from an entry that
+                    // failed to decode, so the next stage would be built at a
+                    // meaningless offset. Return the stored error instead.
+                    #poisoned_finish_guard
                     let mut pos = self.pos;
                     let mut remaining = self.count;
                     let block_len = self.acting_block_length;
@@ -451,6 +480,7 @@ pub(crate) fn generate_decoder_consuming_stages(
             field_pascal: to_pascal_case(&g.name),
             group_decoder_ident: format!("{}Decoder", group_unique_names[gi]),
             entry_decoder_ident: format!("{}EntryDecoder", group_unique_names[gi]),
+            entries_have_tails: !g.groups.is_empty() || !g.var_data.is_empty(),
         })
         .collect();
     let vardata: Vec<OwnerTailVarData> = msg
@@ -505,6 +535,7 @@ pub(crate) fn generate_entry_consuming_stages(
                 accessor_snake: to_snake_case(&ng.name),
                 field_pascal: to_pascal_case(&ng.name),
                 group_decoder_ident: format!("{ng_pascal}Decoder"),
+                entries_have_tails: !ng.groups.is_empty() || !ng.var_data.is_empty(),
                 entry_decoder_ident: format!("{ng_pascal}EntryDecoder"),
             }
         })

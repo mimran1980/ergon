@@ -510,39 +510,49 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Every reserved name must be emitted as an inherent method on some
-/// representative message shape; placement names must never be reserved and
-/// must appear on the metadata facet.
-#[test]
-fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::error::Error>> {
-    // Compile-time include (no CARGO_MANIFEST_DIR) — source of truth for reserved lists.
-    const HELPERS: &str = include_str!("../src/codegen/conversion_helpers.rs");
-    let parse_list = |marker: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let start = HELPERS
-            .find(marker)
-            .ok_or_else(|| format!("missing {marker}"))?;
-        let rest = &HELPERS[start..];
-        let end = rest
-            .find("];")
-            .ok_or_else(|| format!("unterminated {marker}"))?;
-        let block = &rest[..end];
-        let mut names = Vec::new();
-        for line in block.lines() {
-            let t = line.trim();
-            if let Some(s) = t.strip_prefix('"') {
-                if let Some(name) = s.split('"').next() {
-                    if !name.is_empty() {
-                        names.push(name.to_string());
-                    }
-                }
-            }
-        }
-        Ok(names)
-    };
-    let decoder_reserved = parse_list("const DECODER_RESERVED")?;
-    let encoder_reserved = parse_list("const ENCODER_RESERVED")?;
+fn generate_src(xml: &str, pkg: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(xml)?);
+    Ok(Generator::new(GenerationConfig::new(pkg))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone())
+}
 
-    // Placement names must never be reserved (zombie rename regression).
+/// Read a reserved-name list straight out of the generator source.
+///
+/// Compile-time include (no `CARGO_MANIFEST_DIR`) — the generator's own list is
+/// the source of truth, so the test cannot drift from it by holding a copy.
+fn parse_reserved_list(marker: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    const HELPERS: &str = include_str!("../src/codegen/conversion_helpers.rs");
+    let start = HELPERS
+        .find(marker)
+        .ok_or_else(|| format!("missing {marker}"))?;
+    let rest = &HELPERS[start..];
+    let end = rest
+        .find("];")
+        .ok_or_else(|| format!("unterminated {marker}"))?;
+    let mut names = Vec::new();
+    for line in rest[..end].lines() {
+        if let Some(s) = line.trim().strip_prefix('"')
+            && let Some(name) = s.split('"').next()
+            && !name.is_empty()
+        {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// Placement utilities live on the metadata facet, so reserving their names
+/// would rename a real schema field for no reason (zombie rename regression).
+#[test]
+fn placement_names_are_never_reserved() -> Result<(), Box<dyn std::error::Error>> {
+    let decoder_reserved = parse_reserved_list("const DECODER_RESERVED")?;
+    let encoder_reserved = parse_reserved_list("const ENCODER_RESERVED")?;
+
     for placement in [
         "remaining",
         "buffer",
@@ -564,22 +574,11 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
         !decoder_reserved.iter().any(|n| n == "header"),
         "stale reserved `header` must stay removed"
     );
+    Ok(())
+}
 
-    fn generate_src(xml: &str, pkg: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let schema = Schema::from_ir(parse(xml)?);
-        Ok(Generator::new(GenerationConfig::new(pkg))
-            .generate(&schema)?
-            .modules()
-            .next()
-            .expect("one module")
-            .source
-            .clone())
-    }
-
-    // Staged message (group entry has var-data): compute_length factory + rewind.
-    // Flat group+message-var-data is Direct strategy and does not emit compute_length().
-    let tailed = generate_src(
-        r#"<messageSchema package="rsub" id="1" version="0" byteOrder="littleEndian">
+/// Representative tailed message shape for reserved-name coverage.
+const TAILED_SCHEMA: &str = r#"<messageSchema package="rsub" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
       <type name="blockLength" primitiveType="uint16"/>
@@ -603,13 +602,10 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
       <data name="note" id="4" type="varDataEncoding"/>
     </group>
   </message>
-</messageSchema>"#,
-        "rsub",
-    )?;
+</messageSchema>"#;
 
-    // Fixed-only: after_this_message + wrap_into_claim.
-    let fixed = generate_src(
-        r#"<messageSchema package="rfix" id="1" version="0" byteOrder="littleEndian">
+/// Representative fixed message shape for reserved-name coverage.
+const FIXED_SCHEMA: &str = r#"<messageSchema package="rfix" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
       <type name="blockLength" primitiveType="uint16"/>
@@ -621,13 +617,10 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
   <message name="Fixed" id="1" blockLength="4">
     <field name="x" id="1" type="uint32" offset="0"/>
   </message>
-</messageSchema>"#,
-        "rfix",
-    )?;
+</messageSchema>"#;
 
-    // Optional fields → apply_nulls.
-    let optional = generate_src(
-        r#"<messageSchema package="ropt" id="1" version="0" byteOrder="littleEndian">
+/// Representative optional message shape for reserved-name coverage.
+const OPTIONAL_SCHEMA: &str = r#"<messageSchema package="ropt" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
       <type name="blockLength" primitiveType="uint16"/>
@@ -640,9 +633,25 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
     <field name="x" id="1" type="uint16" offset="0"/>
     <field name="maybe" id="2" type="uint16" presence="optional" offset="2"/>
   </message>
-</messageSchema>"#,
-        "ropt",
-    )?;
+</messageSchema>"#;
+
+/// Every reserved name must be emitted as an inherent method on some
+/// representative message shape, and placement must appear on the metadata
+/// facet. A name reserved but never emitted renames fields for nothing.
+#[test]
+fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let decoder_reserved = parse_reserved_list("const DECODER_RESERVED")?;
+    let encoder_reserved = parse_reserved_list("const ENCODER_RESERVED")?;
+
+    // Staged message (group entry has var-data): compute_length factory + rewind.
+    // Flat group+message-var-data is Direct strategy and does not emit compute_length().
+    let tailed = generate_src(TAILED_SCHEMA, "rsub")?;
+
+    // Fixed-only: after_this_message + wrap_into_claim.
+    let fixed = generate_src(FIXED_SCHEMA, "rfix")?;
+
+    // Optional fields → apply_nulls.
+    let optional = generate_src(OPTIONAL_SCHEMA, "ropt")?;
 
     let has_fn = |src: &str, name: &str| {
         src.contains(&format!("fn {name}(")) || src.contains(&format!("fn {name}<"))

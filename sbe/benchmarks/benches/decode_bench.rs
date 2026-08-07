@@ -92,7 +92,7 @@ fn bench_group_iteration(c: &mut Criterion) {
                 .unwrap()
                 .into_fuel_figures()
                 .unwrap();
-            let n = ff.len();
+            let n = ff.remaining();
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
             while let Some(Ok(entry)) = ff.next() {
@@ -255,7 +255,7 @@ fn bench_skip(c: &mut Criterion) {
                 .into_fuel_figures()
                 .unwrap();
             // skip_n to advance through all entries without decoding
-            let result = cursor.skip_n(cursor.len());
+            let result = cursor.skip_n(cursor.remaining());
             black_box(result);
         });
     });

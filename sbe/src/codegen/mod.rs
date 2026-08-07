@@ -795,6 +795,27 @@ impl Generator {
             }
         }
 
+        // `SbeMessage`'s sealing marker lives with the runtime that declares the
+        // trait, so a module reusing someone else's `sbe_rt` must name that
+        // owner's sealing module rather than declaring a second one.
+        let sealed_path = if let Some(ref ext) = self.config.external_sbe_rt_path {
+            let owner = ext.strip_suffix("::sbe_rt").unwrap_or(ext);
+            format!("{owner}::{}", crate::codegen::runtime::SEALED_MODULE)
+        } else if is_importing {
+            let shared = self
+                .config
+                .shared_module
+                .as_deref()
+                .expect("is_importing implies a shared module");
+            format!(
+                "super::{shared}::{}",
+                crate::codegen::runtime::SEALED_MODULE
+            )
+        } else {
+            crate::codegen::runtime::SEALED_MODULE.to_string()
+        };
+        crate::codegen::runtime::set_sealed_path(&sealed_path);
+
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
             if self.config.has_conversions() {
@@ -802,6 +823,13 @@ impl Generator {
             }
         } else if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
+            // A shared runtime is implemented against by sibling modules, so its
+            // sealing module widens to `pub(super)`. A self-contained module
+            // keeps it private, which is what makes `SbeMessage` unimplementable
+            // outside the generated module.
+            src.push_str(&crate::codegen::runtime::generate_sealed_module_src(
+                self.config.shared_module.is_some(),
+            ));
             if self.config.has_conversions() {
                 emit_conversion_traits(&mut src);
             }
@@ -1339,8 +1367,9 @@ mod tests {
             "the versioned set at offset ten must require its complete eleventh byte"
         );
         assert!(
-            source.contains("pub fn enabled_bool(&self) -> Option<bool>"),
-            "a versioned BooleanType group field must preserve absence in its bool accessor"
+            source.contains("pub fn try_enabled_bool(&self) -> Result<Option<bool>,")
+                && source.contains("InvalidBoolean"),
+            "a versioned BooleanType group field must carry the typed bool accessor"
         );
         Ok(())
     }
@@ -1548,7 +1577,8 @@ mod tests {
         let src = modules.modules().next().expect("one module").source.clone();
 
         assert!(
-            src.contains("fn remaining(&self) -> i64") || src.contains("fn remaining(&self) -> i64,"),
+            src.contains("fn remaining(&self) -> i64")
+                || src.contains("fn remaining(&self) -> i64,"),
             "field accessor must keep name remaining() as i64. src snippet check failed"
         );
         assert!(

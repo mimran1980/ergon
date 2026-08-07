@@ -336,7 +336,7 @@ pub struct GenerationConfig {
     pub(crate) module_name: String,
     /// Sibling module that already owns shared types (multi-schema mode).
     pub(crate) shared_module: Option<String>,
-    /// Emit owned `*Domain` structs + `From<Decoder>` / `encode`.
+    /// Emit owned `*Domain` structs + `TryFrom<&Decoder>` / `encode`.
     pub(crate) domain_objects: bool,
     /// Var-data shape on DTOs when `domain_objects` is set.
     pub(crate) domain_var_data: DomainVarData,
@@ -763,8 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn profile_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>> {
         let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
         assert!(full.enable_display_debug);
         assert!(full.enable_meta_attributes);

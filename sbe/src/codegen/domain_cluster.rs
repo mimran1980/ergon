@@ -455,7 +455,7 @@ pub(crate) fn generate_domain_recursive(
                     let opt_bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident() });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident()? });
                         encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });

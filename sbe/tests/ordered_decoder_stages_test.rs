@@ -65,7 +65,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
 
         // First group: consume the message stage, iterate, then finish().
         let mut fuel = dec.into_fuel_figures().unwrap();
-        assert_eq!(fuel.len(), 3);
+        assert_eq!(fuel.remaining(), 3);
         let mut rows = Vec::new();
         while let Some(Ok(e)) = fuel.next() {
             rows.push((e.speed(), e.mpg(), e.usage_description().unwrap().to_vec()));
@@ -79,7 +79,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
 
         // Second group (entries carry a nested group dimension header even at 0).
         let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.len(), 2);
+        assert_eq!(perf.remaining(), 2);
         let mut octanes = Vec::new();
         while let Some(Ok(e)) = perf.next() {
             octanes.push(e.octane_rating());
@@ -138,7 +138,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
 
         // We must still land at performance_figures, then the var-data, correctly.
         let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.len(), 0);
+        assert_eq!(perf.remaining(), 0);
         let after_perf = perf.finish().unwrap();
         let (mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"M");
