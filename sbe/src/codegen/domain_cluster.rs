@@ -285,7 +285,7 @@ pub(crate) fn generate_domain_recursive(
                         }
                     });
                 } else {
-                    // Domain-typed scalars use fallible `try_*` (HFT-003).
+                    // Domain-typed scalars use fallible `try_*`.
                     // Conversion-only renames the raw flyweight getter to *_wire.
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<#scalar_ty> });
@@ -294,13 +294,19 @@ pub(crate) fn generate_domain_recursive(
                             let field_lit = syn::LitStr::new(&f_snake, span);
                             from_exprs.push(quote::quote! {
                                 #f_ident: Some(dec.#try_g().map_err(|_| {
-                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                                 })?)
                             });
                             encode_stmts.push(quote::quote! {
                                 if let Some(v) = self.#f_ident {
                                     enc.#enc_setter(v).map_err(|_| {
-                                        sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                        sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                     })?;
                                 }
                             });
@@ -327,12 +333,18 @@ pub(crate) fn generate_domain_recursive(
                             let field_lit = syn::LitStr::new(&f_snake, span);
                             from_exprs.push(quote::quote! {
                                 #f_ident: dec.#try_g().map_err(|_| {
-                                    sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                                 })?
                             });
                             encode_stmts.push(quote::quote! {
                                 enc.#enc_setter(self.#f_ident).map_err(|_| {
-                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                 })?;
                             });
                         } else {
@@ -386,13 +398,19 @@ pub(crate) fn generate_domain_recursive(
                         let field_lit = syn::LitStr::new(&f_snake, span);
                         from_exprs.push(quote::quote! {
                             #f_ident: Some(dec.#try_g().map_err(|_| {
-                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                             })?)
                         });
                         encode_stmts.push(quote::quote! {
                             if let Some(v) = self.#f_ident {
                                 enc.#enc_setter(v).map_err(|_| {
-                                    sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                    sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                                 })?;
                             }
                         });
@@ -408,12 +426,18 @@ pub(crate) fn generate_domain_recursive(
                         let field_lit = syn::LitStr::new(&f_snake, span);
                         from_exprs.push(quote::quote! {
                             #f_ident: dec.#try_g().map_err(|_| {
-                                sbe_rt::DecodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::DecodeError::DomainConversionFailed {
+                                        field: #field_lit,
+                                        reason: "try_* conversion rejected wire value",
+                                    }
                             })?
                         });
                         encode_stmts.push(quote::quote! {
                             enc.#enc_setter(self.#f_ident).map_err(|_| {
-                                sbe_rt::EncodeError::DomainConversionFailed { field: #field_lit }
+                                sbe_rt::EncodeError::DomainConversionFailed {
+                                            field: #field_lit,
+                                            reason: "try_* conversion rejected domain value",
+                                        }
                             })?;
                         });
                     } else {
@@ -431,7 +455,7 @@ pub(crate) fn generate_domain_recursive(
                     let opt_bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident() });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident()? });
                         encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
@@ -492,7 +516,7 @@ pub(crate) fn generate_domain_recursive(
         struct_fields.push(quote::quote! { pub #g_field_ident: Vec<#entry_domain_ident> });
         // Fixed-entry groups (no tail) yield entries directly;
         // tailed-entry groups yield Result<EntryDecoder, _>.
-        let has_tail = !g.var_data.is_empty() || !g.groups.is_empty();
+        let has_tail = g.has_dynamic_entries();
         if has_tail {
             from_exprs.push(quote::quote! {
                 #g_field_ident: dec.#g_field_ident()
@@ -628,9 +652,8 @@ pub(crate) fn generate_domain_recursive(
         let vd_snake = to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);
         match domain_var_data {
-            crate::config::DomainVarData::LossyStrings => {
-                // HFT-003: never manufacture empty/default for invalid UTF-8.
-                // Name retained for API stability; behaviour is strict.
+            crate::config::DomainVarData::Strings => {
+                // never manufacture empty/default for invalid UTF-8.
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
                 struct_fields.push(quote::quote! { pub #vd_ident: String });
                 from_exprs.push(quote::quote! {
@@ -684,6 +707,7 @@ pub(crate) fn generate_domain_recursive(
             /// Distinct from [`Self::try_from_decoder`]: this path owns header
             /// validation + offset; that path starts from an already-wrapped decoder.
             /// Named methods (not `TryFrom`/`From`) keep the two sources obvious.
+            #[inline]
             pub fn try_from_slice_with_header(
                 buf: &[u8],
                 message_offset: usize,
@@ -743,6 +767,7 @@ pub(crate) fn generate_domain_recursive(
 
         impl #domain_ident {
             #try_from_decoder_doc
+            #[inline]
             pub fn try_from_decoder(
                 dec: #decoder_ident<'_>,
             ) -> Result<Self, sbe_rt::DecodeError> {
@@ -781,7 +806,7 @@ pub(crate) fn generate_domain_recursive(
         for vd in var_data {
             let vd_ty = match domain_var_data {
                 crate::config::DomainVarData::Bytes => "Vec<u8>",
-                crate::config::DomainVarData::LossyStrings => "String",
+                crate::config::DomainVarData::Strings => "String",
             };
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),
@@ -872,6 +897,7 @@ pub(crate) fn generate_domain_recursive(
 
         ts.extend(quote::quote! {
             impl #domain_ident {
+                #[inline]
                 pub fn encode_into<'a>(
                     &self,
                     enc: &mut #entry_encoder_ident<'a>,
@@ -881,6 +907,7 @@ pub(crate) fn generate_domain_recursive(
 
                 /// Compute this entry's contribution to the total encoded length
                 /// (entry block + nested groups + entry var-data).
+                #[inline]
                 pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
                     #len_stmts
                 }
@@ -993,18 +1020,21 @@ pub(crate) fn generate_domain_recursive(
         };
         ts.extend(quote::quote! {
             impl #domain_ident {
+                #[inline]
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     #encode_body
                 }
 
                 /// Compute the exact SBE message body length from this domain object.
                 /// Matches the length returned by [`Self::encode`].
+                #[inline]
                 pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
                     #msg_len_stmts
                 }
 
                 /// Compute the exact SBE message length including the message header.
                 /// Matches `encode()` return value for non-fixed messages.
+                #[inline]
                 pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
                     Ok(self.encoded_length()? + #encoder_ident::HEADER_LENGTH)
                 }

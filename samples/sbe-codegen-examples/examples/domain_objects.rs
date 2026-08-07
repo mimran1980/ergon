@@ -1,6 +1,6 @@
 //! Owned domain-object generation.
 //!
-//! Same schema as the flyweight example, but with `with_domain_objects(DomainVarData::LossyStrings)`.
+//! Same schema as the flyweight example, but with `with_domain_objects(DomainVarData::Strings)`.
 //! Each message gets an owned `MsgDomain` struct with `From<MsgDecoder>`,
 //! useful for persistence, cross-thread transfer, and serialization.
 //!
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(SCHEMA)?;
     let schema = Schema::from_ir(ir);
 
-    let config = GenerationConfig::new("car_codec").with_domain_objects(DomainVarData::LossyStrings);
+    let config = GenerationConfig::new("car_codec").with_domain_objects(DomainVarData::Strings);
     let modules = Generator::new(config).generate(&schema)?;
 
     println!(

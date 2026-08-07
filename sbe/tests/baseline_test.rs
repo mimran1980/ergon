@@ -36,7 +36,7 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         "generated code must suppress non_snake_case"
     );
     assert!(
-        src.contains("#[allow(clippy::identity_op)]"),
+        src.contains("clippy::identity_op"),
         "generated code must suppress clippy::identity_op"
     );
     assert!(
@@ -44,20 +44,23 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         "generated code must suppress clippy::eq_op"
     );
     assert!(
-        src.contains("#[allow(clippy::needless_borrow)]"),
-        "generated code must suppress clippy::needless_borrow"
-    );
-    assert!(
         src.contains("#[allow(clippy::manual_range_contains)]"),
         "generated code must suppress clippy::manual_range_contains"
     );
+    // Module-level allows must not include needless_borrow (emission should not need it).
     assert!(
-        src.contains("#[allow(unused_imports)]"),
-        "generated code must suppress unused_imports"
+        !src.contains("#[allow(clippy::needless_borrow)]"),
+        "generated code must NOT suppress needless_borrow at module level"
     );
-    // QW-8 (0.1.12): unused_variables, unused_mut, dead_code, unused_assignments
-    // removed from module-level allows — they mask generator bugs. The generator
-    // must not emit code that triggers these.
+    // Module-level allows must not hide unused_imports / unused_unsafe / unused_variables.
+    assert!(
+        !src.contains("#[allow(unused_imports)]"),
+        "generated code must NOT suppress unused_imports at module level"
+    );
+    assert!(
+        !src.contains("unused_unsafe"),
+        "generated code must NOT suppress unused_unsafe at module level"
+    );
     assert!(
         !src.contains("#[allow(unused_variables)]"),
         "generated code must NOT suppress unused_variables at module level"
@@ -66,6 +69,85 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
         !src.contains("#[allow(unused_mut)]"),
         "generated code must NOT suppress unused_mut at module level"
     );
+    Ok(())
+}
+
+#[test]
+fn reserved_name_lists_have_no_duplicates() -> Result<(), Box<dyn std::error::Error>> {
+    // ENCODER_RESERVED / DECODER_RESERVED live once in conversion_helpers.rs.
+    // Placement utils (remaining/buffer/limit/message_offset/as_fixed_*) must
+    // not appear — they are only on get_metadata().
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let helpers = std::fs::read_to_string(root.join("src/codegen/conversion_helpers.rs"))?;
+    for (label, marker) in [
+        ("ENCODER_RESERVED", "const ENCODER_RESERVED"),
+        ("DECODER_RESERVED", "const DECODER_RESERVED"),
+    ] {
+        let start = helpers
+            .find(marker)
+            .ok_or_else(|| format!("missing {marker} in conversion_helpers.rs"))?;
+        let rest = &helpers[start..];
+        let end = rest
+            .find("];")
+            .ok_or_else(|| format!("unterminated {marker}"))?;
+        let block = &rest[..end];
+        let mut names: Vec<&str> = Vec::new();
+        for line in block.lines() {
+            let t = line.trim();
+            if let Some(s) = t.strip_prefix('"') {
+                if let Some(name) = s.split('"').next() {
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut dups = Vec::new();
+        for n in &names {
+            if !seen.insert(*n) {
+                dups.push(*n);
+            }
+        }
+        assert!(
+            dups.is_empty(),
+            "{label} has duplicate reserved names: {dups:?} (all={names:?})"
+        );
+        assert!(
+            names.len() >= 8,
+            "{label} parsed too few names ({}); block may have moved",
+            names.len()
+        );
+        for placement in [
+            "remaining",
+            "buffer",
+            "limit",
+            "message_offset",
+            "as_fixed_body_bytes",
+            "as_fixed_region_with_header",
+        ] {
+            assert!(
+                !names.contains(&placement),
+                "{label} must not reserve placement util `{placement}` (lives on get_metadata())"
+            );
+        }
+        assert!(
+            !names.contains(&"header"),
+            "{label} must not reserve stale `header` (never emitted as inherent method)"
+        );
+    }
+    // No local copies left in decoder/encoder/display modules.
+    for rel in [
+        "src/codegen/message_decoder.rs",
+        "src/codegen/message_encoder.rs",
+        "src/codegen/decoder_display.rs",
+    ] {
+        let src = std::fs::read_to_string(root.join(rel))?;
+        assert!(
+            !src.contains("const DECODER_RESERVED") && !src.contains("const ENCODER_RESERVED"),
+            "{rel} must import shared reserved lists from conversion_helpers, not redefine them"
+        );
+    }
     Ok(())
 }
 
@@ -568,7 +650,7 @@ fn encode_byte_exact_scalar() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
         // Write empty tails to reach the complete stage (as_bytes is
-        // completion-only per DECISIONS.md §2).
+        // completion-only).
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -706,15 +788,6 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// iter_fast was removed. For groups with var-data tails (total_tail > 0),
-// advancing by ENTRY_BLOCK_LENGTH produces wrong positions because
-// entries are not contiguous in the buffer — var-data of previous entries
-// pushes later entries forward. For total_tail == 0, the standard Iterator
-// already uses ENTRY_BLOCK_LENGTH. iter_fast was redundant.
-// Test coverage: the standard Iterator's ENTRY_BLOCK_LENGTH fast path
-// is verified by decode_baseline_fixture (fuel_figures[0].speed == 30 etc.)
-// and group_decoder_is_empty.
-
 #[test]
 fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "pre_encode_len");
@@ -745,8 +818,7 @@ fn compute_encoded_length_matches_actual() -> Result<(), Box<dyn std::error::Err
         let empty_full = car.encoded_length_with_header();
         assert_eq!(empty_full, 73); // 65 + 8-byte header
 
-        // DECISIONS.md §2: header-inclusive length must use the dedicated helper.
-        // Use large buffer pattern instead of staged EncodedLength builders
+        // Header-inclusive length must use the dedicated helper.
         let mut buf = [0u8; 4096];
         let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
         car.serial_number(1234);
@@ -1124,8 +1196,12 @@ fn generated_code_has_boolean_from_impls() -> Result<(), Box<dyn std::error::Err
         "BooleanType must implement From<bool>"
     );
     assert!(
-        src.contains("impl From<BooleanType> for bool"),
-        "BooleanType must implement From<BooleanType> for bool"
+        src.contains("impl TryFrom<BooleanType> for bool"),
+        "BooleanType must implement TryFrom (NullVal is not a Rust bool)"
+    );
+    assert!(
+        !src.contains("impl From<BooleanType> for bool"),
+        "infallible From<BooleanType> for bool must not collapse NullVal"
     );
 
     // From<bool> maps true → Self::T and false → Self::F
@@ -1297,8 +1373,7 @@ fn vardata_maxlength_runtime() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.model(b"Civic").unwrap();
         assert!(car.activation_code(b"12345").is_ok(), "activationCode within maxLength via checked");
 
-        // All var-data fields encode successfully via the checked path
-        // (unchecked paths removed — checked path is canonical)
+        // All var-data fields encode successfully via the checked path.
         "#,
     );
     Ok(())
@@ -1357,9 +1432,9 @@ fn boolean_roundtrip_runtime() -> Result<(), Box<dyn std::error::Error>> {
         "#,
     );
 
-    // Also verify From<bool> conversion compiles and works
+    // Also verify bool conversions compile
     assert!(src.contains("impl From<bool> for BooleanType"));
-    assert!(src.contains("impl From<BooleanType> for bool"));
+    assert!(src.contains("impl TryFrom<BooleanType> for bool"));
     Ok(())
 }
 
@@ -1587,7 +1662,7 @@ fn encoder_wrap_short_buffer_returns_error() -> Result<(), Box<dyn std::error::E
         let mut short_header = [0u8; 7];
         assert!(matches!(
             CarEncoder::try_wrap_and_apply_header(&mut short_header, 0),
-            Err(sbe_rt::EncodeError::BufferTooShort { needed, available: 7 })
+            Err(sbe_rt::EncodeError::BufferTooShort { needed, available: 7, .. })
             if needed == total_needed
         ));
 
@@ -1832,7 +1907,8 @@ fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::error::Error>> {
+fn anymessage_unknown_template_forwards_the_complete_frame()
+-> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_unknown");
     compile_and_run(
         "am_unknown",
@@ -1853,11 +1929,11 @@ fn anymessage_unknown_template_forwards_payload() -> Result<(), Box<dyn std::err
         // decode_frame with frame_len → Unknown variant
         let frame = AnyMessage::decode_frame(&buf, 0, 24).unwrap();
         match frame.message {
-            AnyMessage::Unknown { header, payload } => {
+            AnyMessage::Unknown { header, frame } => {
                 assert_eq!(header.template_id(), 99);
-                // payload = &buf[pos..pos+frame_len] = &buf[0..24] = 24 bytes incl header
-                assert_eq!(payload.len(), 24);
-                assert_eq!(payload[8], 0xAB); // body starts at offset 8
+                // frame = &buf[pos..pos+frame_len] = &buf[0..24] — header + body
+                assert_eq!(frame.len(), 24);
+                assert_eq!(frame[8], 0xAB); // body starts at offset 8
             }
             _ => panic!("expected Unknown"),
         }
@@ -1912,7 +1988,7 @@ fn framecursor_iterates_length_prefixed_frames() -> Result<(), Box<dyn std::erro
         framed.extend_from_slice(&(e2.len() as u32).to_le_bytes());
         framed.extend_from_slice(&e2);
 
-        let cursor = FrameCursor::new(&framed, FramingPolicy::LengthPrefixU32);
+        let cursor = FrameCursor::new(&framed, FramingPolicy::LengthPrefixU32Le);
         let frames: Vec<_> = cursor.collect::<Result<Vec<_>, _>>().unwrap();
 
         assert_eq!(frames.len(), 2, "FrameCursor should yield 2 frames");
@@ -2169,7 +2245,7 @@ fn generated_code_uses_one_slice_indexing() -> Result<(), Box<dyn std::error::Er
 #[test]
 fn generated_decoder_has_consuming_stages_and_rewind() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-    // DECISIONS.md §10: the out-of-order skip_to_<later>() surface is removed.
+    // Out-of-order skip_to_<later>() surface is not generated.
     assert!(
         !src.contains("skip_to_fuel_figures"),
         "decoder must NOT emit the removed skip_to_<later>() out-of-order surface"
@@ -2806,7 +2882,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
 fn fixed_fields_struct_exists_and_requires_all_required_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_fields_req");
-    // Task 4 implemented: CarFixedFields is generated.
+
     assert!(
         src.contains("struct CarFixedFields"),
         "CarFixedFields must be generated"
@@ -2821,8 +2897,6 @@ fn fixed_fields_struct_exists_and_requires_all_required_fields()
 #[test]
 fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_method_done");
-    // Task 4: fixed(), raw_fixed(), and CarFixedFields are generated.
-    // finish_unchecked() is intentionally removed — no bypass of the fixed phase.
     assert!(
         src.contains("pub fn fixed("),
         "fixed() method must be generated"
@@ -2845,7 +2919,6 @@ fn fixed_method_exists_and_is_functional() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "composite_sym_done");
-    // Task 4: engine_value() is the renamed _as_struct accessor.
     assert!(
         src.contains("fn engine_value("),
         "engine_value() must be generated"
@@ -2860,7 +2933,6 @@ fn composite_value_and_flyweight_symmetry_exists() -> Result<(), Box<dyn std::er
 #[test]
 fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "fixed_replaces_try");
-    // Task 4: fixed() + raw_fixed() dedicated writer replace try_fixed.
     assert!(src.contains("pub fn fixed("), "fixed() must be generated");
     assert!(
         src.contains("pub fn raw_fixed("),
@@ -2870,7 +2942,6 @@ fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Err
         src.contains("RawFixedWriter"),
         "RawFixedWriter struct must be generated"
     );
-    // try_fixed is removed
     assert!(
         !src.contains("try_fixed"),
         "try_fixed must NOT be generated"
@@ -3067,7 +3138,7 @@ fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::erro
 }
 
 /// Group-entry Decimal fields get generic converted methods plus raw
-/// `*_wire`, exactly like ordinary fields (Task 2).
+/// `*_wire`, exactly like ordinary fields.
 #[test]
 fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -3159,7 +3230,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Independent exact fixed-scale adapter matrix (Task 2): positive/negative
+/// Independent exact fixed-scale adapter matrix: positive/negative
 /// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection —
 /// implemented in a temporary crate against the generated trait only.
 #[test]

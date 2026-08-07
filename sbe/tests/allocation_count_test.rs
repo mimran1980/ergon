@@ -101,7 +101,7 @@ fn warm_up_all() {
     let _vc = car.vehicle_code();
 
     // Group + var-data iteration in wire order via the consuming stages
-    // (DECISIONS.md §3/§10), to settle per-entry/per-field lazy-inits.
+    // (settles per-entry/per-field lazy-inits).
     let mut fuel = car.into_fuel_figures().unwrap();
     for entry in fuel.by_ref() {
         let e = entry.unwrap();
@@ -155,9 +155,11 @@ fn warm_up_all() {
         .encoded_length_with_header();
 }
 
-// ── Consuming stage decode path (DECISIONS.md §3) ──────────────────
-// Warm + measure the new sequential decoder stages: into_<group> -> iterate
-// -> finish -> into_<vd> -> complete. Must allocate nothing.// ── Decode entrypoint ───────────────────────────────────────────────
+// ── Consuming stage decode path ─────────────────────────────────────
+// Warm + measure sequential decoder stages: into_<group> -> iterate ->
+// finish -> into_<vd> -> complete. Must allocate nothing.
+
+// ── Decode entrypoint ───────────────────────────────────────────────
 
 #[test]
 #[serial(alloc_count)]

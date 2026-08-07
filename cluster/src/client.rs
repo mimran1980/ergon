@@ -171,8 +171,7 @@ pub struct AeronCluster {
     /// [`Self::poll_state_changes`].
     awaiting_leader_since: Option<Instant>,
     /// Configured ingress stream id, retained so a `NewLeaderEvent`
-    /// reconnect uses the same stream the session was established on
-    /// (the post-connect path no longer has the builder).
+    /// reconnect uses the same stream the session was established on.
     ingress_stream_id: i32,
     /// `newLeaderTimeout` from the builder (ms). Enforced by
     /// [`Self::poll_state_changes`].
@@ -799,7 +798,7 @@ impl AeronCluster {
     ///
     /// # Hot path
     ///
-    /// This is the HFT publish path. On success there is no temp buffer copy of
+    /// This is the hot publish path. On success there is no temp buffer copy of
     /// the application payload — fill [`ClusterClaim::payload_mut`] then
     /// [`ClusterClaim::commit`]. Abort with [`ClusterClaim::abort`] (or drop).
     ///

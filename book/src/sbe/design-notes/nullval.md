@@ -50,3 +50,8 @@ pub enum EventCode {
 For an `Optional` field (schema `presence="optional"`), the generated accessor
 returns `Option<EventCode>` — but the null check compares against the `NullVal`
 discriminant on the wire, never allocates, and is transparent to the caller.
+
+On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
+`wrap_and_apply_header` when any optional may be left unset — otherwise stale
+buffer bytes ship as if they were intentional values. See
+[Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).

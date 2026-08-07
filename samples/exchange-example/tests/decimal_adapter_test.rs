@@ -1,4 +1,4 @@
-//! Exact Decimal adapter matrix at the sample level (Task 5): mixed
+//! Exact Decimal adapter matrix at the sample level: mixed
 //! exponents including 15-decimal-place baby-token values, negatives, zero,
 //! i64 boundaries, malformed text, and exact round trips through the
 //! generated generic methods with the `rust_decimal` adapter.

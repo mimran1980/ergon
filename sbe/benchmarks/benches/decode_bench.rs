@@ -1,7 +1,7 @@
 //! Decode benchmarks for ergon-generated Car message codec.
 //!
 //! Measures decode latency for the entry point, individual field accessors
-//! (both checked and raw/unchecked variants), group iteration, and HFT-specific
+//! (both checked and raw/unchecked variants), group iteration, and latency-oriented
 //! tight-loop / field-stride / alloc-free decode patterns.
 
 // Generated code generates lots of diagnostics; suppress across the crate.
@@ -92,7 +92,7 @@ fn bench_group_iteration(c: &mut Criterion) {
                 .unwrap()
                 .into_fuel_figures()
                 .unwrap();
-            let n = ff.len();
+            let n = ff.remaining();
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
             while let Some(Ok(entry)) = ff.next() {
@@ -162,11 +162,11 @@ fn bench_decode_checked_vs_unchecked(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_hft_tight_loop(c: &mut Criterion) {
+fn bench_hot_tight_loop(c: &mut Criterion) {
     let batch = replicate_baseline(BATCH_SIZE);
     let msg_len = BASELINE.len();
 
-    let mut group = c.benchmark_group("decode/hft/tight_loop");
+    let mut group = c.benchmark_group("decode/hot/tight_loop");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     group.bench_function("10k_messages", |b| {
@@ -188,11 +188,11 @@ fn bench_hft_tight_loop(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_hft_field_stride(c: &mut Criterion) {
+fn bench_hot_field_stride(c: &mut Criterion) {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     let engine = car.engine_value();
 
-    let mut group = c.benchmark_group("decode/hft/field_stride");
+    let mut group = c.benchmark_group("decode/hot/field_stride");
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("model_year", |b| {
@@ -207,7 +207,7 @@ fn bench_hft_field_stride(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_hft_alloc_free(c: &mut Criterion) {
+fn bench_hot_alloc_free(c: &mut Criterion) {
     // Stack buffer containing the baseline message.
     let stack_buf = {
         let mut buf = [0u8; 1024];
@@ -216,7 +216,7 @@ fn bench_hft_alloc_free(c: &mut Criterion) {
     };
     let msg_len = BASELINE.len();
 
-    let mut group = c.benchmark_group("decode/hft/alloc_free");
+    let mut group = c.benchmark_group("decode/hot/alloc_free");
     group.throughput(Throughput::Bytes(msg_len as u64));
 
     group.bench_function("decode_from_stack", |b| {
@@ -255,7 +255,7 @@ fn bench_skip(c: &mut Criterion) {
                 .into_fuel_figures()
                 .unwrap();
             // skip_n to advance through all entries without decoding
-            let result = cursor.skip_n(cursor.len());
+            let result = cursor.skip_n(cursor.remaining());
             black_box(result);
         });
     });
@@ -270,9 +270,9 @@ criterion_group!(
     bench_group_iteration,
     bench_full_decode_safe,
     bench_decode_checked_vs_unchecked,
-    bench_hft_tight_loop,
-    bench_hft_field_stride,
-    bench_hft_alloc_free,
+    bench_hot_tight_loop,
+    bench_hot_field_stride,
+    bench_hot_alloc_free,
     bench_display,
     bench_skip,
 );

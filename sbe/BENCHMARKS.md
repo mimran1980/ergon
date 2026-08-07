@@ -12,28 +12,48 @@ ergon's maintained benchmarks compare generated codecs with official
 toolchain-specific, so this repository documents the method and gate rather
 than retaining dated point estimates as release guarantees.
 
-## Latest run
+## Where the current result lives
 
-| | |
-|---|---|
-| **Date** | 2026-08-02 |
-| **Release** | 0.1.10 |
-| **Host** | Apple M4 (macOS Darwin, arm64) |
-| **Toolchain** | rustc 1.95.0 |
-| **Benchmark profiles** | LTO on and LTO off; codegen-units=1 |
-| **SBE gate** | **10/10 at or below 1.00 in both profiles** |
-| **Cluster gate** | **5/5 PASS** (body-only fairness fix validated) |
+This file documents the **method and the gate**, not a point estimate. A
+benchmark number is only evidence for the tree that produced it, so the result
+of record is the artifact `just bench` writes, never a table copied into prose.
+
+Each `just bench` invocation owns one unique result root under
+`target/bench-runs/<run-id>/<profile>/criterion`, containing:
+
+- `run-manifest.json` — run id, profile, commit, rustc, target;
+- one Criterion directory per benchmarked arm, each stamped with that run id.
+
+The gate reads only that root. It fails closed on missing, incomplete, stale, or
+mixed-run results, so a release can never pass on evidence from another run. Both
+profiles (LTO and no-LTO) are blocking, and the SBE ceiling is a literal `1.00`
+with no noise tolerance.
+
+Quote a result by naming its run id, commit, and host — or do not quote it.
 
 ## What the numbers actually measure
 
 Most of the measured difference between ergo-sbe and sbe-tool comes down to
 **bounds checking**, not fundamental codegen quality. Minor variations in how
 headers are written or how bulk operations are laid out account for the rest.
-If you had to call `wrap_and_apply_header` (which validates `template_id`
-and `schema_id`) every time, ergo-sbe would be slower than sbe-tool —
-sbe-tool's `wrap` + `header()` does no such validation in release builds. The
-benchmarks therefore use infallible `wrap` / `wrap_and_apply_header` on both
-arms: equal work, equal trust assumptions.
+sbe-tool's `wrap` + `header()` performs no bounds, header, or version check.
+Ergon's `wrap` and `wrap_and_apply_header` do: they prove the version-aware
+fixed extent before handing back an encoder or decoder whose accessors are
+unchecked. Timing those against sbe-tool would charge ergon for work its
+reference never does.
+
+Every maintained pair is therefore in one **validation class**, and that class is
+currently `none` for all of them: the extent proof is performed once in an
+untimed preflight (`assert_baseline_wrap_extent`, `assert_stream_wrap_extent`,
+`assert_encode_extent`), and the timed region calls the matching unchecked
+constructor. `fairness_policy_test` enforces this mechanically — a maintained arm
+that calls a validating constructor fails the test.
+
+The checked constructors are still benchmarked, as separately labelled
+diagnostic arms (`ergo-sbe_wrap_checked`, `ergo-sbe_try_from`,
+`ergo-sbe_header_and_body_checked`). The gate does not read them; they exist to
+price the safety ergon offers, not to be compared against an unchecked
+reference.
 
 The benchmark gate exists to prove that ergo-sbe is **not slower than**
 sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
@@ -295,7 +315,7 @@ just bench-diagnostics
 | Dynamic shape | sequential flat groups; ragged nested groups with nested var-data |
 | Wire configuration | little-endian, big-endian, custom header |
 | Evolution | acting version 0 and current version 1 |
-| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `nth`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
+| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `entry_at`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
 
 The timed encode paths reuse caller-owned buffers. Metadata lookup is the
 generated static `(schema_id, template_id)` match and is also protected by the
@@ -342,17 +362,68 @@ no mandatory aligned-buffer or pooling API.
 
 ### Amplified timing diagnostic (`instruction_counts`)
 
-`instruction_counts` is an amplified Criterion timing harness, not a Valgrind or
-Iai-Callgrind instruction counter. Iai-Callgrind was removed (HFT-005) because
-it pulled in the unmaintained `proc-macro-error2` crate. Each operation is
-repeated `ACCESS_REPETITIONS` times inside a single Criterion iteration to
-amplify sub-nanosecond differences. Results are wall-clock estimates, not
-stable instruction counts — use `perf`, `samply`, or iai-callgrind (on Linux)
-when deterministic instruction evidence is needed.
+`instruction_counts` is an amplified Criterion **timing** harness. Each
+operation is repeated `ACCESS_REPETITIONS` times inside a single Criterion
+iteration to amplify sub-nanosecond differences. Its results are wall-clock
+estimates, not instruction counts, and it is not the instruction lane:
 
 ```sh
-just bench-instructions
+cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
 ```
+
+### Instruction and disassembly evidence (`perf-probe`)
+
+Deterministic mechanism-level evidence comes from the `perf-probe` binary and
+its driver script, not from Criterion:
+
+```sh
+./scripts/run-sbe-instruction-probes.sh --all-profiles      # or `just bench-instructions`
+./scripts/run-sbe-instruction-probes.sh --profile lto --probe ergo_probe_decode_composite
+./scripts/run-sbe-instruction-probes.sh --all-profiles --topic decode
+```
+
+Each probe is a named, `#[inline(never)]`, unmangled wrapper performing exactly
+10,000 opaque logical operations and returning an observed checksum. Setup and
+validation happen in `main`, before the probe is entered, so
+`--toggle-collect=<symbol>` excludes them. The driver:
+
+- builds distinct LTO and no-LTO artifacts;
+- invokes system Valgrind directly
+  (`--tool=callgrind --collect-atstart=no --toggle-collect=<symbol> --branch-sim=yes`);
+- normalises instructions, branches, and mispredicts **per operation**;
+- disassembles that exact binary with `llvm-objdump --disassemble --demangle`;
+- records commit, rustc, target, Valgrind version, profile, run id, symbol,
+  operation count, and checksum in a per-probe JSON summary.
+
+The registry in `sbe/benchmarks/src/bin/perf_probe.rs` is the manifest;
+`sbe/benchmarks/probes.tsv` is its checked-in copy. An unknown, duplicate, or
+unregistered probe name fails closed, as does any drift between the two. Each probe declares a
+coarse `topic` (`decode`, `encode`); `--topic NAME` runs just that set.
+
+The lane requires a Linux host with Valgrind and `llvm-objdump`. It **fails
+closed** elsewhere rather than degrading to a timing harness: a PERF claim
+without Callgrind output and disassembly is not evidence. There is deliberately
+no `iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173 and must
+not return.
+
+### Reproducing the sbe-tool comparators
+
+The benchmarks measure against two single-file sbe-tool modules,
+`sbe/benchmarks/src/sbe_tool_car_patched.rs` and `sbe_tool_ob_patched.rs`. They
+are regenerated from the pinned `simple-binary-encoding` submodule:
+
+```sh
+./scripts/regenerate-sbe-benchmark-reference.sh          # rewrite
+./scripts/regenerate-sbe-benchmark-reference.sh --check  # verify, no tracked writes
+```
+
+The script verifies the pinned upstream commit and tool version, generates into
+a temporary directory, applies the documented deterministic patches, normalises
+only the documented nondeterministic formatting, and records a provenance
+manifest (`sbe-tool-comparator-provenance.json`) holding the upstream commit,
+tool version, and schema/output hashes. The separate
+`scripts/regenerate-sbe-tool-reference.sh` regenerates the *wire-parity test*
+crates; it is not comparator evidence.
 
 ### Warmed latency distributions
 
@@ -394,18 +465,19 @@ Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
   does not use noisy wall-clock ratios as a merge gate. A suspicious shared-runner
   result triggers a stable-runner rerun and fairness review.
 - A dedicated stable runner, when configured, must reject a hot-path Criterion
-  regression-estimate increase above 3%, an Iai instruction-count regression
-  above 2%, any new allocation, or a warmed batch/cluster p99 regression above
-  5%.
+  regression-estimate increase above 3%, a normalised instruction-count
+  regression above 2% from `scripts/run-sbe-instruction-probes.sh`, any new
+  allocation, or a warmed batch/cluster p99 regression above 5%.
 - Criterion's regression estimate and confidence interval are the maintained
   microbenchmark estimator. HDR p50/p99/p99.9 applies only to warmed batch and
   Aeron/cluster end-to-end measurements.
 
 The expanded Criterion matrix, alignment, cold-path, and HDR suites were
-executed on 2026-07-27 with rustc 1.95.0. Iai-Callgrind is compile-validated
-but was not executed on this macOS host because Valgrind is unavailable.
-Machine-specific observations belong in CI artifacts or a release record;
-they are not portable API promises.
+executed on 2026-07-27 with rustc 1.95.0. The instruction-probe lane needs
+Linux and Valgrind, so it does not run on a macOS development host — it fails
+closed there rather than reporting a substitute measurement. Machine-specific
+observations belong in CI artifacts or a release record; they are not portable
+API promises.
 
 ## Cluster codec gate
 

@@ -1,6 +1,107 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.13] — 2026-08-07
+
+### Breaking
+- **`SbeMessage` is a sealed trait.** Only types emitted by
+  `ergo_sbe::Generator` can implement it — the supertrait lives in a private
+  generated module. Hand-rolled `impl SbeMessage for MyType` no longer compiles;
+  use the generated decoder/encoder types.
+- **Staged `EncodedLength` types are named for the stage just completed**, not
+  the next one, matching the encoder's `{Msg}After{Element}` convention.
+  `CarEncodedLength::fuel_figures_ragged(…)` now returns
+  `CarEncodedLengthAfterFuelFigures` (was `…AfterPerformanceFigures`). The
+  chain and the type count are unchanged; only the names shift by one. These
+  types are `#[doc(hidden)]` and reached by chaining, so code that never names
+  a stage explicitly is unaffected.
+- **Generated group decoders no longer expose `wrap_with_parent`.** It was an
+  `unsafe` constructor that only the generated tail stages can call correctly;
+  it is now private. Use `wrap` / the group accessor on the parent stage.
+- **Safe constructors prove fixed extent.** Bare `wrap` / `wrap_and_apply_header`
+  / `decode` run the same header+fixed-body proof as `try_*` and **panic** if
+  short. Field accessors remain unchecked after that proof. Only
+  `unsafe fn *_unchecked` skips the proof (UB on OOB). `AnyMessage::decode`
+  matches `try_decode` (no longer uses unchecked header reads in safe code).
+- **`From<BooleanType> for bool` removed.** Use `as_bool()` / `try_*_bool` /
+  `TryFrom` — `NullVal` is not a Rust `bool`.
+- **`EncodeError::BufferTooShort` carries `field`.** Exhaustive matches need
+  the new field (or `..`).
+- **`DomainConversionFailed` carries `reason`.** Bool null/unknown uses
+  `InvalidBoolean` instead.
+- **`MessageVisitor::visit_unknown` has no panicking default** — implementors
+  must handle unknown templates.
+- Encoder **and decoder** metadata on messages with tails: complete-sounding
+  `as_bytes_with_header` replaced by `as_fixed_region_with_header` /
+  `as_fixed_body_bytes` on the metadata facet (fixed block only). Complete
+  stages and decoder inherent tail-rescan helpers keep full-frame names.
+
+### Added
+- **`add_checked` — group entries proven complete at compile time.** The
+  closure takes the entry encoder by value and must return the entry's
+  `{Group}EntryComplete`, a type reachable only by writing every required tail
+  in wire order. An entry that skips, reorders, or repeats a tail fails to
+  compile instead of emitting a short entry at run time. Flat entries reach it
+  through `EntryEncoder::complete()`. `add` stays for entries checked
+  elsewhere.
+- **Group decoders poison themselves on a malformed entry.** A dynamic-entry
+  group that hits a bad entry can neither yield another entry nor construct a
+  later message stage, so a truncated tail cannot be mistaken for a short
+  group. Fixed-stride groups keep a constant proven stride and carry no poison
+  state or extra field.
+- **`DomainVarData::Strings`** replaces `LossyStrings` (strict UTF-8; same
+  behaviour as 0.1.10+).
+- Restored `docs/SBE_COMPATIBILITY.md`.
+- `#[inline]` on `bulk_decode`, staged `finish_empty` / ragged length builders,
+  domain DTO thin methods, `AnyMessage::visit`, staged `EncodedLength`
+  transitions / complete length getters, EncodedLength zero-count group
+  forwarders, and `try_from_slice_with_header`.
+- `Error::source` on `EncodeError::Decode` and `VerifyError::DecodeError`.
+- `#[must_use]` on message/consuming decoder stage structs and on EncodedLength
+  After/Complete stages (`length builder must be completed`).
+- Reserved ⊆ emitted enforcement test; crate README + feature-matrix placement
+  metadata row; group vs metadata `remaining()` table; dual
+  `acting_version` docs; expanded `into_remaining_mut` / group `remaining`
+  rustdoc.
+- Documented `ItemContext` hook fields; `acting_version` / `acting_block_length`
+  on decoders and consuming stages; metadata
+  `message_offset` / `limit` / `buffer` / `remaining`; field-level error
+  variant rustdoc; book guidance for `apply_nulls`, claim sizing, decode
+  stages (`finish` / `skip_remaining` / must_use), metadata limits, FixedFields
+  (no Default), hybrid bare `decode`, and parity-gate artifact archiving.
+
+### Fixed
+- Encoder metadata `message_offset` / `limit` / `buffer` are `const fn` again;
+  moving them onto the metadata facet had dropped the qualifier.
+- A `presence="constant"` field no longer counts toward the readable fixed
+  extent. Constants carry no wire bytes, so a message whose fields are all
+  constant encodes to a bare header — and the decoder used to reject the frame
+  its own encoder had just produced. A group with a tail masked this, so it
+  only showed on a tail-free message.
+- Aeron `try_claim` recipe rewritten against the real API — the previous
+  snippets mixed `usize` and `i32` for the same binding, called a
+  `buffer_mut()` that does not exist, imported generated codecs from
+  `ergo_sbe`, and hand-rolled an 8-byte framing prefix that the claimed region
+  already excludes.
+- Truncated `# Safety` docs and garbled group-encode rustdoc.
+- Trust-boundary docs/README aligned to three-tier constructors; bare
+  `decode` / `decode_unchecked` rustdoc describe the hybrid identity+extent
+  contract.
+- `decode_unchecked` uses unchecked header reads as documented.
+- Generic encode `BufferTooShort` labels now use group-field names.
+- Keep-matrix times three constructor tiers (try / bare / unchecked).
+- Narrower generated `#[allow]` list (no blanket `unused_unsafe` /
+  `unused_imports` / `needless_borrow`); remaining allows documented in codegen.
+- Bare decoder `wrap` uses a direct extent check (no `Result` on the success
+  path), matching encoder bare wrap; cold panics use static strings.
+- Deduped encoder/decoder reserved method-name lists into a single source of
+  truth (`codegen/conversion_helpers.rs`). Placement utils (`remaining` /
+  `buffer` / `limit` / `message_offset` / fixed-block-only `as_fixed_*`) are
+  **only** on `get_metadata()` and are **not** reserved field renames — schema
+  fields may use those names without a `_field` suffix. Migrate
+  `dec.remaining()` → `dec.get_metadata().remaining()`. Stale reserved entry
+  `header` (never emitted) removed.
+- Bench fairness: batch decode arm uses `wrap_unchecked` to match sbe-tool's
+  zero-check wrap (equal work).
 
 ## [0.1.12] — 2026-08-04
 
@@ -98,10 +199,10 @@ Breaking dual-lane soundness release. See `docs/MIGRATION_0_1_TO_0_1_10.md` and
 
 ### Added
 - `docs/SBE_COMPATIBILITY.md`, `docs/MIGRATION_0_1_TO_0_1_10.md`
-- `hft_001_soundness_test` hostile/safe-constructor gates
-- `GenerationProfile::{Full, HftLean}` preset (`GenerationConfig::profile`)
-- HFT-006 typestate compile-fail + size_of/Send budgets; HFT-008 checked/unchecked
-  identity + keep-sample harness; HFT-009 lean profile matrix tests
+- `soundness_hostile_constructors_test` hostile/safe-constructor gates
+- `GenerationProfile::{Full, Lean}` preset (`GenerationConfig::profile`)
+- Typestate compile-fail + size_of/Send budgets; checked/unchecked
+  identity + keep-sample harness; lean profile matrix tests
 - Book: type-state design note, API freeze decisions, Coming from sbe-tool,
   Road to 1.0, generated-code showcase, benchmarks methodology split
 - Crate READMEs and crate-level rustdoc link the ergo-sbe book (visible on docs.rs)

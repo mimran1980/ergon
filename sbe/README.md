@@ -5,9 +5,12 @@
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
 [![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
-`ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
-wire-order enforcement, closure-based groups, exact buffer sizing, and zero
-heap allocation on hot paths.
+`ergo-sbe` generates Rust SBE codecs with compile-time wire-order enforcement,
+closure-based groups, exact buffer sizing, and zero heap allocation on hot
+paths. Wire compatibility with official SBE is claimed for the shapes the
+dual-encode parity suite exercises — see the normative
+[compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— not as an unqualified "implements every SBE edge case".
 
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
@@ -30,9 +33,14 @@ guide for ergo-sbe (also linked from this crate on
 [`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
 — do not claim unqualified “SBE binary compatibility.”
 
-**0.1 → 0.1.10 migration:**
-[`docs/MIGRATION_0_1_TO_0_1_10.md`](https://github.com/mimran1980/ergon/blob/main/docs/MIGRATION_0_1_TO_0_1_10.md)
-— fallible `wrap` / `decode`, `try_wrap*` removed; private `*_unchecked` cores until HFT-008 keep.
+**Constructors:** book [Trust Boundary](https://mimran1980.github.io/ergon/sbe/core-concepts/trust-boundary.html)
+— three tiers: `try_*` (Result), bare names (panic if short), `unsafe *_unchecked`.
+
+**Placement utils:** buffer positions (`remaining` / `buffer` / `limit` /
+`message_offset`) live on `dec.get_metadata()`, not the decoder type — migrate
+`dec.remaining()` → `dec.get_metadata().remaining()`. A schema field named
+`remaining` keeps the natural accessor `dec.remaining()`. See book
+[Generated code — metadata](https://mimran1980.github.io/ergon/sbe/feature-tour/generated-code.html).
 
 ## Quick Example
 
@@ -61,8 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .generate(&schema)?;
     // In a real project you'd use a build script.
     // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
-    // Checked encode (0.1.10): MessageEncoder::wrap_and_apply_header(buf, 0)?
-    // Public zero-check twins ship only after HFT-008 keep=true evidence.
+    // Checked encode: MessageEncoder::try_wrap_and_apply_header(buf, 0)?
+    // Trusted (panic if short): wrap_and_apply_header; unsafe: *_unchecked.
     let _ = modules;
     Ok(())
 }

@@ -6,9 +6,11 @@
 //!    overlays: `#[repr(transparent)] pub struct Engine(pub [u8; N])`.
 //! 2. Member accessors use explicit `from_le_bytes` / `to_le_bytes` at schema
 //!    offsets (portable; on LE hosts LLVM lowers these to plain loads).
-//! 3. Default decoder path is a **flyweight** (`EngineDecoder { buf, pos }`) —
-//!    zero-copy into the message buffer. `engine_value()` is an eager copy of
-//!    the `N`-byte wire image.
+//! 3. Default decoder path is a **flyweight** (`EngineDecoder { buf, base_addr }`)
+//!    — zero-copy into the message buffer. `base_addr` caches the composite
+//!    body address once at construction so every member accessor is a single
+//!    struct load + immediate-offset wire load. `engine_value()` is an eager
+//!    copy of the `N`-byte wire image.
 //! 4. We intentionally do **not** transmute the buffer to a padded `repr(C)`
 //!    struct: SBE is packed (no Rust alignment padding), fields may be
 //!    unaligned, and big-endian schemas must keep working.
@@ -51,8 +53,8 @@ fn composite_is_transparent_wire_image_not_repr_c_fields() -> Result<(), Box<dyn
     assert!(
         src.contains("pub struct EngineDecoder")
             && src.contains("buf: &'a [u8]")
-            && src.contains("pos: usize"),
-        "flyweight EngineDecoder {{ buf, pos }} must be generated"
+            && src.contains("base_addr: usize"),
+        "flyweight EngineDecoder {{ buf, base_addr }} must be generated"
     );
     Ok(())
 }
@@ -72,7 +74,7 @@ fn composite_flyweight_accessors_use_trusted_reads() -> Result<(), Box<dyn std::
     let engine_decoder = &decoder_and_rest[..end];
 
     assert!(
-        engine_decoder.contains("read_bytes"),
+        engine_decoder.contains("read_addr_unchecked"),
         "fixed-width EngineDecoder accessors must use trusted reads"
     );
     Ok(())

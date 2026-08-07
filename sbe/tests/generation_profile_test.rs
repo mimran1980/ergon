@@ -1,4 +1,4 @@
-//! HFT-009: GenerationProfile::HftLean vs Full feature matrix + core consumer.
+//! GenerationProfile::Lean vs Full feature matrix + core consumer.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;
@@ -20,21 +20,21 @@ fn generate_with(
 }
 
 #[test]
-fn hft_lean_omits_display_meta_and_dispatch() -> Result<(), Box<dyn Error>> {
-    let lean = generate_with(&Paths::example_schema(), "hft9_lean", |c| {
-        c.profile(GenerationProfile::HftLean)
+fn lean_omits_display_meta_and_dispatch() -> Result<(), Box<dyn Error>> {
+    let lean = generate_with(&Paths::example_schema(), "prof_lean", |c| {
+        c.profile(GenerationProfile::Lean)
     })?;
     assert!(
         !lean.contains("core::fmt::Display for CarDecoder"),
-        "HftLean must omit Display"
+        "Lean must omit Display"
     );
     assert!(
         !lean.contains("enum AnyMessage"),
-        "HftLean must omit AnyMessage dispatch"
+        "Lean must omit AnyMessage dispatch"
     );
     assert!(
         !lean.contains("fn serial_number_id") && !lean.contains("SERIAL_NUMBER_ID"),
-        "HftLean must omit field meta constants (id/offset)"
+        "Lean must omit field meta constants (id/offset)"
     );
     // Still has the hot path surface.
     assert!(lean.contains("pub fn wrap_and_apply_header"));
@@ -45,7 +45,7 @@ fn hft_lean_omits_display_meta_and_dispatch() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn full_profile_includes_display_and_dispatch() -> Result<(), Box<dyn Error>> {
-    let full = generate_with(&Paths::example_schema(), "hft9_full", |c| {
+    let full = generate_with(&Paths::example_schema(), "prof_full", |c| {
         c.profile(GenerationProfile::Full)
     })?;
     assert!(
@@ -61,11 +61,11 @@ fn full_profile_includes_display_and_dispatch() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn hft_lean_is_smaller_than_full() -> Result<(), Box<dyn Error>> {
-    let lean = generate_with(&Paths::example_schema(), "hft9_sz_lean", |c| {
-        c.profile(GenerationProfile::HftLean)
+fn lean_is_smaller_than_full() -> Result<(), Box<dyn Error>> {
+    let lean = generate_with(&Paths::example_schema(), "prof_sz_lean", |c| {
+        c.profile(GenerationProfile::Lean)
     })?;
-    let full = generate_with(&Paths::example_schema(), "hft9_sz_full", |c| {
+    let full = generate_with(&Paths::example_schema(), "prof_sz_full", |c| {
         c.profile(GenerationProfile::Full)
     })?;
     assert!(
@@ -78,19 +78,19 @@ fn hft_lean_is_smaller_than_full() -> Result<(), Box<dyn Error>> {
     let ratio = lean.len() as f64 / full.len() as f64;
     assert!(
         ratio < 0.95,
-        "expected HftLean < 95% of Full size, got ratio {ratio:.3}"
+        "expected Lean < 95% of Full size, got ratio {ratio:.3}"
     );
     Ok(())
 }
 
-/// Core-only consumer: HftLean Car encodes/decodes without Display/dispatch.
+/// Core-only consumer: Lean Car encodes/decodes without Display/dispatch.
 #[test]
-fn hft_lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
-    let src = generate_with(&Paths::example_schema(), "hft9_core", |c| {
-        c.profile(GenerationProfile::HftLean)
+fn lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
+    let src = generate_with(&Paths::example_schema(), "prof_core", |c| {
+        c.profile(GenerationProfile::Lean)
     })?;
     compile_and_run(
-        "hft9_core",
+        "prof_core",
         &src,
         r#"
         let mut buf = [0u8; 512];
@@ -121,21 +121,21 @@ fn hft_lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
         let dec = CarDecoder::try_decode(&buf[..len], 0).unwrap();
         assert_eq!(dec.serial_number(), 42);
         assert_eq!(dec.model_year(), 2018);
-        // AnyMessage must not exist in HftLean — ensure we didn't need it.
+        // AnyMessage must not exist in Lean — ensure we didn't need it.
     "#,
     );
     Ok(())
 }
 
-/// Profile + knob override: HftLean then re-enable dispatch only.
+/// Profile + knob override: Lean then re-enable dispatch only.
 #[test]
 fn profile_then_override_dispatch() -> Result<(), Box<dyn Error>> {
-    let src = generate_with(&Paths::example_schema(), "hft9_ov", |c| {
-        c.profile(GenerationProfile::HftLean).with_dispatch(true)
+    let src = generate_with(&Paths::example_schema(), "prof_ov", |c| {
+        c.profile(GenerationProfile::Lean).with_dispatch(true)
     })?;
     assert!(
         src.contains("enum AnyMessage") || src.contains("pub enum AnyMessage"),
-        "with_dispatch(true) after HftLean must restore AnyMessage"
+        "with_dispatch(true) after Lean must restore AnyMessage"
     );
     assert!(
         !src.contains("core::fmt::Display for CarDecoder")

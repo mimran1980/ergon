@@ -170,15 +170,18 @@ fn boolean_field_from_bool_impl() -> Result<(), Box<dyn std::error::Error>> {
         "bool_impl",
         &src,
         r#"
-        // BooleanType has From<bool> and From<BooleanType> for bool
+        // BooleanType has From<bool> and TryFrom for bool (NullVal is not a bool)
         let t: BooleanType = true.into();
         assert_eq!(t, BooleanType::T);
         let f: BooleanType = false.into();
         assert_eq!(f, BooleanType::F);
-        let b: bool = BooleanType::T.into();
+        let b: bool = BooleanType::T.try_into().unwrap();
         assert!(b);
-        let b2: bool = BooleanType::F.into();
+        let b2: bool = BooleanType::F.try_into().unwrap();
         assert!(!b2);
+        assert!(bool::try_from(BooleanType::NullVal).is_err());
+        assert_eq!(BooleanType::T.as_bool(), Some(true));
+        assert_eq!(BooleanType::NullVal.as_bool(), None);
     "#,
     );
 

@@ -159,7 +159,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Task 9 gate: zero allocations around the warmed real claim path —
+/// Zero allocations around the warmed real claim path —
 /// `try_claim_owned` + direct encode + commit — not just Vec encoding.
 #[test]
 fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {

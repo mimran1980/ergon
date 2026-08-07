@@ -90,21 +90,19 @@ impl ConversionSelector {
 /// | Variant | DTO field | Invalid UTF-8 on materialise |
 /// |---------|-----------|------------------------------|
 /// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **`InvalidUtf8` error** (0.1.10; never invents empty) |
-///
-/// Name historical; 0.1.10 materialisation is strict (HFT-003).
+/// | [`Strings`](DomainVarData::Strings) | `String` | **`InvalidUtf8` error** (strict; never invents empty) |
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
     #[default]
     Bytes,
     /// Text-friendly var-data (`String`). Invalid UTF-8 returns
-    /// `DecodeError::InvalidUtf8` (strict; HFT-003). Prefer
+    /// `DecodeError::InvalidUtf8` (strict). Prefer
     /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
-    LossyStrings,
+    Strings,
 }
 
-/// Generated-code surface presets (HFT-009).
+/// Generated-code surface presets.
 ///
 /// Individual knobs (`with_display_debug`, …) still override after
 /// [`GenerationConfig::profile`].
@@ -117,7 +115,7 @@ pub enum GenerationProfile {
     /// Byte codec + typed stages + exact sizing only. Omits Display/Debug,
     /// meta-attribute constants, and `AnyMessage`/`FrameCursor` dispatch.
     /// Domain DTOs and conversions stay off unless re-enabled explicitly.
-    HftLean,
+    Lean,
 }
 
 // ── Hook types ────────────────────────────────────────────────────────────
@@ -205,42 +203,71 @@ pub struct FieldInfo {
 /// hook body to return tokens appended after the generated item.
 // manual Debug/Clone because &Schema in every variant makes derive unhappy
 #[derive(Clone)]
-#[allow(missing_docs)]
 pub enum ItemContext<'a> {
+    /// An SBE enum after codegen of its Rust type.
     Enum {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Enum type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Variants in schema order.
         variants: Vec<EnumVariantInfo>,
     },
+    /// An SBE bitset after codegen.
     Set {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Set type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Bit choices in schema order.
         choices: Vec<SetChoiceInfo>,
     },
+    /// An SBE composite after codegen.
     Composite {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Composite type name (PascalCase).
         name: String,
+        /// Member fields in wire order.
         fields: Vec<FieldInfo>,
     },
+    /// A message decoder flyweight.
     MessageDecoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// A message encoder stage root.
     MessageEncoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// An owned domain DTO (`*Domain`) when domain objects are enabled.
     DomainStruct {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// DTO type name (PascalCase).
         name: String,
+        /// Fields on the DTO (including groups/var-data as owned types).
         fields: Vec<FieldInfo>,
     },
 }
@@ -298,7 +325,7 @@ impl Hooks {
 /// use ergo_sbe::{DomainVarData, GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
-///     .with_domain_objects(DomainVarData::LossyStrings)
+///     .with_domain_objects(DomainVarData::Strings)
 ///     .with_domain_type(
 ///         ConversionSelector::named_type("Decimal"),
 ///         "rust_decimal::Decimal",
@@ -309,7 +336,7 @@ pub struct GenerationConfig {
     pub(crate) module_name: String,
     /// Sibling module that already owns shared types (multi-schema mode).
     pub(crate) shared_module: Option<String>,
-    /// Emit owned `*Domain` structs + `From<Decoder>` / `encode`.
+    /// Emit owned `*Domain` structs + `TryFrom<&Decoder>` / `encode`.
     pub(crate) domain_objects: bool,
     /// Var-data shape on DTOs when `domain_objects` is set.
     pub(crate) domain_var_data: DomainVarData,
@@ -520,12 +547,12 @@ impl GenerationConfig {
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
     /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
-    /// | [`DomainVarData::LossyStrings`] | `String` | `InvalidUtf8` error (strict; HFT-003) |
+    /// | [`DomainVarData::Strings`] | `String` | `InvalidUtf8` error (strict) |
     ///
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};
     /// let text = GenerationConfig::new("msgs")
-    ///     .with_domain_objects(DomainVarData::LossyStrings);
+    ///     .with_domain_objects(DomainVarData::Strings);
     /// let bytes = GenerationConfig::new("msgs")
     ///     .with_domain_objects(DomainVarData::Bytes);
     /// let _ = (text, bytes);
@@ -533,7 +560,7 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// `DomainVarData::LossyStrings` → `manufacturer: String`.
+    /// `DomainVarData::Strings` → `manufacturer: String`.
     /// `DomainVarData::Bytes` → `manufacturer: Vec<u8>`.
     ///
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
@@ -620,19 +647,19 @@ impl GenerationConfig {
         self
     }
 
-    /// Apply a product profile that sets the size knobs together (HFT-009).
+    /// Apply a product profile that sets the size knobs together.
     ///
     /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
     /// |---------|---------------|------------|----------|----------------|
     /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
-    /// | [`GenerationProfile::HftLean`] | off | off | off | forced off |
+    /// | [`GenerationProfile::Lean`] | off | off | off | forced off |
     ///
     /// Chain further `with_*` calls after `profile` to override individual
     /// knobs. Example:
     ///
     /// ```rust
     /// use ergo_sbe::{GenerationConfig, GenerationProfile};
-    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::HftLean);
+    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::Lean);
     /// ```
     #[must_use]
     pub fn profile(mut self, profile: GenerationProfile) -> Self {
@@ -642,7 +669,7 @@ impl GenerationConfig {
                 self.enable_meta_attributes = true;
                 self.enable_dispatch = true;
             }
-            GenerationProfile::HftLean => {
+            GenerationProfile::Lean => {
                 self.enable_display_debug = false;
                 self.enable_meta_attributes = false;
                 self.enable_dispatch = false;
@@ -736,8 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_hft_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn profile_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>> {
         let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
         assert!(full.enable_display_debug);
         assert!(full.enable_meta_attributes);
@@ -746,7 +772,7 @@ mod tests {
         let lean = GenerationConfig::new("m")
             .with_domain_objects(DomainVarData::Bytes)
             .with_conversion(ConversionSelector::named_type("Decimal"))
-            .profile(GenerationProfile::HftLean);
+            .profile(GenerationProfile::Lean);
         assert!(!lean.enable_display_debug);
         assert!(!lean.enable_meta_attributes);
         assert!(!lean.enable_dispatch);
@@ -756,7 +782,7 @@ mod tests {
 
         // Later overrides still win.
         let override_dispatch = GenerationConfig::new("m")
-            .profile(GenerationProfile::HftLean)
+            .profile(GenerationProfile::Lean)
             .with_dispatch(true);
         assert!(override_dispatch.enable_dispatch);
         Ok(())
@@ -821,9 +847,9 @@ mod tests {
 
     #[test]
     fn with_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
-        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::LossyStrings);
+        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::Strings);
         assert!(text.domain_objects_enabled());
-        assert_eq!(text.domain_var_data, DomainVarData::LossyStrings);
+        assert_eq!(text.domain_var_data, DomainVarData::Strings);
         let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);

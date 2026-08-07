@@ -69,6 +69,82 @@ pub(crate) fn presence_str(p: Presence) -> &'static str {
     }
 }
 
+/// Inherent methods on the **message decoder** that force a `_field` rename.
+///
+/// Placement utilities (`remaining`, `buffer`, `limit`, `message_offset`, and
+/// metadata-only byte views such as `as_fixed_*`) live **only** on
+/// `{Name}DecoderMetadata` via `get_metadata()` and are intentionally **absent**
+/// from this list — schema fields may use those names without rename.
+///
+/// Keep in sync with emitted inherent methods in `message_decoder.rs`.
+/// Single source of truth for decoder field rename + Display accessor naming.
+pub(crate) const DECODER_RESERVED: &[&str] = &[
+    "get_metadata",
+    "wrap",
+    "try_wrap",
+    "wrap_unchecked",
+    "decode",
+    "try_decode",
+    "decode_unchecked",
+    "min_readable_fixed_extent",
+    "encoded_length",
+    "encoded_length_with_header",
+    // Full-frame inherent rescan (not the fixed-block-only metadata views).
+    "as_body_bytes",
+    "as_bytes_with_header",
+    "verify",
+    "after_this_message",
+    "acting_version",
+    "acting_block_length",
+    // Consuming stage transition (self → Self) when the message has tails.
+    "rewind",
+];
+
+/// Inherent methods on the **message encoder** that force a `_field` rename.
+///
+/// Placement utilities (`message_offset` / `limit` / `buffer` / metadata byte
+/// views) live **only** on `{Name}EncoderMetadata` via `get_metadata()` and are
+/// intentionally **absent** from this list.
+///
+/// Keep in sync with emitted inherent methods in `message_encoder.rs`.
+pub(crate) const ENCODER_RESERVED: &[&str] = &[
+    "get_metadata",
+    "wrap",
+    "try_wrap",
+    "wrap_unchecked",
+    "wrap_and_apply_header",
+    "try_wrap_and_apply_header",
+    "wrap_and_apply_header_unchecked",
+    "wrap_into_claim",
+    "compute_length",
+    "compute_length_with_header",
+    // Complete-stage inherent methods emitted on the encoder struct.
+    "as_body_bytes",
+    "as_bytes_with_header",
+    "into_remaining_mut",
+    "encoded_length",
+    "encoded_length_with_header",
+    // Emitted when the message has optional fields.
+    "apply_nulls",
+    // Stage transitions taking `self`.
+    "fixed",
+    "raw_fixed",
+    // Associated cold error helper (inherent namespace collision).
+    "buffer_too_short",
+];
+
+/// Placement utility names that live only on `get_metadata()` facets.
+/// Must never appear in [`DECODER_RESERVED`] / [`ENCODER_RESERVED`].
+#[cfg(test)]
+pub(crate) const PLACEMENT_NOT_RESERVED: &[&str] = &[
+    "remaining",
+    "buffer",
+    "limit",
+    "message_offset",
+    "as_fixed_body_bytes",
+    "as_fixed_region_with_header",
+];
+
 /// Resolve a field accessor name, appending `_field` when it clashes
 /// with a reserved method name on the decoder/encoder.
 pub(crate) fn resolve_field_ident(
@@ -80,7 +156,7 @@ pub(crate) fn resolve_field_ident(
     let resolved: &str = match () {
         _ if wire_name.is_some() => method_name,
         _ if reserved.contains(&snake_name) => {
-            // ponytail: allocate only on collision (rare, build-time only).
+            // Allocate only on collision (rare, build-time only).
             Box::leak(format!("{snake_name}_field").into_boxed_str())
         }
         _ => snake_name,
@@ -165,7 +241,7 @@ pub(crate) fn find_domain_type<'a>(
 /// Encoder setter name used by domain DTOs.
 ///
 /// - Conversion-only (no domain type): flyweight is `*_wire`.
-/// - Concrete domain type (HFT-003): fallible `try_*` setter.
+/// - Concrete domain type: fallible `try_*` setter.
 /// - Otherwise: bare field name.
 pub(crate) fn domain_encode_setter_name(
     field: &MessageField,
@@ -179,5 +255,41 @@ pub(crate) fn domain_encode_setter_name(
         format!("{field_snake}_wire")
     } else {
         field_snake.to_string()
+    }
+}
+
+#[cfg(test)]
+mod reserved_list_tests {
+    use super::*;
+
+    #[test]
+    fn placement_names_are_not_reserved() {
+        for name in PLACEMENT_NOT_RESERVED {
+            assert!(
+                !DECODER_RESERVED.contains(name),
+                "placement util `{name}` must not be in DECODER_RESERVED — it lives on get_metadata()"
+            );
+            assert!(
+                !ENCODER_RESERVED.contains(name),
+                "placement util `{name}` must not be in ENCODER_RESERVED — it lives on get_metadata()"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_lists_have_no_duplicates() {
+        for (label, list) in [
+            ("DECODER_RESERVED", DECODER_RESERVED),
+            ("ENCODER_RESERVED", ENCODER_RESERVED),
+        ] {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut dups = Vec::new();
+            for n in list {
+                if !seen.insert(*n) {
+                    dups.push(*n);
+                }
+            }
+            assert!(dups.is_empty(), "{label} has duplicates: {dups:?}");
+        }
     }
 }

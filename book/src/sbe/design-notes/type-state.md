@@ -1,6 +1,6 @@
 # Type-state is zero-cost (and the hybrid design)
 
-## The question every HFT evaluator asks
+## The question evaluators often ask
 
 > Did compile-time wire-order enforcement cost anything on the hot path?
 

@@ -15,7 +15,7 @@ use exchange_example::normalized_app::{
 use rusteron_client::cformat;
 
 /// The embedded media driver aborts when several launch concurrently in one
-/// process — serialise it (plan Task 11: real singleton resources only).
+/// process — serialise it (real singleton resources only).
 static DRIVER_LOCK: Mutex<()> = Mutex::new(());
 
 /// Per-test expectations carried through the poll context.

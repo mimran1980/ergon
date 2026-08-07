@@ -187,7 +187,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
 
     // Tail components in wire order: asks -> bids -> symbol. The consuming
-    // stages enforce this order (DECISIONS.md §3/§10); symbol is read last.
+    // Stages enforce this order; symbol is read last.
     let mut asks = decoder.into_asks().expect("asks group decode");
     let mut ask_prices = Vec::new();
     while let Some(e) = asks.next() {
@@ -239,9 +239,6 @@ fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// Encoder buffer-too-short test removed: encoder is infallible (panics on OOB
-// via slice indexing, matching Aeron). Decoder validates (returns Result).
 
 // ── Binance: ServerTimeResponse (template 102) ────────────────────────────
 
@@ -917,7 +914,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-// ── Task 10: AppMessage/L2Book/Trade roundtrip ─────────────────────────
+// ── AppMessage / L2Book / Trade roundtrip ─────────────────────────────
 
 #[test]
 fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {

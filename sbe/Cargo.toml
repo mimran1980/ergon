@@ -81,22 +81,22 @@ name = "sbe_tool_wire_parity_test"
 name = "sbe_tool_multi_schema_wire_parity_test"
 
 [[test]]
-name = "hft_001_soundness_test"
+name = "soundness_hostile_constructors_test"
 
 [[test]]
-name = "hft_stale_interface_test"
+name = "stale_interface_test"
 
 [[test]]
-name = "hft_006_typestate_budgets_test"
+name = "typestate_budgets_test"
 
 [[test]]
-name = "hft_008_checked_unchecked_test"
+name = "checked_unchecked_parity_test"
 
 [[test]]
-name = "hft_009_profile_test"
+name = "generation_profile_test"
 
 [[test]]
-name = "hft_005_warning_free_consumer_test"
+name = "warning_free_consumer_test"
 
 [[test]]
 name = "fix_sbe_conformance_test"

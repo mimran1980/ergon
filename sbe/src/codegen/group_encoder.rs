@@ -75,6 +75,28 @@ pub(crate) fn generate_group_encoder(
     let span = proc_macro2::Span::call_site();
     let group_enc_ident = syn::Ident::new(&format!("{}Encoder", name), span);
     let entry_enc_ident = syn::Ident::new(&format!("{}EntryEncoder", name), span);
+    let entry_complete_ident = syn::Ident::new(&format!("{}EntryComplete", name), span);
+    // Built with `format!` rather than `///`: a doc comment inside `quote!` is
+    // already a string literal by the time interpolation runs, so `#ident`
+    // inside one would be emitted verbatim instead of the type's real name.
+    let add_checked_doc = format!(
+        "Write one group entry, proving completeness in the type system.\n\n\
+         The closure takes the entry encoder **by value** and must return \
+         `{entry_complete_ident}` — reachable only by writing every required \
+         tail in wire order. An entry that skips, reorders, or repeats a tail \
+         cannot produce that type, so it fails to compile rather than \
+         producing a short entry at run time.\n\n\
+         [`Self::add`] stays available for entries whose tails are already \
+         checked elsewhere.",
+    );
+    // `add_checked` lives on the *group* encoder, so `Self::` would not resolve
+    // from the entry encoder this doc is attached to.
+    let complete_doc = format!(
+        "Finish a flat entry, producing the `{entry_complete_ident}` that \
+         [`{group_enc_ident}::add_checked`] requires.\n\n\
+         Only for entries with no required tails — an entry that has them \
+         reaches this type through its last tail method instead."
+    );
     let block_len_lit = syn::LitInt::new(&group_block_length.to_string(), span);
     let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
     let dim_bytes: Vec<syn::LitInt> = dim_tpl
@@ -95,7 +117,7 @@ pub(crate) fn generate_group_encoder(
         if size == 0 || size > 8 {
             continue;
         }
-        // Exact width in schema endianness (HFT-002) — not a full u64 array.
+        // Exact width in schema endianness — not a full u64 array.
         let null_bytes = super::nullification::null_sentinel_bytes(null_val, size, byte_order);
         let f_offset = syn::Index::from(f.offset);
         let size_lit = syn::LitInt::new(&size.to_string(), span);
@@ -123,7 +145,8 @@ pub(crate) fn generate_group_encoder(
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.pos + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                 available: self.buf.len().saturating_sub(self.pos),
             }
             .into());
@@ -139,7 +162,7 @@ pub(crate) fn generate_group_encoder(
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
             // SAFETY: capacity check above proved pos+block_len ≤ buf.len().
-            let mut __entry = #entry_enc_ident::wrap(__buf, self.pos);
+            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
             f(&mut __entry)?;
             self.pos = __entry.pos;
         }
@@ -167,8 +190,9 @@ pub(crate) fn generate_group_encoder(
                 Self { buf, pos, count, written: 0 }
             }
 
-            /// Write one group entry. Closure may return `()` or `Result<(), E>`
-            /// ([`sbe_rt::GroupEncodeResult`]) so `?` works without `try_add`.
+            /// Write one group entry. The closure may return `()` or
+            /// `Result<(), sbe_rt::EncodeError>` (both satisfy
+            /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
             #[inline]
             #[must_use]
             pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
@@ -176,6 +200,35 @@ pub(crate) fn generate_group_encoder(
                 F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
             {
                 #add_body
+            }
+            #[doc = #add_checked_doc]
+            #[inline]
+            pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            where
+                F: FnOnce(#entry_enc_ident<'b>) -> Result<#entry_complete_ident<'b>, sbe_rt::EncodeError>,
+            {
+                if self.written >= self.count {
+                    return Err(sbe_rt::EncodeError::GroupFull {
+                        declared: self.count as u32,
+                        attempted: self.written as u32 + 1,
+                    });
+                }
+                let block_len = Self::ENTRY_BLOCK_LENGTH;
+                if self.pos + block_len > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: "group entry",
+                        needed: block_len,
+                        available: self.buf.len().saturating_sub(self.pos),
+                    });
+                }
+                {
+                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                    let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
+                    let __complete = f(__entry)?;
+                    self.pos = __complete.into_cursor();
+                }
+                self.written += 1;
+                Ok(())
             }
 
             /// Manual entry creation: returns a borrowed entry encoder.
@@ -200,7 +253,8 @@ pub(crate) fn generate_group_encoder(
                     .unwrap_or(true)
                 {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                         available: self.buf.len().saturating_sub(self.pos),
                     });
                 }
@@ -209,9 +263,7 @@ pub(crate) fn generate_group_encoder(
                 self.written += 1;
                 // SAFETY: capacity check above proved entry_pos..entry_pos+block_len
                 // is in-bounds; entry wrap only writes fixed fields in that region.
-                Ok(unsafe {
-                    #entry_enc_ident::wrap(&mut self.buf[entry_pos..self.pos], 0)
-                })
+                Ok(unsafe { #entry_enc_ident::wrap(&mut self.buf[entry_pos..self.pos], 0) })
             }
         }
     });
@@ -229,7 +281,7 @@ pub(crate) fn generate_group_encoder(
 
     // add_struct: when the entry has no nested groups or var-data, generate
     // a named value struct so callers can write whole entries in one call.
-    if g.groups.is_empty() && g.var_data.is_empty() {
+    if g.has_fixed_stride() {
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
         let mut struct_fields = proc_macro2::TokenStream::new();
         let mut struct_write = proc_macro2::TokenStream::new();
@@ -319,7 +371,8 @@ pub(crate) fn generate_group_encoder(
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
                     if self.pos + block_len > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                            needed: block_len,
+                                field: "group entry",
+                                needed: block_len,
                             available: self.buf.len().saturating_sub(self.pos),
                         });
                     }
@@ -366,6 +419,7 @@ pub(crate) fn generate_group_encoder(
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if end > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
+                            field: "group entry",
                             needed,
                             available: self.buf.len().saturating_sub(self.pos),
                         });
@@ -401,6 +455,12 @@ pub(crate) fn generate_group_encoder(
     let mut entry_methods = proc_macro2::TokenStream::new();
 
     entry_methods.extend(quote::quote! {
+        #[doc = #complete_doc]
+        #[inline]
+        pub fn complete(self) -> #entry_complete_ident<'a> {
+            #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, pos: self.pos }
+        }
+
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
         /// Private entry wrap after the group encoder proved the fixed block
@@ -410,7 +470,7 @@ pub(crate) fn generate_group_encoder(
         /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
         /// for the lifetime of the returned encoder.
         #[inline]
-        pub fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+        unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
             Self {
                 buf,
                 entry_start: pos,
@@ -551,7 +611,8 @@ pub(crate) fn generate_group_encoder(
             {
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: #ng_dim,
+                                field: "group entry",
+                                needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.pos),
                     }
                     .into());
@@ -591,7 +652,8 @@ pub(crate) fn generate_group_encoder(
             {
                 if self.pos + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                        needed: #ng_dim,
+                                field: "group entry",
+                                needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.pos),
                     }.into());
                 }
@@ -643,7 +705,7 @@ pub(crate) fn generate_group_encoder(
                 #schema_max_check
                 let needed = #pfx + data.len();
                 if self.pos + needed > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { needed, available: self.buf.len().saturating_sub(self.pos) });
+                    return Err(sbe_rt::EncodeError::BufferTooShort { field: "group entry", needed, available: self.buf.len().saturating_sub(self.pos) });
                 }
                 let wire_length = #len_ty::try_from(data.len()).map_err(|_| {
                     sbe_rt::EncodeError::VarDataTooLong {
@@ -662,6 +724,14 @@ pub(crate) fn generate_group_encoder(
         });
     }
 
+    ts.extend(quote::quote! {
+        pub struct #entry_complete_ident<'a> {
+            buf: &'a mut [u8], entry_start: usize, pos: usize,
+        }
+        impl<'a> #entry_complete_ident<'a> {
+            pub(crate) fn into_cursor(self) -> usize { self.pos }
+        }
+    });
     ts.extend(quote::quote! {
         #[must_use = "entry encoder fields must be set before the next entry"]
         pub struct #entry_enc_ident<'a> {

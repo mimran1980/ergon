@@ -31,7 +31,7 @@ working codec. All API surfaces are covered in the
 | **Wire-order safety** | Compile-time type-state stages — calling `asks` before `bids` is a type error, not a runtime bug |
 | **Exact buffer sizing** | `compute_length_with_header(…)` gives the exact byte count before you encode — no oversize scratch buffers, works directly with Aeron `try_claim` |
 | **Closure-based groups** | `bids(n, \|g\| g.add(\|e\| { … }))` — nests like the schema, no `.parent()` hopscotch |
-| **Trust boundary** | `decode` / `try_from` / `wrap` return `Result` and validate extents; private zero-check cores only after HFT-008 keep |
+| **Trust boundary** | `decode` / `try_from` / `wrap` return `Result` and validate extents; public `unsafe *_unchecked` only after an external extent proof |
 | **Composite wire images** | `#[repr(transparent)] Engine([u8; N])` — the value IS the on-wire bytes, zero-copy with portable LE/BE accessors |
 | **Domain types** | Map wire `Decimal` to `rust_decimal::Decimal` at the codec boundary — one line of config, no hand-rolled converters |
 | **Bulk group ops** | `bulk_add(&[Entry])` / `bulk_decode()` — measured about 22-23% lower encode latency than `add()` for 1,000-entry flat groups on the audited Apple M4 profiles |

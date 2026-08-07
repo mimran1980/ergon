@@ -1,4 +1,4 @@
-//! Schema documentation provenance tests (reopened.md §9).
+//! Schema documentation provenance tests.
 //!
 //! Proves every supported documentation source independently through
 //! parser -> IR -> codegen -> generated Rust -> cargo doc:

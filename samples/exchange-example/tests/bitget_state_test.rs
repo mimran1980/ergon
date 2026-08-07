@@ -1,4 +1,4 @@
-//! BitgetIngestor pure state-machine tests — the Task 7/8 seam.
+//! BitgetIngestor pure state-machine tests.
 //!
 //! All tests drive the ingestor through `apply(event, emit)` only: borrowed
 //! events in, borrowed normalized events out through the callback.

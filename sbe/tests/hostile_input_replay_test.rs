@@ -108,8 +108,8 @@ fn generated_verify_dispatch_cursor_and_nested_decode_corpus_is_panic_free()
                 let _ = AnyMessage::try_decode(bytes, 0);
                 let _ = AnyMessage::decode_frame(bytes, 0, bytes.len());
                 for policy in [
-                    FramingPolicy::LengthPrefixU16,
-                    FramingPolicy::LengthPrefixU32,
+                    FramingPolicy::LengthPrefixU16Le,
+                    FramingPolicy::LengthPrefixU32Le,
                     FramingPolicy::Fixed(bytes.len()),
                 ] {{
                     let mut cursor = FrameCursor::new(bytes, policy);

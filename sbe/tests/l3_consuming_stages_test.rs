@@ -1,13 +1,11 @@
-//! Canonical bids/asks dual-group proof (DECISIONS.md §3, Tasks A/D) on the
-//! L3 orderbook fixture.
+//! Canonical bids/asks dual-group proof on the L3 orderbook fixture.
 //!
 //! Runtime: decode `bids` then `asks` through the consuming stage API
 //! (`into_bids` -> `finish` -> `into_asks` -> `finish` -> complete), reading
 //! nested `orders` + `orderId` inside each level.
 //!
-//! Compile-fail: the NEW consuming API enforces wire order even while the
-//! legacy `&self` surface still coexists — `into_asks` lives only on
-//! `L3BookDecoderAfterBids`, and `finish` consumes the group decoder.
+//! Compile-fail: the consuming API enforces wire order — `into_asks` lives only
+//! on `L3BookDecoderAfterBids`, and `finish` consumes the group decoder.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -61,7 +59,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
             Ok(())
         }).unwrap();
         let encoded = c.as_bytes_with_header();
-        // DECISIONS.md §2: as_bytes_with_header() is the explicit header-inclusive view.
+        // as_bytes_with_header() is the explicit header-inclusive view.
         assert_eq!(c.as_bytes_with_header(), encoded);
         let total_len = encoded.len();
 
@@ -71,7 +69,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
 
         // bids: consume the message stage, iterate levels, read nested orders.
         let mut bids = dec.into_bids().unwrap();
-        assert_eq!(bids.len(), 2);
+        assert_eq!(bids.remaining(), 2);
         let mut level_prices = Vec::new();
         let mut level_qtys = Vec::new();
         let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
@@ -92,7 +90,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
 
         // asks: only reachable after bids finished.
         let mut asks = after_bids.into_asks().unwrap();
-        assert_eq!(asks.len(), 1);
+        assert_eq!(asks.remaining(), 1);
         let ask_level = asks.next().unwrap().unwrap();
         assert_eq!(ask_level.price(), 200);
         assert_eq!(ask_level.qty(), 20);
@@ -204,7 +202,7 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         assert_eq!(lvl0.price(), 100);
         assert_eq!(lvl0.qty(), 10);
         let mut orders = lvl0.into_orders().unwrap();
-        assert_eq!(orders.len(), 2);
+        assert_eq!(orders.remaining(), 2);
         let mut order_ids = Vec::new();
         while let Some(Ok(ord)) = orders.next() {
             let (id, _done) = ord.into_order_id().unwrap();

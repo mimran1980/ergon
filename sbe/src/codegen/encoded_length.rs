@@ -30,13 +30,13 @@ pub(super) struct GeneratedEncodedLength {
 
 /// Classify a message into one of the three length strategies.
 pub(super) fn strategy(message: &MessageStructure) -> LengthStrategy {
-    if message.groups.is_empty() && message.var_data.is_empty() {
+    if message.is_fixed() {
         return LengthStrategy::Fixed;
     }
     let has_dynamic_entry = message
         .groups
         .iter()
-        .any(|group| !group.groups.is_empty() || !group.var_data.is_empty());
+        .any(|group| group.has_dynamic_entries());
     if has_dynamic_entry {
         LengthStrategy::Staged
     } else {
@@ -87,6 +87,7 @@ fn generate_staged(
             pub const HEADER_LENGTH: usize = #hs_lit;
 
             /// Start computing the encoded length.
+            #[inline]
             pub const fn new() -> Self {
                 Self { state: EncodedLengthAccumulator::new(Self::BLOCK_LENGTH) }
             }
@@ -155,38 +156,36 @@ fn generate_staged(
         generate_ragged_wrappers(&msg_name, "", g, elements, &mut standalone);
     }
 
-    let mut stage_names: Vec<String> = Vec::new();
-    let total_tail = msg.groups.len() + msg.var_data.len();
-    {
-        let mut idx = 0;
-        for g in &msg.groups {
-            idx += 1;
-            if idx < total_tail {
-                let next_pascal = if idx < msg.groups.len() {
-                    crate::codegen::to_pascal_case(&msg.groups[idx].name)
-                } else {
-                    crate::codegen::to_pascal_case(&msg.var_data[idx - msg.groups.len()].name)
-                };
-                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
-            } else {
-                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
-            }
+    // Stage reached *after* a tail element is recorded, named for the element
+    // just consumed — the same convention as the encoder's `{Msg}After{Element}`
+    // stages. The final element yields `…Complete` instead.
+    let tail_pascal: Vec<String> = msg
+        .groups
+        .iter()
+        .map(|g| crate::codegen::to_pascal_case(&g.name))
+        .chain(
+            msg.var_data
+                .iter()
+                .map(|vd| crate::codegen::to_pascal_case(&vd.name)),
+        )
+        .collect();
+    let total_tail = tail_pascal.len();
+    let stage_after = |tail_idx: usize| -> syn::Ident {
+        if tail_idx + 1 < total_tail {
+            syn::Ident::new(
+                &format!("{msg_name}EncodedLengthAfter{}", tail_pascal[tail_idx]),
+                span,
+            )
+        } else {
+            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
         }
-        for (vi, _vd) in msg.var_data.iter().enumerate() {
-            let gi = msg.groups.len() + vi;
-            idx = gi + 1;
-            if idx < total_tail {
-                let next_pascal = crate::codegen::to_pascal_case(&msg.var_data[vi + 1].name);
-                stage_names.push(format!("{msg_name}EncodedLengthAfter{next_pascal}"));
-            } else {
-                stage_names.push(format!("{msg_name}EncodedLengthComplete"));
-            }
-        }
-    }
-    for sn in &stage_names {
-        let sid = syn::Ident::new(sn, span);
+    };
+
+    for idx in 0..total_tail {
+        let sid = stage_after(idx);
         standalone.extend(quote::quote! {
             #[doc(hidden)]
+            #[must_use = "length builder must be completed"]
             pub struct #sid {
                 state: EncodedLengthAccumulator,
             }
@@ -194,7 +193,6 @@ fn generate_staged(
     }
 
     let mut pending_name = entry_ident.clone();
-    let total_tail = msg.groups.len() + msg.var_data.len();
     let mut tail_idx: usize = 0;
 
     for g in &msg.groups {
@@ -205,20 +203,8 @@ fn generate_staged(
         let ds = syn::LitInt::new(&dim_size.to_string(), span);
         let g_bl = syn::LitInt::new(&g.block_length.to_string(), span);
 
-        let has_dynamic_entry = !g.groups.is_empty() || !g.var_data.is_empty();
-        let tail_after_group = tail_idx + 1;
-        let next_name = if tail_after_group < total_tail {
-            let next_pascal = if tail_after_group < msg.groups.len() {
-                crate::codegen::to_pascal_case(&msg.groups[tail_after_group].name)
-            } else {
-                crate::codegen::to_pascal_case(
-                    &msg.var_data[tail_after_group - msg.groups.len()].name,
-                )
-            };
-            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
-        } else {
-            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
-        };
+        let has_dynamic_entry = g.has_dynamic_entries();
+        let next_name = stage_after(tail_idx);
 
         let mut entry_tail_methods = TokenStream::new();
 
@@ -250,7 +236,7 @@ fn generate_staged(
                 let ng_ds = syn::LitInt::new(&ng_dim.to_string(), span);
                 let ng_bl = syn::LitInt::new(&ng.block_length.to_string(), span);
 
-                let is_flat_nested = ng.groups.is_empty() && ng.var_data.is_empty();
+                let is_flat_nested = ng.has_fixed_stride();
                 if is_flat_nested {
                     // Flat nested group: adds dim + count * block, restores multiplier.
                     entry_tail_methods.extend(quote::quote! {
@@ -279,6 +265,7 @@ fn generate_staged(
 
                     standalone.extend(quote::quote! {
                         #[doc(hidden)]
+                        #[must_use = "complete the nested shape or call finish_empty()"]
                         pub struct #nested_pending {
                             state: EncodedLengthAccumulator,
                             parent_multiplier: usize,
@@ -327,6 +314,7 @@ fn generate_staged(
                         let back_to = next_name.clone();
                         standalone.extend(quote::quote! {
                             impl #nested_pending {
+                                #[inline]
                                 pub const fn #nvd_snake(
                                     mut self, byte_len: usize,
                                 ) -> Result<#back_to, sbe_rt::EncodeError> {
@@ -369,6 +357,7 @@ fn generate_staged(
                 }
 
                 entry_tail_methods.extend(quote::quote! {
+                    #[inline]
                     pub const fn #vd_snake(
                         mut self, byte_len: usize,
                     ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -391,6 +380,7 @@ fn generate_staged(
 
                     /// Complete this group when the entry count is zero.
                     /// Returns an error if the declared count is non-zero.
+                    #[inline]
                     pub fn finish_empty(self)
                         -> Result<#next_name, sbe_rt::EncodeError>
                     {
@@ -410,75 +400,12 @@ fn generate_staged(
                 }
             });
 
-            {
-                let next_tail_idx = tail_idx + 1;
-                if next_tail_idx < total_tail {
-                    let (next_method_name, next_param_ty, next_param_name) = if next_tail_idx
-                        < msg.groups.len()
-                    {
-                        let ng = &msg.groups[next_tail_idx];
-                        let (_, _, ng_num_prim) = get_dim_num_layout(elements, &ng.dimension_type);
-                        let ng_count_ty: syn::Type =
-                            syn::parse_str(rust_type(ng_num_prim)).unwrap();
-                        (
-                            syn::Ident::new(&crate::codegen::to_snake_case(&ng.name), span),
-                            ng_count_ty,
-                            syn::Ident::new("count", span),
-                        )
-                    } else {
-                        let vdi = next_tail_idx - msg.groups.len();
-                        let vd = &msg.var_data[vdi];
-                        (
-                            syn::Ident::new(&crate::codegen::to_snake_case(&vd.name), span),
-                            syn::parse_str::<syn::Type>("usize").unwrap(),
-                            syn::Ident::new("byte_len", span),
-                        )
-                    };
-
-                    let method_name_str = next_method_name.to_string();
-                    let has_collision = g
-                        .groups
-                        .iter()
-                        .any(|ng| crate::codegen::to_snake_case(&ng.name) == method_name_str)
-                        || g.var_data
-                            .iter()
-                            .any(|vd| crate::codegen::to_snake_case(&vd.name) == method_name_str);
-
-                    if !has_collision {
-                        // Generate forwarding: on error, store in accumulator
-                        // and continue the chain. Error surfaces at next fallible boundary.
-                        standalone.extend(quote::quote! {
-                            impl #pending_ident {
-                                pub fn #next_method_name(
-                                    self, #next_param_name: #next_param_ty,
-                                ) -> #next_name {
-                                    if self.declared_count != 0 {
-                                        let mut state = self.state;
-                                        state.fail(sbe_rt::EncodeError::GroupCountMismatch {
-                                            declared: self.declared_count,
-                                            actual: 0,
-                                        });
-                                        return #next_name { state };
-                                    }
-                                    // Zero-count: advance state in-place rather than
-                                    // calling finish_empty(self), which would consume
-                                    // self and make .state unreachable in the Err
-                                    // branch (E0382 use after move).
-                                    let mut state = self.state;
-                                    state.leave_group(self.parent_multiplier);
-                                    match state.check() {
-                                        Ok(()) => #next_name { state },
-                                        Err(e) => {
-                                            state.fail(e);
-                                            #next_name { state }
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }
-            }
+            // A zero-count pending stage has no shorthand to the next tail.
+            // The old forwarder was named for the next group/var-data and took
+            // its `count`/`byte_len` — then discarded the argument, silently
+            // under-sizing that tail. The explicit chain
+            // `pending.finish_empty()?.next_tail(argument)` applies every
+            // supplied value at its own named transition.
 
             // Uniform group method + ragged + unknown_size on the previous stage
             let g_ragged = syn::Ident::new(
@@ -494,6 +421,17 @@ fn generate_staged(
                 &format!("{}{}RaggedBuilder", msg_name, g_pascal_ragged),
                 span,
             );
+            let unknown_size_doc = format!(
+                "**Unknown-size** group — the entry count is discovered from the \
+                 data (e.g. draining an iterator), not known up front.\n\n\
+                 Like the ragged path but without a declared `count`: call \
+                 `builder.add()` (or `builder.entries(n)`) once per entry; the \
+                 builder counts completed entries and rejects overflow of the \
+                 wire count type (`{}`). Each `add()` contributes the entry's \
+                 fixed block, plus any `group()`/`var_data()` recorded for that \
+                 entry.",
+                rust_type(num_prim)
+            );
             standalone.extend(quote::quote! {
                 impl #pending_name {
                     /// **Uniform** group — every one of the `count` entries shares
@@ -502,6 +440,7 @@ fn generate_staged(
                     /// single entry shape multiplied by `count`, so no per-entry
                     /// description is needed. This is the fastest path; prefer it
                     /// whenever all entries are identical.
+                    #[inline]
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> #pending_ident {
@@ -527,6 +466,7 @@ fn generate_staged(
                     /// `count` times. Each entry's fixed block is pre-counted, so
                     /// `add()` only registers the entry — describe its variable tail
                     /// with `group()`/`var_data()`.
+                    #[inline]
                     pub fn #g_ragged<F>(
                         mut self, count: #count_ty, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
@@ -554,14 +494,8 @@ fn generate_staged(
                         }
                     }
 
-                    /// **Unknown-size** group — the entry count is discovered from
-                    /// the data (e.g. draining an iterator), not known up-front.
-                    /// Like the ragged path but without a declared `count`: call
-                    /// `builder.add()` (or `builder.entries(n)`) once per entry;
-                    /// the builder counts completed entries and rejects overflow
-                    /// of the wire count type (`#count_ty`). Each `add()` contributes
-                    /// the entry's fixed block, plus any `group()`/`var_data()` you
-                    /// record for that entry.
+                    #[doc = #unknown_size_doc]
+                    #[inline]
                     pub fn #g_unknown<F>(
                         mut self, f: F,
                     ) -> Result<#next_name, sbe_rt::EncodeError>
@@ -592,6 +526,7 @@ fn generate_staged(
             // Flat group — simple, no pending stage.
             standalone.extend(quote::quote! {
                 impl #pending_name {
+                    #[inline]
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -624,14 +559,7 @@ fn generate_staged(
         let ps_lit = syn::LitInt::new(&prefix_size.to_string(), span);
         let field_name = &vd.name;
 
-        let tail_after = tail_idx + 1;
-        let next_name = if tail_after < total_tail {
-            let next_pascal =
-                crate::codegen::to_pascal_case(&msg.var_data[tail_after - msg.groups.len()].name);
-            syn::Ident::new(&format!("{msg_name}EncodedLengthAfter{next_pascal}"), span)
-        } else {
-            syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span)
-        };
+        let next_name = stage_after(tail_idx);
 
         let mut max_chk = TokenStream::new();
         if let Some(max) = vd.max_length {
@@ -647,6 +575,7 @@ fn generate_staged(
 
         standalone.extend(quote::quote! {
             impl #pending_name {
+                #[inline]
                 pub const fn #vd_snake(
                     self, byte_len: usize,
                 ) -> Result<#next_name, sbe_rt::EncodeError> {
@@ -671,7 +600,9 @@ fn generate_staged(
     let complete_ident = syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span);
     standalone.extend(quote::quote! {
         impl #complete_ident {
+            #[inline]
             pub const fn encoded_length(&self) -> usize { self.state.len }
+            #[inline]
             pub const fn encoded_length_with_header(&self) -> usize {
                 self.state.len + #hs_lit as usize
             }
@@ -882,6 +813,27 @@ pub(super) fn generate_support() -> TokenStream {
                 self.multiplier
             }
 
+            /// Add `unit_len * repetitions * times` in one checked step.
+            ///
+            /// Identical fixed-width entries contribute the same amount each,
+            /// so `times` repetitions of `add_scaled` are one multiplication.
+            /// The overflow boundary is unchanged: every term is non-negative,
+            /// so the single checked add overflows exactly when some partial
+            /// sum of the loop would have.
+            pub(crate) const fn add_scaled_repeated(
+                &mut self,
+                unit_len: usize,
+                repetitions: usize,
+                times: usize,
+            ) {
+                if self.error.is_some() { return; }
+                let Some(scaled) = repetitions.checked_mul(times) else {
+                    self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow);
+                    return;
+                };
+                self.add_scaled(unit_len, scaled);
+            }
+
             pub(crate) const fn add_scaled(&mut self, unit_len: usize, repetitions: usize) {
                 if self.error.is_some() { return; }
                 let contribution = match unit_len.checked_mul(repetitions) {
@@ -951,18 +903,43 @@ pub(super) fn generate_support() -> TokenStream {
             #[inline]
             pub fn add(&mut self) -> sbe_rt::GroupResult {
                 self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
-                self.written += 1;
-                Ok(())
+                self.bump_written(1)
             }
 
             /// Register N flat entries at once (for fixed-width unknown-size groups).
+            ///
+            /// Equivalent to `n` successful [`Self::add`] calls, including the
+            /// boundary at which the entry count overflows.
             #[inline]
             pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
-                for _ in 0..n {
-                    self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
+                // One scaled contribution, not `n` identical ones: the entries
+                // are the same fixed width by definition, so the loop only ever
+                // recomputed the same product. Constant-time, no new branch, no
+                // allocation, and the same typed overflow boundary.
+                self.state
+                    .add_scaled_repeated(self.entry_block_length, self.parent_multiplier, n);
+                self.bump_written(n)
+            }
+
+            /// Checked entry-count update. An unchecked `written += n` could
+            /// wrap and report a count the caller never asked for, which the
+            /// group's declared-count check would then silently accept.
+            #[inline]
+            fn bump_written(&mut self, n: usize) -> sbe_rt::GroupResult {
+                match self.written.checked_add(n) {
+                    Some(total) => {
+                        self.written = total;
+                        Ok(())
+                    }
+                    None => {
+                        let error = sbe_rt::EncodeError::GroupCountOverflow {
+                            maximum: u32::MAX,
+                            actual: u32::MAX,
+                        };
+                        self.state.fail(error);
+                        Err(error)
+                    }
                 }
-                self.written += n;
-                Ok(())
             }
 
             /// Add a nested group dimension + entries.
@@ -979,6 +956,7 @@ pub(super) fn generate_support() -> TokenStream {
             /// then the closure describes each entry (`sub.add()` for the entry
             /// block, `sub.var_data(...)` for per-entry var-data). The closure
             /// receives a sub-builder scoped to this group's parent multiplier.
+            #[inline]
             pub fn group_ragged<F>(
                 &mut self, dim: usize, entry_block: usize, f: F,
             ) -> sbe_rt::GroupResult
@@ -996,6 +974,7 @@ pub(super) fn generate_support() -> TokenStream {
             }
 
             /// Add a varData field for the current entry.
+            #[inline]
             pub fn var_data(&mut self, prefix: usize, byte_len: usize) -> sbe_rt::GroupResult {
                 self.state.add_scaled(prefix, self.parent_multiplier);
                 self.state.add_scaled(byte_len, self.parent_multiplier);

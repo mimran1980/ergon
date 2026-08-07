@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ANCHOR: build_rs_example
     let generated_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
     let config = ergo_sbe::GenerationConfig::new("feature_tour")
-        .with_domain_objects(ergo_sbe::DomainVarData::LossyStrings)
+        .with_domain_objects(ergo_sbe::DomainVarData::Strings)
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",

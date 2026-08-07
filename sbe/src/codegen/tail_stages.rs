@@ -1,4 +1,4 @@
-//! Message/entry consuming tail-stage codegen (DECISIONS.md §3).
+//! Message/entry consuming tail-stage codegen.
 //!
 //! `generate_owner_consuming_stages` emits the type-state tail stages that own
 //! sequential access to an owner's (message or entry) tail groups + var-data.
@@ -21,6 +21,9 @@ pub(crate) fn generate_owner_consuming_stages(
     groups: &[OwnerTailGroup],
     vardata: &[OwnerTailVarData],
     enable_dispatch: bool,
+    // True when the initial owner stage is a message decoder (caches `base_addr`,
+    // exposes `byte_pos()`); false for entry decoders, which keep `pos`.
+    initial_has_byte_pos: bool,
 ) -> proc_macro2::TokenStream {
     let total_tail = groups.len() + vardata.len();
     if total_tail == 0 {
@@ -45,6 +48,9 @@ pub(crate) fn generate_owner_consuming_stages(
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
+            /// Consuming decoder stage — drop without `into_*` / `finish` skips
+            /// remaining wire tails.
+            #[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
             pub struct #stage<'a> {
                 pub(crate) buf: &'a [u8],
                 pub(crate) pos: usize,
@@ -55,21 +61,39 @@ pub(crate) fn generate_owner_consuming_stages(
         });
     }
 
-    // acting_version() / acting_block_length() on every stage (DECISIONS.md §3).
+    // acting_version() / acting_block_length() on every stage.
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
         ts.extend(quote::quote! {
             impl<'a> #stage<'a> {
+                /// Schema version from the message header (or wrap args), not the
+                /// compiled schema constant. Fields with `sinceVersion` and optional
+                /// presence depend on this value.
                 #[inline]
                 pub const fn acting_version(&self) -> u16 { self.acting_version }
+                /// Block length from the wire header / wrap args. Tail offsets use
+                /// this acting length, not only the compiled `BLOCK_LENGTH`.
                 #[inline]
                 pub const fn acting_block_length(&self) -> usize { self.acting_block_length }
             }
         });
     }
 
+    // The initial stage is the message decoder itself (message tails), which
+    // caches `base_addr` and exposes `byte_pos()` — there is no `pos` field on
+    // it. For entry tails the initial stage is the entry decoder, which keeps
+    // `pos` and has no `byte_pos()`. Later stages all carry `pos` directly.
+    let parent_pos_expr = |i: usize| -> syn::Expr {
+        if i == 0 && initial_has_byte_pos {
+            syn::parse_str("self.byte_pos()").unwrap()
+        } else {
+            syn::parse_str("self.pos").unwrap()
+        }
+    };
     let start_expr = |i: usize| -> syn::Expr {
-        if i == 0 {
+        if i == 0 && initial_has_byte_pos {
+            syn::parse_str("self.byte_pos() + self.acting_block_length").unwrap()
+        } else if i == 0 {
             syn::parse_str("self.pos + self.acting_block_length").unwrap()
         } else {
             syn::parse_str("self.tail_start").unwrap()
@@ -87,21 +111,31 @@ pub(crate) fn generate_owner_consuming_stages(
         let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let se = start_expr(i);
+        let pp = parent_pos_expr(i);
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Consume this stage and start decoding the next tail group,
                 /// enforcing wire order. The returned group decoder owns the
                 /// right to advance to the following stage via `finish()`.
                 #[inline]
-                pub fn #into_ident(self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+                pub fn #into_ident(
+                    self,
+                ) -> Result<#g_decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                     let group_start = #se;
-                    #g_decoder_ident::wrap_with_parent(
-                        self.buf,
-                        group_start,
-                        self.acting_version,
-                        self.pos,
-                        self.acting_block_length,
-                    )
+                    // SAFETY: this stage was reached by consuming the message in
+                    // wire order, so `#pp` and `self.acting_block_length`
+                    // describe the real parent body and `group_start` is this
+                    // group's genuine dimension-header offset. The header,
+                    // block length, and extent are still validated inside.
+                    unsafe {
+                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
+                            self.buf,
+                            group_start,
+                            self.acting_version,
+                            #pp,
+                            self.acting_block_length,
+                        )
+                    }
                 }
             }
         });
@@ -118,6 +152,11 @@ pub(crate) fn generate_owner_consuming_stages(
         let next_stage = stage_after_ident(i);
         let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
         let slice_ident = syn::Ident::new(&format!("{}_slice", vd.accessor_snake), span);
+        let slice_doc = format!(
+            "Non-consuming variant: read this var-data field as `&[u8]` without \
+             advancing or constructing the next stage.\n\n\
+             Cheaper than [`Self::{into_ident}`] when only the bytes are needed."
+        );
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
@@ -129,6 +168,7 @@ pub(crate) fn generate_owner_consuming_stages(
         );
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
         let se = start_expr(i);
+        let pp = parent_pos_expr(i);
         let mut max_check = proc_macro2::TokenStream::new();
         if let Some(max) = vd.max_length {
             let max_lit = syn::LitInt::new(&max.to_string(), span);
@@ -177,7 +217,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     let data = &self.buf[data_start..data_end];
                     let next = #next_stage {
                         buf: self.buf,
-                        pos: self.pos,
+                        pos: #pp,
                         tail_start: data_end,
                         acting_version: self.acting_version,
                         acting_block_length: self.acting_block_length,
@@ -185,9 +225,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     Ok((data, next))
                 }
 
-                /// Non-consuming variant: read this var-data field as `&[u8]`
-                /// without advancing or constructing the next stage. Cheaper
-                /// than [`Self::#into_ident`] when only the bytes are needed.
+                #[doc = #slice_doc]
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = #se;
@@ -348,12 +386,29 @@ pub(crate) fn generate_owner_consuming_stages(
         let next_stage = stage_after_ident(i);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
+        let poisoned_finish_guard = if tg.entries_have_tails {
+            quote::quote! {
+                if let Some(error) = self.poisoned {
+                    return Err(error);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         ts.extend(quote::quote! {
-            impl<'a> #g_decoder_ident<'a> {
+            impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                 /// Scan past any unread entries (including nested tails) in wire
                 /// order and return the next decoder stage.
+                ///
+                /// Only an *attached* group — one reached through its message's
+                /// tail — can complete into a message stage. A standalone
+                /// [`Self::wrap`] has no parent to return to.
                 #[inline]
                 pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                    // A poisoned group's position came from an entry that
+                    // failed to decode, so the next stage would be built at a
+                    // meaningless offset. Return the stored error instead.
+                    #poisoned_finish_guard
                     let mut pos = self.pos;
                     let mut remaining = self.count;
                     let block_len = self.acting_block_length;
@@ -418,9 +473,9 @@ pub(crate) fn generate_owner_consuming_stages(
     ts
 }
 
-/// Message-level consuming tail stages (DECISIONS.md §3): thin wrapper that
-/// resolves the message's tail groups + var-data into descriptors and delegates
-/// to `generate_owner_consuming_stages`.
+/// Message-level consuming tail stages: thin wrapper that resolves the
+/// message's tail groups + var-data into descriptors and delegates to
+/// `generate_owner_consuming_stages`.
 pub(crate) fn generate_decoder_consuming_stages(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -443,6 +498,7 @@ pub(crate) fn generate_decoder_consuming_stages(
             field_pascal: to_pascal_case(&g.name),
             group_decoder_ident: format!("{}Decoder", group_unique_names[gi]),
             entry_decoder_ident: format!("{}EntryDecoder", group_unique_names[gi]),
+            entries_have_tails: g.has_dynamic_entries(),
         })
         .collect();
     let vardata: Vec<OwnerTailVarData> = msg
@@ -472,12 +528,13 @@ pub(crate) fn generate_decoder_consuming_stages(
         &groups,
         &vardata,
         enable_dispatch,
+        true,
     )
 }
 
 /// Entry-level consuming tail stages for a group whose entries have nested
-/// groups and/or var-data (DECISIONS.md §3, Task D). `name` is the group's
-/// scoped name; nested group decoder names are `{name}{Ng}Decoder`.
+/// groups and/or var-data. `name` is the group's scoped name; nested group
+/// decoder names are `{name}{Ng}Decoder`.
 pub(crate) fn generate_entry_consuming_stages(
     g: &MessageGroup,
     elements: &SchemaElements,
@@ -497,6 +554,7 @@ pub(crate) fn generate_entry_consuming_stages(
                 accessor_snake: to_snake_case(&ng.name),
                 field_pascal: to_pascal_case(&ng.name),
                 group_decoder_ident: format!("{ng_pascal}Decoder"),
+                entries_have_tails: ng.has_dynamic_entries(),
                 entry_decoder_ident: format!("{ng_pascal}EntryDecoder"),
             }
         })
@@ -528,5 +586,6 @@ pub(crate) fn generate_entry_consuming_stages(
         &groups,
         &vardata,
         enable_dispatch,
+        false,
     )
 }

@@ -17,8 +17,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = AnyMessage::decode_frame(data, pos, frame_len);
 
     for policy in [
-        FramingPolicy::LengthPrefixU16,
-        FramingPolicy::LengthPrefixU32,
+        FramingPolicy::LengthPrefixU16Le,
+        FramingPolicy::LengthPrefixU32Le,
         FramingPolicy::Fixed(frame_len),
     ] {
         let mut cursor = FrameCursor::new(data, policy);

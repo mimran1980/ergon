@@ -32,10 +32,10 @@
 //! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
 //! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
 //!   Aeron `try_claim`
-//! - **Two-lane trust boundary** — `try_wrap` / `try_wrap_and_apply_header` /
-//!   `try_decode` validate the buffer extent and return `Result`. The zero-check
-//!   lane (`wrap_unchecked` / `wrap_and_apply_header_unchecked` /
-//!   `decode_unchecked`) is `unsafe` with the extent precondition in `# Safety`
+//! - **Three-tier trust boundary** — `try_*` constructors validate the buffer
+//!   extent and return `Result`; bare `wrap` / `wrap_and_apply_header` /
+//!   `decode` prove the same extent and **panic** if short; `unsafe fn
+//!   *_unchecked` skips checks (caller proves the extent in `# Safety`)
 //! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
 //! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
 //!   line of config
@@ -174,7 +174,7 @@
 //! ## Domain objects
 //!
 //! [`GenerationConfig::with_domain_objects`] with a [`DomainVarData`] mode emits
-//! owned structs. Use [`DomainVarData::LossyStrings`] for text (`String`;
+//! owned structs. Use [`DomainVarData::Strings`] for text (`String`;
 //! invalid UTF-8 → `InvalidUtf8` error) or [`DomainVarData::Bytes`] for `Vec<u8>`.
 //!
 //! See [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)

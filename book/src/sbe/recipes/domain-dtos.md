@@ -18,7 +18,7 @@ ergon/sbe-tool fairness ratio.
 
 ```rust,no_run
 // build.rs — DomainVarData picks the DTO field type for var-data:
-// .with_domain_objects(DomainVarData::LossyStrings) // String (invalid UTF-8 → InvalidUtf8 error)
+// .with_domain_objects(DomainVarData::Strings) // String (invalid UTF-8 → InvalidUtf8 error)
 // .with_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
 ```
 
@@ -78,16 +78,16 @@ SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
 
 | Call | Field type | Invalid UTF-8 | When to use |
 |------|------------|---------------|-------------|
-| `.with_domain_objects(DomainVarData::LossyStrings)` | `String` | **`InvalidUtf8` error** (strict; 0.1.10) | Text schemas when validity is known |
+| `.with_domain_objects(DomainVarData::Strings)` | `String` | **`InvalidUtf8` error** (strict; 0.1.10) | Text schemas when validity is known |
 | `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
 
-**`LossyStrings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
+**`Strings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
 for bad bytes; there is no silent empty-string fallback. Use `Bytes` (or stay
 on flyweights) when you need audit / replay fidelity of non-UTF-8 tails.
 
 Runnable demo (text path):
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
-uses `DomainVarData::LossyStrings`. Flyweight path is unchanged: with schema
+uses `DomainVarData::Strings`. Flyweight path is unchanged: with schema
 `characterEncoding="UTF-8"` you still get `into_manufacturer_as_str()` without
 a DTO.
 

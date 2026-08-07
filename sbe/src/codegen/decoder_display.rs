@@ -1,6 +1,6 @@
 //! `Display` / `Debug` impl codegen for message decoders.
 
-use super::conversion_helpers::{find_domain_type, resolve_field_ident};
+use super::conversion_helpers::{DECODER_RESERVED, find_domain_type, resolve_field_ident};
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::Presence;
 use crate::structured_ir::{FieldType, MessageStructure};
@@ -23,28 +23,10 @@ pub(crate) fn generate_decoder_display(
     });
     let mut out_idx = 0usize;
     for f in &msg.fields {
-        const DECODER_RESERVED: &[&str] = &[
-            "remaining",
-            "message_offset",
-            "limit",
-            "buffer",
-            "wrap",
-            "decode",
-            "header",
-            "encoded_length",
-            "encoded_length_with_header",
-            "as_body_bytes",
-            "as_bytes_with_header",
-            "verify",
-            "acting_version",
-            "acting_block_length",
-            // Consuming stage transition (self → Self).
-            "rewind",
-        ];
         let snake = to_snake_case(&f.name);
-        // Domain-converted fields use `try_<name>` (HFT-003); Display must not
-        // call the old infallible name.
+        // Domain-converted fields use fallible `try_<name>` for Display.
         let wire_name = find_domain_type(f, domain_types).map(|_| format!("{snake}_wire"));
+        // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
         let domain_try = find_domain_type(f, domain_types)
             .map(|_| syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site()));
@@ -54,7 +36,7 @@ pub(crate) fn generate_decoder_display(
         // Only touch wire when the field's full range is in-buffer — Display must
         // not panic on truncated / invalid SBE.
         let in_bounds = quote::quote! {
-            self.pos.saturating_add(#end_off_lit) <= self.buf.len()
+            self.byte_pos().saturating_add(#end_off_lit) <= self.buf.len()
                 && #end_off_lit <= self.acting_block_length
         };
         match &f.field_type {
@@ -181,7 +163,7 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                // Domain-converted composites use fallible `try_*` (HFT-003).
+                // Domain-converted composites use fallible `try_*`.
                 // Wire-only composites use the *_value() accessor.
                 if find_domain_type(f, domain_types).is_some() {
                     let try_ident =
@@ -212,8 +194,7 @@ pub(crate) fn generate_decoder_display(
         let g_snake = to_snake_case(&g.name);
         let g_ident = syn::Ident::new(&g_snake, proc_macro2::Span::call_site());
         let sep = if out_idx == 0 { "" } else { ", " };
-        let g_total_tail = g.groups.len() + g.var_data.len();
-        if g_total_tail == 0 {
+        if g.has_fixed_stride() {
             let fmt_open = format!("{sep}{g_snake}: [");
             body.extend(quote::quote! {
                 if let Ok(g) = self.#g_ident() {
@@ -244,7 +225,7 @@ pub(crate) fn generate_decoder_display(
         out_idx += 1;
         // Debug: format group entries as a Vec<String> via Display.
         let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
-        if g_total_tail == 0 {
+        if g.has_fixed_stride() {
             debug_body.extend(quote::quote! {
                 if let Ok(_g) = self.#g_ident() {
                     let entries: Vec<String> = _g.map(|e| format!("{e}")).collect();

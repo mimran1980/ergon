@@ -83,7 +83,7 @@ fn l3_domain_objects_generated() -> Result<(), Box<dyn std::error::Error>> {
         src.contains("fn try_from_decoder")
             && src.contains("L3BookDomain")
             && src.contains("L3BookDecoder"),
-        "missing try_from_decoder (HFT-003; panicking From removed)"
+        "missing try_from_decoder (panicking From not generated)"
     );
 
     Ok(())

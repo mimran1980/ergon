@@ -45,14 +45,13 @@ Rationale: [Type-state design note](type-state.md).
 **Decision: supported production opt-in after a proven trust boundary** — not
 “benchmarking only” framing.
 
-- Default generation can enable companions via
-  the two-lane trust boundary (safe checked constructors + `unsafe` unchecked lane).
-- Safety contract lives on that method and in generated docs: validate with
-  `decode` / `try_from` / `wrap` / `verify` first; do not carry unchecked
-  access across stage transitions; calling field `_unchecked` without a
-  proven extent is UB (not “safe garbage”).
-- HFT hot loops after validation are an **intended** use case. Checked
-  accessors remain the default API.
+- Default generation exposes the three-tier constructor boundary: `try_*`
+  (Result), bare names (panic after extent proof), and `unsafe fn *_unchecked`.
+- Safety contract: validate with `try_decode` / `try_from` / `try_wrap` /
+  `verify` at trust edges; bare constructors also prove fixed extent before
+  returning; only `*_unchecked` may skip that proof (UB if wrong).
+- Hot loops after validation are an **intended** use case for the
+  unchecked lane. Checked constructors remain the default for untrusted input.
 
 See [Trust boundaries](../feature-tour/trust-boundaries.md).
 

@@ -768,18 +768,24 @@ impl Generator {
             schema.package, schema.id, schema.version
         )
         .unwrap();
+        // Lint allow list is intentionally narrow — do not re-add
+        // unused_unsafe / unused_imports / dead_code (hide generator bugs).
+        // Remaining allows (schema reality):
+        // - absurd_extreme_comparisons / identity_op / erasing_op / unnecessary_cast:
+        //   schema min/max/const offsets can be tautological after folding.
+        // - double_must_use: staged builders return must_use types from must_use methods.
+        // - eq_op: schema-driven `x == x` style checks in generated matches.
+        // - manual_range_contains: generated version gates prefer explicit compares
+        //   that stay readable next to sinceVersion literals.
+        // - non_camel_case_types / non_snake_case: SBE identifiers as emitted.
         src.push_str(
             "#[allow(clippy::absurd_extreme_comparisons, clippy::double_must_use, \
-                       clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast, \
-                       unused_unsafe)]\n",
+                       clippy::erasing_op, clippy::identity_op, clippy::unnecessary_cast)]\n",
         );
         src.push_str("#[allow(non_camel_case_types)]\n");
         src.push_str("#[allow(non_snake_case)]\n");
-        src.push_str("#[allow(clippy::identity_op)]\n");
         src.push_str("#[allow(clippy::eq_op)]\n");
-        src.push_str("#[allow(clippy::needless_borrow)]\n");
-        src.push_str("#[allow(clippy::manual_range_contains)]\n");
-        src.push_str("#[allow(unused_imports)]\n\n");
+        src.push_str("#[allow(clippy::manual_range_contains)]\n\n");
 
         // If importing from a shared module, bring all its items into scope.
         // This covers shared types + the sbe_rt runtime module.
@@ -789,6 +795,27 @@ impl Generator {
             }
         }
 
+        // `SbeMessage`'s sealing marker lives with the runtime that declares the
+        // trait, so a module reusing someone else's `sbe_rt` must name that
+        // owner's sealing module rather than declaring a second one.
+        let sealed_path = if let Some(ref ext) = self.config.external_sbe_rt_path {
+            let owner = ext.strip_suffix("::sbe_rt").unwrap_or(ext);
+            format!("{owner}::{}", crate::codegen::runtime::SEALED_MODULE)
+        } else if is_importing {
+            let shared = self
+                .config
+                .shared_module
+                .as_deref()
+                .expect("is_importing implies a shared module");
+            format!(
+                "super::{shared}::{}",
+                crate::codegen::runtime::SEALED_MODULE
+            )
+        } else {
+            crate::codegen::runtime::SEALED_MODULE.to_string()
+        };
+        crate::codegen::runtime::set_sealed_path(&sealed_path);
+
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
             if self.config.has_conversions() {
@@ -796,6 +823,13 @@ impl Generator {
             }
         } else if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
+            // A shared runtime is implemented against by sibling modules, so its
+            // sealing module widens to `pub(super)`. A self-contained module
+            // keeps it private, which is what makes `SbeMessage` unimplementable
+            // outside the generated module.
+            src.push_str(&crate::codegen::runtime::generate_sealed_module_src(
+                self.config.shared_module.is_some(),
+            ));
             if self.config.has_conversions() {
                 emit_conversion_traits(&mut src);
             }
@@ -912,7 +946,7 @@ impl Generator {
                 self.run_hooks(&ctx, &mut src);
             }
 
-            // Converter seam: domain-type / with_conversion / auto_bool (HFT-003).
+            // Converter seam: domain-type / with_conversion / auto_bool.
             if !conv_sels.is_empty() {
                 let converter_ts = generate_converter_impls(msg, &conv_sels, domain_types, multi);
                 src.push_str(&converter_ts);
@@ -997,7 +1031,7 @@ impl Generator {
             src.push('\n');
         }
         // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
-        // private + unsafe (HFT-001) — never a safe public memory-safety
+        // private + unsafe — never a safe public memory-safety
         // precondition for callers.
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
@@ -1026,6 +1060,23 @@ impl Generator {
                 unsafe {
                     core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N])
                 }
+            }
+
+            /// Unchecked read from an absolute base address — one wire load with
+            /// an immediate offset, no separate `buf`/`pos` re-load or add.
+            ///
+            /// Used by decoders that cache `base_addr = buf.as_ptr() as usize +
+            /// body_pos` once at construction, so every fixed-field accessor
+            /// becomes a single struct load + immediate-offset load.
+            ///
+            /// # Safety
+            /// Caller guarantees `addr + offset + N` does not overflow and
+            /// points within the live buffer the decoder was constructed from.
+            #[inline]
+            #[allow(dead_code)] // used from generated accessors in this module
+            unsafe fn read_addr_unchecked<const N: usize>(addr: usize, offset: usize) -> [u8; N] {
+                // SAFETY: caller guarantees the address range is valid.
+                unsafe { core::ptr::read_unaligned((addr + offset) as *const [u8; N]) }
             }
 
             /// Unchecked companion to [`write_bytes`] — zero bounds checks.
@@ -1333,8 +1384,9 @@ mod tests {
             "the versioned set at offset ten must require its complete eleventh byte"
         );
         assert!(
-            source.contains("pub fn enabled_bool(&self) -> Option<bool>"),
-            "a versioned BooleanType group field must preserve absence in its bool accessor"
+            source.contains("pub fn try_enabled_bool(&self) -> Result<Option<bool>,")
+                && source.contains("InvalidBoolean"),
+            "a versioned BooleanType group field must carry the typed bool accessor"
         );
         Ok(())
     }
@@ -1516,12 +1568,10 @@ mod tests {
         }
     }
 
-    /// When a flat message has a field whose name clashes with a reserved
-    /// decoder method (e.g. "remaining"), the generated accessor must be
-    /// renamed to `{name}_field` so it doesn't collide with
-    /// `pub fn remaining(&self) -> &[u8]`.
+    /// Placement utils live on metadata only — a field named `remaining` keeps
+    /// its natural accessor name and does not force `_field`.
     #[test]
-    fn field_named_remaining_is_renamed_to_remaining_field()
+    fn field_named_remaining_keeps_name_placement_on_metadata()
     -> Result<(), Box<dyn std::error::Error>> {
         let xml = r#"<messageSchema package="test" id="1" version="1" byteOrder="littleEndian">
           <types>
@@ -1543,18 +1593,23 @@ mod tests {
             crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
         let src = modules.modules().next().expect("one module").source.clone();
 
-        let remaining_count = src.matches("fn remaining(&self)").count();
-        // The decoder and encoder each have a generated `remaining()` method
-        // (in separate impl blocks). The field accessor is renamed to
-        // `remaining_field` and must not appear as `fn remaining(&self)`.
-        assert_eq!(
-            remaining_count, 2,
-            "expected 2 'remaining' methods (decoder + DecoderMetadata), found {remaining_count}"
-        );
-        // The field accessor must be renamed.
         assert!(
-            src.contains("fn remaining_field"),
-            "field accessor 'remaining' must be renamed to 'remaining_field'. src:\n{src}"
+            src.contains("fn remaining(&self) -> i64")
+                || src.contains("fn remaining(&self) -> i64,"),
+            "field accessor must keep name remaining() as i64. src snippet check failed"
+        );
+        assert!(
+            !src.contains("fn remaining_field"),
+            "placement-name fields must not be renamed to remaining_field"
+        );
+        assert!(
+            src.contains("fn get_metadata("),
+            "placement utils must be on get_metadata()"
+        );
+        // Metadata still exposes remaining() as a byte slice utility.
+        assert!(
+            src.contains("DecoderMetadata"),
+            "DecoderMetadata type must be emitted"
         );
 
         Ok(())

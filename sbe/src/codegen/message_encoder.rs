@@ -12,7 +12,7 @@
 use crate::ir::{ByteOrder, Presence};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{field_has_conversion_free, resolve_field_ident};
+use super::conversion_helpers::{ENCODER_RESERVED, field_has_conversion_free, resolve_field_ident};
 use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;
@@ -88,6 +88,7 @@ pub(crate) fn generate_message_encoder(
     let span = proc_macro2::Span::call_site();
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
+    let fixed_encoder_ident = syn::Ident::new(&format!("{}FixedEncoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
     // Pre-compute the exact schema-declared header wire image. Composite
@@ -118,6 +119,7 @@ pub(crate) fn generate_message_encoder(
     let to_endian = syn::Ident::new(&format!("to_{}_bytes", order_suffix), span);
 
     let mut ts = proc_macro2::TokenStream::new();
+    let sealed_path = super::runtime::sealed_path_tokens();
 
     let tail_pascal: Vec<String> = msg
         .groups
@@ -219,26 +221,7 @@ pub(crate) fn generate_message_encoder(
             const _HEADER_TEMPLATE_LEN: () =
                 assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
         });
-        impl_contents.extend(quote::quote! {
-            /// Absolute offset of this message within the original buffer
-            /// (the `msg_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.msg_offset
-            }
-
-            /// Absolute current write cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.pos
-            }
-
-            /// The complete original buffer this encoder wraps.
-            #[inline]
-            pub fn buffer(&self) -> &[u8] {
-                self.buf
-            }
-        });
+        // Placement utils live only on EncoderMetadata via get_metadata().
     } else {
         let impl_consts_suffix = if is_capped {
             // When theoretical max exceeds 64KB, do NOT emit MAX_ENCODED_LENGTH —
@@ -279,26 +262,7 @@ pub(crate) fn generate_message_encoder(
                 }
             });
         }
-        impl_contents.extend(quote::quote! {
-            /// Absolute offset of this message within the original buffer
-            /// (the `msg_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.msg_offset
-            }
-
-            /// Absolute current write cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.pos
-            }
-
-            /// The complete original buffer this encoder wraps.
-            #[inline]
-            pub fn buffer(&self) -> &[u8] {
-                self.buf
-            }
-        });
+        // Placement utils live only on EncoderMetadata via get_metadata().
     }
 
     // ── Hot-path bounds check: one cmp, cold error construction ──
@@ -313,18 +277,21 @@ pub(crate) fn generate_message_encoder(
         #[inline(never)]
         fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
             sbe_rt::EncodeError::BufferTooShort {
+                field: "message header+body",
                 needed,
                 available: buf.len().saturating_sub(pos),
             }
         }
     };
     // Constructors + cold helper on the concrete (default-H) impl so
-    // `CarEncoder::wrap_and_apply_header` needs no turbofish (HFT-001).
+    // `CarEncoder::wrap_and_apply_header` needs no turbofish.
     impl_consts.extend(cold_check);
 
-    // Unsuffixed names are the safe checked `Result` lane. Zero-check cores are
-    // module-private `unsafe fn *_unchecked` until an HFT-008 keep=true decision
-    // re-publishes them (docs/evidence/unchecked-keep-manifest.json).
+    // Three-tier constructors:
+    //   try_*        — safe, returns Result on short buffers
+    //   bare name    — safe, panics on short buffers (extent proved before
+    //                  unchecked field setters)
+    //   *_unchecked  — unsafe, caller proves HEADER + fixed body extent
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with one bounds/overflow check.
         /// Does **not** write the message header (`HeaderAbsent`).
@@ -342,30 +309,28 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(Self::wrap(buf, msg_offset))
+            Ok(unsafe { Self::wrap_unchecked(buf, msg_offset) })
         }
 
-        /// Trusted body-only wrap — skips capacity validation. The encoder's
-        /// field setters use slice indexing, so an undersized buffer will
-        /// **panic** rather than invoke UB.
+        /// Trusted body-only wrap. Proves header + fixed-body extent then
+        /// constructs; **panics** if the buffer is too short. Field setters
+        /// use unchecked writes justified by that proof.
         ///
-        /// Prefer [`Self::try_wrap`] at trust boundaries.
+        /// Prefer [`Self::try_wrap`] at untrusted boundaries.
         #[inline]
         pub fn wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-            let body_pos = msg_offset + #header_size_lit;
-            #name_encoder_ident {
-                buf,
-                msg_offset,
-                pos: body_pos + #block_length_lit,
-                _header: core::marker::PhantomData,
+            if #needed_lit > buf.len().saturating_sub(msg_offset) {
+                panic!("{}", Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
+            // SAFETY: extent check above proved header + fixed body fit.
+            unsafe { Self::wrap_unchecked(buf, msg_offset) }
         }
 
         /// Zero-check body-only wrap — raw pointer ops, **UB** on OOB.
-        /// Only for proven-tight HFT loops where the panic machinery is
+        /// Only for proven-tight hot loops where the panic machinery is
         /// measurable in the critical path.
         ///
         /// # Safety
@@ -402,34 +367,30 @@ pub(crate) fn generate_message_encoder(
                 return Err(Self::buffer_too_short(buf, pos, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(Self::wrap_and_apply_header(buf, pos))
+            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
         }
 
-        /// Trusted full-frame wrap + header — skips capacity validation.
-        /// The header write uses slice indexing, so an undersized buffer will
-        /// **panic** rather than invoke UB.
+        /// Trusted full-frame wrap + header. Proves header + fixed-body extent
+        /// then writes the header; **panics** if the buffer is too short.
+        /// Field setters use unchecked writes justified by that proof.
         ///
-        /// Prefer [`Self::try_wrap_and_apply_header`] at trust boundaries.
-        /// Call [`Self::wrap_and_apply_header_unchecked`] if you have proven
-        /// the buffer is large enough and want to skip even the panic machinery.
+        /// Prefer [`Self::try_wrap_and_apply_header`] at untrusted boundaries.
+        /// Call [`Self::wrap_and_apply_header_unchecked`] only with a proven
+        /// extent when even panic machinery must be avoided.
         #[inline]
         pub fn wrap_and_apply_header(
             buf: &'a mut [u8],
             pos: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            buf[pos..pos + #header_size_lit]
-                .copy_from_slice(&Self::HEADER_TEMPLATE);
-            let body_pos = pos + #header_size_lit;
-            #name_encoder_ident {
-                buf,
-                msg_offset: pos,
-                pos: body_pos + #block_length_lit,
-                _header: core::marker::PhantomData,
+            if #needed_lit > buf.len().saturating_sub(pos) {
+                panic!("{}", Self::buffer_too_short(buf, pos, #needed_lit));
             }
+            // SAFETY: extent check above proved header + fixed body fit.
+            unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) }
         }
 
         /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
-        /// on OOB. Only for proven-tight HFT loops.
+        /// on OOB. Only for proven-tight hot loops.
         ///
         /// # Safety
         /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
@@ -514,36 +475,8 @@ pub(crate) fn generate_message_encoder(
         }
     }
 
-    const ENCODER_RESERVED: &[&str] = &[
-        "message_offset",
-        "limit",
-        "buffer",
-        "wrap",
-        "wrap",
-        "wrap_and_apply_header",
-        "wrap_and_apply_header",
-        "wrap_into_claim",
-        "compute_length_with_header",
-        // Complete-stage inherent methods emitted on the encoder struct — a
-        // field named after any of these would otherwise collide (matches the
-        // corresponding names in DECODER_RESERVED).
-        "as_body_bytes",
-        "as_bytes_with_header",
-        "into_remaining_mut",
-        "encoded_length",
-        "encoded_length_with_header",
-        // Emitted when the message has optional fields.
-        "apply_nulls",
-        // Stage transitions taking `self` (encoded-length struct wraps into
-        // a stage, so they always exist on the main encoder struct).
-        "fixed",
-        "raw_fixed",
-        // Associated fn (no receiver) — a field-named setter with `&mut self`
-        // collides with this because Rust does not separate associated fns from
-        // methods in the inherent namespace.
-        "buffer_too_short",
-    ];
-
+    // Placement utils live only on EncoderMetadata via get_metadata() —
+    // see ENCODER_RESERVED in conversion_helpers (inherent methods only).
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         // Offset of this field from the message header start (header + body offset).
@@ -736,9 +669,7 @@ pub(crate) fn generate_message_encoder(
     }
 
     // No partial as_bytes on incomplete stages — complete-message byte/length
-    // views exist only on the terminal complete stage (DECISIONS.md §2).
-    // Callers that genuinely need partial inspection should use an explicit
-    // name such as `written_prefix()`."
+    // views exist only on the terminal complete stage.
 
     // Encoded-length support: strategy-classified (computed above).
     // Length helpers are associated functions — keep on concrete impl for
@@ -820,10 +751,16 @@ pub(crate) fn generate_message_encoder(
                 });
             }
         }
+        // `format!`, not `///`: a doc comment inside `quote!` is already a
+        // string literal when interpolation runs, so `#fixed_name` in one would
+        // reach the generated docs verbatim.
+        let fixed_doc = format!(
+            "Set all fixed fields at once from a [`{fixed_name}`] value.\n\n\
+             Required fields are always written; optional fields are written \
+             when `Some`. Returns the encoder for tail methods."
+        );
         impl_contents.extend(quote::quote! {
-            /// Set all fixed fields at once from a [`#fixed_name`] value.
-            /// Required fields are always written; optional fields are
-            /// written when `Some`. Returns the encoder for tail methods.
+            #[doc = #fixed_doc]
             #[inline]
             #[must_use]
             pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
@@ -835,10 +772,19 @@ pub(crate) fn generate_message_encoder(
 
     {
         let raw_name = syn::Ident::new(&format!("{name}RawFixedWriter"), span);
+        let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
+        let raw_struct_doc = format!(
+            "Raw fixed-field writer. Individual field setters are available \
+             only on this writer. When done, embed the fields in a \
+             [`{fixed_name}`] and call the encoder's `fixed()`."
+        );
+        let raw_fixed_doc = format!(
+            "Return a dedicated raw fixed-field writer. All individual field \
+             setters are available on the writer. To advance to tail stages, \
+             collect the values into a [`{fixed_name}`] and call `fixed()`."
+        );
         ts.extend(quote::quote! {
-            /// Raw fixed-field writer. Individual field setters are available
-            /// only on this writer. When done, embed the fields in a
-            /// `#fixed_name` and call the encoder's `fixed()`.
+            #[doc = #raw_struct_doc]
             #[must_use = "raw fixed writer must be embedded in FixedFields"]
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
@@ -847,9 +793,7 @@ pub(crate) fn generate_message_encoder(
             }
         });
         impl_contents.extend(quote::quote! {
-            /// Return a dedicated raw fixed-field writer. All individual field
-            /// setters are available on the writer. To advance to tail stages,
-            /// collect the values into a `#fixed_name` and call `fixed()`.
+            #[doc = #raw_fixed_doc]
             #[inline]
             #[must_use]
             pub fn raw_fixed(self) -> #raw_name<'a> {
@@ -880,31 +824,65 @@ pub(crate) fn generate_message_encoder(
 
     // ── Metadata facet ──────────────────────────────────────────────────
     let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
+    // Complete-sounding `as_bytes_with_header` only when there are no tails;
+    // otherwise this stage is fixed-block only and must not look like a frame.
+    let meta_bytes = if msg.is_fixed() {
+        quote::quote! {
+            /// Message body bytes written so far (header exclusive).
+            #[inline]
+            pub fn as_body_bytes(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+            }
+            /// Header-inclusive frame bytes (message is fixed-only — complete).
+            #[inline]
+            pub fn as_bytes_with_header(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+            }
+        }
+    } else {
+        quote::quote! {
+            /// Fixed-block body bytes only (groups/var-data not yet written).
+            /// For a complete frame use the terminal stage's
+            /// `as_bytes_with_header`.
+            #[inline]
+            pub fn as_fixed_body_bytes(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+            }
+            /// Header + fixed block only — **not** a complete SBE message when
+            /// groups or var-data remain. Prefer the complete stage's
+            /// `as_bytes_with_header`.
+            #[inline]
+            pub fn as_fixed_region_with_header(&self) -> &[u8] {
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+            }
+        }
+    };
     ts.extend(quote::quote! {
-        /// Buffer-placement and wire-frame metadata. Holds a reference to the
-        /// parent encoder — zero-copy. All utility methods (`as_body_bytes`,
-        /// `as_bytes_with_header`, `into_remaining_mut`) live here so no
-        /// schema field can collide with them.
+        /// Buffer-placement metadata. Holds a reference to the parent encoder
+        /// — zero-copy. Utility methods live here so no schema field can
+        /// collide with them.
         #[derive(Clone, Copy)]
         pub struct #enc_metadata_ident<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
             encoder: &'m #name_encoder_ident<'a, H>,
         }
 
         impl<'m, 'a, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, 'a, H> {
-            /// Message body bytes (header exclusive).
+            #meta_bytes
+            /// Absolute offset of this message within the original buffer
+            /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
-            pub fn as_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
-            }
-            /// Header-inclusive frame bytes.
-            #[inline]
-            pub fn as_bytes_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
-            }
-            /// Absolute offset of this message within the original buffer.
-            #[inline]
-            pub fn message_offset(&self) -> usize {
+            pub const fn message_offset(&self) -> usize {
                 self.encoder.msg_offset
+            }
+            /// Absolute current write cursor within the original buffer.
+            #[inline]
+            pub const fn limit(&self) -> usize {
+                self.encoder.pos
+            }
+            /// The complete original buffer this encoder wraps.
+            #[inline]
+            pub const fn buffer(&self) -> &[u8] {
+                self.encoder.buf
             }
         }
     });
@@ -946,12 +924,23 @@ pub(crate) fn generate_message_encoder(
 
             let g_snake_unknown =
                 syn::Ident::new(&format!("{}_unknown_size", to_snake_case(&g.name)), span);
+            // `format!`, not `///`: `#g_snake` inside a `quote!` doc comment
+            // would be emitted verbatim instead of the sibling method's name.
+            let unknown_count_doc = format!(
+                "Encode this group without knowing the count up front.\n\n\
+                 The dimension header is written with a zero placeholder; after \
+                 the closure returns, the actual entry count is back-patched \
+                 into the header. No `GroupFull` check — overflow is the \
+                 caller's responsibility.\n\n\
+                 Prefer [`Self::{g_snake}`] when the count is known at compile \
+                 time or from a small input."
+            );
 
             ts.extend(quote::quote! {
                 impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
-                    /// Encode this group with a known count up front. Closure may
-                    /// return `()` or `Result<(), E>` (via
-                    /// Closures return `GroupResult`; `?` just works. a
+                    /// Encode this group with a known count up front.
+                    /// Closures return [`sbe_rt::GroupResult`]
+                    /// (`Result<(), EncodeError>`); `?` works — there is no
                     /// separate `try_*` method name.
                     #[inline]
                     #[must_use]
@@ -965,6 +954,7 @@ pub(crate) fn generate_message_encoder(
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }
@@ -993,14 +983,7 @@ pub(crate) fn generate_message_encoder(
                         })
                     }
 
-                    /// Encode this group without knowing the count up front.
-                    /// The dimension header is written with a zero placeholder;
-                    /// after the closure returns, the actual entry count is
-                    /// back-patched into the header. No `GroupFull` check —
-                    /// overflow is the caller's responsibility.
-                    ///
-                    /// Prefer [`Self::#g_snake`] when the count is known at
-                    /// compile time or from a small input.
+                    #[doc = #unknown_count_doc]
                     #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
@@ -1012,6 +995,7 @@ pub(crate) fn generate_message_encoder(
                     {
                         if self.pos + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }
@@ -1090,6 +1074,7 @@ pub(crate) fn generate_message_encoder(
                 let needed = #prefix_size_lit + data.len();
                 if self.pos + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: stringify!(#vd_snake),
                         needed,
                         available: self.buf.len().saturating_sub(self.pos),
                     });
@@ -1169,6 +1154,7 @@ pub(crate) fn generate_message_encoder(
                         let needed = #prefix_size_lit + exact_len;
                         if self.pos + needed > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
+                                field: stringify!(#vd_snake),
                                 needed,
                                 available: self.buf.len().saturating_sub(self.pos),
                             }.into());
@@ -1218,7 +1204,12 @@ pub(crate) fn generate_message_encoder(
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
                 }
-                /// Unwritten region after this message.
+                /// Unwritten region after this message's write cursor to the end of
+                /// the original buffer. Use for multi-message packing, e.g.
+                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
+                /// the payload of the current message — for the absolute write
+                /// cursor while keeping the encoder alive, use
+                /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
                     &mut self.buf[self.pos..]
@@ -1254,7 +1245,12 @@ pub(crate) fn generate_message_encoder(
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.pos - self.msg_offset
                 }
-                /// Unwritten region after this message.
+                /// Unwritten region after this message's write cursor to the end of
+                /// the original buffer. Use for multi-message packing, e.g.
+                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
+                /// the payload of the current message — for the absolute write
+                /// cursor while keeping the encoder alive, use
+                /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
                     &mut self.buf[self.pos..]
@@ -1272,9 +1268,9 @@ pub(crate) fn generate_message_encoder(
         });
     }
 
-    if total_tail > 0 {
+    if msg.has_tails() {
         ts.extend(quote::quote! {
-            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
+            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
 
             impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
                 const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -1285,7 +1281,7 @@ pub(crate) fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> sbe_rt::private::Sealed for #name_encoder_ident<'a> {}
+            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
 
             impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
                 const TEMPLATE_ID: u16 = #msg_id_lit;
@@ -1328,7 +1324,7 @@ pub(crate) fn generate_message_encoder(
     }
 
     // Checked + unsafe unchecked constructors are emitted once on the
-    // concrete impl above (HFT-001). Do not re-emit a second safe zero-check
+    // concrete impl above. Do not re-emit a second safe zero-check
     // pair here — that reintroduced UB from safe Rust.
 
     ts.extend(encoded_len_gen.standalone);

@@ -322,12 +322,8 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// Regression: message-level and group-entry-level Debug/Display used to
-/// silently drop bitset fields entirely (`FieldType::Set { .. } => {}`).
-/// A message or entry with only a set field printed as if the field didn't
-/// exist. Covers both non-versioned and `sinceVersion`-gated set fields at
-/// both levels — versioned accessors return `Option<T>` (not `Display`), so
-/// the generated Debug/Display code must branch, not blindly forward.
+/// Bitset fields appear in message- and entry-level Debug/Display, including
+/// `sinceVersion`-gated sets (accessors are `Option<T>`, so Debug must branch).
 #[test]
 fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -416,7 +412,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
 
 #[test]
 fn set_description_doc_not_duplicated() -> Result<(), Box<dyn std::error::Error>> {
-    // Regression: generate_set previously emitted the description doc twice.
+    // Set description rustdoc is emitted once.
     let xml = r#"<?xml version="1.0"?>
         <messageSchema package="setdoc" id="1" version="0" byteOrder="littleEndian">
           <types>
@@ -615,7 +611,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
     let ir = parse(all_field_types_schema())?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
-        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::LossyStrings),
+        GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::Strings),
     )
     .generate(&schema)?
     .modules()

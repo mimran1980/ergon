@@ -732,7 +732,7 @@ fn domain_encode_buffer_too_short() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate_domain_with(&Paths::example_schema(), "car_dom_str", |c| {
-        c.with_domain_objects(DomainVarData::LossyStrings)
+        c.with_domain_objects(DomainVarData::Strings)
     });
     assert!(
         src.contains("pub manufacturer: String"),
@@ -740,7 +740,7 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
     );
     assert!(
         src.contains("InvalidUtf8"),
-        "expected strict InvalidUtf8 on invalid UTF-8 (HFT-003):\n{src}"
+        "expected strict InvalidUtf8 on invalid UTF-8:\n{src}"
     );
     compile_and_run(
         "car_dom_str",

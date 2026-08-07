@@ -1,8 +1,8 @@
 # Road to 1.0
 
 Today both crates carry an honest **not production-ready** disclaimer. That
-is correct for a 0.1.x series with a still-open API freeze. “Best HFT lib”
-needs a published **exit path** from that disclaimer — criteria, not a date.
+is correct for a 0.1.x series with a still-open API freeze. This page is the
+published **exit path** from that disclaimer — criteria, not a date.
 
 ## ergo-sbe (reaches 1.0 first)
 

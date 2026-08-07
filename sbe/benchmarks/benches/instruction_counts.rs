@@ -1,6 +1,4 @@
-//! Scalar-access and verify diagnostics.
-//! iai-callgrind removed (HFT-005): pulled unmaintained proc-macro-error2.
-//! Replaced with a criterion harness that measures the same operations.
+//! Scalar-access and verify diagnostics via amplified Criterion timing.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]

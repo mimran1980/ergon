@@ -51,12 +51,15 @@ pub(crate) fn generate_group_decoder(
     let total_tail = g.groups.len() + g.var_data.len();
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
-    let bulk_decode_eligible = total_tail == 0
+    let bulk_decode_eligible = g.has_fixed_stride()
         && g.fields.iter().all(|f| {
             f.presence == Presence::Constant
                 || (f.presence != Presence::Optional && f.since_version == 0)
         });
-    let fixed_extent_validation = if total_tail == 0 {
+    // Unified extent rule: see `emit_readable_extent_body` in runtime.rs.
+    let min_extent_arms = crate::codegen::runtime::emit_readable_extent_body(&g.fields);
+
+    let fixed_extent_validation = if g.has_fixed_stride() {
         quote::quote! {
             let entries_length = count.checked_mul(block_length).ok_or(
                 sbe_rt::DecodeError::BufferTooShort {
@@ -77,23 +80,88 @@ pub(crate) fn generate_group_decoder(
         quote::quote! {}
     };
 
+    // Dynamic groups have no constant stride, so the whole region cannot be
+    // proven once at wrap time. Each private entry construction is instead
+    // preceded by a proof of the acting fixed block at that position.
+    //
+    // How much an entry needs, though, depends only on `acting_version` and
+    // `acting_block_length` — both fixed for the decoder's lifetime. It is
+    // resolved once at wrap and stored, so the per-entry cost in the iteration
+    // hot path is one subtraction and one comparison, not a re-run of the
+    // version-branch chain in `min_readable_fixed_extent`.
+    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g
+        .has_dynamic_entries()
+    {
+        (
+            quote::quote! { min_entry_extent: usize, },
+            quote::quote! {
+                let min_entry_extent = if block_length > min_fixed { block_length } else { min_fixed };
+            },
+            quote::quote! { min_entry_extent, },
+            quote::quote! { min_entry_extent: attached.min_entry_extent, },
+        )
+    } else {
+        // A fixed-stride group proves its whole entry region at wrap time, so
+        // it needs no per-entry extent and carries no field for one.
+        (
+            proc_macro2::TokenStream::new(),
+            proc_macro2::TokenStream::new(),
+            proc_macro2::TokenStream::new(),
+            proc_macro2::TokenStream::new(),
+        )
+    };
+
+    let dynamic_entry_extent_proof = quote::quote! {
+        let __available = self.buf.len().saturating_sub(self.pos);
+        if self.min_entry_extent > __available {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: #g_name_lit,
+                needed: self.min_entry_extent,
+                available: __available,
+            });
+        }
+    };
+
+    // A dynamic group whose entry fails to decode has lost its framing: every
+    // later offset in the group is derived from the failed entry's length. The
+    // first error is stored, yielded once, and then the group is finished —
+    // it can neither yield another entry nor construct a later message stage.
+    // Fixed-stride groups have a constant, already-proven stride, so they carry
+    // no poison state and no extra field.
+    let clear_poison = if g.has_dynamic_entries() {
+        quote::quote! { self.poisoned = None; }
+    } else {
+        proc_macro2::TokenStream::new()
+    };
+    let (poison_field, poison_init) = if g.has_dynamic_entries() {
+        (
+            quote::quote! { poisoned: Option<sbe_rt::DecodeError>, },
+            quote::quote! { poisoned: None, },
+        )
+    } else {
+        (
+            proc_macro2::TokenStream::new(),
+            proc_macro2::TokenStream::new(),
+        )
+    };
+
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
     }
-    // T-5: when entries have nested groups or var-data, there is no constant
-    // stride, so nth() O(1) is not available. The iterator or skip_n() must be
-    // used instead.
-    if total_tail > 0 {
+    // When entries have nested groups or var-data, there is no constant stride,
+    // so O(1) random access is not available — use the iterator or skip_n().
+    if g.has_dynamic_entries() {
         ts.extend(quote::quote! {
             #[doc = " This group has entries with nested groups or var-data —"]
-            #[doc = " there is no constant stride, so `nth()` (O(1) random access)"]
-            #[doc = " is **not** available. Use the [`Iterator`] implementation or"]
+            #[doc = " there is no constant stride, so `entry_at` (O(1) random"]
+            #[doc = " access) is **not** available. Use the [`Iterator`]"]
+            #[doc = " implementation, [`Self::scan_entry_at`], or"]
             #[doc = " [`Self::skip_n`] to advance positionally instead."]
         });
     }
     ts.extend(quote::quote! {
-        pub struct #decoder_ident<'a> {
+        pub struct #decoder_ident<'a, C: sbe_rt::GroupContext = sbe_rt::Detached> {
             buf: &'a [u8],
             pos: usize,
             count: usize,
@@ -101,32 +169,40 @@ pub(crate) fn generate_group_decoder(
             total: usize,
             acting_version: u16,
             acting_block_length: usize,
-            // Parent message body position + acting block length, remembered so
-            // `finish()` can reconstruct the next message decoder stage
-            // (DECISIONS.md §3 consuming tail stages). Unused by the legacy
-            // `&self` random-access accessors.
+            // Parent message body position + acting block length, so `finish()`
+            // can reconstruct the next message decoder stage. Unused by
+            // random-access entry accessors.
             parent_pos: usize,
             parent_block_length: usize,
+            #poison_field
+            #dyn_extent_field
+            // Zero-sized: attachment is a type-level fact, not a runtime flag.
+            _context: core::marker::PhantomData<C>,
         }
 
-        impl<'a> #decoder_ident<'a> {
-            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
-
+        impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
+            /// Proof-dependent constructor: like `wrap()` but remembers the
+            /// parent message body position and acting block length so
+            /// `finish()` can rebuild the next stage.
+            ///
+            /// Private to the generated module — a caller outside it cannot
+            /// invent parent state and then `finish()` into a message stage
+            /// that never existed.
+            ///
+            /// # Safety
+            /// `parent_pos` and `parent_block_length` must describe the message
+            /// body this group is genuinely nested in, and `pos` must be that
+            /// message's real dimension-header offset for this group. The
+            /// dimension header, the acting block length, and the group extent
+            /// are still validated here and may be untrusted.
             #[inline]
-            pub fn wrap(buf: &'a [u8], pos: usize, acting_version: u16) -> Result<Self, sbe_rt::DecodeError> {
-                Self::wrap_with_parent(buf, pos, acting_version, 0, 0)
-            }
-
-            /// Like `wrap()` but remembers the parent message body position and
-            /// acting block length so `finish()` can rebuild the next stage.
-            #[inline]
-            pub fn wrap_with_parent(
+            unsafe fn wrap_with_parent(
                 buf: &'a [u8],
                 pos: usize,
                 acting_version: u16,
                 parent_pos: usize,
                 parent_block_length: usize,
-            ) -> Result<Self, sbe_rt::DecodeError> {
+            ) -> Result<#decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
                 if #dim_size_lit > buf.len().saturating_sub(pos) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -140,8 +216,21 @@ pub(crate) fn generate_group_decoder(
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
                 let entries_start = pos + #dim_size_lit;
+                // SBE acting-version rule at the flyweight trust boundary: an
+                // entry whose wire block length cannot hold the required fixed
+                // fields active at this version is malformed, and a required
+                // getter would otherwise perform an unchecked read past it.
+                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
+                if count > 0 && block_length < min_fixed {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #g_name_lit,
+                        needed: min_fixed,
+                        available: block_length,
+                    });
+                }
+                #dyn_extent_decl
                 #fixed_extent_validation
-                Ok(Self {
+                Ok(#decoder_ident {
                     buf,
                     pos: entries_start,
                     count,
@@ -151,6 +240,9 @@ pub(crate) fn generate_group_decoder(
                     acting_block_length: block_length,
                     parent_pos,
                     parent_block_length,
+                    #poison_init
+                    #dyn_extent_init
+                    _context: core::marker::PhantomData,
                 })
             }
 
@@ -159,17 +251,76 @@ pub(crate) fn generate_group_decoder(
                 self.count == 0
             }
         }
+
+        impl<'a> #decoder_ident<'a, sbe_rt::Detached> {
+            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+
+            /// Minimum entry bytes needed to safely read every **required**
+            /// fixed field present at `acting_version`.
+            ///
+            /// Version-aware, and not always the compiled
+            /// `ENTRY_BLOCK_LENGTH`: a forward-compatible reader accepts a
+            /// wire block length it does not recognise, but never one too
+            /// small for the fields it will actually read.
+            #[inline]
+            pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
+                #min_extent_arms
+            }
+
+            /// Wrap a standalone group at its dimension header, with bounds
+            /// checks.
+            ///
+            /// This is the only public constructor. It validates the dimension
+            /// header, rejects a wire block length too small to hold the
+            /// required fixed fields active at `acting_version`, and — for
+            /// fixed-stride groups — proves the whole entry region at once.
+            ///
+            /// The result is *detached*: it iterates, random-accesses, and
+            /// rewinds, but has no parent message to complete into, so it has
+            /// no `finish` / `skip_remaining`.
+            #[inline]
+            pub fn wrap(
+                buf: &'a [u8],
+                pos: usize,
+                acting_version: u16,
+            ) -> Result<#decoder_ident<'a, sbe_rt::Detached>, sbe_rt::DecodeError> {
+                // SAFETY: a standalone group has no parent to prove; the zero
+                // parent position can never be observed, because a detached
+                // decoder cannot reach a message stage.
+                let attached = unsafe {
+                    <#decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
+                        buf, pos, acting_version, 0, 0,
+                    )?
+                };
+                Ok(#decoder_ident {
+                    buf: attached.buf,
+                    pos: attached.pos,
+                    count: attached.count,
+                    start: attached.start,
+                    total: attached.total,
+                    acting_version: attached.acting_version,
+                    acting_block_length: attached.acting_block_length,
+                    parent_pos: attached.parent_pos,
+                    parent_block_length: attached.parent_block_length,
+                    #poison_init
+                    #dyn_extent_reinit
+                    _context: core::marker::PhantomData,
+                })
+            }
+        }
     });
 
     // remaining(), rewind()
     ts.extend(quote::quote! {
-        impl<'a> #decoder_ident<'a> {
+        impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
+            /// Entries not yet advanced (count), not a byte slice.
+            /// For message-level byte tails use `get_metadata().remaining()`.
             #[inline]
             pub const fn remaining(&self) -> usize {
                 self.count
             }
 
-            /// Private zero-check dimension wrap after the caller has proven
+            /// Dimension wrap after the caller has proven
             /// the dimension header (and, for fixed groups, the full entry
             /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
             ///
@@ -187,24 +338,37 @@ pub(crate) fn generate_group_decoder(
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
+                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
+                #dyn_extent_decl
                 Self {
                     buf, pos: pos + #dim_size_lit, count, start: pos + #dim_size_lit,
                     total: count, acting_version, acting_block_length: block_length,
                     parent_pos, parent_block_length,
+                    #poison_init
+                    #dyn_extent_init
+                    _context: core::marker::PhantomData,
                 }
             }
 
+            /// Restart iteration from the group's proven start.
+            ///
+            /// This is the one operation that clears a poisoned group: the
+            /// start offset was validated at wrap time, so retrying from there
+            /// is sound even after an entry failed.
             #[inline]
             pub fn rewind(&mut self) -> &mut Self {
                 self.pos = self.start;
                 self.count = self.total;
+                #clear_poison
                 self
             }
         }
     });
 
     // skip_n()
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
+        // no tails: tail_offset_0 is a no-op
+        // (count-based total_tail remains for index use below)
         // Build field read expressions for bulk_decode (reverse of
         // add_struct's struct_write in generate_group_encoder).
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
@@ -267,22 +431,12 @@ pub(crate) fn generate_group_decoder(
             }
         }
 
-        ts.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
-                #[inline]
-                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
-                    if n > self.count {
-                        return Err(sbe_rt::DecodeError::BufferTooShort {
-                            field: #g_name_lit,
-                            needed: n.saturating_mul(self.acting_block_length),
-                            available: self.count.saturating_mul(self.acting_block_length),
-                        });
-                    }
-                    self.pos += n.saturating_mul(self.acting_block_length);
-                    self.count -= n;
-                    Ok(())
-                }
-
+        // Eager owned rows can only be emitted when the row type can represent
+        // every valid acting version: flat, required, since-v0 fields. An
+        // optional or versioned field has no representation in a plain struct,
+        // so a bulk row would have to fabricate a value for something absent.
+        let bulk_methods = if bulk_decode_eligible {
+            quote::quote! {
                 /// Bulk-decode all remaining entries into a caller-owned `Vec`.
                 /// Zero-allocation after warm-up — the caller reuses the
                 /// destination buffer across messages.
@@ -321,28 +475,52 @@ pub(crate) fn generate_group_decoder(
                 /// One bounds check for the whole batch — faster than
                 /// iterating with [`Iterator::next`] when materialising
                 /// the entire group (DTO construction, snapshots).
+                #[inline]
                 pub fn bulk_decode(&mut self) -> Result<Vec<#entry_struct_ident>, sbe_rt::DecodeError> {
                     let mut out = Vec::new();
                     self.bulk_decode_into(&mut out)?;
                     Ok(out)
                 }
             }
-        });
-    } else {
+        } else {
+            proc_macro2::TokenStream::new()
+        };
+
         ts.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
                     if n > self.count {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: n.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
-                            available: self.count.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            needed: n.saturating_mul(self.acting_block_length),
+                            available: self.count.saturating_mul(self.acting_block_length),
+                        });
+                    }
+                    self.pos += n.saturating_mul(self.acting_block_length);
+                    self.count -= n;
+                    Ok(())
+                }
+                #bulk_methods
+
+            }
+        });
+    } else {
+        ts.extend(quote::quote! {
+            impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
+                #[inline]
+                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+                    if n > self.count {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: n.saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
+                            available: self.count.saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
                         });
                     }
                     for _ in 0..n {
-                        // SAFETY: encoded_length re-validates; prior entry/group
-                        // construction left pos on a plausible entry start.
+                        #dynamic_entry_extent_proof
+                        // SAFETY: acting fixed block proven in-bounds directly
+                        // above; encoded_length re-validates the dynamic tail.
                         let entry = unsafe {
                             #entry_decoder_ident::wrap(
                                 self.buf,
@@ -362,9 +540,9 @@ pub(crate) fn generate_group_decoder(
 
     // Random access is direct for fixed entries. Entries with nested tails
     // must be walked because their encoded lengths are not a constant stride.
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
         ts.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
                 pub fn entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
@@ -409,14 +587,14 @@ pub(crate) fn generate_group_decoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
                 pub fn scan_entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: idx.saturating_add(1).saturating_mul(Self::ENTRY_BLOCK_LENGTH),
-                            available: self.total.saturating_mul(Self::ENTRY_BLOCK_LENGTH),
+                            needed: idx.saturating_add(1).saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
+                            available: self.total.saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
                         });
                     }
                     let mut offset = self.start;
@@ -428,7 +606,17 @@ pub(crate) fn generate_group_decoder(
                             self.acting_version,
                         )?;
                     }
-                    // SAFETY: skip walked prior entries; encoded_length validates.
+                    let available = self.buf.len().saturating_sub(offset);
+                    if self.min_entry_extent > available {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: self.min_entry_extent,
+                            available,
+                        });
+                    }
+                    // SAFETY: skip walked prior entries and the acting fixed
+                    // block at `offset` is proven above; encoded_length
+                    // validates the dynamic tail.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
@@ -444,9 +632,9 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
-    if total_tail == 0 {
+    if g.has_fixed_stride() {
         ts.extend(quote::quote! {
-            impl<'a> Iterator for #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> Iterator for #decoder_ident<'a, C> {
                 type Item = #entry_decoder_ident<'a>;
 
                 #[inline]
@@ -470,7 +658,7 @@ pub(crate) fn generate_group_decoder(
                 }
             }
 
-            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> ExactSizeIterator for #decoder_ident<'a, C> {
                 #[inline]
                 fn len(&self) -> usize {
                     self.count
@@ -479,17 +667,37 @@ pub(crate) fn generate_group_decoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a> Iterator for #decoder_ident<'a> {
+            impl<'a, C: sbe_rt::GroupContext> Iterator for #decoder_ident<'a, C> {
                 type Item = Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError>;
 
                 #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
-                    if self.count == 0 {
+                    // Poisoned: the error was already yielded once. Every later
+                    // offset in this group came from the entry that failed, so
+                    // there is nothing truthful left to produce.
+                    if self.poisoned.is_some() || self.count == 0 {
                         return None;
                     }
-                    // SAFETY: encoded_length() re-validates the dynamic tail
-                    // before advance; fixed block at pos was left by prior entry
-                    // or by dimension header after wrap_with_parent.
+                    // Extent resolved once at wrap: the hot path is a
+                    // subtraction and a comparison.
+                    let available = self.buf.len().saturating_sub(self.pos);
+                    if self.min_entry_extent > available {
+                        let error = sbe_rt::DecodeError::BufferTooShort {
+                            field: #g_name_lit,
+                            needed: self.min_entry_extent,
+                            available,
+                        };
+                        // Zero the count with the poison so `remaining()`,
+                        // `is_empty()`, and `size_hint()` all agree with what
+                        // iteration will actually yield. `rewind()` restores it
+                        // from `total`, so nothing is lost.
+                        self.poisoned = Some(error);
+                        self.count = 0;
+                        return Some(Err(error));
+                    }
+                    // SAFETY: acting fixed block at pos proven directly above;
+                    // encoded_length() re-validates the dynamic tail before
+                    // advancing.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
@@ -501,6 +709,7 @@ pub(crate) fn generate_group_decoder(
                     let size = match entry.encoded_length() {
                         Ok(s) => s,
                         Err(e) => {
+                            self.poisoned = Some(e);
                             self.count = 0;
                             return Some(Err(e));
                         }
@@ -509,14 +718,28 @@ pub(crate) fn generate_group_decoder(
                     self.count -= 1;
                     Some(Ok(entry))
                 }
-            }
 
-            impl<'a> ExactSizeIterator for #decoder_ident<'a> {
+                /// Conservative: the declared count is an upper bound, but a
+                /// malformed entry can end iteration early, so the lower bound
+                /// is zero. This group is deliberately **not**
+                /// `ExactSizeIterator` — a size-based allocation must not trust
+                /// a count the wire has not yet justified.
+                ///
+                /// Poisoning zeroes the count, so this collapses to `(0, Some(0))`
+                /// on a broken group without a separate branch.
                 #[inline]
-                fn len(&self) -> usize {
-                    self.count
+                fn size_hint(&self) -> (usize, Option<usize>) {
+                    (0, Some(self.count))
                 }
             }
+
+            /// Exhausted by count or by poison, `next()` keeps returning `None`.
+            ///
+            /// [`Self::rewind`] is the documented exception: it is not `next`,
+            /// and it deliberately restarts a *new* iteration from the start
+            /// offset proven at wrap time. Do not call it partway through an
+            /// adaptor that has cached this fuse.
+            impl<'a, C: sbe_rt::GroupContext> core::iter::FusedIterator for #decoder_ident<'a, C> {}
         });
     }
 
@@ -538,7 +761,7 @@ pub(crate) fn generate_group_decoder(
             /// field offset used by accessors) must not overflow and must be
             /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
             #[inline]
-            pub fn wrap(
+            unsafe fn wrap(
                 buf: &'a [u8],
                 pos: usize,
                 acting_block_length: usize,
@@ -562,7 +785,7 @@ pub(crate) fn generate_group_decoder(
             /// Fixed block at `pos` and every dynamic tail extent this entry
             /// will traverse must be fully in-bounds in `buf`.
             #[inline]
-            pub fn wrap(
+            unsafe fn wrap(
                 buf: &'a [u8],
                 pos: usize,
                 acting_block_length: usize,
@@ -764,7 +987,7 @@ pub(crate) fn generate_group_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                            Some(#target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset })
                         }
                     });
                 } else {
@@ -772,7 +995,7 @@ pub(crate) fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
                             let offset = self.pos + #offset_lit;
-                            #target_decoder_name { buf: self.buf, pos: offset }
+                            #target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset }
                         }
                     });
                 }
@@ -892,21 +1115,57 @@ pub(crate) fn generate_group_decoder(
                 }
 
                 if crate::structured_ir::is_bool_enum(elements, enum_name) {
-                    let bool_ident = quote::format_ident!("{}_bool", f_name);
-                    if f.since_version > 0 {
+                    let bool_ident = quote::format_ident!("try_{}_bool", f_name);
+                    let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                    // ── Boolean matrix for group entries (same contract as message-level) ──
+                    if f.presence == Presence::Optional {
+                        // None = version absence OR schema null value; a
+                        // present non-boolean discriminant → InvalidBoolean.
                         entry_body.extend(quote::quote! {
                             #[inline]
-                            pub fn #bool_ident(&self) -> Option<bool> {
-                                self.#raw_ident().map(|value| value != 0)
+                            pub fn #bool_ident(&self) -> Result<Option<bool>, sbe_rt::DecodeError> {
+                                match self.#f_name_ident() {
+                                    None => Ok(None),
+                                    Some(v) => v.as_bool().map(Some).ok_or(
+                                        sbe_rt::DecodeError::InvalidBoolean {
+                                            field: #f_name_lit,
+                                            discriminant: v as u64,
+                                        }
+                                    ),
+                                }
+                            }
+                        });
+                    } else if f.since_version > 0 {
+                        // Required but not yet present → None means
+                        // absent from the acting version. A present
+                        // non-boolean value → InvalidBoolean.
+                        entry_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #bool_ident(&self) -> Result<Option<bool>, sbe_rt::DecodeError> {
+                                match self.#f_name_ident() {
+                                    None => Ok(None),
+                                    Some(v) => v.as_bool().map(Some).ok_or(
+                                        sbe_rt::DecodeError::InvalidBoolean {
+                                            field: #f_name_lit,
+                                            discriminant: v as u64,
+                                        }
+                                    ),
+                                }
                             }
                         });
                     } else {
-                        // Use the const raw primitive accessor — the typed
-                        // enum getter is not const (from_raw is runtime).
+                        // Required since-v0: the raw value always
+                        // returns a discriminant; NullVal and unknown
+                        // are InvalidBoolean.
                         entry_body.extend(quote::quote! {
                             #[inline]
-                            pub const fn #bool_ident(&self) -> bool {
-                                self.#raw_ident() != 0
+                            pub fn #bool_ident(&self) -> Result<bool, sbe_rt::DecodeError> {
+                                self.#f_name_ident().as_bool().ok_or(
+                                    sbe_rt::DecodeError::InvalidBoolean {
+                                        field: #f_name_lit,
+                                        discriminant: self.#raw_ident() as u64,
+                                    }
+                                )
                             }
                         });
                     }
@@ -1349,8 +1608,7 @@ pub(crate) fn generate_group_decoder(
         let ng_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
         let sep = if entry_display_out_idx == 0 { "" } else { ", " };
         let fmt_open = format!("{sep}{}: [", ng.name);
-        let ng_total_tail = ng.groups.len() + ng.var_data.len();
-        if ng_total_tail == 0 {
+        if ng.has_fixed_stride() {
             entry_display_body.extend(quote::quote! {
                 write!(f, #fmt_open)?;
                 if let Ok(ng_decoder) = self.#ng_ident() {
@@ -1435,10 +1693,9 @@ pub(crate) fn generate_group_decoder(
         ));
     }
 
-    // Concrete consuming entry-level tail stages (DECISIONS.md §3, Task D) for
-    // entries that have nested groups and/or var-data. Additive: the legacy
-    // `&self` entry accessors remain. Emitted after the nested group decoders
-    // above so `finish()` can name them.
+    // Consuming entry-level tail stages for entries with nested groups and/or
+    // var-data. Random-access `&self` entry accessors remain. Emitted after the
+    // nested group decoders above so `finish()` can name them.
     ts.extend(generate_entry_consuming_stages(
         g,
         elements,

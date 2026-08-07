@@ -138,6 +138,27 @@ if [[ ${#control_files[@]} -gt 0 ]]; then
             FNR == 1 {
                 in_if = 0
                 reported = 0
+                in_heredoc = 0
+                heredoc_tag = ""
+            }
+            # Skip heredoc bodies. An embedded Python/awk `if` has no `fi`, so
+            # reading one as shell control flow would leave the block open for
+            # the rest of the file and flag every later command.
+            in_heredoc {
+                line = $0
+                sub(/^[[:space:]]+/, "", line)
+                if (line == heredoc_tag) {
+                    in_heredoc = 0
+                    heredoc_tag = ""
+                }
+                next
+            }
+            match($0, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/) {
+                heredoc_tag = substr($0, RSTART, RLENGTH)
+                sub(/^<<-?[[:space:]]*/, "", heredoc_tag)
+                gsub(/['"'"'"]/, "", heredoc_tag)
+                in_heredoc = 1
+                next
             }
             /^[[:space:]]*@?if[[:space:]]/ {
                 in_if = 1

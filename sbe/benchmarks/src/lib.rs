@@ -69,3 +69,74 @@ pub fn sbe_tool_car_body_decoder(
         acting_version,
     )
 }
+
+// ─── Untimed extent preflights ─────────────────────────────────────────────
+//
+// Maintained pairs run in validation class `none`: sbe-tool's `wrap` performs
+// no bounds, header, or version check, so timing ergon's validating `wrap`
+// against it would charge ergon for work its reference never does. The timed
+// regions therefore call `wrap_unchecked`, whose safety contract is that the
+// message extent is already proven.
+//
+// These helpers are that proof. They run once, outside every timed region, and
+// panic before any measurement is taken — so a benchmark can never report a
+// number for a buffer that would have been rejected.
+
+/// Prove one framed message at `message_offset` has a full header plus the
+/// version-aware fixed body extent.
+///
+/// Panics with the offending offset rather than returning, because a benchmark
+/// that cannot legally wrap has nothing meaningful to measure.
+#[inline]
+pub fn assert_baseline_wrap_extent(
+    buf: &[u8],
+    message_offset: usize,
+    acting_block_length: usize,
+    acting_version: u16,
+) {
+    use crate::ergo_car::CarDecoder;
+
+    let body_pos = message_offset
+        .checked_add(CarDecoder::HEADER_LENGTH)
+        .unwrap_or_else(|| panic!("message offset {message_offset} overflows the header length"));
+    let min_fixed = CarDecoder::min_readable_fixed_extent(acting_version);
+    let needed = acting_block_length.max(min_fixed);
+    let available = buf.len().saturating_sub(body_pos);
+    assert!(
+        needed <= available,
+        "message at offset {message_offset} needs {needed} body bytes but only {available} are \
+         present — the timed region would wrap past the buffer"
+    );
+}
+
+/// Prove every message start in a replicated stream, so a strided
+/// `wrap_unchecked` loop is sound for all `count` iterations.
+#[inline]
+pub fn assert_stream_wrap_extent(
+    buf: &[u8],
+    msg_len: usize,
+    count: usize,
+    acting_block_length: usize,
+    acting_version: u16,
+) {
+    assert!(msg_len > 0, "a zero-length message would never advance");
+    assert!(
+        buf.len() >= count.saturating_mul(msg_len),
+        "stream holds {} bytes, too short for {count} messages of {msg_len}",
+        buf.len()
+    );
+    for index in 0..count {
+        assert_baseline_wrap_extent(buf, index * msg_len, acting_block_length, acting_version);
+    }
+}
+
+/// Prove an encode buffer can hold a complete frame before a timed region
+/// wraps it unchecked.
+#[inline]
+pub fn assert_encode_extent(buf: &[u8], needed_with_header: usize) {
+    assert!(
+        buf.len() >= needed_with_header,
+        "encode buffer holds {} bytes but a complete frame needs {needed_with_header}",
+        buf.len()
+    );
+}

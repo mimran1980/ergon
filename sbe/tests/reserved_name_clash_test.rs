@@ -1,14 +1,10 @@
 //! Regression test for reserved-method / field-name collisions.
 //!
-//! A flat message may legally declare fields whose names collide with reserved
-//! decoder/encoder methods (`remaining`, `buffer`). Both the **array**
-//! accessor path and the **optional primitive** accessor path must route the
-//! field name through `resolve_field_ident` so it becomes `{name}_field`,
-//! leaving the reserved method intact. The earlier substring-only test used a
-//! single scalar field and did not exercise either path — a schema with an
-//! optional `remaining` and an array `buffer` produced duplicate methods
-//! and a `Display` impl referencing a non-existent `remaining_field`, so the
-//! generated crate failed to compile. This test compiles and runs it.
+//! Placement utilities (`remaining`, `buffer`, `limit`, `message_offset`) live
+//! only on `{Name}DecoderMetadata` / `{Name}EncoderMetadata` via
+//! `get_metadata()`. Schema fields may therefore use those names without a
+//! `_field` rename. Reserved renames still apply to true inherent methods
+//! (`wrap`, `decode`, `encoded_length`, `fixed`, …).
 
 #![allow(clippy::expect_used)]
 
@@ -27,10 +23,12 @@ const SCHEMA_XML: &str = r#"<messageSchema package="clash" id="1" version="0" by
     </composite>
     <type name="Quad" primitiveType="uint32" length="4"/>
   </types>
-  <message name="Msg" id="1" blockLength="21">
+  <message name="Msg" id="1" blockLength="29">
     <field name="remaining" id="1" type="uint32" presence="optional" offset="0"/>
     <field name="buffer" id="2" type="Quad" offset="4"/>
-    <field name="normal" id="3" type="uint8" offset="20"/>
+    <field name="limit" id="3" type="uint32" offset="20"/>
+    <field name="messageOffset" id="4" type="uint32" offset="24"/>
+    <field name="normal" id="5" type="uint8" offset="28"/>
   </message>
 </messageSchema>"#;
 
@@ -46,27 +44,36 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         .source
         .clone();
 
-    // Both field accessors are renamed; the reserved methods survive.
+    // Placement names are not reserved on the message decoder — fields keep
+    // their natural names; utils are on get_metadata().
+    for natural in [
+        "fn remaining(&self) -> Option<u32>",
+        "fn buffer(&self) -> [u32; 4]",
+        "fn limit(&self) -> u32",
+        "fn message_offset(&self) -> u32",
+    ] {
+        assert!(
+            src.contains(natural),
+            "placement-named field must keep natural accessor `{natural}` (not *_field)"
+        );
+    }
+    for renamed in [
+        "fn remaining_field",
+        "fn buffer_field",
+        "fn limit_field",
+        "fn message_offset_field",
+    ] {
+        assert!(
+            !src.contains(renamed),
+            "must not rename placement-named field to `{renamed}`"
+        );
+    }
     assert!(
-        src.contains("fn remaining_field(&self) -> Option<u32>"),
-        "optional field 'remaining' must be renamed to remaining_field"
-    );
-    assert!(
-        src.contains("fn buffer_field(&self) -> [u32; 4]"),
-        "array field 'buffer' must be renamed to buffer_field"
-    );
-    // The reserved decoder methods still exist and are not shadowed.
-    assert!(
-        src.contains("fn remaining(&self)"),
-        "reserved decoder method remaining() must remain"
-    );
-    assert!(
-        src.contains("fn buffer(&self)"),
-        "reserved decoder method buffer() must remain"
+        src.contains("fn get_metadata("),
+        "decoder must expose get_metadata for placement utils"
     );
 
-    // The real proof: the generated crate compiles and every path works,
-    // including the Display impl that references the renamed accessors.
+    // The real proof: the generated crate compiles and every path works.
     compile_and_run(
         "clash",
         &src,
@@ -76,19 +83,25 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
             .fixed(&MsgFixedFields {
                 remaining: Some(7),
                 buffer: [10, 20, 30, 40],
+                limit: 100,
+                message_offset: 200,
                 normal: 9,
             })
             .encoded_length_with_header();
 
         let dec = MsgDecoder::try_from(&buf[..len]).expect("decode");
-        // Renamed field accessors.
-        assert_eq!(dec.remaining_field(), Some(7));
-        assert_eq!(dec.buffer_field(), [10, 20, 30, 40]);
+        // Field accessors use natural names (no _field).
+        assert_eq!(dec.remaining(), Some(7));
+        assert_eq!(dec.buffer(), [10, 20, 30, 40]);
+        assert_eq!(dec.limit(), 100);
+        assert_eq!(dec.message_offset(), 200);
         assert_eq!(dec.normal(), 9);
-        // Reserved methods still available and distinct from the fields.
-        let _tail: &[u8] = dec.remaining();
-        let _all: &[u8] = dec.buffer();
-        // Display/Debug impl references the renamed accessors — must format.
+        // Placement utils are on metadata and do not collide with fields.
+        let meta = dec.get_metadata();
+        let _all: &[u8] = meta.buffer();
+        let _tail: &[u8] = meta.remaining();
+        let _lim: usize = meta.limit();
+        let _off: usize = meta.message_offset();
         let shown = format!("{dec:?}");
         assert!(shown.contains("remaining"));
         "#,
@@ -492,6 +505,204 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     assert!(
         src.contains("keyword") || src.contains("type"),
         "diagnostic must mention the keyword issue: {src}"
+    );
+
+    Ok(())
+}
+
+fn generate_src(xml: &str, pkg: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(xml)?);
+    Ok(Generator::new(GenerationConfig::new(pkg))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone())
+}
+
+/// Read a reserved-name list straight out of the generator source.
+///
+/// Compile-time include (no `CARGO_MANIFEST_DIR`) — the generator's own list is
+/// the source of truth, so the test cannot drift from it by holding a copy.
+fn parse_reserved_list(marker: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    const HELPERS: &str = include_str!("../src/codegen/conversion_helpers.rs");
+    let start = HELPERS
+        .find(marker)
+        .ok_or_else(|| format!("missing {marker}"))?;
+    let rest = &HELPERS[start..];
+    let end = rest
+        .find("];")
+        .ok_or_else(|| format!("unterminated {marker}"))?;
+    let mut names = Vec::new();
+    for line in rest[..end].lines() {
+        if let Some(s) = line.trim().strip_prefix('"')
+            && let Some(name) = s.split('"').next()
+            && !name.is_empty()
+        {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// Placement utilities live on the metadata facet, so reserving their names
+/// would rename a real schema field for no reason (zombie rename regression).
+#[test]
+fn placement_names_are_never_reserved() -> Result<(), Box<dyn std::error::Error>> {
+    let decoder_reserved = parse_reserved_list("const DECODER_RESERVED")?;
+    let encoder_reserved = parse_reserved_list("const ENCODER_RESERVED")?;
+
+    for placement in [
+        "remaining",
+        "buffer",
+        "limit",
+        "message_offset",
+        "as_fixed_body_bytes",
+        "as_fixed_region_with_header",
+    ] {
+        assert!(
+            !decoder_reserved.iter().any(|n| n == placement),
+            "DECODER_RESERVED must not contain placement util `{placement}`"
+        );
+        assert!(
+            !encoder_reserved.iter().any(|n| n == placement),
+            "ENCODER_RESERVED must not contain placement util `{placement}`"
+        );
+    }
+    assert!(
+        !decoder_reserved.iter().any(|n| n == "header"),
+        "stale reserved `header` must stay removed"
+    );
+    Ok(())
+}
+
+/// Representative tailed message shape for reserved-name coverage.
+const TAILED_SCHEMA: &str = r#"<messageSchema package="rsub" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="Tailed" id="1" blockLength="4">
+    <field name="x" id="1" type="uint32" offset="0"/>
+    <group name="g" id="2" dimensionType="groupSizeEncoding">
+      <field name="y" id="3" type="uint16" offset="0"/>
+      <data name="note" id="4" type="varDataEncoding"/>
+    </group>
+  </message>
+</messageSchema>"#;
+
+/// Representative fixed message shape for reserved-name coverage.
+const FIXED_SCHEMA: &str = r#"<messageSchema package="rfix" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="Fixed" id="1" blockLength="4">
+    <field name="x" id="1" type="uint32" offset="0"/>
+  </message>
+</messageSchema>"#;
+
+/// Representative optional message shape for reserved-name coverage.
+const OPTIONAL_SCHEMA: &str = r#"<messageSchema package="ropt" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="Opt" id="1" blockLength="4">
+    <field name="x" id="1" type="uint16" offset="0"/>
+    <field name="maybe" id="2" type="uint16" presence="optional" offset="2"/>
+  </message>
+</messageSchema>"#;
+
+/// Every reserved name must be emitted as an inherent method on some
+/// representative message shape, and placement must appear on the metadata
+/// facet. A name reserved but never emitted renames fields for nothing.
+#[test]
+fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let decoder_reserved = parse_reserved_list("const DECODER_RESERVED")?;
+    let encoder_reserved = parse_reserved_list("const ENCODER_RESERVED")?;
+
+    // Staged message (group entry has var-data): compute_length factory + rewind.
+    // Flat group+message-var-data is Direct strategy and does not emit compute_length().
+    let tailed = generate_src(TAILED_SCHEMA, "rsub")?;
+
+    // Fixed-only: after_this_message + wrap_into_claim.
+    let fixed = generate_src(FIXED_SCHEMA, "rfix")?;
+
+    // Optional fields → apply_nulls.
+    let optional = generate_src(OPTIONAL_SCHEMA, "ropt")?;
+
+    let has_fn = |src: &str, name: &str| {
+        src.contains(&format!("fn {name}(")) || src.contains(&format!("fn {name}<"))
+    };
+
+    for name in &decoder_reserved {
+        let ok = has_fn(&tailed, name) || has_fn(&fixed, name) || has_fn(&optional, name);
+        assert!(
+            ok,
+            "DECODER_RESERVED `{name}` is not emitted as an inherent method on \
+             any representative schema (tailed/fixed/optional) — remove from \
+             reserved or restore emission"
+        );
+    }
+    for name in &encoder_reserved {
+        let ok = has_fn(&tailed, name) || has_fn(&fixed, name) || has_fn(&optional, name);
+        assert!(
+            ok,
+            "ENCODER_RESERVED `{name}` is not emitted as an inherent method on \
+             any representative schema (tailed/fixed/optional) — remove from \
+             reserved or restore emission"
+        );
+    }
+
+    // Placement lives on metadata for every shape.
+    for src in [&tailed, &fixed, &optional] {
+        assert!(src.contains("fn get_metadata("), "missing get_metadata");
+        assert!(
+            src.contains("fn remaining(&self)") || src.contains("fn remaining(&self) ->"),
+            "metadata remaining missing"
+        );
+        // Field-safe: a placement-named method on Metadata, not reserved rename.
+        assert!(
+            !src.contains("fn remaining_field"),
+            "must not emit remaining_field without a reserved collision"
+        );
+    }
+
+    // Conditional emission spots.
+    assert!(has_fn(&tailed, "rewind"), "tailed message must emit rewind");
+    assert!(
+        has_fn(&fixed, "after_this_message"),
+        "fixed message must emit after_this_message"
+    );
+    assert!(
+        has_fn(&fixed, "wrap_into_claim"),
+        "fixed message must emit wrap_into_claim"
+    );
+    assert!(
+        has_fn(&optional, "apply_nulls"),
+        "optional fields must emit apply_nulls"
     );
 
     Ok(())

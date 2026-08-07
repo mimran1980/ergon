@@ -1,4 +1,4 @@
-//! Concrete consuming decoder tail stages (DECISIONS.md §3, Tasks A–C).
+//! Concrete consuming decoder tail stages.
 //!
 //! These tests prove the new sequential decoder API end-to-end:
 //!
@@ -11,8 +11,8 @@
 //!
 //! Wire order is enforced by consumption: each `into_*`/`finish`/`skip_remaining`
 //! takes `self`, so a later tail component is unreachable until the current one
-//! is consumed. The legacy `&self` random-access surface still coexists for now;
-//! these tests exercise only the new consuming path.
+//! is consumed. Random-access `&self` accessors remain; these tests exercise
+//! only the consuming path.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -65,7 +65,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
 
         // First group: consume the message stage, iterate, then finish().
         let mut fuel = dec.into_fuel_figures().unwrap();
-        assert_eq!(fuel.len(), 3);
+        assert_eq!(fuel.remaining(), 3);
         let mut rows = Vec::new();
         while let Some(Ok(e)) = fuel.next() {
             rows.push((e.speed(), e.mpg(), e.usage_description().unwrap().to_vec()));
@@ -79,7 +79,7 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
 
         // Second group (entries carry a nested group dimension header even at 0).
         let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.len(), 2);
+        assert_eq!(perf.remaining(), 2);
         let mut octanes = Vec::new();
         while let Some(Ok(e)) = perf.next() {
             octanes.push(e.octane_rating());
@@ -138,7 +138,7 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
 
         // We must still land at performance_figures, then the var-data, correctly.
         let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.len(), 0);
+        assert_eq!(perf.remaining(), 0);
         let after_perf = perf.finish().unwrap();
         let (mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"M");
@@ -147,6 +147,42 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         let (code, done) = after_model.into_activation_code().unwrap();
         assert_eq!(code, b"P");
         assert_eq!(done.encoded_length_with_header(), encoded.len());
+    "#,
+    );
+
+    Ok(())
+}
+
+/// All three `into_*_as_str()` return `&'a str` tied to the buffer, not the
+/// stage — prove all three `&str` coexist after all three calls complete.
+#[test]
+fn multiple_var_data_strings_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "coexist_strings");
+    compile_and_run(
+        "coexist_strings",
+        &src,
+        r#"
+        let mut buf = [0u8; 4096];
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        car.serial_number(1);
+        let complete = car
+            .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(b"Honda")?
+            .model(b"Civic VTi")?
+            .activation_code(b"abcdef")?;
+        let encoded = complete.as_bytes_with_header();
+
+        let decoder = CarDecoder::try_decode(encoded, 0)?;
+        let after_fuel = decoder.into_fuel_figures()?.finish()?;
+        let after_perf = after_fuel.into_performance_figures()?.finish()?;
+
+        // All three into_*_as_str() calls complete before any assert.
+        let (mfr, decoder) = after_perf.into_manufacturer_as_str()?;
+        let (model, decoder) = decoder.into_model_as_str()?;
+        let (code, _done) = decoder.into_activation_code_as_str()?;
+        // Prove all three &str coexist — each borrows 'a from the original wire buffer.
+        assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
     "#,
     );
 

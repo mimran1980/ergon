@@ -17,6 +17,7 @@
 
 mod common;
 use common::{Paths, assert_source_ok, compile_and_run, generate};
+use std::path::PathBuf;
 
 fn assert_tool_schema(name: &str, filename: &str, expected: &[&str]) {
     let (_schema, src) = generate(&Paths::sbe_tool_test_resource(filename), name);
@@ -253,6 +254,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
             sbe_rt::EncodeError::BufferTooShort {
                 needed: 28,
                 available: 27,
+                ..
             }
         ));
 
@@ -616,91 +618,38 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             assert_eq!(row.raw_later_set(), None);
             assert_eq!(row.later_bool(), None);
             assert_eq!(row.raw_later_bool(), None);
-            assert_eq!(row.later_bool_bool(), None);
+            assert_eq!(row.try_later_bool_bool().unwrap(), None);
         }
 
-        // Acting version 1 with a seven-byte entry: the array and composite
-        // fit, but the enum at offset 7 does not. Keep a second entry so an
-        // off-by-one extent check would read its base byte as the first
-        // entry's enum instead of running off the supplied slice.
-        let enum_short = [
-            0, 0,       // root blockLength
-            1, 0,       // templateId
-            48, 1,      // schemaId 304
-            1, 0,       // acting version
-            7, 0,       // entry blockLength
-            2, 0,       // count
-            7,          // first base
-            0x22, 0x11, 0x44, 0x33,
-            0x66, 0x55,
-            1,          // second base: valid LaterEnum::A if read incorrectly
-            0, 0, 0, 0,
-            0, 0,
-        ];
-        let decoded = VersionedGroupMessageDecoder::try_from(enum_short.as_slice())?;
-        let first = decoded.into_entries()?.next().unwrap();
-        assert_eq!(first.later_array(), [0x1122, 0x3344]);
-        assert_eq!(first.later_composite_value(), Some(LaterComposite::new(0x5566)));
-        assert_eq!(first.later_enum(), None);
-        assert_eq!(first.raw_later_enum(), None);
+        // Acting version 1 declares laterArray..laterBool required, so a v1
+        // frame whose entry block cannot hold them is malformed. Each short
+        // block below would previously have yielded an entry whose required
+        // getter silently reported absence; the trust boundary now refuses the
+        // frame. Every case keeps a second entry present, so a weaker check
+        // could read across the boundary without leaving the supplied slice.
+        for (entry_block_length, _missing) in [
+            (7u16, "laterEnum at offset 7"),
+            (8, "laterSet at offset 8"),
+            (9, "laterBool at offset 9"),
+        ] {
+            let mut wire = vec![
+                0, 0,       // root blockLength
+                1, 0,       // templateId
+                48, 1,      // schemaId 304
+                1, 0,       // acting version
+            ];
+            wire.extend_from_slice(&entry_block_length.to_le_bytes());
+            wire.extend_from_slice(&2u16.to_le_bytes()); // count
+            wire.extend(std::iter::repeat(1u8).take(usize::from(entry_block_length) * 2));
 
-        // One more byte makes the enum available, but not the set at offset
-        // 8. Again, the next entry begins with a byte that would look like a
-        // valid set if the complete-field extent check regressed.
-        let set_short = [
-            0, 0,       // root blockLength
-            1, 0,       // templateId
-            48, 1,      // schemaId 304
-            1, 0,       // acting version
-            8, 0,       // entry blockLength
-            2, 0,       // count
-            7,          // first base
-            0x22, 0x11, 0x44, 0x33,
-            0x66, 0x55,
-            1,          // first enum
-            1,          // second base: LaterSet bit 0 if read incorrectly
-            0, 0, 0, 0,
-            0, 0,
-            1,
-        ];
-        let decoded = VersionedGroupMessageDecoder::try_from(set_short.as_slice())?;
-        let first = decoded.into_entries()?.next().unwrap();
-        assert_eq!(first.later_enum(), Some(LaterEnum::A));
-        assert_eq!(first.later_set(), None);
-        assert_eq!(first.raw_later_set(), None);
+            let decoded = VersionedGroupMessageDecoder::try_from(wire.as_slice())?;
+            let Err(_) = decoded.into_entries() else {
+                panic!("blockLength {entry_block_length} cannot hold version-1 required fields");
+            };
+        }
 
-        // Nine bytes include the set but not the versioned BooleanType at
-        // offset 9. Its convenience `_bool` accessor must preserve absence
-        // instead of reading the next entry or collapsing `None` to false.
-        let bool_short = [
-            0, 0,       // root blockLength
-            1, 0,       // templateId
-            48, 1,      // schemaId 304
-            1, 0,       // acting version
-            9, 0,       // entry blockLength
-            2, 0,       // count
-            7,          // first base
-            0x22, 0x11, 0x44, 0x33,
-            0x66, 0x55,
-            1,          // first enum
-            1,          // first set
-            1,          // second base: true if read incorrectly as laterBool
-            0, 0, 0, 0,
-            0, 0,
-            1,
-            1,
-        ];
-        let decoded = VersionedGroupMessageDecoder::try_from(bool_short.as_slice())?;
-        let first = decoded.into_entries()?.next().unwrap();
-        assert_eq!(first.later_set(), Some(LaterSet(1)));
-        assert_eq!(first.later_bool(), None);
-        assert_eq!(first.raw_later_bool(), None);
-        assert_eq!(first.later_bool_bool(), None);
-
-        // Ten bytes include the versioned bool but not the optional uint32 at
-        // offset 10. Its extent check uses `offset + prim_size` — a `+` → `-`
-        // mutation would compute `10 - 4 = 6 > 10` (false) and return a garbage
-        // value read from the second entry.
+        // The optional field at offset 10 is *not* part of the required
+        // extent, so a ten-byte v1 entry block is well formed.
         let opt_short = [
             0, 0,       // root blockLength
             1, 0,       // templateId
@@ -714,7 +663,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             1,          // first enum
             1,          // first set
             1,          // first bool (BooleanType::T)
-            0xDD, 0xCC, 0xBB, 0xAA, // second entry data: would be read if check regresses
+            0xDD, 0xCC, 0xBB, 0xAA, // second entry data
             9,          // second base
             0, 0, 0, 0,
             0, 0,
@@ -723,10 +672,11 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             0,
         ];
         let decoded = VersionedGroupMessageDecoder::try_from(opt_short.as_slice())?;
-        let first = decoded.into_entries()?.next().unwrap();
-        assert_eq!(first.later_bool(), Some(BooleanType::T));
-        assert_eq!(first.later_bool_bool(), Some(true));
-        assert!(first.later_value().is_none(), "laterValue at offset 10 does not fit in blockLength 10");
+        let Some(first) = decoded.into_entries()?.next() else {
+            panic!("a well-formed v1 entry block must yield its entry");
+        };
+        assert_eq!(first.try_later_bool_bool().unwrap(), Some(true));
+        assert!(first.later_value().is_none());
 
         // Latest-version add_struct covers multi-byte primitive arrays plus
         // composite/enum/set fields in a flat group entry.
@@ -752,7 +702,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
         assert_eq!(row.later_enum(), Some(LaterEnum::A));
         assert_eq!(row.later_set(), Some(LaterSet(1)));
         assert_eq!(row.later_bool(), Some(BooleanType::T));
-        assert_eq!(row.later_bool_bool(), Some(true));
+        assert_eq!(row.try_later_bool_bool().unwrap(), Some(true));
         assert_eq!(row.later_value(), Some(42u32));
         "#,
     );
@@ -771,28 +721,36 @@ fn group_primitive_array_respects_the_wire_entry_block_boundary()
         "group_array_boundary",
         &src,
         r#"
-        // The generated array starts at offset 1 and needs eight bytes. A
-        // wire blockLength of 8 is therefore one byte short. Keep a second
-        // entry present so an incorrect check could read across the boundary
-        // without reaching the end of the supplied slice.
+        // The generated array starts at offset 1 and needs eight bytes, so a
+        // wire blockLength of 8 cannot hold this entry's required fields. That
+        // frame is malformed and is refused at the group trust boundary rather
+        // than handed out as an entry whose required getter would read a
+        // schema-width array past the acting block. A second entry is present
+        // so a weaker check could read across the boundary without running off
+        // the supplied slice.
         let short = [
             0, 0,       // root blockLength
             1, 0,       // templateId
             49, 1,      // schemaId 305
             0, 0,       // acting version
-            8, 0,       // entry blockLength (correct minimum is 9)
+            8, 0,       // entry blockLength (required minimum is 9)
             2, 0,       // count
             7, 1, 2, 3, 4, 5, 6, 7,
             9, 8, 7, 6, 5, 4, 3, 2,
         ];
         let decoded = ArrayBoundaryMessageDecoder::try_from(short.as_slice())?;
-        let first = decoded.into_entries()?.next().unwrap();
-        assert_eq!(first.base(), 7);
-        assert_eq!(
-            first.values(),
-            [0, 0],
-            "an array that exceeds the acting entry block must be absent"
-        );
+        let Err(_) = decoded.into_entries() else {
+            panic!("a group whose block length cannot hold its required fields must not expose an entry");
+        };
+
+        // Zero entries: nothing is ever read, so the short block is harmless.
+        let empty = [
+            0, 0, 1, 0, 49, 1, 0, 0,
+            8, 0,       // same short entry blockLength
+            0, 0,       // count = 0
+        ];
+        let decoded = ArrayBoundaryMessageDecoder::try_from(empty.as_slice())?;
+        assert!(decoded.into_entries()?.is_empty());
 
         let complete = [
             0, 0,       // root blockLength
@@ -806,7 +764,9 @@ fn group_primitive_array_respects_the_wire_entry_block_boundary()
             0x88, 0x77, 0x66, 0x55,
         ];
         let decoded = ArrayBoundaryMessageDecoder::try_from(complete.as_slice())?;
-        let row = decoded.into_entries()?.next().unwrap();
+        let Some(row) = decoded.into_entries()?.next() else {
+            panic!("a complete entry block must yield its entry");
+        };
         assert_eq!(row.base(), 7);
         assert_eq!(row.values(), [0x1122_3344, 0x5566_7788]);
         "#,
@@ -868,7 +828,9 @@ fn multi_nested_group_compiles_and_roundtrips() -> Result<(), Box<dyn std::error
         let len = enc.encoded_length_with_header();
 
         let dec = MultiNestedDecoder::try_from(&buf[..len])?;
-        assert_eq!(dec.header_field(), 0u32);
+        // Field name `header` is not reserved (no inherent header() method) —
+        // natural accessor keeps the schema name.
+        assert_eq!(dec.header(), 0u32);
 
         let mut entries = dec.into_parent()?;
         let mut count = 0usize;
@@ -959,5 +921,51 @@ fn group_entry_display_includes_fields() -> Result<(), Box<dyn std::error::Error
         "#,
     );
 
+    Ok(())
+}
+
+/// A `presence="constant"` field carries no wire bytes — its value comes from
+/// the schema. A message whose only field is constant therefore encodes to a
+/// bare header with a zero-length body.
+///
+/// The message-level readable-extent calculation used to count constant fields,
+/// so it demanded body space the wire format never contains and the decoder
+/// rejected frames its own encoder had just produced. A group with a tail
+/// masked this — the dimension header supplied the missing byte — so the
+/// regression only shows on a tail-free message.
+#[test]
+fn a_constant_only_message_round_trips_through_an_empty_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(
+        &PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/schemas/constant-only-message.xml"
+        )),
+        "const_only_body",
+    );
+
+    compile_and_run(
+        "const_only_body",
+        &src,
+        r#"
+        // Constant fields occupy no wire space, so the body is empty.
+        assert_eq!(ConstOnlyEncoder::BLOCK_LENGTH, 0, "a constant field is not on the wire");
+        assert_eq!(
+            ConstOnlyDecoder::min_readable_fixed_extent(0),
+            0,
+            "no wire byte is required to read a schema-supplied constant"
+        );
+
+        let mut buf = [0u8; ConstOnlyEncoder::compute_length_with_header()];
+        let len = ConstOnlyEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ConstOnlyFixedFields {})
+            .encoded_length_with_header();
+        assert_eq!(len, ConstOnlyEncoder::HEADER_LENGTH, "header only, empty body");
+
+        // The decoder must accept what the encoder just produced.
+        let decoded = ConstOnlyDecoder::try_from(&buf[..len])?;
+        assert_eq!(decoded.c(), Model::C, "the constant reads from the schema");
+        "#,
+    );
     Ok(())
 }

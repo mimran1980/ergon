@@ -1,4 +1,4 @@
-//! HFT-005: generated consumer must compile warning-free under a strict lint set.
+//! generated consumer must compile warning-free under a strict lint set.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;
@@ -9,11 +9,11 @@ mod common;
 use common::{Paths, generate};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
-/// Compile a minimal HftLean + Full consumer with `-D warnings`.
+/// Compile a minimal Lean + Full consumer with `-D warnings`.
 #[test]
-fn generated_hft_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Error>> {
+fn generated_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Error>> {
     for (label, profile) in [
-        ("wf_lean", GenerationProfile::HftLean),
+        ("wf_lean", GenerationProfile::Lean),
         ("wf_full", GenerationProfile::Full),
     ] {
         let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
@@ -22,14 +22,14 @@ fn generated_hft_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dy
         let modules = Generator::new(config).generate(&schema)?;
         let src = &modules.modules().next().ok_or("no module")?.source;
 
-        let dir = std::env::temp_dir().join(format!("ergo_hft005_{label}"));
+        let dir = std::env::temp_dir().join(format!("ergo_soundness_{label}"));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src"))?;
         fs::write(dir.join(format!("src/{label}.rs")), src)?;
         fs::write(
             dir.join("src/main.rs"),
             format!(
-                r#"// Supported consumer lint set (HFT-005): deny warnings except
+                r#"// Supported consumer lint set: deny warnings except
 // unused/dead_code noise that generated codecs still emit in places.
 #![deny(warnings)]
 #![allow(unused, dead_code)]

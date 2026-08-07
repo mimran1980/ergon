@@ -51,29 +51,28 @@ whether you continue evaluating the crate:
 | What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results—not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
-| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through August 2026 is **17 billion tokens** (measured by `ccusage` across Claude Code + Codex; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
-| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$2,352**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
+| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through August 2026 is **18 billion tokens** (measured by `ccusage` across Claude Code + Codex; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
+| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$1,871**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
 ## Cumulative token usage (since 2026-06-28)
 
-Snapshot from `ccusage` on 2026-08-02. Claude Code and Codex agent usage only.
+Snapshot from `ccusage` on 2026-08-07. Claude Code and Codex agent usage only.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
-| claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
-| claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 84 | 47,196 | 182,101 | 1,789,470 | — | 2,018,851 | $3.21 |
+| claude-fable-5 | 128,112 | 210,931 | 5,707,178 | 44,132,249 | — | 50,178,470 | $168.76 |
+| claude-opus-4-8 | 153,359 | 505,224 | 3,840,858 | 93,893,329 | — | 98,392,770 | $86.22 |
+| claude-opus-5 | 1,702 | 575,673 | 2,454,943 | 204,567,008 | — | 207,599,326 | $139.50 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 30,354 | 271,452 | 5,241,739 | 211,508,497 | — | 217,052,042 | $66.04 |
-| deepseek-v4-flash | 50,334,902 | 13,625,402 | 0 | 2,605,519,232 | — | 2,669,479,536 | $18.16 |
-| deepseek-v4-pro | 46,593,200 | 8,875,997 | 0 | 10,057,334,080 | — | 10,112,803,277 | $64.45 |
-| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
-| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
+| claude-sonnet-5 | 30,556 | 328,854 | 6,177,826 | 218,888,413 | — | 225,425,649 | $71.84 |
+| deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $19.28 |
+| deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $71.89 |
+| glm-4.7 | 2,620,188 | 287,011 | 0 | 56,403,328 | — | 59,310,527 | $8.41 |
+| glm-5.2 | 19,826,248 | 2,577,598 | 0 | 1,868,156,352 | — | 1,890,560,198 | $524.82 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
-| gpt-5.6-sol | 24,631,981 | 2,451,746 | 0 | 809,366,528 | 1,109,895 | 837,560,150 | $608.56 |
-| **Total** | **158,165,064** | **31,479,393** | **21,673,654** | **16,831,101,528** | **1,141,165** | **17,043,560,804** | **$2,351.90** |
+| gpt-5.6-sol | 33,916,058 | 3,205,179 | 0 | 970,537,472 | 1,524,674 | 1,009,183,383 | $758.17 |
+| **Total** | **159,052,174** | **32,893,371** | **18,203,535** | **17,914,836,171** | **1,555,944** | **18,126,541,195** | **$1,870.77** |
 
 **Notes:**
 
@@ -114,14 +113,14 @@ hardest sessions at a level comparable to Opus.
 | **OpenAI (>272K)** | GPT-5.5 — $238 | GPT-5.5 — $4,590 | GPT-5.6 Sol — $7,060 | **$11,888** | Long-context: 2× input, 1.5× output — the rate you'd actually pay |
 | **Grok (<200K)** | Grok 4.5 — $99 | Grok 4.5 — $1,978 | Grok 4.5 — $3,528 | **$5,605** | Short-context rates — unrealistic for this workload |
 | **Grok (≥200K)** | Grok 4.5 — $198 | Grok 4.5 — $3,956 | Grok 4.5 — $7,055 | **$11,209** | Rates double at ≥200K; 500K max context |
-| **Actual enterprise blend** | — | — | — | **$2,352** | What ccusage records at enterprise/PAYG rates across all 12 models — NOT what I paid (~$261 out-of-pocket) |
+| **Actual enterprise blend** | — | — | — | **$1,871** | What ccusage records at enterprise/PAYG rates across all 11 models — NOT what I paid (~$261 out-of-pocket) |
 
 The takeaway: at short-context rates, Grok ($5,605) undercuts Anthropic ($7,884
 promo) — the user's intuition is correct. But those rates are fictional for this
 workload: every session exceeded 200K context, so the real Grok bill would be
 $11,209. Anthropic's key advantage is no long-context multiplier — Sonnet 5 at
 $8,655 (standard) is cheaper than both Grok ≥200K ($11,209) and OpenAI >272K
-($11,888) for this kind of sustained agentic work. The actual $2,352 blend is
+($11,888) for this kind of sustained agentic work. The actual $1,871 blend is
 cheaper than any single-provider scenario except DeepSeek-only ($121) because it
 used cheap DeepSeek cache reads for the bulk of tokens while spending on
 expensive models only for high-value sessions.
@@ -970,7 +969,7 @@ Official-style codecs often separate checked setup from a trusted hot path. For
 - unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
   lane — they return `Result`, validate extents once, then enter a private
   zero-check core (`try_wrap*` aliases are removed);
-- public constructor `*_unchecked` twins only if measured HFT-008 keep rules
+- public constructor `*_unchecked` twins only if measured  keep rules
   pass (currently **keep=false** — cores stay module-private); and
 - no repeated dynamic bounds check for every constant schema offset after the
   required block length has already been proved on the checked entry path.
@@ -1227,28 +1226,29 @@ whether I can afford enough turns to finish the loop.
 
 The most accurate data comes from `ccusage` (Claude Code + Codex agents only;
 Hermes and OpenCode are automation agents and excluded here). Snapshot from
-2026-08-02, covering the full project period since the first commit on
-2026-07-04 (with a few days of buffer before).
+2026-08-07 (`ccusage` export since 2026-06-28). Note: this export was produced
+by a newer `ccusage` version with a different rate table and session
+attribution than the previous 2026-08-02 snapshot, so per-model figures differ
+— the current snapshot is authoritative.
 
 ### ccusage API-level spend
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning | Total Tokens | API Cost |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
-| claude-haiku-4-5 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
-| claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 84 | 47,196 | 182,101 | 1,789,470 | — | 2,018,851 | $3.21 |
+| claude-fable-5 | 128,112 | 210,931 | 5,707,178 | 44,132,249 | — | 50,178,470 | $168.76 |
+| claude-opus-4-8 | 153,359 | 505,224 | 3,840,858 | 93,893,329 | — | 98,392,770 | $86.22 |
+| claude-opus-5 | 1,702 | 575,673 | 2,454,943 | 204,567,008 | — | 207,599,326 | $139.50 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 30,354 | 271,452 | 5,241,739 | 211,508,497 | — | 217,052,042 | $66.04 |
-| deepseek-v4-flash | 50,334,902 | 13,625,402 | 0 | 2,605,519,232 | — | 2,669,479,536 | $18.16 |
-| deepseek-v4-pro | 46,593,200 | 8,875,997 | 0 | 10,057,334,080 | — | 10,112,803,277 | $64.45 |
-| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
-| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
+| claude-sonnet-5 | 30,556 | 328,854 | 6,177,826 | 218,888,413 | — | 225,425,649 | $71.84 |
+| deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $19.28 |
+| deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $71.89 |
+| glm-4.7 | 2,620,188 | 287,011 | 0 | 56,403,328 | — | 59,310,527 | $8.41 |
+| glm-5.2 | 19,826,248 | 2,577,598 | 0 | 1,868,156,352 | — | 1,890,560,198 | $524.82 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
-| gpt-5.6-sol | 24,631,981 | 2,451,746 | 0 | 809,366,528 | 1,109,895 | 837,560,150 | $608.56 |
-| **Total** | **158,165,064** | **31,479,393** | **21,673,654** | **16,831,101,528** | **1,141,165** | **17,043,560,804** | **$2,351.90** |
+| gpt-5.6-sol | 33,916,058 | 3,205,179 | 0 | 970,537,472 | 1,524,674 | 1,009,183,383 | $758.17 |
+| **Total** | **159,052,174** | **32,893,371** | **18,203,535** | **17,914,836,171** | **1,555,944** | **18,126,541,195** | **$1,870.77** |
 
-That's **17 billion tokens** and **$2,351.90** in API charges at
+That's **18 billion tokens** and **$1,870.77** in API charges at
 enterprise/pay-as-you-go rates. The earlier 14-billion-token estimate was
 derived from provider dashboards and was an order-of-magnitude figure; the
 ccusage data is a precise ledger-level reconciliation across Claude Code and
@@ -1260,7 +1260,7 @@ Separate from the API charges above, these subscription fees were paid:
 
 | Provider | Spend | Notes |
 |---|---:|---|
-| GLM coding plan | $114 | Covers glm-4.7 and glm-5.2 API usage — the $680.23 in GLM API costs in the ccusage table is how the plan's included quota would be priced at PAYG rates |
+| GLM coding plan | $114 | Covers glm-4.7 and glm-5.2 API usage — the $533.23 in GLM API costs in the ccusage table is how the plan's included quota would be priced at PAYG rates |
 | OpenAI subscription | $20 | |
 | Claude subscription | $20 | |
 | Grok subscription | $30 | Grok API usage is not tracked by ccusage |
@@ -1270,13 +1270,13 @@ Separate from the API charges above, these subscription fees were paid:
 
 | Category | Amount |
 |---|---:|
-| API charges (enterprise/PAYG rates, via ccusage) | $2,351.90 |
+| API charges (enterprise/PAYG rates, via ccusage) | $1,870.77 |
 | Subscriptions | $184.00 |
-| **Total identified** | **$2,535.90** |
+| **Total identified** | **$2,054.77** |
 
 The API charges are computed at published enterprise rates, not necessarily what
 was actually billed (DeepSeek's actual bill was $77.39 for the project period;
-GLM usage was covered by the $114 plan). The gap between the $2,351.90 computed
+GLM usage was covered by the $114 plan). The gap between the $1,870.77 computed
 API cost and the ~$261 of actual out-of-pocket spend is the economic story of
 this project: DeepSeek's cache-hit pricing made sustained agentic development
 affordable.
@@ -1853,7 +1853,7 @@ This project was a particularly favourable case for AI-assisted development:
 - constant feedback was possible.
 
 Even in that favourable case, it consumed about a month of intense work,
-roughly 17 billion tokens (measured by ccusage), repeated cleanup, extensive
+roughly 18 billion tokens (measured by ccusage), repeated cleanup, extensive
 tests, and continuous human judgment. The fashionable version—write a specification,
 dispatch many agents, and return to a finished library—did not survive beyond
 the early greenfield stage.

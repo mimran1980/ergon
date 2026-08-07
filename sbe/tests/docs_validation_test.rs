@@ -94,7 +94,7 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
         GenerationConfig::new("tour_codec")
-            .with_domain_objects(DomainVarData::LossyStrings)
+            .with_domain_objects(DomainVarData::Strings)
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",
@@ -487,7 +487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(q.copy_vehicle_code(&mut dst), 6);
     assert_eq!(&dst, b"ABCDEF");
 
-    // Domain object (docs) — fallible materialisation (0.1.10 / HFT-003)
+    // Domain object (docs) — fallible materialisation
     let dto = QuoteDomain::try_from_decoder(q)?;
     let mut out = [0u8; 512];
     let n = dto.encode(&mut out)?;

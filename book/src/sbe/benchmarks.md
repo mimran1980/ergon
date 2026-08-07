@@ -251,7 +251,7 @@ just bench-diagnostics
 | Dynamic shape | sequential flat groups; ragged nested groups with nested var-data |
 | Wire configuration | little-endian, big-endian, custom header |
 | Evolution | acting version 0 and current version 1 |
-| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `nth`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
+| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `entry_at`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
 
 The timed encode paths reuse caller-owned buffers. Metadata lookup is the
 generated static `(schema_id, template_id)` match and is also protected by the
@@ -298,15 +298,35 @@ no mandatory aligned-buffer or pooling API.
 
 ### Amplified timing diagnostic (`instruction_counts`)
 
-`instruction_counts` is an amplified Criterion timing harness, not a Valgrind
-or Iai-Callgrind instruction counter. Each operation is repeated
-`ACCESS_REPETITIONS` times inside a single Criterion iteration to amplify
-sub-nanosecond differences. For deterministic instruction evidence use
-`perf`, `samply`, or iai-callgrind (Linux).
+`instruction_counts` is an amplified Criterion **timing** harness. Each
+operation is repeated `ACCESS_REPETITIONS` times inside a single Criterion
+iteration to amplify sub-nanosecond differences. Its output is wall-clock, not
+instruction counts:
 
 ```sh
-just bench-instructions
+cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
 ```
+
+### Instruction and disassembly evidence (`perf-probe`)
+
+Deterministic mechanism-level evidence comes from named, `#[inline(never)]`,
+unmangled probe symbols measured under raw Callgrind:
+
+```sh
+just bench-instructions                                      # both profiles
+./scripts/run-sbe-instruction-probes.sh --all-profiles --topic decode
+```
+
+Each probe performs exactly 10,000 opaque logical operations and returns an
+observed checksum; setup and validation run before the probe is entered, so
+`--toggle-collect=<symbol>` excludes them. The driver normalises instructions,
+branches, and mispredicts per operation, disassembles the exact binary it
+measured, and records commit, rustc, target, Valgrind version, profile, run id,
+symbol, operation count, and checksum.
+
+The lane needs Linux plus Valgrind and `llvm-objdump`, and fails closed
+elsewhere rather than substituting a timing harness. There is no
+`iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
 
 ### Warmed latency distributions
 
@@ -348,16 +368,17 @@ Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
   does not use noisy wall-clock ratios as a merge gate. A suspicious shared-runner
   result triggers a stable-runner rerun and fairness review.
 - A dedicated stable runner, when configured, must reject a hot-path Criterion
-  regression-estimate increase above 3%, an Iai instruction-count regression
-  above 2%, any new allocation, or a warmed batch/cluster p99 regression above
+  regression-estimate increase above 3%, a normalised instruction-count
+  regression above 2% from `scripts/run-sbe-instruction-probes.sh`, any new allocation, or a warmed batch/cluster p99 regression above
   5%.
 - Criterion's regression estimate and confidence interval are the maintained
   microbenchmark estimator. HDR p50/p99/p99.9 applies only to warmed batch and
   Aeron/cluster end-to-end measurements.
 
 The expanded Criterion matrix, alignment, cold-path, and HDR suites were
-executed on 2026-07-27 with rustc 1.95.0. Iai-Callgrind is compile-validated
-but was not executed on this macOS host because Valgrind is unavailable.
+executed on 2026-07-27 with rustc 1.95.0. The instruction-probe lane needs
+Linux and Valgrind, so it does not run on a macOS development host; it fails
+closed there rather than reporting a substitute measurement.
 Machine-specific observations belong in CI artifacts or a release record;
 they are not portable API promises.
 

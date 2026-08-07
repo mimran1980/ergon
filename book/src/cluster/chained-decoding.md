@@ -1,7 +1,7 @@
 # Chained Message Decoding
 
 A `SessionMessageHeader` is followed by application payload bytes (another SBE
-message). Use the decoder's `remaining()` to get the payload, then
+message). Use `get_metadata().remaining()` to get the payload byte slice, then
 `AnyMessage::decode` to parse the next message. This uses the non-stable
 `cluster_codec_types` seam described above:
 
@@ -9,7 +9,7 @@ message). Use the decoder's `remaining()` to get the payload, then
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (24 bytes).
     // Both lengths are const, so size the frame on the stack.
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];

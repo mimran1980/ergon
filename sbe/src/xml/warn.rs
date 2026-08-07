@@ -1,27 +1,33 @@
 //! Source-name tracking and de-duplicated parse warnings.
 
 use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock, PoisonError};
+
+/// The name warnings are reported against.
+///
+/// Declared once at module scope. A `static` inside a function body is local to
+/// *that* body, so a setter and a getter that each declared their own would
+/// touch two unrelated cells: the setter would appear to work and every warning
+/// would still report the placeholder.
+static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
+
+/// Placeholder used until a real source name is known (in-memory XML input).
+const UNNAMED_SOURCE: &str = "<xml>";
+
+fn source_cell() -> &'static Mutex<String> {
+    SOURCE.get_or_init(|| Mutex::new(String::from(UNNAMED_SOURCE)))
+}
 
 /// Tracks the source name so warnings can reference the real file
 /// instead of a hardcoded `"schema.xml"`.
 pub(crate) fn set_source_name(name: String) {
-    use std::sync::Mutex;
-    use std::sync::OnceLock;
-    static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
-    *SOURCE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .unwrap() = name;
+    *source_cell().lock().unwrap_or_else(PoisonError::into_inner) = name;
 }
 
 pub(crate) fn source_name() -> String {
-    use std::sync::Mutex;
-    use std::sync::OnceLock;
-    static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
-    SOURCE
-        .get_or_init(|| Mutex::new(String::from("<xml>")))
+    source_cell()
         .lock()
-        .unwrap()
+        .unwrap_or_else(PoisonError::into_inner)
         .clone()
 }
 
@@ -78,5 +84,36 @@ pub(crate) fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, st
         } else {
             eprintln!("warning: {message}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The setter and the getter must reach the same cell.
+    ///
+    /// They once declared a `static` each, inside their own function bodies —
+    /// two distinct cells. The setter wrote one, the getter read the other, so
+    /// every parse warning reported the placeholder no matter which file was
+    /// being parsed. Nothing failed; the diagnostics were just quietly wrong.
+    #[test]
+    fn set_source_name_is_what_warnings_report() -> Result<(), Box<dyn std::error::Error>> {
+        let previous = source_name();
+
+        set_source_name("orderbook-schema.xml".into());
+        assert_eq!(
+            source_name(),
+            "orderbook-schema.xml",
+            "warnings must name the file that was actually parsed"
+        );
+        assert_ne!(
+            source_name(),
+            UNNAMED_SOURCE,
+            "the placeholder means the setter never reached the cell the getter reads"
+        );
+
+        set_source_name(previous);
+        Ok(())
     }
 }
