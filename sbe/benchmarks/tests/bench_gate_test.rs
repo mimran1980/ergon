@@ -127,7 +127,10 @@ fn write_all_pairs(
 fn stamp_run_ids(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     for (group, ergo_fn, ref_fn) in PAIRS {
         for function in [ergo_fn, ref_fn] {
-            fs::write(estimate_dir(root, group, function).join("run-id.txt"), run_id)?;
+            fs::write(
+                estimate_dir(root, group, function).join("run-id.txt"),
+                run_id,
+            )?;
         }
     }
     Ok(())
@@ -145,11 +148,13 @@ fn complete_manifest(run_id: &str) -> String {
 }
 
 fn run_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(Command::new(repository()?.join("scripts/check-bench-gate.sh"))
-        .arg(dir)
-        .args(["0", "sbe"])
-        .args(extra)
-        .output()?)
+    Ok(
+        Command::new(repository()?.join("scripts/check-bench-gate.sh"))
+            .arg(dir)
+            .args(["0", "sbe"])
+            .args(extra)
+            .output()?,
+    )
 }
 
 fn describe(output: &Output) -> String {
@@ -214,8 +219,8 @@ fn a_ratio_barely_above_one_fails() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate()
--> Result<(), Box<dyn std::error::Error>> {
+fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate() -> Result<(), Box<dyn std::error::Error>>
+{
     let criterion = TempCriterion::new()?;
     write_all_pairs(&criterion.0, 100.4, 100.0)?; // ratio 1.004
 
@@ -233,8 +238,7 @@ fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate()
 }
 
 #[test]
-fn a_missing_pair_fails_rather_than_silently_passing()
--> Result<(), Box<dyn std::error::Error>> {
+fn a_missing_pair_fails_rather_than_silently_passing() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = TempCriterion::new()?;
     write_all_pairs(&criterion.0, 100.0, 100.0)?;
     // Drop one arm of one maintained pair.
@@ -361,8 +365,7 @@ fn mixed_run_ids_across_estimates_are_refused() -> Result<(), Box<dyn std::error
 // ── Producer / consumer path identity ──────────────────────────────────────
 
 #[test]
-fn the_runner_gates_exactly_the_directory_it_produces()
--> Result<(), Box<dyn std::error::Error>> {
+fn the_runner_gates_exactly_the_directory_it_produces() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new(repository()?.join("scripts/run-sbe-bench.sh"))
         .args(["--print-plan", RUN_ID])
         .output()?;

@@ -253,8 +253,7 @@ pub(crate) fn generate_message_decoder(
     }
 
     // Unified extent rule shared with group entries (runtime.rs).
-    let min_extent_arms =
-        crate::codegen::runtime::emit_readable_extent_body(&msg.fields);
+    let min_extent_arms = crate::codegen::runtime::emit_readable_extent_body(&msg.fields);
 
     impl_body.extend(quote::quote! {
         /// Minimum body bytes needed to safely read every fixed field present

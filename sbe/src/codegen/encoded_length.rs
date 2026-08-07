@@ -33,7 +33,10 @@ pub(super) fn strategy(message: &MessageStructure) -> LengthStrategy {
     if message.is_fixed() {
         return LengthStrategy::Fixed;
     }
-    let has_dynamic_entry = message.groups.iter().any(|group| group.has_dynamic_entries());
+    let has_dynamic_entry = message
+        .groups
+        .iter()
+        .any(|group| group.has_dynamic_entries());
     if has_dynamic_entry {
         LengthStrategy::Staged
     } else {

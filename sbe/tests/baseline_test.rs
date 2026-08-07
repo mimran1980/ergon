@@ -1907,7 +1907,8 @@ fn anymessage_decode_frame_validates_length() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn anymessage_unknown_template_forwards_the_complete_frame() -> Result<(), Box<dyn std::error::Error>> {
+fn anymessage_unknown_template_forwards_the_complete_frame()
+-> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "am_unknown");
     compile_and_run(
         "am_unknown",

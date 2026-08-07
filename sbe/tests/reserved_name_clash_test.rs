@@ -680,8 +680,7 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
     for src in [&tailed, &fixed, &optional] {
         assert!(src.contains("fn get_metadata("), "missing get_metadata");
         assert!(
-            src.contains("fn remaining(&self)")
-                || src.contains("fn remaining(&self) ->"),
+            src.contains("fn remaining(&self)") || src.contains("fn remaining(&self) ->"),
             "metadata remaining missing"
         );
         // Field-safe: a placement-named method on Metadata, not reserved rename.
@@ -692,10 +691,7 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
     }
 
     // Conditional emission spots.
-    assert!(
-        has_fn(&tailed, "rewind"),
-        "tailed message must emit rewind"
-    );
+    assert!(has_fn(&tailed, "rewind"), "tailed message must emit rewind");
     assert!(
         has_fn(&fixed, "after_this_message"),
         "fixed message must emit after_this_message"

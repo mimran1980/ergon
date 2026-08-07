@@ -12,9 +12,7 @@
 use crate::ir::{ByteOrder, Presence};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{
-    field_has_conversion_free, resolve_field_ident, ENCODER_RESERVED,
-};
+use super::conversion_helpers::{ENCODER_RESERVED, field_has_conversion_free, resolve_field_ident};
 use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;

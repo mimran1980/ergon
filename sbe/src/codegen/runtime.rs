@@ -779,9 +779,8 @@ pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
 /// the getter silently return `None`.
 pub(crate) fn emit_readable_extent_body(fields: &[MessageField]) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
-    let in_extent = |f: &&MessageField| {
-        f.presence != Presence::Optional && f.presence != Presence::Constant
-    };
+    let in_extent =
+        |f: &&MessageField| f.presence != Presence::Optional && f.presence != Presence::Constant;
     let extent_at = |max_version: u16| -> usize {
         fields
             .iter()

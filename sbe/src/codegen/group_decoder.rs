@@ -57,8 +57,7 @@ pub(crate) fn generate_group_decoder(
                 || (f.presence != Presence::Optional && f.since_version == 0)
         });
     // Unified extent rule: see `emit_readable_extent_body` in runtime.rs.
-    let min_extent_arms =
-        crate::codegen::runtime::emit_readable_extent_body(&g.fields);
+    let min_extent_arms = crate::codegen::runtime::emit_readable_extent_body(&g.fields);
 
     let fixed_extent_validation = if g.has_fixed_stride() {
         quote::quote! {
@@ -90,7 +89,8 @@ pub(crate) fn generate_group_decoder(
     // resolved once at wrap and stored, so the per-entry cost in the iteration
     // hot path is one subtraction and one comparison, not a re-run of the
     // version-branch chain in `min_readable_fixed_extent`.
-    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g.has_dynamic_entries()
+    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g
+        .has_dynamic_entries()
     {
         (
             quote::quote! { min_entry_extent: usize, },
