@@ -106,8 +106,7 @@ fn malformed_entry_yields_one_error_then_reports_finished() -> Result<(), Box<dy
         assert_eq!(group.size_hint(), (0, Some(0)));
 
         // Completion returns the stored error instead of a later stage.
-        let poisoned = FuelFiguresDecoder::wrap(&buf, 0, 0)?;
-        let mut poisoned = poisoned;
+        let mut poisoned = FuelFiguresDecoder::wrap(&buf, 0, 0)?;
         let _ = poisoned.next();
         // (finish is only reachable on an attached group — see below.)
         "#,

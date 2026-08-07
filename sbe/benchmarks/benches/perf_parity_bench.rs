@@ -507,9 +507,11 @@ fn bench_encode_scalar(c: &mut Criterion) {
             WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
         };
 
-        // Constructor proves HEADER+BLOCK_LENGTH (8+45); compare only the
-        // touched prefix (header + serial_number + model_year = 18 bytes).
-        const NEED: usize = 8 + 45;
+        // Exact frame: header (8) + fixed block (45). No tails are written in
+        // this preflight, so the fixed extent is the exact frame size.
+        // `compute_length_with_header()` is runtime-only here (Car has tails),
+        // so the generated consts are the correct static sizing.
+        const NEED: usize = CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH;
         let mut ergon = [0u8; NEED];
         black_box(
             CarEncoder::wrap_and_apply_header(&mut ergon, 0)
