@@ -32,14 +32,14 @@ fancy = ["miette/fancy"]
 # Removed: serde — DTOs are for app logic + SBE re-encode; JSON/etc. is app-owned.
 
 [dependencies]
-roxmltree = "0.20"
+roxmltree = "0.21"
 thiserror = "2"
 miette = { version = "7", features = ["derive"] }
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-prettyplease = "0.2"
-sha2 = "0.10"
+prettyplease = "0.3"
+sha2 = "0.11"
 
 [[test]]
 name = "smoke_test"
@@ -102,9 +102,9 @@ name = "warning_free_consumer_test"
 name = "fix_sbe_conformance_test"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 serial_test = "3"
-toml = "0.8"
+toml = "1.1"
 # fancy-no-backtrace (not "fancy"): GraphicalReportHandler for tests proving
 # the miette rendering pipeline actually snippets — skips the heavier
 # backtrace/backtrace-ext deps that "fancy" pulls in.
