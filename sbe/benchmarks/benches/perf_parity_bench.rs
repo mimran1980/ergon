@@ -43,7 +43,9 @@
 
 // ergon generated code
 
-use ergo_sbe_benchmarks::{ergo_car::*, sbe_tool_car_body_decoder};
+use ergo_sbe_benchmarks::{
+    assert_encode_extent, assert_stream_wrap_extent, ergo_car::*, sbe_tool_car_body_decoder,
+};
 
 // sbe-tool Rust SBE generated code (patched for module inclusion)
 
@@ -290,6 +292,9 @@ fn bench_decode_composite(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
+    // Untimed: prove every message start the timed loop will wrap unchecked.
+    assert_stream_wrap_extent(&buf, msg_len, MICRO_BATCH_SIZE, bl_e, ver_e);
+
     let ergo_car = CarDecoder::wrap(&buf, 0, bl_e, ver_e);
     let ergo_engine = ergo_car.engine();
     let tool_engine = sbe_tool_car_body_decoder(&buf, 0, bl, ver).engine_decoder();
@@ -301,6 +306,14 @@ fn bench_decode_composite(c: &mut Criterion) {
 
     // Traverse a contiguous stream so the gate measures composite decoding,
     // not the code address of a loop repeatedly loading the same three bytes.
+    //
+    // Equal work: sbe-tool's `wrap` only stores buffer, offset, block length,
+    // and version — it performs no extent check. Ergon's bare `wrap` proves the
+    // version-aware fixed extent on every message, so timing it here would
+    // charge ergon for a bounds proof its reference never performs. The extent
+    // is proven once above (both arms decoded the same stream and agreed on
+    // every field), and the timed region uses the matching unchecked
+    // constructor — the same validation class the other maintained pairs use.
     group.bench_function("ergo-sbe_engine", |b| {
         b.iter(|| {
             let buf = black_box(buf.as_slice());
@@ -308,7 +321,9 @@ fn bench_decode_composite(c: &mut Criterion) {
             let mut total_cylinders = 0_u64;
             let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(buf, off, bl_e, ver_e);
+                // SAFETY: `buf` is a prebuilt concat of whole baseline frames,
+                // so every `off` is a message start with a proven extent.
+                let car = unsafe { CarDecoder::wrap_unchecked(buf, off, bl_e, ver_e) };
                 let engine = car.engine();
                 total_capacity += u64::from(engine.capacity());
                 total_cylinders += u64::from(engine.num_cylinders());
@@ -353,6 +368,8 @@ fn bench_throughput_batch(c: &mut Criterion) {
     let ver = sbe_tool_version();
     // Validate the stream header once (real feed-handler pattern), then decode fast.
     let (bl_e, ver_e) = ergo_sbe_header_fields();
+    // Untimed: prove every message start the timed loop will wrap unchecked.
+    assert_stream_wrap_extent(&buf, msg_len, BATCH_SIZE, bl_e, ver_e);
 
     let mut group = c.benchmark_group("parity/throughput/batch_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
@@ -576,9 +593,14 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // (same unfairness class as batch decode; product bare wrap still proves).
     group.bench_function("ergo-sbe_body_only", |b| {
         let mut buf = [0u8; 512];
+        // Untimed: prove the buffer holds a complete frame before the timed
+        // region wraps it unchecked.
+        // This arm writes only the fixed block, so header + block length is the
+        // exact extent the timed region touches.
+        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                // SAFETY: fixed [0u8; 512] holds header+fixed body at offset 0.
+                // SAFETY: extent asserted directly above.
                 unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
                     .serial_number(black_box(1234))
                     .model_year(black_box(2013));
