@@ -69,8 +69,15 @@ check-products: policy
     cargo test -p ergo-aeron-cluster --doc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
 
+# Strict rustdoc for a *generated consumer*. Crate-only rustdoc never sees the
+# generated flyweight API, which is the artifact users actually read, so a
+# broken intra-doc link or a link to a type the generator does not emit can only
+# be caught here.
+check-generated-rustdoc:
+    RUSTDOCFLAGS='-D warnings -D rustdoc::broken_intra_doc_links' cargo doc --manifest-path samples/sbe-feature-tour/Cargo.toml --no-deps
+
 # Sample crates gate (unpublished).
-check-samples: policy
+check-samples: policy check-generated-rustdoc
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets -- -D warnings
@@ -78,7 +85,7 @@ check-samples: policy
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
 # Pre-release check: comprehensive suite + coverage + bench compile + dry-run publish.
-release-check: test check-coverage
+release-check: test check-coverage check-generated-rustdoc
     cargo bench -p ergo-sbe-benchmarks --no-run
     cargo bench -p ergo-aeron-cluster --no-run
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
@@ -236,22 +243,14 @@ fix:
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
 # Benchmark parity — ergo-sbe vs sbe-tool head-to-head.
-# Gate: every maintained ergon/sbe-tool ratio must stay at or below 1.00.
+# Gate: every maintained ergon/sbe-tool ratio must stay at or below a literal
+# 1.00 — no noise tolerance — in BOTH profiles. Both are blocking: a regression
+# that only appears without LTO is still a regression for downstream consumers.
+# Each invocation owns a unique result root, so the gate can only read estimates
+# produced by that same invocation.
 # Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
-# LTO results are informational — sensitive to thermal/code-layout variance on
-# shared hardware. The no-LTO gate is the canonical acceptance check.
 bench:
-    @echo "=== SBE perf parity — no LTO ==="
-    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-    @echo ""
-    @echo "=== Gate — no LTO ==="
-    ./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe
-    @echo ""
-    @echo "=== SBE perf parity — LTO (informational) ==="
-    cd sbe/benchmarks && cargo bench --bench perf_parity_bench
-    @echo ""
-    @echo "=== Gate — LTO (warning only) ==="
-    -./scripts/check-bench-gate.sh target/criterion 0.005 sbe
+    ./scripts/run-sbe-bench.sh
 
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while
@@ -273,9 +272,21 @@ bench-diagnostics:
 bench-cold:
     ./scripts/measure-codegen-cold-path.sh
 
-# Linux/Valgrind instruction counts (requires iai-callgrind-runner).
+# Mechanism-level evidence: raw Callgrind instruction/branch counts plus
+# disassembly for the named perf-probe symbols, in both optimisation profiles.
+# Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
+# than degrading to a timing harness (a PERF claim needs this, not Criterion).
 bench-instructions:
-    cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
+    ./scripts/run-sbe-instruction-probes.sh --all-profiles
+
+# Regenerate the two sbe-tool comparators the head-to-head benches measure
+# against, from the pinned simple-binary-encoding submodule.
+update-bench-reference:
+    ./scripts/regenerate-sbe-benchmark-reference.sh
+
+# Verify those comparators are reproducible without touching tracked files.
+check-bench-reference:
+    ./scripts/regenerate-sbe-benchmark-reference.sh --check
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
 bench-cluster:
