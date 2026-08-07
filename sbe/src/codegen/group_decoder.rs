@@ -56,45 +56,9 @@ pub(crate) fn generate_group_decoder(
             f.presence == Presence::Constant
                 || (f.presence != Presence::Optional && f.since_version == 0)
         });
-    // Version-aware minimum entry extent: every REQUIRED fixed field readable
-    // at `acting_version` must fit inside the wire block length. Optional and
-    // not-yet-present fields keep their own version/block-length guards, so
-    // their absence stays representable and is not proven here.
-    let mut min_extent_arms = proc_macro2::TokenStream::new();
-    {
-        let required_end = |max_version: u16| -> usize {
-            g.fields
-                .iter()
-                .filter(|f| {
-                    f.presence != Presence::Optional
-                        && f.presence != Presence::Constant
-                        && f.since_version <= max_version
-                })
-                .map(|f| f.offset.saturating_add(f.field_type.size()))
-                .max()
-                .unwrap_or(0)
-        };
-        let mut versions: Vec<u16> = g.fields.iter().map(|f| f.since_version).collect();
-        versions.sort_unstable();
-        versions.dedup();
-
-        let m0_lit = syn::LitInt::new(&required_end(0).to_string(), span);
-        min_extent_arms.extend(quote::quote! {
-            let mut m = #m0_lit;
-        });
-        for v in versions {
-            if v == 0 {
-                continue; // seeded above; `acting_version >= 0` is always true
-            }
-            let v_lit = syn::LitInt::new(&v.to_string(), span);
-            let m_lit = syn::LitInt::new(&required_end(v).to_string(), span);
-            min_extent_arms.extend(quote::quote! {
-                if acting_version >= #v_lit {
-                    m = #m_lit;
-                }
-            });
-        }
-    }
+    // Unified extent rule: see `emit_readable_extent_body` in runtime.rs.
+    let min_extent_arms =
+        crate::codegen::runtime::emit_readable_extent_body(&g.fields);
 
     let fixed_extent_validation = if total_tail == 0 {
         quote::quote! {
@@ -301,7 +265,6 @@ pub(crate) fn generate_group_decoder(
             #[inline]
             pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
                 #min_extent_arms
-                m
             }
 
             /// Wrap a standalone group at its dimension header, with bounds

@@ -252,55 +252,9 @@ pub(crate) fn generate_message_decoder(
         });
     }
 
-    // Version-aware minimum fixed extent: every field readable at
-    // `acting_version` must fit in the body buffer.
-    let mut min_extent_arms = proc_macro2::TokenStream::new();
-    {
-        // A `presence="constant"` field carries no wire bytes at all — its
-        // value comes from the schema — so demanding body space for one
-        // rejects frames this schema's own encoder produces. Constants are
-        // excluded here for the same reason the group-entry extent excludes
-        // them (`generate_group_decoder`).
-        let on_the_wire = |f: &&MessageField| f.presence != Presence::Constant;
-        let extent_at = |max_version: u16| -> usize {
-            msg.fields
-                .iter()
-                .filter(on_the_wire)
-                .filter(|f| f.since_version <= max_version)
-                .map(|f| f.offset.saturating_add(f.field_type.size()))
-                .max()
-                .unwrap_or(0)
-        };
-
-        let mut versions: Vec<u16> = msg
-            .fields
-            .iter()
-            .filter(on_the_wire)
-            .map(|f| f.since_version)
-            .collect();
-        versions.sort_unstable();
-        versions.dedup();
-
-        // Seed with the v0 extent, then step it up per distinct version.
-        let m0_lit =
-            syn::LitInt::new(&extent_at(0).to_string(), proc_macro2::Span::call_site());
-        min_extent_arms.extend(quote::quote! {
-            let mut m = #m0_lit;
-        });
-        for v in versions {
-            if v == 0 {
-                continue; // already seeded; avoid `acting_version >= 0` (always true)
-            }
-            let v_lit = syn::LitInt::new(&v.to_string(), proc_macro2::Span::call_site());
-            let m_lit =
-                syn::LitInt::new(&extent_at(v).to_string(), proc_macro2::Span::call_site());
-            min_extent_arms.extend(quote::quote! {
-                if acting_version >= #v_lit {
-                    m = #m_lit;
-                }
-            });
-        }
-    }
+    // Unified extent rule shared with group entries (runtime.rs).
+    let min_extent_arms =
+        crate::codegen::runtime::emit_readable_extent_body(&msg.fields);
 
     impl_body.extend(quote::quote! {
         /// Minimum body bytes needed to safely read every fixed field present
@@ -308,7 +262,6 @@ pub(crate) fn generate_message_decoder(
         #[inline]
         pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
             #min_extent_arms
-            m
         }
 
         /// Wrap a buffer for decoding at **message start** with bounds checks.

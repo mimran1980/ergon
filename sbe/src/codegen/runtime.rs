@@ -766,6 +766,67 @@ pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     tokens
 }
 
+/// Emit the version-aware `min_readable_fixed_extent` body:
+/// `let mut m = N; if acting_version >= V { m = M; } … m`.
+///
+/// Required, non-constant fields that are active at `max_version` must fit.
+/// Optional and Constant fields are excluded: constants occupy no wire bytes,
+/// and optional getters carry their own block-length guard.
+///
+/// This is NOT purely a safety bound — it doubles as a frame validity check.
+/// Including a since-versioned required field in the extent rejects a
+/// malformed frame *before* the decoder is constructed, rather than letting
+/// the getter silently return `None`.
+pub(crate) fn emit_readable_extent_body(fields: &[MessageField]) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let in_extent = |f: &&MessageField| {
+        f.presence != Presence::Optional && f.presence != Presence::Constant
+    };
+    let extent_at = |max_version: u16| -> usize {
+        fields
+            .iter()
+            .filter(in_extent)
+            .filter(|f| f.since_version <= max_version)
+            .map(|f| f.offset.saturating_add(f.field_type.size()))
+            .max()
+            .unwrap_or(0)
+    };
+
+    let mut versions: Vec<u16> = fields
+        .iter()
+        .filter(in_extent)
+        .map(|f| f.since_version)
+        .collect();
+    versions.sort_unstable();
+    versions.dedup();
+
+    let m0 = extent_at(0);
+    let m0_lit = syn::LitInt::new(&m0.to_string(), span);
+
+    // Build one TokenStream per version guard branch so we can splice them
+    // into one quote! block.
+    let mut version_arms = proc_macro2::TokenStream::new();
+    for &v in &versions {
+        if v == 0 {
+            continue;
+        }
+        let v_lit = syn::LitInt::new(&v.to_string(), span);
+        let m = extent_at(v);
+        let m_lit = syn::LitInt::new(&m.to_string(), span);
+        version_arms.extend(quote::quote! {
+            if acting_version >= #v_lit {
+                m = #m_lit;
+            }
+        });
+    }
+
+    quote::quote! {
+        let mut m = #m0_lit;
+        #version_arms
+        m
+    }
+}
+
 pub(crate) fn find_matching_end(
     tokens: &[Token],
     start: usize,
