@@ -36,7 +36,7 @@ pub(crate) fn generate_decoder_display(
         // Only touch wire when the field's full range is in-buffer — Display must
         // not panic on truncated / invalid SBE.
         let in_bounds = quote::quote! {
-            self.pos.saturating_add(#end_off_lit) <= self.buf.len()
+            self.byte_pos().saturating_add(#end_off_lit) <= self.buf.len()
                 && #end_off_lit <= self.acting_block_length
         };
         match &f.field_type {

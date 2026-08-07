@@ -844,28 +844,27 @@ impl MessageHeader {
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> MessageHeaderDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
-        let offset = self.pos + 0;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 0) })
     }
     #[inline]
     pub fn template_id(&self) -> u16 {
-        let offset = self.pos + 2;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 2) })
     }
     #[inline]
     pub fn schema_id(&self) -> u16 {
-        let offset = self.pos + 4;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 4) })
     }
     #[inline]
     pub fn version(&self) -> u16 {
-        let offset = self.pos + 6;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 6) })
     }
 }
 ///Repeating group dimensions.
@@ -895,18 +894,19 @@ const _: () = assert!(core::mem::size_of:: < GroupSizeEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct GroupSizeEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> GroupSizeEncodingDecoder<'a> {
     #[inline]
     pub fn block_length(&self) -> u16 {
-        let offset = self.pos + 0;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 0) })
     }
     #[inline]
     pub fn num_in_group(&self) -> u16 {
-        let offset = self.pos + 2;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 2) })
     }
 }
 ///Variable length UTF-8 String.
@@ -934,13 +934,15 @@ const _: () = assert!(core::mem::size_of:: < VarStringEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarStringEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> VarStringEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
-        let offset = self.pos + 0;
-        u32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
+        u32::from_le_bytes(unsafe { read_addr_unchecked::<4>(self.base_addr, 0) })
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -972,13 +974,15 @@ const _: () = assert!(core::mem::size_of:: < VarAsciiEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarAsciiEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> VarAsciiEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
-        let offset = self.pos + 0;
-        u32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
+        u32::from_le_bytes(unsafe { read_addr_unchecked::<4>(self.base_addr, 0) })
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -1010,13 +1014,15 @@ const _: () = assert!(core::mem::size_of:: < VarDataEncoding > () == 4);
 #[derive(Clone, Copy)]
 pub struct VarDataEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> VarDataEncodingDecoder<'a> {
     #[inline]
     pub fn length(&self) -> u32 {
-        let offset = self.pos + 0;
-        u32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
+        u32::from_le_bytes(unsafe { read_addr_unchecked::<4>(self.base_addr, 0) })
     }
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -1054,20 +1060,21 @@ const _: () = assert!(core::mem::size_of:: < Booster > () == 2);
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> BoosterDecoder<'a> {
     #[inline]
     pub fn boost_type(&self) -> BoostType {
-        let offset = self.pos + 0;
         BoostType::from_raw(
-            u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
+            u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 0) }),
         )
     }
     #[inline]
     pub fn horse_power(&self) -> u8 {
-        let offset = self.pos + 1;
-        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+        u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 1) })
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1150,18 +1157,19 @@ const _: () = assert!(core::mem::size_of:: < Engine > () == 10);
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the composite body: `buf.as_ptr() as usize
+    /// + body_offset`. Cached once at construction so every accessor
+    /// becomes a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
 }
 impl<'a> EngineDecoder<'a> {
     #[inline]
     pub fn capacity(&self) -> u16 {
-        let offset = self.pos + 0;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 0) })
     }
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
-        let offset = self.pos + 2;
-        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+        u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 2) })
     }
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
@@ -1172,9 +1180,8 @@ impl<'a> EngineDecoder<'a> {
         let mut res = [0 as u8; 3];
         let mut idx = 0;
         while idx < 3 {
-            let offset = self.pos + 3 + idx * 1;
             res[idx] = u8::from_le_bytes(unsafe {
-                read_bytes_unchecked::<1>(self.buf, offset)
+                read_addr_unchecked::<1>(self.base_addr, 3 + idx * 1)
             });
             idx += 1;
         }
@@ -1186,20 +1193,17 @@ impl<'a> EngineDecoder<'a> {
     }
     #[inline]
     pub fn efficiency(&self) -> i8 {
-        let offset = self.pos + 6;
-        i8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+        i8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 6) })
     }
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
-        let offset = self.pos + 7;
         BooleanType::from_raw(
-            u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
+            u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 7) }),
         )
     }
     #[inline]
     pub fn booster(&self) -> Booster {
-        let offset = self.pos + 8;
-        Booster(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        Booster(unsafe { read_addr_unchecked::<2>(self.base_addr, 8) })
     }
 }
 pub struct CarSchema;
@@ -1214,7 +1218,10 @@ impl CarSchema {
 #[must_use = "decoder must be read or advanced; dropping is fine only after use"]
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    /// Absolute address of the message body: `buf.as_ptr() as usize +
+    /// body_pos`. Cached once at construction so fixed-field accessors
+    /// become a single struct load + immediate-offset wire load.
+    pub(crate) base_addr: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
@@ -1233,14 +1240,14 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// within the underlying buffer.
     #[inline]
     pub fn message_offset(&self) -> usize {
-        self.decoder.pos.saturating_sub(CarDecoder::HEADER_LENGTH)
+        self.decoder.byte_pos().saturating_sub(CarDecoder::HEADER_LENGTH)
     }
     /// End of the **acting fixed block** (body start + acting block length).
     /// Not the full message end when groups/var-data follow — use a complete
     /// stage or inherent `encoded_length_with_header` after walking tails.
     #[inline]
     pub fn limit(&self) -> usize {
-        self.decoder.pos + self.decoder.acting_block_length
+        self.decoder.byte_pos() + self.decoder.acting_block_length
     }
     /// The full underlying buffer slice this decoder was wrapped on.
     #[inline]
@@ -1251,7 +1258,7 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// groups/var-data of **this** message until the consuming walk finishes.
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
-        let end = (self.decoder.pos + self.decoder.acting_block_length)
+        let end = (self.decoder.byte_pos() + self.decoder.acting_block_length)
             .min(self.decoder.buf.len());
         &self.decoder.buf[end..]
     }
@@ -1262,8 +1269,8 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// the stage.
     #[inline]
     pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let start = self.decoder.pos;
-        let end = self.decoder.pos + self.decoder.acting_block_length;
+        let start = self.decoder.byte_pos();
+        let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
         if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "body",
@@ -1279,7 +1286,7 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     #[inline]
     pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.message_offset();
-        let end = self.decoder.pos + self.decoder.acting_block_length;
+        let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
         if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "frame",
@@ -1430,7 +1437,7 @@ impl<'a> CarDecoder<'a> {
         let body_pos = message_offset + Self::HEADER_LENGTH;
         Self {
             buf,
-            pos: body_pos,
+            base_addr: buf.as_ptr() as usize + body_pos,
             acting_block_length,
             acting_version,
         }
@@ -1594,8 +1601,7 @@ impl<'a> CarDecoder<'a> {
     }
     #[inline]
     pub fn serial_number(&self) -> u64 {
-        let offset = self.pos + 0;
-        u64::from_le_bytes(unsafe { read_bytes_unchecked::<8>(self.buf, offset) })
+        u64::from_le_bytes(unsafe { read_addr_unchecked::<8>(self.base_addr, 0) })
     }
     pub const SERIAL_NUMBER_ID: u16 = 1;
     pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
@@ -1617,8 +1623,7 @@ impl<'a> CarDecoder<'a> {
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     #[inline]
     pub fn model_year(&self) -> u16 {
-        let offset = self.pos + 8;
-        u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
+        u16::from_le_bytes(unsafe { read_addr_unchecked::<2>(self.base_addr, 8) })
     }
     pub const MODEL_YEAR_ID: u16 = 2;
     pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
@@ -1640,17 +1645,15 @@ impl<'a> CarDecoder<'a> {
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     #[inline]
     pub fn available(&self) -> BooleanType {
-        let offset = self.pos + 10;
         BooleanType::from_raw(
-            u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
+            u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 10) }),
         )
     }
     /// Raw wire discriminant — bypasses enum mapping.
     /// Use to inspect unknown/forward enum values without losing the original byte.
     #[inline]
     pub fn raw_available(&self) -> u8 {
-        let offset = self.pos + 10;
-        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+        u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 10) })
     }
     /// Returns `true` / `false` for valid boolean values.
     /// Rejects `NullVal` or unknown raw discriminants —
@@ -1682,17 +1685,15 @@ impl<'a> CarDecoder<'a> {
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     #[inline]
     pub fn code(&self) -> Model {
-        let offset = self.pos + 11;
         Model::from_raw(
-            u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
+            u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 11) }),
         )
     }
     /// Raw wire discriminant — bypasses enum mapping.
     /// Use to inspect unknown/forward enum values without losing the original byte.
     #[inline]
     pub fn raw_code(&self) -> u8 {
-        let offset = self.pos + 11;
-        u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
+        u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 11) })
     }
     pub const CODE_ID: u16 = 4;
     pub const CODE_SINCE_VERSION: u16 = 0;
@@ -1715,8 +1716,7 @@ impl<'a> CarDecoder<'a> {
         if 28 > self.acting_block_length {
             return [0 as u32; 4];
         }
-        let offset = self.pos + 12;
-        let all: [u8; 16] = unsafe { read_bytes_unchecked::<16>(self.buf, offset) };
+        let all: [u8; 16] = unsafe { read_addr_unchecked::<16>(self.base_addr, 12) };
         [
             u32::from_le_bytes([all[0usize], all[1usize], all[2usize], all[3usize]]),
             u32::from_le_bytes([all[4usize], all[5usize], all[6usize], all[7usize]]),
@@ -1747,8 +1747,7 @@ impl<'a> CarDecoder<'a> {
         if 34 > self.acting_block_length {
             return [0 as u8; 6];
         }
-        let offset = self.pos + 28;
-        let all: [u8; 6] = unsafe { read_bytes_unchecked::<6>(self.buf, offset) };
+        let all: [u8; 6] = unsafe { read_addr_unchecked::<6>(self.base_addr, 28) };
         [
             u8::from_le_bytes([all[0usize]]),
             u8::from_le_bytes([all[1usize]]),
@@ -1789,9 +1788,8 @@ impl<'a> CarDecoder<'a> {
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     #[inline]
     pub fn extras(&self) -> OptionalExtras {
-        let offset = self.pos + 34;
         OptionalExtras(
-            u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) }),
+            u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 34) }),
         )
     }
     pub const EXTRAS_ID: u16 = 7;
@@ -1831,16 +1829,14 @@ impl<'a> CarDecoder<'a> {
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     #[inline]
     pub fn engine(&self) -> EngineDecoder<'_> {
-        let offset = self.pos + 35;
         EngineDecoder {
             buf: self.buf,
-            pos: offset,
+            base_addr: self.base_addr + 35,
         }
     }
     #[inline]
     pub fn engine_value(&self) -> Engine {
-        let offset = self.pos + 35;
-        Engine(unsafe { read_bytes_unchecked::<10>(self.buf, offset) })
+        Engine(unsafe { read_addr_unchecked::<10>(self.base_addr, 35) })
     }
     pub const ENGINE_ID: u16 = 9;
     pub const ENGINE_SINCE_VERSION: u16 = 0;
@@ -1857,9 +1853,14 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    /// Byte offset of the message body within `self.buf`.
+    #[inline]
+    fn byte_pos(&self) -> usize {
+        self.base_addr - self.buf.as_ptr() as usize
+    }
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-        Ok(self.pos + self.acting_block_length)
+        Ok(self.byte_pos() + self.acting_block_length)
     }
     #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -2160,7 +2161,7 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
-        Ok(end - self.pos)
+        Ok(end - self.byte_pos())
     }
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -2170,12 +2171,13 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
-        Ok(&self.buf[self.pos..end])
+        let start = self.byte_pos();
+        Ok(&self.buf[start..end])
     }
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
-        let start = self.pos.saturating_sub(Self::HEADER_LENGTH);
+        let start = self.byte_pos().saturating_sub(Self::HEADER_LENGTH);
         Ok(&self.buf[start..end])
     }
     #[inline]
@@ -2358,36 +2360,37 @@ impl<'a> core::fmt::Display for CarDecoder<'a> {
 impl<'a> core::fmt::Debug for CarDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_struct("CarDecoder");
-        if self.pos.saturating_add(8) <= self.buf.len() && 8 <= self.acting_block_length
+        if self.byte_pos().saturating_add(8) <= self.buf.len()
+            && 8 <= self.acting_block_length
         {
             let v = self.serial_number();
             d.field("serialNumber", &v);
         }
-        if self.pos.saturating_add(10) <= self.buf.len()
+        if self.byte_pos().saturating_add(10) <= self.buf.len()
             && 10 <= self.acting_block_length
         {
             let v = self.model_year();
             d.field("modelYear", &v);
         }
-        if self.pos.saturating_add(11) <= self.buf.len()
+        if self.byte_pos().saturating_add(11) <= self.buf.len()
             && 11 <= self.acting_block_length
         {
             let v = self.available();
             d.field("available", &v);
         }
-        if self.pos.saturating_add(12) <= self.buf.len()
+        if self.byte_pos().saturating_add(12) <= self.buf.len()
             && 12 <= self.acting_block_length
         {
             let v = self.code();
             d.field("code", &v);
         }
-        if self.pos.saturating_add(35) <= self.buf.len()
+        if self.byte_pos().saturating_add(35) <= self.buf.len()
             && 35 <= self.acting_block_length
         {
             let v = self.extras();
             d.field("extras", &format_args!("{}", v));
         }
-        if self.pos.saturating_add(45) <= self.buf.len()
+        if self.byte_pos().saturating_add(45) <= self.buf.len()
             && 45 <= self.acting_block_length
         {
             let v = self.engine_value();
@@ -4448,7 +4451,7 @@ impl<'a> CarDecoder<'a> {
     pub fn into_fuel_figures(
         self,
     ) -> Result<FuelFiguresDecoder<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-        let group_start = self.pos + self.acting_block_length;
+        let group_start = self.byte_pos() + self.acting_block_length;
         unsafe {
             <FuelFiguresDecoder<
                 'a,
@@ -4457,7 +4460,7 @@ impl<'a> CarDecoder<'a> {
                 self.buf,
                 group_start,
                 self.acting_version,
-                self.pos,
+                self.byte_pos(),
                 self.acting_block_length,
             )
         }
@@ -8592,6 +8595,21 @@ pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N
 #[allow(dead_code)]
 unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }
+}
+/// Unchecked read from an absolute base address — one wire load with
+/// an immediate offset, no separate `buf`/`pos` re-load or add.
+///
+/// Used by decoders that cache `base_addr = buf.as_ptr() as usize +
+/// body_pos` once at construction, so every fixed-field accessor
+/// becomes a single struct load + immediate-offset load.
+///
+/// # Safety
+/// Caller guarantees `addr + offset + N` does not overflow and
+/// points within the live buffer the decoder was constructed from.
+#[inline]
+#[allow(dead_code)]
+unsafe fn read_addr_unchecked<const N: usize>(addr: usize, offset: usize) -> [u8; N] {
+    unsafe { core::ptr::read_unaligned((addr + offset) as *const [u8; N]) }
 }
 /// Unchecked companion to [`write_bytes`] — zero bounds checks.
 ///

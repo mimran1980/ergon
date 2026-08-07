@@ -1610,9 +1610,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 let mut res = [0 as #r_type_ty; #len_lit];
                                 let mut idx = 0;
                                 while idx < #len_lit {
-                                    let offset = self.pos + #offset_lit + idx * #prim_size_lit;
                                     res[idx] = #r_type_ty::#from_method(
-                                        unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
+                                        unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit + idx * #prim_size_lit) }
                                     );
                                     idx += 1;
                                 }
@@ -1633,8 +1632,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     decoder_getters.extend(quote::quote! {
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
+                            #r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
                         }
                     });
                 }
@@ -1651,8 +1649,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
+                        #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
                     }
                 });
             }
@@ -1671,8 +1668,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                     }
                 });
             }
@@ -1691,8 +1687,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                        #target_ident(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                     }
                 });
             }
@@ -1704,7 +1699,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
             pub(crate) buf: &'a [u8],
-            pub(crate) pos: usize,
+            /// Absolute address of the composite body: `buf.as_ptr() as usize
+            /// + body_offset`. Cached once at construction so every accessor
+            /// becomes a single struct load + immediate-offset wire load.
+            pub(crate) base_addr: usize,
         }
 
         impl<'a> #decoder_name<'a> {

@@ -987,7 +987,7 @@ pub(crate) fn generate_group_decoder(
                                 return None;
                             }
                             let offset = self.pos + #offset_lit;
-                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                            Some(#target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset })
                         }
                     });
                 } else {
@@ -995,7 +995,7 @@ pub(crate) fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
                             let offset = self.pos + #offset_lit;
-                            #target_decoder_name { buf: self.buf, pos: offset }
+                            #target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset }
                         }
                     });
                 }

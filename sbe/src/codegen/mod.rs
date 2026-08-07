@@ -1062,6 +1062,23 @@ impl Generator {
                 }
             }
 
+            /// Unchecked read from an absolute base address — one wire load with
+            /// an immediate offset, no separate `buf`/`pos` re-load or add.
+            ///
+            /// Used by decoders that cache `base_addr = buf.as_ptr() as usize +
+            /// body_pos` once at construction, so every fixed-field accessor
+            /// becomes a single struct load + immediate-offset load.
+            ///
+            /// # Safety
+            /// Caller guarantees `addr + offset + N` does not overflow and
+            /// points within the live buffer the decoder was constructed from.
+            #[inline]
+            #[allow(dead_code)] // used from generated accessors in this module
+            unsafe fn read_addr_unchecked<const N: usize>(addr: usize, offset: usize) -> [u8; N] {
+                // SAFETY: caller guarantees the address range is valid.
+                unsafe { core::ptr::read_unaligned((addr + offset) as *const [u8; N]) }
+            }
+
             /// Unchecked companion to [`write_bytes`] — zero bounds checks.
             ///
             /// # Safety

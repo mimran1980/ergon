@@ -181,7 +181,10 @@ pub(crate) fn generate_message_decoder(
         #[must_use = "decoder must be read or advanced; dropping is fine only after use"]
         pub struct #decoder_ident<'a> {
             pub(crate) buf: &'a [u8],
-            pub(crate) pos: usize,
+            /// Absolute address of the message body: `buf.as_ptr() as usize +
+            /// body_pos`. Cached once at construction so fixed-field accessors
+            /// become a single struct load + immediate-offset wire load.
+            pub(crate) base_addr: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
         }
@@ -361,7 +364,7 @@ pub(crate) fn generate_message_decoder(
             let body_pos = message_offset + Self::HEADER_LENGTH;
             Self {
                 buf,
-                pos: body_pos,
+                base_addr: buf.as_ptr() as usize + body_pos,
                 acting_block_length,
                 acting_version,
             }
@@ -651,8 +654,7 @@ pub(crate) fn generate_message_decoder(
                         #[inline]
                         pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             #version_guard
-                            let offset = self.pos + #offset_lit;
-                            let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, offset) };
+                            let all: [u8; #total_size_lit] = unsafe { read_addr_unchecked::<#total_size_lit>(self.base_addr, #offset_lit) };
                             [#(#elements),*]
                         }
                     });
@@ -714,8 +716,7 @@ pub(crate) fn generate_message_decoder(
                             "#[inline]\n\
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
                                  {version_guard}\
-                                 let offset = self.pos + {offset};\n\
-                                 let val = {rt}::{order}(unsafe {{ read_bytes_unchecked::<{ps}>(self.buf, offset) }});\n\
+                                 let val = {rt}::{order}(unsafe {{ read_addr_unchecked::<{ps}>(self.base_addr, {offset}) }});\n\
                                  if {null_check} {{\n\
                                      None\n\
                                  }} else {{\n\
@@ -750,8 +751,7 @@ pub(crate) fn generate_message_decoder(
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                     return None;
                                 }
-                                let offset = self.pos + #offset_lit;
-                                Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                                Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                             }
                         });
                     } else {
@@ -762,8 +762,7 @@ pub(crate) fn generate_message_decoder(
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub fn #fname_ident(&self) -> #r_type_ty {
-                                let offset = self.pos + #offset_lit;
-                                #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
+                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
                             }
                         });
                     }
@@ -797,16 +796,14 @@ pub(crate) fn generate_message_decoder(
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_decoder_name { buf: self.buf, pos: offset })
+                            Some(#target_decoder_name { buf: self.buf, base_addr: self.base_addr + #offset_lit })
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
-                            let offset = self.pos + #offset_lit;
-                            #target_decoder_name { buf: self.buf, pos: offset }
+                            #target_decoder_name { buf: self.buf, base_addr: self.base_addr + #offset_lit }
                         }
                     });
                 }
@@ -827,16 +824,14 @@ pub(crate) fn generate_message_decoder(
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) }))
+                            Some(#target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) }))
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
-                            #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
+                            #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
                         }
                     });
                 }
@@ -884,8 +879,7 @@ pub(crate) fn generate_message_decoder(
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })))
+                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
                         }
                         /// Raw wire discriminant — bypasses enum mapping.
                         /// Returns `None` when the field is not present in the acting version.
@@ -894,8 +888,7 @@ pub(crate) fn generate_message_decoder(
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                            Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                         }
                     });
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
@@ -923,15 +916,13 @@ pub(crate) fn generate_message_decoder(
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
-                            #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                            #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                         }
                         /// Raw wire discriminant — bypasses enum mapping.
                         /// Use to inspect unknown/forward enum values without losing the original byte.
                         #[inline]
                         pub fn #raw_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
+                            #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
                         }
                     });
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
@@ -995,16 +986,14 @@ pub(crate) fn generate_message_decoder(
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })))
+                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
-                            #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                            #target_ident(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                         }
                     });
                 }
@@ -1019,9 +1008,15 @@ pub(crate) fn generate_message_decoder(
 
     // tail_offset_0
     impl_body.extend(quote::quote! {
+        /// Byte offset of the message body within `self.buf`.
+        #[inline]
+        fn byte_pos(&self) -> usize {
+            self.base_addr - self.buf.as_ptr() as usize
+        }
+
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.pos + self.acting_block_length)
+            Ok(self.byte_pos() + self.acting_block_length)
         }
     });
 
@@ -1343,7 +1338,7 @@ pub(crate) fn generate_message_decoder(
         #[inline]
         pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            Ok(end - self.pos)
+            Ok(end - self.byte_pos())
         }
 
         #[inline]
@@ -1355,13 +1350,14 @@ pub(crate) fn generate_message_decoder(
         #[inline]
         pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            Ok(&self.buf[self.pos..end])
+            let start = self.byte_pos();
+            Ok(&self.buf[start..end])
         }
 
         #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            let start = self.pos.saturating_sub(Self::HEADER_LENGTH);
+            let start = self.byte_pos().saturating_sub(Self::HEADER_LENGTH);
             Ok(&self.buf[start..end])
         }
     });
@@ -1536,8 +1532,8 @@ pub(crate) fn generate_message_decoder(
             /// this is the complete body.
             #[inline]
             pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.pos;
-                let end = self.decoder.pos + self.decoder.acting_block_length;
+                let start = self.decoder.byte_pos();
+                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
                 if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "body",
@@ -1551,7 +1547,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 let start = self.message_offset();
-                let end = self.decoder.pos + self.decoder.acting_block_length;
+                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
                 if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame",
@@ -1571,8 +1567,8 @@ pub(crate) fn generate_message_decoder(
             /// the stage.
             #[inline]
             pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.pos;
-                let end = self.decoder.pos + self.decoder.acting_block_length;
+                let start = self.decoder.byte_pos();
+                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
                 if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "body",
@@ -1588,7 +1584,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 let start = self.message_offset();
-                let end = self.decoder.pos + self.decoder.acting_block_length;
+                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
                 if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame",
@@ -1617,14 +1613,14 @@ pub(crate) fn generate_message_decoder(
             /// within the underlying buffer.
             #[inline]
             pub fn message_offset(&self) -> usize {
-                self.decoder.pos.saturating_sub(#decoder_ident::HEADER_LENGTH)
+                self.decoder.byte_pos().saturating_sub(#decoder_ident::HEADER_LENGTH)
             }
             /// End of the **acting fixed block** (body start + acting block length).
             /// Not the full message end when groups/var-data follow — use a complete
             /// stage or inherent `encoded_length_with_header` after walking tails.
             #[inline]
             pub fn limit(&self) -> usize {
-                self.decoder.pos + self.decoder.acting_block_length
+                self.decoder.byte_pos() + self.decoder.acting_block_length
             }
             /// The full underlying buffer slice this decoder was wrapped on.
             #[inline]
@@ -1635,7 +1631,7 @@ pub(crate) fn generate_message_decoder(
             /// groups/var-data of **this** message until the consuming walk finishes.
             #[inline]
             pub fn remaining(&self) -> &'a [u8] {
-                let end = (self.decoder.pos + self.decoder.acting_block_length).min(self.decoder.buf.len());
+                let end = (self.decoder.byte_pos() + self.decoder.acting_block_length).min(self.decoder.buf.len());
                 &self.decoder.buf[end..]
             }
             #meta_bytes
