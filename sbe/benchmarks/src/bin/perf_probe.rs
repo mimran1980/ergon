@@ -155,6 +155,28 @@ const PROBES: &[Probe] = &[
         topic: "encode",
         run: run_tool_wire_parity_encode_full,
     },
+    // ── Candidate-5 symmetry probes ───────────────────────────────────────
+    Probe {
+        symbol: "ergo_probe_encode_composite",
+        arm: Arm::Ergon,
+        pair: "encode_composite",
+        topic: "symmetry",
+        run: run_ergo_encode_composite,
+    },
+    Probe {
+        symbol: "ergo_probe_encode_group_entry",
+        arm: Arm::Ergon,
+        pair: "encode_group_entry",
+        topic: "symmetry",
+        run: run_ergo_encode_group_entry,
+    },
+    Probe {
+        symbol: "ergo_probe_decode_vardata",
+        arm: Arm::Ergon,
+        pair: "decode_vardata",
+        topic: "symmetry",
+        run: run_ergo_decode_vardata,
+    },
 ];
 
 // ─── Setup, performed once in main, never inside a probe ───────────────────
@@ -572,6 +594,94 @@ fn run_tool_wire_parity_encode_full() -> u64 {
     tool_probe_wire_parity_encode_full(&mut buf)
 }
 
+// ─── Candidate-5 probes: encoder/decoder symmetry ──────────────────────────
+// These measure the encode direction of operations whose decode direction is
+// already covered. Grouped under `topic: "symmetry"` so a future unification
+// of mirrored codegen can be checked for instruction-level asymmetry.
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_encode_composite(buf: &mut [u8]) -> u64 {
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        // SAFETY: SCALAR_FRAME bytes of stack, extent proven in main.
+        unsafe { CarEncoder::wrap_unchecked(black_box(&mut *buf), 0) }
+            .engine(Engine([0u8; 10]))
+            .serial_number(7);
+        // msg_offset=0 → engine writes at buf[43], serial_number at buf[8].
+        checksum = checksum
+            .wrapping_add(u64::from(buf[8]))
+            .wrapping_add(u64::from(buf[43]));
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_encode_composite() -> u64 {
+    let mut buf = [0_u8; SCALAR_FRAME];
+    ergo_probe_encode_composite(&mut buf)
+}
+
+// Group entry write: encode one fuel_figures entry, mirroring what
+// decode_full_message already decodes.
+
+const FUEL_ENTRY_BUF: usize = 64;
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_encode_group_entry(buf: &mut [u8]) -> u64 {
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        FuelFiguresEncoder::wrap(black_box(&mut buf[..]), 0, 1)
+            .add(|e| {
+                e.speed(30_u16).mpg(35.9_f32).usage_description(b"urban")?;
+                Ok(())
+            })
+            .expect("flat entry");
+        // Group dimension header: blockLength at buf[0..2], numInGroup at buf[2..4],
+        // then entry bytes. Checksum the dimension + first entry byte.
+        checksum = checksum
+            .wrapping_add(u64::from(buf[0]))
+            .wrapping_add(u64::from(buf[4]));
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_encode_group_entry() -> u64 {
+    let mut buf = [0_u8; FUEL_ENTRY_BUF];
+    ergo_probe_encode_group_entry(&mut buf)
+}
+
+// Var-data decode: read the manufacturer string through the consuming stage
+// chain that matches what encode throughput already writes.
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_decode_vardata(buf: &[u8], block_length: usize, version: u16) -> u64 {
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        // SAFETY: extent proven once in assert_baseline_extent.
+        let car = unsafe { CarDecoder::wrap_unchecked(black_box(buf), 0, block_length, version) };
+        let (mfr, _after) = car
+            .into_fuel_figures()
+            .expect("fuel figures")
+            .finish()
+            .expect("fuel finish")
+            .into_performance_figures()
+            .expect("perf figures")
+            .finish()
+            .expect("perf finish")
+            .into_manufacturer()
+            .expect("manufacturer");
+        checksum = checksum.wrapping_add(mfr[0] as u64);
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_decode_vardata() -> u64 {
+    let (bl, ver) = ergo_header_fields();
+    ergo_probe_decode_vardata(BASELINE, bl, ver)
+}
+
 // ─── Driver ────────────────────────────────────────────────────────────────
 
 fn print_manifest() {
@@ -611,6 +721,11 @@ fn validate_registry() {
         seen.push(probe.symbol);
     }
     for probe in PROBES {
+        // Symmetry probes measure encode vs decode within the same codec,
+        // not ergon vs sbe-tool — they have no opposing arm.
+        if probe.topic == "symmetry" {
+            continue;
+        }
         let counterpart = PROBES
             .iter()
             .filter(|other| other.pair == probe.pair)

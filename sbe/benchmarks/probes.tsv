@@ -11,3 +11,6 @@ ergo_probe_encode_throughput	ergon	encode_throughput_10k	encode	10000
 tool_probe_encode_throughput	sbe-tool	encode_throughput_10k	encode	10000
 ergo_probe_wire_parity_encode_full	ergon	wire_parity_encode_full	encode	10000
 tool_probe_wire_parity_encode_full	sbe-tool	wire_parity_encode_full	encode	10000
+ergo_probe_encode_composite	ergon	encode_composite	symmetry	10000
+ergo_probe_encode_group_entry	ergon	encode_group_entry	symmetry	10000
+ergo_probe_decode_vardata	ergon	decode_vardata	symmetry	10000
