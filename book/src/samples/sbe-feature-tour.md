@@ -13,7 +13,7 @@ crates.io / docs.rs teaching entry.
 *(The real `build.rs` — this code is compiled and tested in CI.)*
 
 The generated code is included via `#[path = "generated/feature_tour.rs"]` —
-no `sbe_mod!` needed. See [Build Patterns](../build-patterns.md).
+no `sbe_mod!` needed. See [Build Patterns](./build-patterns.md).
 
 | Selector | Config | Decode API | Encode API |
 |----------|--------|------------|------------|

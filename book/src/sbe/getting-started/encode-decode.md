@@ -59,4 +59,4 @@ complete Car example with groups and var-data.
 **Start here for a full runnable map of features:**
 [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
 (`cargo run --manifest-path samples/sbe-feature-tour/Cargo.toml`).  
-More recipes: [Recipes](../../recipes.md).
+More recipes: [Recipes](../recipes.md).

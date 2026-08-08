@@ -44,6 +44,7 @@
   - [Why NullVal Instead of Option](./sbe/design-notes/nullval.md)
   - [Feature Matrix](./sbe/design-notes/feature-matrix.md)
 - [Benchmarks](./sbe/benchmarks.md)
+  - [Methodology](./sbe/benchmarks/methodology.md)
 
 # ergo-aeron-cluster
 

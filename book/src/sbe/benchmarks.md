@@ -1,6 +1,6 @@
 # Benchmark Results
 
-> Methodology, gate rules, and fairness policy: [Benchmark Methodology](benchmarks/methodology.md).
+> Methodology, gate rules, and fairness policy: [Benchmark Methodology](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/methodology.md).
 
 ### SBE codec gate — `just bench`
 
@@ -175,7 +175,7 @@ Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
 **Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
 small engine once the rest of the fixed block is written; BE build is slightly
 slower than LE on an LE host; preheld memcpy is endian-independent. See README
-[Encode — FixedFields vs setters…](../core-concepts/composite-layout.md).
+[Encode — FixedFields vs setters…](core-concepts/composite-layout.md).
 
 ```sh
 cd sbe/benchmarks && cargo bench --bench encode_style_bench

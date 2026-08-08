@@ -56,49 +56,20 @@ On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
 buffer bytes ship as if they were intentional values. See
 [Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
 
-## Opting into `Option<T>` (configurable)
+## Null-aware accessors on BooleanType
 
-The `NullVal` default is the right choice for most schemas — zero-cost, matches
-the schema's declared value domain, and keeps generated code lean. But when a
-codebase already uses `Option` heavily, or when every access site already checks
-for null, the boilerplate of `if code == EventCode::NullVal` can outweigh the
-simplicity.
-
-Ergon supports **opt-in `Option<T>` mapping** per selector — the wire format
-stays identical (`NullVal` discriminant → `None`, any other value → `Some(v)`),
-but the generated accessors use `Option<EventCode>` (for enums) and
-`Option<bool>` (for `BooleanType`):
+For `BooleanType` fields specifically, ergon emits a `_bool()` accessor
+alongside the standard enum getter:
 
 ```rust,ignore
-use ergo_sbe::{ConversionSelector, GenerationConfig};
+// Standard getter — returns the enum variant
+pub fn available(&self) -> BooleanType { … }
 
-// Enum fields matching this selector → Option<EventCode>
-let config = GenerationConfig::new("msgs")
-    .with_null_as_option(ConversionSelector::named_type("EventCode"));
-
-// All boolean fields → Option<bool>
-let config = GenerationConfig::new("msgs")
-    .with_null_as_option(ConversionSelector::named_type("BooleanType"));
-
-// Every enum in the schema
-let config = GenerationConfig::new("msgs")
-    .with_null_as_option(ConversionSelector::all_enums());
+// Null-aware — None when NullVal, Some(true/false) otherwise
+pub fn available_bool(&self) -> Option<bool> { … }
 ```
 
-Generated diff (enum):
-
-```rust,ignore
-// Default (NullVal)                    // with_null_as_option
-pub fn code(&self) -> EventCode { … }   →   pub fn code(&self) -> Option<EventCode> { … }
-pub fn set_code(&mut self, v: EventCode) →   pub fn set_code(&mut self, v: Option<EventCode>)
-```
-
-Generated diff (bool):
-
-```rust,ignore
-pub fn available(&self) -> BooleanType { … }   →   pub fn available(&self) -> Option<bool> { … }
-```
-
-The wire encoding is byte-identical either way — `None` writes the `NullVal`
-discriminant, `Some(v)` writes `v`. The choice is pure API preference.
+For enums and other types, the `NullVal` variant remains the canonical
+approach. An opt-in `Option<T>` mapping via configuration is tracked as a
+future enhancement — the wire encoding is compatible either way.
 

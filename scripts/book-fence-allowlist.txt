@@ -28,9 +28,7 @@ book/src/sbe/core-concepts/composite-layout.md:22 — const size assert sketch; 
 book/src/sbe/core-concepts/wire-order-stages.md:46 — approximate generated shape; not compilable
 book/src/sbe/design-notes/nullval.md:12 — BooleanType Option sketch; illustrative not compilable
 book/src/sbe/design-notes/nullval.md:40 — BooleanType Option sketch; illustrative not compilable
-book/src/sbe/design-notes/nullval.md:72 — BooleanType Option sketch; illustrative not compilable
-book/src/sbe/design-notes/nullval.md:90 — BooleanType Option sketch; illustrative not compilable
-book/src/sbe/design-notes/nullval.md:98 — BooleanType Option sketch; illustrative not compilable
+book/src/sbe/design-notes/nullval.md:64 — BooleanType Option sketch; illustrative not compilable
 book/src/sbe/design-notes/type-state.md:10 — approximate generated shape; not compilable
 book/src/sbe/design-notes/type-state.md:51 — approximate generated shape; not compilable
 book/src/sbe/feature-tour/generated-code.md:7 — multi-template sketch
