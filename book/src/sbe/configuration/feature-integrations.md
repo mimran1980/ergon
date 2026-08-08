@@ -5,12 +5,14 @@ your hot path needs, keep compilation lean otherwise.
 
 ## Quick reference
 
-| Feature | Crate | What it gives you |
-|---------|-------|-------------------|
-| `compact_str` | [`compact_str`](https://crates.io/crates/compact_str) | Inline strings ≤24 bytes; no heap for tickers/symbols |
-| `smol_str` | [`smol_str`](https://crates.io/crates/smol_str) | O(1)-clone strings; good for long-lived DTOs |
-| `bytes` | [`bytes`](https://crates.io/crates/bytes) | Zero-copy shared slices; relay/forward without copy |
-| `chrono` | [`chrono`](https://crates.io/crates/chrono) | `DateTime<Utc>` / `NaiveDateTime` from timestamp fields |
+| Feature | Best for | Cost |
+|---------|----------|------|
+| `compact_str` | Tickers, symbols, venue codes (≤24 B) | 0 alloc, 46–56% faster than `String` at ≤24 B; converges at 32 B+ |
+| `smol_str` | Long-lived DTOs, shared/cached objects | Consistent ~5 ns, O(1) clone |
+| `bytes` | Relay/forwarding, zero-copy pipelines | Competitive at all sizes, best at 256 B+ |
+| `chrono` | Typed timestamps on encode/decode | +2–6 ns vs raw `i64` (4–8× slower but negligible vs I/O) |
+
+See [Measured performance](#measured-performance) below for the full benchmark table.
 
 Add features in your `Cargo.toml`:
 
@@ -61,16 +63,24 @@ let (symbol, next_stage) = stage.into_symbol_as_compact_str()?;
 // symbol: CompactString — no heap allocation for ≤24B symbols
 ```
 
-### Allocation profile
+### Measured performance
 
-| Payload | `String` | `CompactString` |
-|---------|----------|-----------------|
-| 3 B (ticker) | 1 heap alloc | 0 alloc (inline) |
-| 8 B (venue) | 1 heap alloc | 0 alloc (inline) |
-| 24 B (exact threshold) | 1 heap alloc | 0 alloc (inline) |
-| 32 B (description) | 1 heap alloc | 1 heap alloc |
+*aarch64-apple-darwin, rustc 1.95.0 — nanoseconds per `from_utf8` + conversion*
 
-Run the benchmarks: `cargo bench -p ergo-sbe-benchmarks --bench var_data_types_bench --all-features`
+| Payload | `String` | `CompactString` | `SmolStr` | `Bytes` | `Vec<u8>` |
+|---------|----------|-----------------|-----------|---------|-----------|
+| 3 B (ticker) | 5.9 ns | **3.2 ns** (−46%) | 5.4 ns | 8.6 ns | 10.1 ns |
+| 8 B (venue) | 5.8 ns | **3.1 ns** (−47%) | 5.4 ns | 8.7 ns | 10.1 ns |
+| 24 B (inline limit) | 8.2 ns | **3.6 ns** (−56%) | 5.1 ns | 9.7 ns | 10.5 ns |
+| 32 B (over inline) | 10.2 ns | 14.2 ns | 10.0 ns | 10.7 ns | 10.9 ns |
+| 128 B | 11.1 ns | 13.9 ns | 14.3 ns | 17.2 ns | 11.1 ns |
+| 256 B | 19.1 ns | 19.2 ns | 25.3 ns | **13.6 ns** | 14.1 ns |
+
+**Takeaway:** CompactString is 46–56% faster for symbols ≤24 bytes (no heap).
+At larger sizes it converges with String. Bytes wins at 256 B+. SmolStr is
+consistent ~5 ns across all sizes (O(1) clone cost is elsewhere).
+
+Run: `cargo bench -p ergo-sbe-benchmarks --bench var_data_types_bench --all-features`
 
 ## SmolStr — cheap clones (DTOs)
 
@@ -169,17 +179,21 @@ let naive = i64_micros_to_naive(1_720_000_000_000_000);
 assert_eq!(naive_to_i64_micros(naive), 1_720_000_000_000_000);
 ```
 
-### Conversion cost
+### Measured conversion cost
 
-| Operation | Time (approx) | vs raw `i64` |
-|-----------|---------------|-------------|
-| `i64_nanos_to_datetime` | ~4 ns | ~20× slower |
-| `datetime_to_i64_nanos` | ~3 ns | ~15× slower |
-| Raw `i64` no-op | ~0.2 ns | baseline |
+*aarch64-apple-darwin, rustc 1.95.0 — ns per operation*
 
-The conversion adds a few nanoseconds — negligible next to the I/O cost of a
-network frame or the allocator cost of a var-data field. Use the converters;
-the type safety is worth it.
+| Operation | Time | vs `raw i64` | Notes |
+|-----------|------|-------------|-------|
+| `i64_nanos_to_datetime` | **2.8 ns** | 4.1× | Wire → DateTime<Utc> (decode) |
+| `datetime_to_i64_nanos` | **4.8 ns** | 7.0× | DateTime<Utc> → wire (encode) |
+| `i64_micros_to_naive` | **5.5 ns** | 8.1× | Wire → NaiveDateTime (decode) |
+| `naive_to_i64_micros` | **5.6 ns** | 8.2× | NaiveDateTime → wire (encode) |
+| `raw i64` no-op | **0.68 ns** | baseline | Identity pass-through |
+
+**Takeaway:** Conversions add 2–6 ns — negligible next to the I/O cost of a
+network frame (~500 ns for 10 GbE) or the allocator cost of a var-data field
+(3–19 ns). The type safety is worth it.
 
 Run: `cargo bench -p ergo-sbe-benchmarks --bench chrono_converter_bench --all-features`
 
