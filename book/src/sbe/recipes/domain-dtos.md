@@ -24,7 +24,7 @@ ergon/sbe-tool fairness ratio.
 
 **Generated shape** (illustrative — your names follow your schema):
 
-```text
+```rust,ignore
 pub struct QuoteDomain {
     pub seq: u32,
     pub some_numbers: [u32; 4],

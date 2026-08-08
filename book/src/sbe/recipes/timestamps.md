@@ -6,14 +6,14 @@ but **all mapping to `chrono::DateTime<Utc>`** in Rust. The generated
 micros need their own `TryFromSbe`/`TryToSbe` impls. Distinguish them with
 `FieldPath` selectors:
 
-```text
+```xml
 <!-- schema fragment — three uint64 fields, same wire type, three precisions -->
 <field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
 <field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
 <field name="received_at" id="3" type="uint64" semanticType="UTCTimestampMillis"/>
 ```
 
-```text
+```rust,ignore
 // build.rs — register converters for all three
 let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::field_path("Event.created_at"))   // nanos, built-in
@@ -26,7 +26,7 @@ converter — `TryFromSbe<u64>` can only exist once. Resolve this by naming
 the wire fields unique types — the idiomatic pattern when three `uint64`
 columns mean three different things:
 
-```text
+```xml
 <!-- Distinguish wire types by name — all are uint64 under the hood -->
 <composite name="TimestampNanos">  <type name="ts" primitiveType="uint64"/>  </composite>
 <composite name="TimestampMicros"> <type name="ts" primitiveType="uint64"/>  </composite>
@@ -48,7 +48,7 @@ around `u64`). Implement the converters per-type, no blanket-clash:
 ```
 *(From `book/examples/timestamp-conversions.rs` — compiles against tour_codec. Micros and millis converters follow the same pattern with different scaling.)*
 
-```text
+```rust,ignore
 // build.rs — three selectors, each naming a distinct named type
 let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::named_type("TimestampNanos"))

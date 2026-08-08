@@ -4,7 +4,7 @@
 <field name="serialNumber" id="1" type="uint64" description="VIN-style serial"/>
 ```
 
-```text
+```rust,ignore
 // Generated (approx):
 /// VIN-style serial
 pub fn serial_number(&self) -> u64 { … }

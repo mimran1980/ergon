@@ -11,7 +11,7 @@
 | **`Decimal`** (schema composite) | **Wire** — generated type / `price_value()` — what is in the buffer |
 | **`Cents`**, **`rust_decimal::Decimal`**, … | **App** — what your code wants to use |
 
-```text
+```rust,ignore
   app  ──price_from / price()──►  wire Decimal on the buffer
   buf  ──price_as / price()──►   app value
 ```

@@ -4,11 +4,21 @@
 # without updating this file. Every entry must have a reason.
 book/src/cluster/chained-decoding.md:8 — Aeron dependency; cannot compile in book harness
 book/src/cluster/session-builder.md:5 — AsyncClusterConnect poll loop; Aeron dependency
+book/src/introduction.md:75 — schematic chain sketch; not compilable in harness
+book/src/samples/build-patterns.md:33 — build.rs/lib.rs snippet; not compilable
+book/src/samples/exchange-example.md:15 — illustrative conversion; not compilable
+book/src/samples/l3-book.md:14 — illustrative Decimal API; not compilable
+book/src/sbe/configuration.md:14 — conversion arrow sketch; not compilable
 book/src/sbe/configuration/conversion-vs-domain.md:27 — synthetic type names; not real generated API
 book/src/sbe/configuration/conversion-vs-domain.md:39 — synthetic type names; not real generated API
 book/src/sbe/configuration/conversion-vs-domain.md:45 — synthetic type names; not real generated API
 book/src/sbe/configuration/hooks.md:21 — synthetic hook; not real generated API
+book/src/sbe/core-concepts/composite-layout.md:22 — const size assert sketch; not compilable
+book/src/sbe/core-concepts/wire-order-stages.md:46 — approximate generated shape; not compilable
+book/src/sbe/design-notes/nullval.md:12 — rejected Option sketch; not compilable
 book/src/sbe/design-notes/nullval.md:40 — BooleanType sketch; illustrative not compilable
+book/src/sbe/design-notes/type-state.md:10 — stage-field tuple sketch; not compilable
+book/src/sbe/design-notes/type-state.md:51 — approximate generated shape; not compilable
 book/src/sbe/feature-tour/generated-code.md:7 — import block; no harness context
 book/src/sbe/feature-tour/generated-code.md:47 — multi-template sketch
 book/src/sbe/feature-tour/generated-code.md:88 — multi-template sketch
@@ -17,10 +27,20 @@ book/src/sbe/feature-tour/generated-code.md:112 — multi-template sketch
 book/src/sbe/feature-tour/generated-code.md:142 — multi-template sketch
 book/src/sbe/feature-tour/generated-code.md:163 — multi-template sketch
 book/src/sbe/getting-started/encode-decode.md:39 — partial encode example; not full crate
+book/src/sbe/getting-started/from-sbe-tool.md:18 — schematic wrap comparison; not compilable
 book/src/sbe/getting-started/include.md:6 — schematic; includes are compile-checked via other tests
+book/src/sbe/getting-started/include.md:13 — include! module sketch; not compilable
+book/src/sbe/getting-started/include.md:23 — sbe_mod! sketch; not compilable
+book/src/sbe/getting-started/method-chaining.md:27 — anti-pattern chain; illustrative not compilable
 book/src/sbe/getting-started/multi-schema.md:17 — multi-schema sketch; not a real crate
 book/src/sbe/getting-started/multi-schema.md:40 — multi-schema sketch; not a real crate
 book/src/sbe/getting-started/multi-schema.md:78 — multi-schema sketch; not a real crate
 book/src/sbe/getting-started/multi-schema.md:106 — multi-schema sketch; not a real crate
+book/src/sbe/recipes.md:23 — unknown-size chain sketch; not compilable
 book/src/sbe/recipes/aeron-try-claim.md:10 — Aeron dependency; not compilable in book harness
 book/src/sbe/recipes/aeron-try-claim.md:39 — Aeron dependency; not compilable in book harness
+book/src/sbe/recipes/display-debug.md:18 — real Debug output sample; illustrative
+book/src/sbe/recipes/domain-dtos.md:27 — illustrative generated DTO shape; not compilable
+book/src/sbe/recipes/schema-rustdoc.md:7 — approximate generated accessor; not compilable
+book/src/sbe/recipes/timestamps.md:16 — build.rs converter sketch; not compilable
+book/src/sbe/recipes/timestamps.md:51 — build.rs selector sketch; not compilable

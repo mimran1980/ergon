@@ -43,7 +43,7 @@ encode at `0.9867×` sbe-tool.
 Generated code emits **separate types** for each stage, same fields, different
 methods:
 
-```text
+```rust,ignore
 // Approximate generated shape — not Encoder<AfterBids>:
 pub struct BookEncoder<'a> { /* buf, pos, … */ }
 pub struct BookAfterBids<'a> { /* same layout */ }

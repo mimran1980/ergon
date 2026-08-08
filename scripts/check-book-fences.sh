@@ -14,7 +14,7 @@ find "$root/book" -name '*.md' -print0 | while IFS= read -r -d '' f; do
     rel="${f#"$root/"}"
     grep -n '```rust,ignore' "$f" 2>/dev/null | while IFS=: read -r ln _; do
         echo "$rel:$ln"
-    done
+    done || true   # grep exits 1 on no-match; pipefail would otherwise abort the whole find pipeline
 done | sort > "$actual"
 
 # Collect allowlisted fences (skip comment/blank lines)

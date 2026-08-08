@@ -7,7 +7,7 @@
 **No.** Named stage structs and marker generics are zero-sized compile-time
 constructs. Every transition is a **move** of the same three runtime fields:
 
-```text
+```rust,ignore
 (buf, msg_offset, pos)  +  PhantomData / zero-sized stage identity
 ```
 
@@ -48,7 +48,7 @@ and would double the generated type count.
 
 ## What users see
 
-```text
+```rust,ignore
 // Approximate generated shape — not Encoder<AfterBids>:
 pub struct BookEncoder<'a, H: HeaderState = HeaderPresent> { /* buf, msg_offset, pos */ }
 pub struct BookAfterBids<'a, H: HeaderState = HeaderPresent> { /* same layout */ }

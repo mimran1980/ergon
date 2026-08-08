@@ -72,7 +72,7 @@ thread of the code.
 ergo-sbe leans on **scoped closures** and **chaining** so nested schemas stay
 readable and you rarely pass encoder ownership field-to-field by hand:
 
-```text
+```rust,ignore
   // Nested shape mirrors the schema — no .parent() hopscotch.
   enc.fixed(&fields)
       .bids(n, |bids| {

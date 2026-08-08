@@ -19,7 +19,7 @@ On little-endian hosts, `from_le_bytes` lowers to a plain load (aligned or
 unaligned as needed) — so member access is “super fast” **without** casting the
 buffer to a padded Rust struct. The generator also emits
 
-```text
+```rust,ignore
 const _: () = assert!(core::mem::size_of::<Engine>() == 10);
 ```
 

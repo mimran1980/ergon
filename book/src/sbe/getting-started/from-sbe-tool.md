@@ -15,7 +15,7 @@ compatible with every SBE feature.”
 | `wrap` argument | **Body** offset (often `8` for a frame at 0) | **Message start** (often `0`) |
 | Where fields live | `body_offset + field_offset` | `message_offset + HEADER_LENGTH + field_offset` |
 
-```text
+```rust,ignore
 // Frame at buf[0..]:
 // sbe-tool:  enc.wrap(buf, 8)              // body starts at 8
 // ergo-sbe:  Enc::wrap(buf, 0)             // message starts at 0

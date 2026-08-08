@@ -9,7 +9,7 @@ types (e.g. `255` for `uint8`) and the minimum value for signed types (e.g.
 An early design tried wrapping every enum field in `Option<EventCode>` at the
 field site:
 
-```text
+```rust,ignore
 // Option approach — REJECTED
 pub fn event_code(&self) -> Option<EventCode> { … }
 pub fn set_event_code(&mut self, val: Option<EventCode>) { … }

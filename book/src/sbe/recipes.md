@@ -20,7 +20,7 @@ Runnable, tested code for every pattern lives in [sbe-feature-tour](https://gith
 
 **Unknown size:** count back-patched after the closure (streaming producers).
 
-```text
+```rust,ignore
 let unknown_len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
     .fixed(&fields)
     .fuel_figures_unknown_size(|g| {
