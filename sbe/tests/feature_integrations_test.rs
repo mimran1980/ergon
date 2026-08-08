@@ -10,8 +10,11 @@ use common::{Paths, compile_and_run};
 fn test_compiles(label: &str, features: &[&str], code: &str) {
     let ir = ergo_sbe::parse_file(&Paths::example_schema()).expect("parse schema");
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let config = ergo_sbe::GenerationConfig::new(label).with_domain_objects(ergo_sbe::DomainVarData::Bytes);
-    let modules = ergo_sbe::Generator::new(config).generate(&schema).expect("generate");
+    let config =
+        ergo_sbe::GenerationConfig::new(label).with_domain_objects(ergo_sbe::DomainVarData::Bytes);
+    let modules = ergo_sbe::Generator::new(config)
+        .generate(&schema)
+        .expect("generate");
     let src = &modules.modules().next().expect("no module").source;
     compile_and_run(label, src, code);
 }
@@ -21,7 +24,10 @@ fn test_compiles(label: &str, features: &[&str], code: &str) {
 #[test]
 #[cfg(feature = "compact_str")]
 fn compact_strings_domain_compiles() {
-    test_compiles("cd", &[], r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
+    test_compiles(
+        "cd",
+        &[],
+        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cd::*;
     // Prove CarDomain is generated with CompactString fields when built with compact_str
     let buf = [0u8; 256];
@@ -29,13 +35,17 @@ fn compact_strings_domain_compiles() {
     // CarDomain::try_from_decoder exists and returns Result
     let _dto: CarDomain = CarDomain::try_from_decoder(dec)?;
     Ok(())
-}"#);
+}"#,
+    );
 }
 
 #[test]
 #[cfg(feature = "smol_str")]
 fn smol_strings_domain_compiles() {
-    test_compiles("sd", &[], r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
+    test_compiles(
+        "sd",
+        &[],
+        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sd::*;
     let buf = [0u8; 256];
     let dec = CarDecoder::decode(&buf, 0)?;
@@ -43,13 +53,17 @@ fn smol_strings_domain_compiles() {
     // SmolStr is O(1)-clone — prove Clone is derived
     let _dto2 = dto.clone();
     Ok(())
-}"#);
+}"#,
+    );
 }
 
 #[test]
 #[cfg(feature = "bytes")]
 fn bytes_domain_compiles() {
-    test_compiles("bd", &[], r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
+    test_compiles(
+        "bd",
+        &[],
+        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use bd::*;
     let buf = [0u8; 256];
     let dec = CarDecoder::decode(&buf, 0)?;
@@ -57,7 +71,8 @@ fn bytes_domain_compiles() {
     // Bytes fields — test that the type resolves
     let _mfr: bytes::Bytes = dto.manufacturer;
     Ok(())
-}"#);
+}"#,
+    );
 }
 
 // ── All features together ─────────────────────────────────────────────────
@@ -65,7 +80,10 @@ fn bytes_domain_compiles() {
 #[test]
 #[cfg(all(feature = "compact_str", feature = "bytes", feature = "chrono"))]
 fn all_features_compile_together() {
-    test_compiles("af", &[], r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
+    test_compiles(
+        "af",
+        &[],
+        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use af::*;
     let buf = [0u8; 256];
     let dec = CarDecoder::decode(&buf, 0)?;
@@ -77,7 +95,8 @@ fn all_features_compile_together() {
     let ts = ergo_sbe::chrono_converters::i64_nanos_to_datetime(0);
     assert_eq!(ts.and_utc().timestamp(), 0);
     Ok(())
-}"#);
+}"#,
+    );
 }
 
 // ── Chrono converter tests ────────────────────────────────────────────────

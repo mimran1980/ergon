@@ -378,12 +378,12 @@ pub mod chrono_converters;
 // Re-export optional dependencies so generated codecs can name the types
 // without the consumer adding them directly. Feature-gated codec methods
 // (into_<field>_as_compact_str, etc.) use these paths.
+#[cfg(feature = "bytes")]
+pub use bytes;
 #[cfg(feature = "compact_str")]
 pub use compact_str;
 #[cfg(feature = "smol_str")]
 pub use smol_str;
-#[cfg(feature = "bytes")]
-pub use bytes;
 
 // Header-state markers (`HeaderPresent` / `HeaderAbsent`) live in each
 // generated module's `sbe_rt` (see `generate_sbe_rt_src`). They are not

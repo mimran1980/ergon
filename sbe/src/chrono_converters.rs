@@ -65,15 +65,13 @@ pub fn datetime_to_i64_nanos(dt: DateTime<Utc>) -> i64 {
 /// chrono representable limits for out-of-range values.
 #[must_use]
 pub fn i64_micros_to_naive(micros: i64) -> NaiveDateTime {
-    DateTime::from_timestamp_micros(micros)
-        .map(|dt| dt.naive_utc())
-        .unwrap_or_else(|| {
-            if micros < 0 {
-                DateTime::<Utc>::MIN_UTC.naive_utc()
-            } else {
-                DateTime::<Utc>::MAX_UTC.naive_utc()
-            }
-        })
+    chrono::NaiveDateTime::from_timestamp_micros(micros).unwrap_or_else(|| {
+        if micros < 0 {
+            DateTime::<Utc>::MIN_UTC.naive_utc()
+        } else {
+            DateTime::<Utc>::MAX_UTC.naive_utc()
+        }
+    })
 }
 
 /// Convert [`NaiveDateTime`] → SBE `i64` wire microseconds.
@@ -95,8 +93,9 @@ mod tests {
         let now = Utc::now();
         let wire = datetime_to_i64_nanos(now);
         let back = i64_nanos_to_datetime(wire);
-        // Sub-second precision may differ by 1 nanosecond due to truncation
-        assert_eq!(now.and_utc().timestamp(), back.and_utc().timestamp());
+        // Sub-second precision may differ by 1 nanosecond due to truncation.
+        // Both are DateTime<Utc> so .timestamp() is not deprecated.
+        assert_eq!(now.timestamp(), back.timestamp());
     }
 
     #[test]

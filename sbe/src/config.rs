@@ -846,7 +846,8 @@ mod tests {
     }
 
     #[test]
-    fn profile_lean_preserves_explicit_conversions_and_domain_types() -> Result<(), Box<dyn std::error::Error>> {
+    fn profile_lean_preserves_explicit_conversions_and_domain_types()
+    -> Result<(), Box<dyn std::error::Error>> {
         let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
         assert!(full.enable_display_debug);
         assert!(full.enable_meta_attributes);
@@ -855,6 +856,10 @@ mod tests {
         let lean = GenerationConfig::new("m")
             .with_domain_objects(DomainVarData::Bytes)
             .with_conversion(ConversionSelector::named_type("Decimal"))
+            .with_domain_type(
+                ConversionSelector::named_type("Decimal"),
+                "rust_decimal::Decimal",
+            )
             .profile(GenerationProfile::Lean);
         assert!(!lean.enable_display_debug);
         assert!(!lean.enable_meta_attributes);
@@ -862,8 +867,14 @@ mod tests {
         assert!(!lean.domain_objects);
         // Explicit conversions and domain types survive Lean — they're
         // deliberate schema choices with higher precedence than a bulk preset.
-        assert!(lean.has_conversions(), "explicit conversions must survive Lean");
-        assert!(!lean.domain_types.is_empty(), "explicit domain types must survive Lean");
+        assert!(
+            lean.has_conversions(),
+            "explicit conversions must survive Lean"
+        );
+        assert!(
+            !lean.domain_types.is_empty(),
+            "explicit domain types must survive Lean"
+        );
 
         // Later overrides still win.
         let override_dispatch = GenerationConfig::new("m")
