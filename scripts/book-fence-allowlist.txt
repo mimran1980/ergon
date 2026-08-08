@@ -42,8 +42,6 @@ book/src/sbe/recipes/aeron-try-claim.md:39 — Aeron dependency; not compilable 
 book/src/sbe/recipes/display-debug.md:18 — real Debug output sample; illustrative
 book/src/sbe/recipes/domain-dtos.md:27 — illustrative generated DTO shape; not compilable
 book/src/sbe/recipes/schema-rustdoc.md:7 — approximate generated accessor; not compilable
-book/src/sbe/recipes/timestamps.md:16 — build.rs converter sketch; not compilable
-book/src/sbe/recipes/timestamps.md:51 — build.rs selector sketch; not compilable
 book/src/sbe/configuration/feature-integrations.md:37 — build.rs config sketch; needs feature flags
 book/src/sbe/configuration/feature-integrations.md:46 — generated DTO sketch; not real generated code
 book/src/sbe/configuration/feature-integrations.md:60 — codec accessor sketch; needs feature flags

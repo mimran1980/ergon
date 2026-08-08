@@ -1,65 +1,110 @@
 # Timestamp Conversions
 
-Three wire `uint64` fields, each a different timestamp precision on the wire,
-but **all mapping to `chrono::DateTime<Utc>`** in Rust. The generated
-`u64`↔`DateTime` converter always uses **nanosecond** precision, so millis and
-micros need their own `TryFromSbe`/`TryToSbe` impls. Distinguish them with
-`FieldPath` selectors:
+SBE represents timestamps as `uint64` wire fields with a `semanticType` attribute
+(`UTCTimestamp` = nanoseconds, `UTCTimestampMicros` = microseconds,
+`UTCTimestampMillis` = milliseconds). The `chrono` feature (see
+[Feature Integrations](../configuration/feature-integrations.md)) converts
+these to `chrono::DateTime<Utc>` and `chrono::NaiveDateTime` with one line
+of config.
 
-```xml
-<!-- schema fragment — three uint64 fields, same wire type, three precisions -->
-<field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
-<field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
-<field name="received_at" id="3" type="uint64" semanticType="UTCTimestampMillis"/>
+## Nanoseconds and microseconds — built-in
+
+Enable the `chrono` feature in your `Cargo.toml`:
+
+```toml
+[dependencies]
+ergo-sbe = { version = "0.1", features = ["chrono"] }
+chrono = "0.4"
 ```
 
-```rust,ignore
-// build.rs — register converters for all three
-let config = GenerationConfig::new("msgs")
-    .with_conversion(ConversionSelector::field_path("Event.created_at"))   // nanos, built-in
-    .with_conversion(ConversionSelector::field_path("Event.updated_at"))   // micros, custom
-    .with_conversion(ConversionSelector::field_path("Event.received_at")); // millis, custom
-```
-
-Writing `TryFromSbe<u64>` for micros would clash with the built-in nano
-converter — `TryFromSbe<u64>` can only exist once. Resolve this by naming
-the wire fields unique types — the idiomatic pattern when three `uint64`
-columns mean three different things:
-
-```xml
-<!-- Distinguish wire types by name — all are uint64 under the hood -->
-<composite name="TimestampNanos">  <type name="ts" primitiveType="uint64"/>  </composite>
-<composite name="TimestampMicros"> <type name="ts" primitiveType="uint64"/>  </composite>
-<composite name="TimestampMillis"> <type name="ts" primitiveType="uint64"/>  </composite>
-
-<message name="Event" id="1">
-  <field name="created_at"  id="1" type="TimestampNanos"/>
-  <field name="updated_at"  id="2" type="TimestampMicros"/>
-  <field name="received_at" id="3" type="TimestampMillis"/>
-</message>
-```
-
-Now each wire type generates a distinct Rust newtype (`TimestampNanos`,
-`TimestampMicros`, `TimestampMillis` — all `#[repr(transparent)]` wrappers
-around `u64`). Implement the converters per-type, no blanket-clash:
+Then register the converters by `semanticType` in `build.rs`:
 
 ```rust,no_run
-{{#include ../../../examples/timestamp-conversions.rs:timestamp_adapter_nanos}}
-```
-*(From `book/examples/timestamp-conversions.rs` — compiles against tour_codec. Micros and millis converters follow the same pattern with different scaling.)*
+use ergo_sbe::{ConversionSelector, GenerationConfig};
 
-```rust,ignore
-// build.rs — three selectors, each naming a distinct named type
 let config = GenerationConfig::new("msgs")
-    .with_conversion(ConversionSelector::named_type("TimestampNanos"))
-    .with_conversion(ConversionSelector::named_type("TimestampMicros"))
+    .with_domain_type(
+        ConversionSelector::semantic_type("UTCTimestamp"),
+        "chrono::DateTime<chrono::Utc>",
+    )
+    .with_domain_type(
+        ConversionSelector::semantic_type("UTCTimestampMicros"),
+        "chrono::NaiveDateTime",
+    );
+```
+
+Schema:
+
+```xml
+<field name="created_at"  id="1" type="uint64" semanticType="UTCTimestamp"/>
+<field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
+```
+
+Generated API — `try_created_at()` returns `DateTime<Utc>`, `try_updated_at()`
+returns `NaiveDateTime`:
+
+```rust,no_run
+// Decode
+let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
+let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
+
+// Encode
+enc.try_created_at(chrono::Utc::now())?;
+enc.try_updated_at(chrono::NaiveDateTime::from_timestamp_micros(1_720_000_000_000_000).unwrap())?;
+```
+
+Conversion cost: 2.8 ns (nanos → DateTime), 5.5 ns (micros → NaiveDateTime).
+See the [measured benchmarks](../configuration/feature-integrations.md#measured-conversion-cost).
+
+## Milliseconds — composite newtype
+
+`UTCTimestampMillis` has no built-in chrono converter. Distinguish millis
+fields from nanos/micros fields with a single-element composite:
+
+```xml
+<composite name="TimestampMillis">
+  <type name="ts" primitiveType="uint64"/>
+</composite>
+<field name="received_at" id="3" type="TimestampMillis"/>
+```
+
+This generates `TimestampMillis(pub u64)` — a distinct Rust type from `u64`.
+Now implement `TryFromSbe` / `TryToSbe` for it in your application crate:
+
+```rust,no_run
+use ergo_sbe::codegen::conversion_traits::{TryFromSbe, TryToSbe};
+
+impl TryFromSbe<u64> for chrono::NaiveDateTime {
+    type Error = ergo_sbe::DecodeError;
+    fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
+        // wire is milliseconds since epoch
+        let secs = (wire / 1000) as i64;
+        let nsecs = ((wire % 1000) * 1_000_000) as u32;
+        chrono::DateTime::from_timestamp(secs, nsecs)
+            .map(|dt| dt.naive_utc())
+            .ok_or_else(|| ergo_sbe::DecodeError::ValueOutOfRange {
+                field: "received_at",
+                value: wire as i128,
+                min: 0,
+                max: i64::MAX as i128,
+            })
+    }
+}
+
+impl TryToSbe<u64> for chrono::NaiveDateTime {
+    fn try_to_sbe(&self) -> Result<u64, ergo_sbe::EncodeError> {
+        Ok(self.and_utc().timestamp_millis() as u64)
+    }
+}
+```
+
+Then register it in `build.rs`:
+
+```rust,no_run
+let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::named_type("TimestampMillis"));
 ```
 
-```rust,no_run
-{{#include ../../../examples/timestamp-conversions.rs:timestamp_encode_decode}}
-```
-
-The pattern generalises: **one Rust type, N wire representations** → one
-single-field composite per representation, each with its own `TryFromSbe` /
-`TryToSbe` impl, all distinguished by `ConversionSelector::named_type`.
+The generated accessor is `dec.received_at_as::<chrono::NaiveDateTime>()?` —
+a different shape from `try_received_at()` because `with_conversion` (generic)
+vs `with_domain_type` (canonical) choose different method-name patterns.
