@@ -87,19 +87,31 @@ impl ConversionSelector {
 /// Passed to [`GenerationConfig::with_domain_objects`]. Wire is always
 /// length-prefixed **bytes**; this only chooses the **owned** DTO field type.
 ///
-/// | Variant | DTO field | Invalid UTF-8 on materialise |
-/// |---------|-----------|------------------------------|
-/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`Strings`](DomainVarData::Strings) | `String` | **`InvalidUtf8` error** (strict; never invents empty) |
+/// | Variant | DTO field | Feature | Invalid UTF-8 |
+/// |---------|-----------|---------|---------------|
+/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | — | n/a |
+/// | [`Strings`](DomainVarData::Strings) | `String` | — | **`InvalidUtf8` error** |
+/// | `CompactStrings` | `CompactString` | `compact_str` | **`InvalidUtf8` error** |
+/// | `SmolStrings` | `SmolStr` | `smol_str` | **`InvalidUtf8` error** |
+/// | `BytesCrate` | `bytes::Bytes` | `bytes` | n/a |
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
     #[default]
     Bytes,
     /// Text-friendly var-data (`String`). Invalid UTF-8 returns
-    /// `DecodeError::InvalidUtf8` (strict). Prefer
-    /// [`DomainVarData::Bytes`] when non-UTF-8 tails must round-trip bit-exact.
+    /// `DecodeError::InvalidUtf8` (strict).
     Strings,
+    /// Inline short strings (`compact_str::CompactString`, ≤24 bytes on stack).
+    /// Requires feature `compact_str`.
+    #[cfg(feature = "compact_str")]
+    CompactStrings,
+    /// O(1)-clone strings (`smol_str::SmolStr`). Requires feature `smol_str`.
+    #[cfg(feature = "smol_str")]
+    SmolStrings,
+    /// Zero-copy shared buffer (`bytes::Bytes`). Requires feature `bytes`.
+    #[cfg(feature = "bytes")]
+    BytesCrate,
 }
 
 /// Generated-code surface presets.

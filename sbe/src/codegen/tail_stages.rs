@@ -322,6 +322,69 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         }
 
+        // Feature-gated: into_<field>_as_compact_str() — owned inline string.
+        #[cfg(feature = "compact_str")]
+        {
+            let as_compact_ident =
+                syn::Ident::new(&format!("into_{}_as_compact_str", vd.accessor_snake), span);
+            let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+            ts.extend(quote::quote! {
+                impl<'a> #current_stage<'a> {
+                    /// Consume this stage, read the next var-data field as a
+                    /// [`compact_str::CompactString`] (≤24 bytes inline), and advance.
+                    #[inline]
+                    pub fn #as_compact_ident(self) -> Result<(compact_str::CompactString, #next_stage<'a>), sbe_rt::DecodeError> {
+                        let (bytes, next) = self.#into_ident()?;
+                        let s = core::str::from_utf8(bytes).map_err(|e| {
+                            sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
+                        })?;
+                        Ok((compact_str::CompactString::new(s), next))
+                    }
+                }
+            });
+        }
+
+        // Feature-gated: into_<field>_as_smol_str() — owned O(1)-clone string.
+        #[cfg(feature = "smol_str")]
+        {
+            let as_smol_ident =
+                syn::Ident::new(&format!("into_{}_as_smol_str", vd.accessor_snake), span);
+            let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+            ts.extend(quote::quote! {
+                impl<'a> #current_stage<'a> {
+                    /// Consume this stage, read the next var-data field as a
+                    /// [`smol_str::SmolStr`] (O(1) clone), and advance.
+                    #[inline]
+                    pub fn #as_smol_ident(self) -> Result<(smol_str::SmolStr, #next_stage<'a>), sbe_rt::DecodeError> {
+                        let (bytes, next) = self.#into_ident()?;
+                        let s = core::str::from_utf8(bytes).map_err(|e| {
+                            sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
+                        })?;
+                        Ok((smol_str::SmolStr::new(s), next))
+                    }
+                }
+            });
+        }
+
+        // Feature-gated: into_<field>_as_bytes() — zero-copy Bytes.
+        #[cfg(feature = "bytes")]
+        {
+            let as_bytes_ident =
+                syn::Ident::new(&format!("into_{}_as_bytes", vd.accessor_snake), span);
+            let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+            ts.extend(quote::quote! {
+                impl<'a> #current_stage<'a> {
+                    /// Consume this stage, read the next var-data field as
+                    /// [`bytes::Bytes`] (zero-copy shared buffer), and advance.
+                    #[inline]
+                    pub fn #as_bytes_ident(self) -> Result<(bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
+                        let (data, next) = self.#into_ident()?;
+                        Ok((bytes::Bytes::copy_from_slice(data), next))
+                    }
+                }
+            });
+        }
+
         // Scoped fallible combinator: try_<data> always available.
         let try_data_ident = syn::Ident::new(&format!("try_{}", vd.accessor_snake), span);
         ts.extend(quote::quote! {

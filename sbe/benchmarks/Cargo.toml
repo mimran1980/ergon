@@ -13,12 +13,14 @@ path = "src/lib.rs"
 [dependencies]
 ergo-sbe = { path = ".." }
 rust_decimal = "1"
+compact_str = { version = "0.8", optional = true }
+smol_str = { version = "0.3", optional = true }
+bytes = { version = "1", optional = true }
+chrono = { version = "0.4", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 hdrhistogram = "7"
-# iai-callgrind removed: pulled unmaintained proc-macro-error2
-# (RUSTSEC-2026-0173). instruction_counts is a Criterion timing harness.
 
 [build-dependencies]
 ergo-sbe = { path = ".." }
@@ -75,9 +77,19 @@ harness = false
 [[bench]]
 name = "group_encode_decimal_bench"
 harness = false
+[[bench]]
+name = "var_data_types_bench"
+harness = false
+[[bench]]
+name = "chrono_converter_bench"
+harness = false
 
 [features]
 default = []
+compact_str = ["ergo-sbe/compact_str", "dep:compact_str"]
+smol_str = ["ergo-sbe/smol_str", "dep:smol_str"]
+bytes = ["ergo-sbe/bytes", "dep:bytes"]
+chrono = ["ergo-sbe/chrono", "dep:chrono"]
 
 [lints]
 workspace = true

@@ -366,6 +366,15 @@ pub use xml::{
 };
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
 
+/// Chrono timestamp converters — feature-gated behind `chrono`.
+///
+/// Use [`GenerationConfig::with_domain_type`] with
+/// `"chrono::DateTime<chrono::Utc>"` or `"chrono::NaiveDateTime"` to
+/// generate `try_*` / `try_set_*` methods that convert between SBE `i64`
+/// wire values and chrono datetime types.
+#[cfg(feature = "chrono")]
+pub mod chrono_converters;
+
 // Header-state markers (`HeaderPresent` / `HeaderAbsent`) live in each
 // generated module's `sbe_rt` (see `generate_sbe_rt_src`). They are not
 // re-exported here: generated codecs seal against their own `sbe_rt::HeaderState`,

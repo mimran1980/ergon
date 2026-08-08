@@ -26,10 +26,15 @@ default = ["fancy"]
 # Renders schema parse errors with a source snippet + span. Opt out with
 # `default-features = false` to skip terminal/backtrace deps (plain fallback).
 fancy = ["miette/fancy"]
-# Removed: bound-check-disabled provided negligible ~1% gain.
-# LLVM elides bounds checks for constant-sized accesses on visible
-# stack buffers. unchecked companions are always generated.
-# Removed: serde — DTOs are for app logic + SBE re-encode; JSON/etc. is app-owned.
+# Domain DTO var-data: inline short strings (≤24 bytes) on the stack.
+compact_str = ["dep:compact_str"]
+# Domain DTO var-data: O(1)-clone short strings, good for long-lived DTOs.
+smol_str = ["dep:smol_str"]
+# Domain DTO var-data: zero-copy shared buffer slices via the `bytes` crate.
+bytes = ["dep:bytes"]
+# Converter: `chrono::DateTime<Utc>` / `chrono::NaiveDateTime` for timestamp
+# semantic types. Use `with_domain_type(SemanticType("UTCTimestamp"), "chrono::DateTime<chrono::Utc>")`.
+chrono = ["dep:chrono"]
 
 [dependencies]
 roxmltree = "0.20"
@@ -40,6 +45,10 @@ quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
 sha2 = "0.10"
+compact_str = { version = "0.8", optional = true }
+smol_str = { version = "0.3", optional = true }
+bytes = { version = "1", optional = true }
+chrono = { version = "0.4", optional = true }
 
 [[test]]
 name = "smoke_test"
