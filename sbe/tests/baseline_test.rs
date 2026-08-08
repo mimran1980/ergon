@@ -21,6 +21,43 @@ use common::{
 const MODULE: &str = "car_example";
 
 #[test]
+fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+    let (_schema_a, source_a) = generate(&Paths::example_schema(), "shared_rt");
+    // Generate a second module that re-uses the first module's sbe_rt.
+    let ir = parse_file(&Paths::example_schema())?;
+    let schema_b = Schema::from_ir(ir);
+    let mut g = Generator::new(
+        GenerationConfig::new("consumer_rt")
+            .with_external_sbe_rt("super::shared_rt::sbe_rt"),
+    );
+    let ms = g.generate(&schema_b)?;
+    let source_b = ms.modules().next().unwrap().source.clone();
+    // Must import shared sbe_rt
+    assert!(
+        source_b.contains("super::shared_rt::sbe_rt"),
+        "consumer module must import shared sbe_rt; got: {source_b}"
+    );
+    // Must NOT contain an inline pub mod sbe_rt
+    assert!(
+        !source_b.contains("pub mod sbe_rt"),
+        "consumer module must not inline its own sbe_rt"
+    );
+    // Both modules compile together and can use types from either.
+    compile_and_run_two_modules(
+        "external_sbe_rt",
+        "shared_rt",
+        &source_a,
+        "consumer_rt",
+        &source_b,
+        "// shared_rt and consumer_rt types both resolve\n\
+         let _ = shared_rt::CarDecoder::BLOCK_LENGTH;\n\
+         let _ = consumer_rt::CarDecoder::BLOCK_LENGTH;\n",
+    );
+    Ok(())
+}
+
+#[test]
 fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
     // Item-level allow attributes — NOT expect, because the exact set of

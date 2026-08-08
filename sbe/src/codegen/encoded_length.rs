@@ -1004,6 +1004,7 @@ fn generate_ragged_wrappers(
     ts.extend(quote::quote! {
         /// Schema-specific ragged entry builder — field-named methods bake in
         /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+        #[must_use = "ragged builder must be consumed to advance the length"]
         pub struct #wrapper_ident<'a> {
             b: &'a mut RaggedEntryBuilder,
         }

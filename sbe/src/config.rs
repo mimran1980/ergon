@@ -292,10 +292,10 @@ impl std::fmt::Debug for ItemContext<'_> {
 /// Token streams returned by hooks — appended after the generated item.
 pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
-/// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
-/// [`PartialEq`] — hook closures can't be cloned or compared.
-#[derive(Default)]
-pub(crate) struct Hooks(Vec<Box<HookFn>>);
+/// Wrapper so hooks can live in [`GenerationConfig`]. Uses [`Arc`] so
+/// `GenerationConfig` can derive [`Clone`].
+#[derive(Clone, Default)]
+pub(crate) struct Hooks(Vec<std::sync::Arc<HookFn>>);
 
 impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -303,10 +303,10 @@ impl std::fmt::Debug for Hooks {
     }
 }
 impl Hooks {
-    pub(crate) fn push(&mut self, hook: Box<HookFn>) {
+    pub(crate) fn push(&mut self, hook: std::sync::Arc<HookFn>) {
         self.0.push(hook);
     }
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> {
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, std::sync::Arc<HookFn>> {
         self.0.iter()
     }
     pub(crate) fn is_empty(&self) -> bool {
@@ -331,6 +331,7 @@ impl Hooks {
 ///         "rust_decimal::Decimal",
 ///     );
 /// ```
+#[derive(Clone)]
 pub struct GenerationConfig {
     /// Rust module name for the generated output file (`{module_name}.rs`).
     pub(crate) module_name: String,
@@ -424,6 +425,23 @@ impl GenerationConfig {
     #[must_use]
     pub(crate) fn module_name(&self) -> &str {
         &self.module_name
+    }
+
+    /// Override the module name set in [`new`]. Use when cloning a base
+    /// config across several schemas — set the placeholder in [`new`], then
+    /// call `.clone().with_module_name("orderbook")` on each.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let base = GenerationConfig::new("_");
+    /// let a = base.clone().with_module_name("md");
+    /// let b = base.clone().with_module_name("ob");
+    /// // `a` generates `md.rs`, `b` generates `ob.rs`, `base` unchanged.
+    /// ```
+    #[must_use]
+    pub fn with_module_name(mut self, name: impl Into<String>) -> Self {
+        self.module_name = name.into();
+        self
     }
 
     #[must_use]
@@ -524,7 +542,11 @@ impl GenerationConfig {
         if !self.conversions.contains(&sel) {
             self.conversions.push(sel.clone());
         }
-        if !self.domain_types.iter().any(|(s, _)| s == &sel) {
+        // Last-write-wins: calling with_domain_type(sel, "B") after
+        // with_domain_type(sel, "A") replaces the mapping.
+        if let Some(existing) = self.domain_types.iter_mut().find(|(s, _)| s == &sel) {
+            existing.1 = ty;
+        } else {
             self.domain_types.push((sel, ty));
         }
         self
@@ -534,6 +556,15 @@ impl GenerationConfig {
     ///
     /// In build.rs: `.with_error_from_impls("crate::AppError")`.
     /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
+    ///
+    /// **Note:** The generated `From` impl uses `format!("sbe encode: {err}")` —
+    /// stringifying the typed error through its `Display` form, then calling
+    /// `YourType::from(String)`. This means (1) your error type must implement
+    /// `From<String>`, and (2) field-level error details (e.g.
+    /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
+    /// the conversion. If you need typed error matching, implement
+    /// `From<EncodeError>` / `From<DecodeError>` on your error type directly
+    /// instead.
     #[must_use]
     pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
@@ -654,6 +685,10 @@ impl GenerationConfig {
     /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
     /// | [`GenerationProfile::Lean`] | off | off | off | forced off |
     ///
+    /// **`Lean` also clears conversions** — `with_conversion`, `with_domain_type`,
+    /// and `with_bool_domain_type` are silently discarded. Call `profile` BEFORE
+    /// any conversion/domain-type config, or re-apply those calls after it.
+    ///
     /// Chain further `with_*` calls after `profile` to override individual
     /// knobs. Example:
     ///
@@ -712,7 +747,7 @@ impl GenerationConfig {
     where
         F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
-        self.hooks.push(Box::new(hook));
+        self.hooks.push(std::sync::Arc::new(hook));
         self
     }
 

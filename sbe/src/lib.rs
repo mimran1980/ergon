@@ -265,6 +265,7 @@ pub mod build;
     clippy::fn_params_excessive_bools,
     clippy::cast_enum_constructor,
     clippy::ptr_as_ptr,
+    // Recursive-descent group encoder helper; legitimate recursion.
     clippy::only_used_in_recursion
 )]
 pub mod codegen;
@@ -314,7 +315,6 @@ pub mod schema;
 )]
 pub(crate) mod structured_ir;
 /// XML parse ([`parse`], [`parse_file`]).
-#[doc(hidden)]
 #[allow(
     unused,
     dead_code,

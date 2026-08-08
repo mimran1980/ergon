@@ -416,7 +416,7 @@ pub mod sbe_rt {
 /// Sealing marker for [`sbe_rt::SbeMessage`]. Private to this generated
 /// module: no consumer can name it, so no consumer can forge message
 /// metadata by implementing `SbeMessage` for its own type.
-mod __sbe_message_sealed {
+pub(crate) mod __sbe_message_sealed {
     pub trait Sealed {}
 }
 ///Boolean Type.
@@ -1213,6 +1213,14 @@ impl CarSchema {
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
+    /// Full structural verification of a buffer: validates header,
+    /// block-length extent, group dimension headers, entry strides,
+    /// and var-data bounds. Use **before** construction when the
+    /// entire frame must be proven valid without building a decoder.
+    #[inline]
+    pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
+        CarDecoder::verify(buf)
+    }
 }
 ///Description of a basic Car
 #[must_use = "decoder must be read or advanced; dropping is fine only after use"]
@@ -7695,6 +7703,7 @@ impl CarEncodedLength {
 }
 /// Schema-specific ragged entry builder — field-named methods bake in
 /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+#[must_use = "ragged builder must be consumed to advance the length"]
 pub struct CarFuelFiguresRaggedBuilder<'a> {
     b: &'a mut RaggedEntryBuilder,
 }
@@ -7726,11 +7735,13 @@ impl<'a> CarFuelFiguresRaggedBuilder<'a> {
 }
 /// Schema-specific ragged entry builder — field-named methods bake in
 /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+#[must_use = "ragged builder must be consumed to advance the length"]
 pub struct CarPerformanceFiguresRaggedBuilder<'a> {
     b: &'a mut RaggedEntryBuilder,
 }
 /// Schema-specific ragged entry builder — field-named methods bake in
 /// the wire layout (dim/block/prefix). Chain: `b.add()?.field(len)?`.
+#[must_use = "ragged builder must be consumed to advance the length"]
 pub struct CarPerformanceFiguresAccelerationRaggedBuilder<'a> {
     b: &'a mut RaggedEntryBuilder,
 }

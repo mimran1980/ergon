@@ -82,18 +82,18 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    pub(crate) fn malformed_xml(message: impl Into<String>, xml: &str) -> Self {
+    pub(crate) fn malformed_xml(name: &str, message: impl Into<String>, xml: &str) -> Self {
         Self::MalformedXml {
             message: message.into(),
-            source_code: named_source(xml),
+            source_code: named_source(name, xml),
             span: None,
         }
     }
 
     /// Lift an internal [`Fault`] into a span-bearing [`ParseError`], attaching
     /// the parsed source so `miette` can render the highlight.
-    pub(crate) fn from_fault(fault: Fault, input: &str) -> Self {
-        let source_code = named_source(input);
+    pub(crate) fn from_fault(name: &str, fault: Fault, input: &str) -> Self {
+        let source_code = named_source(name, input);
         let span = fault.span.map(miette::SourceSpan::from);
         match fault.kind {
             FaultKind::Missing { what } => Self::Missing {
@@ -131,8 +131,11 @@ impl From<crate::resolve::ResolveError> for ParseError {
     }
 }
 
-pub(crate) fn named_source(xml: &str) -> miette::NamedSource<String> {
-    miette::NamedSource::new("schema.xml", xml.to_owned())
+/// Build a [`miette::NamedSource`] with the real source name, not the
+/// old hardcoded `"schema.xml"`. Callers thread the name from [`WarnState`]
+/// (set by the entry point — file path or `"<xml>"`).
+pub(crate) fn named_source(name: &str, xml: &str) -> miette::NamedSource<String> {
+    miette::NamedSource::new(name, xml.to_owned())
 }
 
 /// Internal, source-free error — converted to [`ParseError`] at the boundary,

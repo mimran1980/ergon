@@ -382,7 +382,10 @@ pub(crate) fn sealed_path_tokens() -> TokenStream {
 /// keeps it fully private, which is what makes `SbeMessage` unimplementable
 /// outside the generated module.
 pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
-    let visibility = if exported { "pub(super) " } else { "" };
+    // `pub(crate)` so `with_external_sbe_rt` consumer modules in the same
+    // crate can name `super::shared::__sbe_message_sealed`. Externally
+    // generated crates still cannot implement SbeMessage.
+    let visibility = if exported { "pub " } else { "pub(crate) " };
     format!(
         "/// Sealing marker for [`sbe_rt::SbeMessage`]. Private to this generated\n\
          /// module: no consumer can name it, so no consumer can forge message\n\

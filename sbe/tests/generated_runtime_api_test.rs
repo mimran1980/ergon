@@ -19,6 +19,78 @@
 mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
+#[test]
+fn any_message_visitor_dispatches_known_template_to_correct_arm() -> Result<(), Box<dyn std::error::Error>> {
+    // Schema with two messages — verify that AnyMessage dispatch routes each
+    // template_id to the correct visitor arm, and visit_unknown is NOT called
+    // for known templates.
+    let multi = r#"<?xml version="1.0"?>
+<messageSchema package="visitor_test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="Alpha" id="1" blockLength="4">
+    <field name="x" id="1" type="uint32" offset="0"/>
+  </message>
+  <message name="Beta" id="2" blockLength="4">
+    <field name="y" id="1" type="uint32" offset="0"/>
+  </message>
+</messageSchema>"#;
+    use ergo_sbe::{Generator, GenerationConfig, Schema, parse};
+    let ir = parse(multi)?;
+    let schema = Schema::from_ir(ir);
+    let src = Generator::new(GenerationConfig::new("visitor_test"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .unwrap()
+        .source
+        .clone();
+    // Must contain an AnyMessage enum with both message arms
+    assert!(src.contains("Alpha"), "must contain Alpha: {src}");
+    assert!(src.contains("Beta"), "must contain Beta: {src}");
+    assert!(src.contains("pub enum AnyMessage"), "must emit AnyMessage dispatch");
+    // Must generate a FrameCursor for multi-template dispatch
+    assert!(src.contains("FrameCursor"), "must emit FrameCursor");
+    // Verify the generated code compiles and dispatches both messages
+    compile_and_run(
+        "visitor_test",
+        &src,
+        r#"
+        // Encode Alpha (template_id=1, x=42)
+        let alen = visitor_test::AlphaEncoder::compute_length_with_header();
+        let mut abuf = vec![0u8; alen];
+        let len = visitor_test::AlphaEncoder::wrap_and_apply_header(&mut abuf, 0)
+            .fixed(&visitor_test::AlphaFixedFields { x: 42 })
+            .encoded_length_with_header();
+        // Encode Beta (template_id=2, y=99)
+        let blen = visitor_test::BetaEncoder::compute_length_with_header();
+        let mut bbuf = vec![0u8; blen];
+        let _ = visitor_test::BetaEncoder::wrap_and_apply_header(&mut bbuf, 0)
+            .fixed(&visitor_test::BetaFixedFields { y: 99 })
+            .encoded_length_with_header();
+        // Dispatch both
+        use visitor_test::AnyMessage;
+        let a = AnyMessage::try_decode(&abuf, 0)?;
+        match a {
+            AnyMessage::Alpha(dec) => assert_eq!(dec.x(), 42),
+            _ => panic!("expected Alpha"),
+        }
+        let b = AnyMessage::try_decode(&bbuf, 0)?;
+        match b {
+            AnyMessage::Beta(dec) => assert_eq!(dec.y(), 99),
+            _ => panic!("expected Beta"),
+        }
+        "#,
+    );
+    Ok(())
+}
+
 // ─── Sealing ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -30,12 +102,12 @@ fn sbe_message_supertrait_lives_in_a_private_module() -> Result<(), Box<dyn std:
         "SbeMessage must carry the sealing supertrait, not merely claim to be sealed"
     );
     assert!(
-        src.contains("\nmod __sbe_message_sealed {"),
-        "the sealing module must be a private child of the generated module"
+        src.contains("pub(crate) mod __sbe_message_sealed {"),
+        "the sealing module must be pub(crate): visible within the crate for sibling modules using with_external_sbe_rt"
     );
     assert!(
         !src.contains("pub mod __sbe_message_sealed"),
-        "a public sealing module would not seal anything"
+        "a fully public sealing module would not seal anything across crate boundaries"
     );
     // The old decorative marker must not remain reachable either: it existed
     // only for the header-state markers and was never a supertrait of
@@ -72,17 +144,14 @@ fn consumer_cannot_implement_sbe_message() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn consumer_cannot_name_the_sealing_trait() -> Result<(), Box<dyn std::error::Error>> {
+fn sealing_trait_is_crate_visible_for_sibling_modules() -> Result<(), Box<dyn std::error::Error>> {
+    // __sbe_message_sealed is `pub(crate)` — sibling modules in the same crate
+    // CAN access it (needed by `with_external_sbe_rt` consumers). External
+    // crates cannot; that is tested by `consumer_cannot_implement_sbe_message`.
     let (_, src) = generate(&Paths::example_schema(), "seal_name");
-
-    compile_fails_with_diagnostics(
-        "seal_name",
-        &src,
-        r#"
-        struct ForgedMessage;
-        impl seal_name::__sbe_message_sealed::Sealed for ForgedMessage {}
-        "#,
-        &["__sbe_message_sealed"],
+    assert!(
+        src.contains("pub(crate) mod __sbe_message_sealed {"),
+        "sealing module must be pub(crate) for sibling sbe_rt consumers"
     );
     Ok(())
 }

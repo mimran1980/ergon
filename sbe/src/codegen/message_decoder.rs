@@ -162,6 +162,15 @@ pub(crate) fn generate_message_decoder(
             pub const TEMPLATE_ID: u16 = #msg_id_lit;
             pub const BLOCK_LENGTH: usize = #bl_lit;
             pub const HEADER_LENGTH: usize = #hdr_size_lit;
+
+            /// Full structural verification of a buffer: validates header,
+            /// block-length extent, group dimension headers, entry strides,
+            /// and var-data bounds. Use **before** construction when the
+            /// entire frame must be proven valid without building a decoder.
+            #[inline]
+            pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
+                #decoder_ident::verify(buf)
+            }
         }
     });
 

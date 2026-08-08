@@ -1,47 +1,26 @@
 //! Source-name tracking and de-duplicated parse warnings.
+//!
+//! The source name (filename or `"<xml>"` for in-memory input) lives in
+//! [`WarnState`] — no global static. Thread a single `WarnState` through the
+//! parse and every warning reports the correct file.
 
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock, PoisonError};
-
-/// The name warnings are reported against.
-///
-/// Declared once at module scope. A `static` inside a function body is local to
-/// *that* body, so a setter and a getter that each declared their own would
-/// touch two unrelated cells: the setter would appear to work and every warning
-/// would still report the placeholder.
-static SOURCE: OnceLock<Mutex<String>> = OnceLock::new();
-
-/// Placeholder used until a real source name is known (in-memory XML input).
-const UNNAMED_SOURCE: &str = "<xml>";
-
-fn source_cell() -> &'static Mutex<String> {
-    SOURCE.get_or_init(|| Mutex::new(String::from(UNNAMED_SOURCE)))
-}
-
-/// Tracks the source name so warnings can reference the real file
-/// instead of a hardcoded `"schema.xml"`.
-pub(crate) fn set_source_name(name: String) {
-    *source_cell().lock().unwrap_or_else(PoisonError::into_inner) = name;
-}
-
-pub(crate) fn source_name() -> String {
-    source_cell()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone()
-}
 
 /// Per-invocation warning dedup — no global static, so concurrent parses
 /// never suppress each other's warnings. Wrapped in `RefCell` because the
 /// recursive-descent parser doesn't cross any await point.
 pub(crate) struct WarnState {
     seen: std::cell::RefCell<HashSet<String>>,
+    /// The name warnings and errors are reported against
+    /// (e.g. `"orderbook-schema.xml"` or `"<xml>"`).
+    pub(crate) name: String,
 }
 
 impl WarnState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(name: String) -> Self {
         Self {
             seen: std::cell::RefCell::new(HashSet::new()),
+            name,
         }
     }
 }
@@ -77,7 +56,7 @@ pub(crate) fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, st
             let snippet = text[last_nl..line_end].trim();
             eprintln!(
                 "{}:{}:{}: {message}\n  |\n  | {snippet}\n  |",
-                source_name(),
+                state.name,
                 line,
                 col,
             );
@@ -91,29 +70,24 @@ pub(crate) fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, st
 mod tests {
     use super::*;
 
-    /// The setter and the getter must reach the same cell.
-    ///
-    /// They once declared a `static` each, inside their own function bodies —
-    /// two distinct cells. The setter wrote one, the getter read the other, so
-    /// every parse warning reported the placeholder no matter which file was
-    /// being parsed. Nothing failed; the diagnostics were just quietly wrong.
+    /// Each `WarnState` carries its own name — no global static.
     #[test]
-    fn set_source_name_is_what_warnings_report() -> Result<(), Box<dyn std::error::Error>> {
-        let previous = source_name();
-
-        set_source_name("orderbook-schema.xml".into());
+    fn warn_state_remembers_the_file_it_was_built_with() -> Result<(), Box<dyn std::error::Error>> {
+        let state = WarnState::new("orderbook-schema.xml".into());
         assert_eq!(
-            source_name(),
-            "orderbook-schema.xml",
+            state.name, "orderbook-schema.xml",
             "warnings must name the file that was actually parsed"
         );
-        assert_ne!(
-            source_name(),
-            UNNAMED_SOURCE,
-            "the placeholder means the setter never reached the cell the getter reads"
-        );
 
-        set_source_name(previous);
+        let state2 = WarnState::new("market-data.xml".into());
+        assert_eq!(
+            state2.name, "market-data.xml",
+            "separate WarnStates carry separate names — no global leak"
+        );
+        assert_eq!(
+            state.name, "orderbook-schema.xml",
+            "first WarnState is unchanged by the second"
+        );
         Ok(())
     }
 }

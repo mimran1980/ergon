@@ -89,6 +89,16 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         &self.listener
     }
 
+    /// Mutable listener accessor — allows state updates between polls.
+    pub fn listener_mut(&mut self) -> &mut L {
+        &mut self.listener
+    }
+
+    /// Consume the adapter and return the inner listener.
+    pub fn into_listener(self) -> L {
+        self.listener
+    }
+
     /// Decode and dispatch one egress fragment.
     ///
     /// Decode / protocol errors are returned to the caller (not

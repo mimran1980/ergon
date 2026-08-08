@@ -290,7 +290,10 @@ check-bench-reference:
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
 bench-cluster:
+    # LTO-on (release profile: lto=true, codegen-units=1)
     cargo bench -p ergo-aeron-cluster
+    # LTO-off — publish both profiles per the benchmark fairness matrix
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-aeron-cluster
     @echo ""
     @echo "=== Gate ==="
     ./scripts/check-bench-gate.sh target/criterion 0.005 cluster

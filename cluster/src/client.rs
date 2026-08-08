@@ -852,7 +852,7 @@ pub(crate) fn apply_state_transition(
             *state = SessionState::AwaitingNewLeader;
             *awaiting_leader_since = Some(Instant::now());
         }
-        SessionState::AwaitingNewLeader | SessionState::AwaitingNewLeaderConnection => {
+        SessionState::AwaitingNewLeader => {
             if let Some(since) = *awaiting_leader_since
                 && since.elapsed() >= Duration::from_millis(new_leader_timeout_ms)
             {
@@ -920,7 +920,7 @@ pub struct AsyncClusterConnect {
     builder: crate::SessionBuilder,
     aeron_dir: String,
     credentials: Vec<u8>,
-    step: AsyncStep,
+    step: ConnectStep,
     connect_sent: bool,
     /// Wall-clock of last SessionConnectRequest offer attempt (success or not).
     last_connect_offer: Instant,
@@ -932,11 +932,18 @@ pub struct AsyncClusterConnect {
     leader_member_id: i32,
 }
 
+/// State machine step for [`AsyncClusterConnect`]. Each call to
+/// [`AsyncClusterConnect::poll`] may advance one step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AsyncStep {
+#[non_exhaustive]
+pub enum ConnectStep {
+    /// Building the Aeron transport (client, publication, subscription).
     CreateTransport,
+    /// Offering the session-connect request.
     SendConnect,
+    /// Waiting for the NewLeaderEvent / OK response.
     PollResponse,
+    /// Connect complete — [`AsyncClusterConnect::finish`] may be called.
     Done,
 }
 
@@ -959,7 +966,7 @@ impl AsyncClusterConnect {
             builder,
             aeron_dir,
             credentials: creds,
-            step: AsyncStep::CreateTransport,
+            step: ConnectStep::CreateTransport,
             connect_sent: false,
             last_connect_offer: past,
             reoffer_interval_ms: connect_reoffer_interval_ms(timeout_ms),
@@ -971,32 +978,33 @@ impl AsyncClusterConnect {
         }
     }
 
-    /// Current connect step.
-    pub fn step(&self) -> &'static str {
-        match self.step {
-            AsyncStep::CreateTransport => "create_transport",
-            AsyncStep::SendConnect => "send_connect",
-            AsyncStep::PollResponse => "poll_response",
-            AsyncStep::Done => "done",
-        }
+    /// Current connect step.  Use `match` on the returned [`ConnectStep`]
+    /// for exhaustive handling — new steps added in future releases will
+    /// surface as compile errors (the enum is `#[non_exhaustive]`).
+    pub fn step(&self) -> ConnectStep {
+        self.step
     }
 
     /// True once the connect has completed and `finish()` can be called.
     pub fn is_complete(&self) -> bool {
-        self.step == AsyncStep::Done
+        self.step == ConnectStep::Done
     }
 
     /// Advance the connect by one unit of work. Returns `Ok(true)` if
-    /// more polling is needed, `Ok(false)` once complete.
+    /// more polling is needed, `Ok(false)` once complete. Idempotent after
+    /// completion — calling `poll()` on an already-completed connect
+    /// returns `Ok(false)` regardless of the deadline.
     pub fn poll(&mut self) -> Result<bool, ClusterError> {
-        if Instant::now() > self.deadline {
+        // Skip deadline after completion — an extra defensive poll after a
+        // successful-but-slow connect must not throw away the recovered cluster.
+        if !self.is_complete() && Instant::now() > self.deadline {
             return Err(ClusterError::Timeout {
                 phase: "async_connect",
                 after_ms: self.started.elapsed().as_millis() as u64,
             });
         }
         match self.step {
-            AsyncStep::CreateTransport => {
+            ConnectStep::CreateTransport => {
                 self.builder.validate()?;
                 let dir_cstr = cformat!("{}", self.aeron_dir);
                 let ctx = AeronContext::new().map_err(|e| ClusterError::aeron("ctx", e))?;
@@ -1020,18 +1028,18 @@ impl AsyncClusterConnect {
                 self.aeron = Some(aeron);
                 self.ingress = Some(ingress);
                 self.egress = Some(egress);
-                self.step = AsyncStep::SendConnect;
+                self.step = ConnectStep::SendConnect;
                 Ok(true)
             }
-            AsyncStep::SendConnect => {
+            ConnectStep::SendConnect => {
                 // Retry the offer across polls until the publication
                 // connects and the connect request lands.
                 if self.encode_and_send_connect()? {
-                    self.step = AsyncStep::PollResponse;
+                    self.step = ConnectStep::PollResponse;
                 }
                 Ok(true)
             }
-            AsyncStep::PollResponse => {
+            ConnectStep::PollResponse => {
                 if let Some(ev) = self.poll_one_event()? {
                     use crate::poller::EgressEvent;
                     match ev {
@@ -1049,7 +1057,7 @@ impl AsyncClusterConnect {
                                     self.cluster_session_id = cluster_session_id;
                                     self.leadership_term_id = leadership_term_id;
                                     self.leader_member_id = leader_member_id;
-                                    self.step = AsyncStep::Done;
+                                    self.step = ConnectStep::Done;
                                     return Ok(false);
                                 }
                                 EventCode::AUTHENTICATIONREJECTED => {
@@ -1102,13 +1110,13 @@ impl AsyncClusterConnect {
                 }
                 Ok(true)
             }
-            AsyncStep::Done => Ok(false),
+            ConnectStep::Done => Ok(false),
         }
     }
 
     /// Consume the in-progress connect and yield the connected client.
     pub fn finish(self) -> Result<AeronCluster, ClusterError> {
-        if self.step != AsyncStep::Done {
+        if self.step != ConnectStep::Done {
             return Err(ClusterError::ConnectFailed {
                 reason: "connect not complete".into(),
             });

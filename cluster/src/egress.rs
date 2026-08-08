@@ -132,6 +132,11 @@ impl<L: EgressListener> EgressAdapter<L> {
         &self.listener
     }
 
+    /// Consume the adapter and return the inner listener.
+    pub fn into_listener(self) -> L {
+        self.listener
+    }
+
     /// Decode and dispatch one egress fragment. Listener callbacks are
     /// wrapped in `catch_unwind` — panics become `ListenerPanicked`.
     /// Returns `Ok(true)` if dispatched, `Ok(false)` for unknown types.

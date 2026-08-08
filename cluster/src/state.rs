@@ -10,8 +10,6 @@ pub enum SessionState {
     Connected,
     /// Disconnected from leader; waiting for a NewLeaderEvent on egress.
     AwaitingNewLeader,
-    /// New leader detected on egress; ingress reconnection in progress.
-    AwaitingNewLeaderConnection,
     /// `close()` was called; will finalise on the next poll.
     PendingClose,
     /// Terminal state. No further operations are valid.
@@ -36,7 +34,7 @@ mod tests {
         assert_ne!(SessionState::Connected, SessionState::Closed);
         assert_ne!(
             SessionState::AwaitingNewLeader,
-            SessionState::AwaitingNewLeaderConnection
+            SessionState::PendingClose
         );
 
         Ok(())

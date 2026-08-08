@@ -37,8 +37,12 @@ use crate::{ClusterError, CredentialsSupplier};
 pub struct SessionBuilder {
     /// Normalized ingress channel (C string for rusteron).
     ingress_c: Option<CString>,
+    /// If the ingress channel parse failed, the error (surfaced at connect).
+    ingress_err: Option<ClusterError>,
     /// Normalized egress channel (C string for rusteron).
     egress_c: Option<CString>,
+    /// If the egress channel parse failed, the error (surfaced at connect).
+    egress_err: Option<ClusterError>,
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
@@ -64,7 +68,9 @@ impl Default for SessionBuilder {
     fn default() -> Self {
         Self {
             ingress_c: None,
+            ingress_err: None,
             egress_c: None,
+            egress_err: None,
             ingress_stream_id: 101,
             egress_stream_id: 102,
             message_timeout_ms: 5_000,
@@ -80,14 +86,24 @@ impl Default for SessionBuilder {
 
 impl SessionBuilder {
     /// Set the ingress channel URI (validated + stored as `CString`).
+    /// Malformed URIs are stored and surfaced at connect time instead of
+    /// being silently replaced with a "missing field" error.
     pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
-        self.ingress_c = uri::channel_cstr(channel.as_ref()).ok();
+        match uri::channel_cstr(channel.as_ref()) {
+            Ok(c) => self.ingress_c = Some(c),
+            Err(e) => self.ingress_err = Some(e),
+        }
         self
     }
 
     /// Set the egress channel URI (validated + stored as `CString`).
+    /// Malformed URIs are stored and surfaced at connect time instead of
+    /// being silently replaced with a "missing field" error.
     pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Self {
-        self.egress_c = uri::channel_cstr(channel.as_ref()).ok();
+        match uri::channel_cstr(channel.as_ref()) {
+            Ok(c) => self.egress_c = Some(c),
+            Err(e) => self.egress_err = Some(e),
+        }
         self
     }
 
@@ -182,6 +198,17 @@ impl SessionBuilder {
 
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
+        // Surface channel parse errors first — they are the real cause.
+        if self.ingress_c.is_none() {
+            if let Some(ref err) = self.ingress_err {
+                return Err(err.clone());
+            }
+        }
+        if self.egress_c.is_none() {
+            if let Some(ref err) = self.egress_err {
+                return Err(err.clone());
+            }
+        }
         let has_ingress = self.ingress_c.is_some();
         let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
         if !has_ingress && !has_endpoints {
@@ -210,6 +237,9 @@ impl SessionBuilder {
 
     /// FFI form of egress channel (cached).
     pub(crate) fn egress_for_aeron(&self) -> Result<&CString, ClusterError> {
+        if let Some(ref err) = self.egress_err {
+            return Err(err.clone());
+        }
         self.egress_c
             .as_ref()
             .ok_or_else(|| ClusterError::connect("egress channel missing (call validate first)"))
@@ -217,6 +247,9 @@ impl SessionBuilder {
 
     /// FFI form of the initial ingress channel for connect.
     pub(crate) fn resolve_initial_ingress_for_aeron(&self) -> Result<CString, ClusterError> {
+        if let Some(ref err) = self.ingress_err {
+            return Err(err.clone());
+        }
         if let Some(c) = self.ingress_c.as_ref() {
             return Ok(c.clone());
         }

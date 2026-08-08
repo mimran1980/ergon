@@ -7,14 +7,19 @@ use roxmltree::{Document, Node};
 
 use crate::ir::Ir;
 
-use super::error::{Fault, ParseError, named_source};
+use super::error::{Fault, ParseError};
 use super::registry::TypeRegistry;
 use super::schema::parse_schema;
-use super::warn::{WarnState, set_source_name, source_name};
+use super::warn::WarnState;
 
+/// Parse an SBE schema from a string. Returns a token [`Ir`] ready for
+/// [`crate::Schema::from_ir`].
+///
+/// # Errors
+/// [`ParseError`] with source spans when the XML is malformed or the schema
+/// is structurally invalid.
 pub fn parse(xml: &str) -> Result<Ir, ParseError> {
-    let warn_state = WarnState::new();
-    set_source_name("<xml>".into());
+    let warn_state = WarnState::new("<xml>".into());
     parse_with_context(
         xml,
         None,
@@ -38,7 +43,7 @@ pub fn parse(xml: &str) -> Result<Ir, ParseError> {
 /// Same as [`parse`].
 #[allow(clippy::result_large_err)]
 pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
-    let warn_state = WarnState::new();
+    let warn_state = WarnState::new("<xml>".into());
     parse_with_context(
         xml,
         None,
@@ -60,6 +65,7 @@ pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
 pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
     if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
         return Err(ParseError::malformed_xml(
+            "<xml>",
             format!("XSD structural validation failed: {e}"),
             xml,
         ));
@@ -75,10 +81,10 @@ pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
     let path = path.as_ref();
-    let warn_state = WarnState::new();
-    set_source_name(path.display().to_string());
+    let name = path.display().to_string();
+    let warn_state = WarnState::new(name.clone());
     let xml = std::fs::read_to_string(path).map_err(|e| {
-        ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
+        ParseError::malformed_xml(&name, format!("cannot read {}: {e}", path.display()), "")
     })?;
     let base_dir = path.parent();
     let mut seen = HashSet::new();
@@ -99,10 +105,10 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir, ParseError> {
     let path = path.as_ref();
-    let warn_state = WarnState::new();
-    set_source_name(path.display().to_string());
+    let name = path.display().to_string();
+    let warn_state = WarnState::new(name.clone());
     let xml = std::fs::read_to_string(path).map_err(|e| {
-        ParseError::malformed_xml(format!("cannot read {}: {e}", path.display()), "")
+        ParseError::malformed_xml(&name, format!("cannot read {}: {e}", path.display()), "")
     })?;
     let base_dir = path.parent();
     let mut seen = HashSet::new();
@@ -129,7 +135,7 @@ pub(crate) fn parse_with_context(
 ) -> Result<Ir, ParseError> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return Err(ParseError::malformed_xml(e.to_string(), xml)),
+        Err(e) => return Err(ParseError::malformed_xml(&warn_state.name, e.to_string(), xml)),
     };
     let input = doc.input_text();
     let root = doc
@@ -139,16 +145,17 @@ pub(crate) fn parse_with_context(
         .ok_or_else(|| Fault::missing_no_node("root <messageSchema> element"));
     let root = match root {
         Ok(n) => n,
-        Err(fault) => return Err(ParseError::from_fault(fault, input)),
+        Err(fault) => return Err(ParseError::from_fault(&warn_state.name, fault, input)),
     };
     if root.tag_name().name() != "messageSchema" {
         return Err(ParseError::from_fault(
+            &warn_state.name,
             Fault::missing(root, "root <messageSchema> element"),
             input,
         ));
     }
     let mut ir = parse_schema(root, base_dir, seen, initial_registry, warn_state)
-        .map_err(|fault| ParseError::from_fault(fault, input))?;
+        .map_err(|fault| ParseError::from_fault(&warn_state.name, fault, input))?;
     crate::resolve::resolve_schema(&mut ir, Some(input))?;
     Ok(ir)
 }

@@ -16,7 +16,7 @@ use super::error::{Fault, FaultKind};
 use super::message::parse_message;
 use super::registry::{TypeRegistry, compute_type_size};
 use super::types::parse_types_node;
-use super::warn::{WarnState, source_name, warn_once};
+use super::warn::{WarnState, warn_once};
 
 pub(crate) fn parse_schema(
     root: Node<'_, '_>,

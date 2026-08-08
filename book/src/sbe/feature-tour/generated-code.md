@@ -8,13 +8,14 @@ For a schema with one message (`Car`), `ergo-sbe` emits a single Rust module wit
 // Each message gets a zero-allocation decoder.
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) pos: usize,
+    pub(crate) base_addr: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
 
 impl<'a> CarDecoder<'a> {
-    pub const SCHEMA_ID: u16 = 77;
+    // Illustrative only — real values from your schema.
+    pub const SCHEMA_ID: u16 = 1;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
     pub const HEADER_LENGTH: usize = 8;
@@ -23,7 +24,8 @@ impl<'a> CarDecoder<'a> {
     pub fn try_decode(buf: &'a [u8], pos: usize)
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
-    // Infallible external-metadata wrap (caller must prove buffer safety).
+    // Proves the header+fixed-body extent and panics if short.
+    // Caller does not need `unsafe` — the proof is in the constructor.
     pub fn wrap(buf: &'a [u8], message_offset: usize,
                acting_block_length: usize, acting_version: u16)
         -> Self { ... }

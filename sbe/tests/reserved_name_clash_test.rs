@@ -488,24 +488,21 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     // Empty append token — generated code will have `fn type()` which is
     // invalid Rust because `type` is a reserved keyword.
     let config = GenerationConfig::new("kwfail").with_keyword_append_token("");
-    let src = Generator::new(config)
-        .generate(&schema)?
-        .modules()
-        .next()
-        .expect("one module")
-        .source
-        .clone();
+    let result = Generator::new(config).generate(&schema);
 
-    // The generated source should contain the diagnostic comment explaining
-    // that the code failed Rust syntax validation.
-    assert!(
-        src.contains("ergo-sbe: generated code failed Rust syntax validation"),
-        "must contain diagnostic comment when generated code won't parse"
-    );
-    assert!(
-        src.contains("keyword") || src.contains("type"),
-        "diagnostic must mention the keyword issue: {src}"
-    );
+    // 0.1.14+: generate() returns Err instead of silently emitting a
+    // comment-banner module. The keyword-affixed-field path already handles
+    // this case (append "_"); the empty-token path exposes the defect.
+    match result {
+        Err(ergo_sbe::codegen::GenerateError::InvalidGeneratedSource { module, error }) => {
+            assert!(module == "kwfail", "error module name must match");
+            assert!(
+                error.contains("keyword") || error.contains("type"),
+                "error must mention the keyword issue: {error}"
+            );
+        }
+        other => panic!("expected InvalidGeneratedSource, got {other:?}"),
+    }
 
     Ok(())
 }

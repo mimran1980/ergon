@@ -64,4 +64,25 @@ explicitly.
 ## 6. No renames bundled with this note
 
 This audit records decisions; it does not rename public generated types.
+
+## 7. `#[non_exhaustive]` policy for generated structs
+
+| Struct | `#[non_exhaustive]` | Rationale |
+|--------|---------------------|-----------|
+| `{Msg}FixedFields` | **No** (exhaustive) | Schema field additions must surface as compile errors (§2 above) |
+| `{Msg}Encoder` | No (all fields `pub(crate)`) | Constructed by the generated `wrap` / `wrap_and_apply_header` |
+| `{Msg}Decoder` | No (all fields `pub(crate)`) | Constructed by the generated `try_decode` / `decode` / `wrap` |
+| `{Msg}After{Element}` | No (all fields `pub(crate)`) | Only reachable through the consuming tail-stage chain |
+| `{Msg}Complete` | No (all fields `pub(crate)`) | Reachable after writing all tails |
+| `{Group}Encoder` | No (all fields `pub(crate)`) | Constructed by the generated group closure |
+| `{Group}Decoder` | No (fields are `pub(crate)`) | Constructed by generated iterator / `wrap` |
+| `{Group}EntryComplete` | No (fields `pub(crate)`) | Only produced by `add_checked` / `complete()` |
+| `{Msg}EncodedLength` | No (fields `pub(crate)`) | Constructed by `compute_length()` |
+| `{Msg}EncodedLengthAfter*` / `Complete` | No (fields `pub(crate)`) | Consuming stages, same as encoder |
+| `{Msg}Schema` | No (unit struct) | Carries only consts |
+| `ConnectStep` | **Yes** | New async-connect steps must not break exhaustiveness downstream |
+| `GenerateError` | **Yes** | Future validation variants are additive |
+| `ParseError` | No (existing public API) | Variants are well-established; `#[non_exhaustive]` would break existing handlers |
+
+**Decision: keep generated consumer-facing structs non-exhaustive via `pub(crate)` fields rather than `#[non_exhaustive]`.** A downstream crate cannot construct one directly, so adding a field is not a breaking change. `#[non_exhaustive]` is reserved for public enums that will gain variants over time (`GenerateError`, `ConnectStep`).
 Any future rename lands in one release with CHANGELOG entries.

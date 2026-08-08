@@ -119,6 +119,7 @@ pub struct GeneratedModuleSet {
 /// Errors returned by [`Generator::generate`] when the configuration
 /// is invalid for the given schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum GenerateError {
     /// A schema value cannot be represented by its declared message-header
     /// field without using a reserved/null value.
@@ -148,6 +149,14 @@ pub enum GenerateError {
         /// The second selector that produced the collision.
         selector_b: String,
     },
+    /// Generated module source failed its own syntax check. This is always an
+    /// ergo-sbe codegen bug — report it.
+    InvalidGeneratedSource {
+        /// Which module produced invalid Rust.
+        module: String,
+        /// The syn parse error.
+        error: String,
+    },
 }
 
 impl core::fmt::Display for GenerateError {
@@ -175,6 +184,12 @@ impl core::fmt::Display for GenerateError {
                 write!(
                     f,
                     "conversion method collision: '{method}' from '{selector_a}' and '{selector_b}'"
+                )
+            }
+            Self::InvalidGeneratedSource { module, error } => {
+                write!(
+                    f,
+                    "generated module '{module}' failed Rust syntax validation: {error}"
                 )
             }
         }
@@ -372,6 +387,28 @@ impl Generator {
                     reason: "domain type path must not be empty".into(),
                 });
             }
+            // Validate the path is parseable Rust — catch typos at build time,
+            // not as a panic deep in codegen.
+            syn::parse_str::<syn::Type>(rust_type).map_err(|e| {
+                GenerateError::InvalidConversion {
+                    selector: format!("{sel:?}"),
+                    reason: format!("domain type path is not a valid Rust type: {e}"),
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Validate user-supplied paths that will be parsed by syn later. Catches
+    /// typos at config-validation time rather than as panics in codegen.
+    fn validate_paths(&self) -> Result<(), GenerateError> {
+        if let Some(ref err_path) = self.config.error_from_path {
+            syn::parse_str::<syn::Type>(err_path).map_err(|e| {
+                GenerateError::InvalidConversion {
+                    selector: "error_from_path".into(),
+                    reason: format!("error-from path is not a valid Rust type: {e}"),
+                }
+            })?;
         }
         Ok(())
     }
@@ -447,8 +484,9 @@ impl Generator {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
                 self.validate_header_values(schema)?;
                 self.validate_conversions(schema)?;
+                self.validate_paths()?;
                 let mut modules = GeneratedModuleSet::default();
-                let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective);
+                let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective)?;
                 modules.push(GeneratedModule {
                     path: format!("{}.rs", self.config.module_name),
                     source: src,
@@ -476,6 +514,7 @@ impl Generator {
         let effective = self.effective_domain_types(schemas);
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
+                self.validate_paths()?;
                 self.generate_multi_inner(schemas, &effective)
             })
         })
@@ -492,6 +531,7 @@ impl Generator {
 
         for (i, (schema, module_name)) in schemas.iter().enumerate() {
             self.validate_header_values(schema)?;
+            self.validate_conversions(schema)?;
             if i == 0 {
                 let elements = partition_tokens(&schema.ir.tokens);
                 for et in &elements.enums {
@@ -524,7 +564,7 @@ impl Generator {
             } else {
                 &empty_set
             };
-            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt, domain_types);
+            let src = self.gen_schema(schema, skip_set, is_importing, emit_sbe_rt, domain_types)?;
             modules.push(GeneratedModule {
                 path: format!("{}.rs", module_name),
                 source: src,
@@ -753,7 +793,7 @@ impl Generator {
         is_importing: bool,
         emit_sbe_rt: bool,
         domain_types: &[(crate::ConversionSelector, String)],
-    ) -> String {
+    ) -> Result<String, GenerateError> {
         let ir = &schema.ir;
 
         let mut src = String::new();
@@ -1117,20 +1157,13 @@ impl Generator {
         let file = match syn::parse_str::<syn::File>(&src) {
             Ok(f) => f,
             Err(e) => {
-                // Produce a comment explaining the failure so the user
-                // can diagnose it (e.g. a reserved keyword leaked through).
-                let mut diag =
-                    String::from("// ergo-sbe: generated code failed Rust syntax validation.\n");
-                use std::fmt::Write;
-                let _ = writeln!(
-                    diag,
-                    "// This usually means a schema name collides with a Rust keyword.\n// syn error: {e}\n// Raw source follows.\n\n"
-                );
-                diag.push_str(&src);
-                return diag;
+                return Err(GenerateError::InvalidGeneratedSource {
+                    module: self.config.module_name.clone(),
+                    error: e.to_string(),
+                });
             }
         };
-        prettyplease::unparse(&file)
+        Ok(prettyplease::unparse(&file))
     }
 }
 
