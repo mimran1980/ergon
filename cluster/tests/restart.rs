@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![cfg(feature = "test-harness")]
 //! Privileged lifecycle tests: quorum loss and full cluster restart. These
 //! exercise destructive cluster control and are slow, but each asserts real

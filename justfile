@@ -302,5 +302,7 @@ bench-cluster:
     # LTO-off — publish both profiles per the benchmark fairness matrix
     CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-aeron-cluster
     @echo ""
-    @echo "=== Gate ==="
+    @echo "=== Gate (LTO) ==="
     ./scripts/check-bench-gate.sh target/criterion 0.005 cluster
+    @echo "=== Gate (no-LTO) ==="
+    ./scripts/check-bench-gate.sh target/bench-no-lto/criterion 0.005 cluster

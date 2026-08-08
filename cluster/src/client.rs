@@ -546,12 +546,12 @@ impl AeronCluster {
                 maximum: self.max_message_length,
             });
         }
-        // Fast path: zero-alloc claim when the payload fits in one fragment.
+        // Fast path: zero-alloc claim when the header+payload fits in one fragment.
         // max_payload_length == 0 means the publication constants haven't been
         // cached yet (fresh connect, get_constants failed, or transport not ready).
         // In that case we always attempt try_claim — it will fail with a proper
         // Aeron error if the payload is too large.
-        let claim_eligible = payload.len() <= self.max_payload_length || self.max_payload_length == 0;
+        let claim_eligible = total <= self.max_payload_length || self.max_payload_length == 0;
         if claim_eligible {
             return match self.try_claim(payload.len()) {
                 Ok(mut claim) => {
@@ -667,30 +667,30 @@ impl AeronCluster {
         err
     }
 
-    /// Track the result of an `offer_parts` call. Accepts the mapped result
-    /// from `offer_parts().map_err(|e| ClusterError::from_offer_error(...))`.
+    /// Track the result of an `offer_parts` call. Unlike `track_ingress_publication_result`,
+    /// this takes a pre-mapped `Result<i64, ClusterError>`. The error is passed through
+    /// the fatal-publication tracker so `Closed` / `MaxPositionExceeded` transition the
+    /// session to `AwaitingNewLeader`.
     fn track_ingress_publication_result_offer(
         &mut self,
         result: Result<i64, ClusterError>,
     ) -> Result<i64, ClusterError> {
         match result {
-            Ok(pos) if pos >= 0 => Ok(pos),
-            Ok(neg) => {
-                let failure = PublicationFailure::from_raw(neg);
-                if matches!(
-                    failure,
-                    PublicationFailure::Closed | PublicationFailure::MaxPositionExceeded
-                ) && self.state == SessionState::Connected
+            Ok(pos) => Ok(pos),
+            Err(e) => {
+                // Propagate fatal sentinels to the session state machine.
+                if let ClusterError::Publication { failure, .. } = &e
+                    && self.state == SessionState::Connected
+                    && matches!(
+                        *failure,
+                        PublicationFailure::Closed | PublicationFailure::MaxPositionExceeded
+                    )
                 {
                     self.state = SessionState::AwaitingNewLeader;
                     self.awaiting_leader_since = Some(Instant::now());
                 }
-                Err(ClusterError::Publication {
-                    failure,
-                    context: "offer",
-                })
+                Err(e)
             }
-            Err(e) => Err(e),
         }
     }
 

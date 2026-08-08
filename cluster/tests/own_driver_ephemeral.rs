@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![cfg(feature = "test-harness")]
 //! Probe: own-driver UDP with a SEPARATE egress port (Java pattern).
 //! Client egress on localhost:9100 (ephemeral-style, non-conflicting),

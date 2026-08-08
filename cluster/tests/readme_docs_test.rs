@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Compile-check every `rust` / `rust,no_run` fence in `cluster/README.md`.
 //! `rust,ignore` fences are rejected — use `rust,no_run` for Aeron-dependent
 //! examples that cannot execute in the test harness.

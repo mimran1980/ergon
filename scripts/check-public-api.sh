@@ -5,7 +5,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-baseline="${1:-v0.1.13}"
+baseline="${1:-0.1.13}"
 
 echo "=== public API semver check ==="
 echo "baseline: $baseline"

@@ -331,14 +331,14 @@ pub(crate) fn generate_owner_consuming_stages(
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     /// Consume this stage, read the next var-data field as a
-                    /// [`compact_str::CompactString`] (≤24 bytes inline), and advance.
+                    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
                     #[inline]
-                    pub fn #as_compact_ident(self) -> Result<(compact_str::CompactString, #next_stage<'a>), sbe_rt::DecodeError> {
+                    pub fn #as_compact_ident(self) -> Result<(ergo_sbe::compact_str::CompactString, #next_stage<'a>), sbe_rt::DecodeError> {
                         let (bytes, next) = self.#into_ident()?;
                         let s = core::str::from_utf8(bytes).map_err(|e| {
                             sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
                         })?;
-                        Ok((compact_str::CompactString::new(s), next))
+                        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
                     }
                 }
             });
@@ -353,14 +353,14 @@ pub(crate) fn generate_owner_consuming_stages(
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     /// Consume this stage, read the next var-data field as a
-                    /// [`smol_str::SmolStr`] (O(1) clone), and advance.
+                    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
                     #[inline]
-                    pub fn #as_smol_ident(self) -> Result<(smol_str::SmolStr, #next_stage<'a>), sbe_rt::DecodeError> {
+                    pub fn #as_smol_ident(self) -> Result<(ergo_sbe::smol_str::SmolStr, #next_stage<'a>), sbe_rt::DecodeError> {
                         let (bytes, next) = self.#into_ident()?;
                         let s = core::str::from_utf8(bytes).map_err(|e| {
                             sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
                         })?;
-                        Ok((smol_str::SmolStr::new(s), next))
+                        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
                     }
                 }
             });
@@ -375,11 +375,11 @@ pub(crate) fn generate_owner_consuming_stages(
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     /// Consume this stage, read the next var-data field as
-                    /// [`bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
+                    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
                     #[inline]
-                    pub fn #as_bytes_ident(self) -> Result<(bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
+                    pub fn #as_bytes_ident(self) -> Result<(ergo_sbe::bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
                         let (data, next) = self.#into_ident()?;
-                        Ok((bytes::Bytes::copy_from_slice(data), next))
+                        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
                     }
                 }
             });

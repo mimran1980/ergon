@@ -45,7 +45,11 @@ pub fn i64_nanos_to_datetime(nanos: i64) -> DateTime<Utc> {
     let nsecs: u32 = nanos.rem_euclid(1_000_000_000) as u32;
     Utc.timestamp_opt(secs, nsecs)
         .single()
-        .unwrap_or(if nanos < 0 { DateTime::<Utc>::MIN_UTC } else { DateTime::<Utc>::MAX_UTC })
+        .unwrap_or(if nanos < 0 {
+            DateTime::<Utc>::MIN_UTC
+        } else {
+            DateTime::<Utc>::MAX_UTC
+        })
 }
 
 /// Convert [`DateTime<Utc>`] → SBE `i64` wire nanoseconds.
@@ -84,7 +88,7 @@ mod tests {
         let wire = datetime_to_i64_nanos(now);
         let back = i64_nanos_to_datetime(wire);
         // Sub-second precision may differ by 1 nanosecond due to truncation
-        assert_eq!(now.timestamp(), back.timestamp());
+        assert_eq!(now.and_utc().timestamp(), back.and_utc().timestamp());
     }
 
     #[test]
@@ -92,7 +96,7 @@ mod tests {
         let now = Utc::now().naive_utc();
         let wire = naive_to_i64_micros(now);
         let back = i64_micros_to_naive(wire);
-        assert_eq!(now.timestamp(), back.timestamp());
+        assert_eq!(now.and_utc().timestamp(), back.and_utc().timestamp());
     }
 
     #[test]
@@ -100,7 +104,7 @@ mod tests {
         let dt = i64_nanos_to_datetime(0);
         assert_eq!(dt.timestamp(), 0);
         let naive = i64_micros_to_naive(0);
-        assert_eq!(naive.timestamp(), 0);
+        assert_eq!(naive.and_utc().timestamp(), 0);
     }
 
     #[test]

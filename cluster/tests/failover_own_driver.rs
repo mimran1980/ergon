@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![cfg(feature = "test-harness")]
 //! Deterministic 3-node failover over the **own-driver UDP** transport,
 //! driven through the high-level `AeronCluster` API.

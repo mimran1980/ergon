@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Wire-byte golden fixtures for the cluster protocol messages.
 //!
 //! Each `GOLDEN_*` constant is the exact SBE wire output for a fixed,

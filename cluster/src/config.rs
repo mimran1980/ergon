@@ -91,8 +91,14 @@ impl SessionBuilder {
     /// being silently replaced with a "missing field" error.
     pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
         match uri::channel_cstr(channel.as_ref()) {
-            Ok(c) => self.ingress_c = Some(c),
-            Err(e) => self.ingress_err = Some(e),
+            Ok(c) => {
+                self.ingress_c = Some(c);
+                self.ingress_err = None; // clear stale error from previous call
+            }
+            Err(e) => {
+                self.ingress_c = None; // clear stale value from previous call
+                self.ingress_err = Some(e);
+            }
         }
         self
     }
@@ -102,8 +108,14 @@ impl SessionBuilder {
     /// being silently replaced with a "missing field" error.
     pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Self {
         match uri::channel_cstr(channel.as_ref()) {
-            Ok(c) => self.egress_c = Some(c),
-            Err(e) => self.egress_err = Some(e),
+            Ok(c) => {
+                self.egress_c = Some(c);
+                self.egress_err = None; // clear stale error from previous call
+            }
+            Err(e) => {
+                self.egress_c = None; // clear stale value from previous call
+                self.egress_err = Some(e);
+            }
         }
         self
     }

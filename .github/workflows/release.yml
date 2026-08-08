@@ -47,6 +47,12 @@ jobs:
       - name: Mandatory pre-release verification
         run: just release-check
 
+      - name: Run SBE benchmarks (LTO + no-LTO) — before publish
+        run: just bench
+
+      - name: Run cluster benchmarks (LTO + no-LTO) — before publish
+        run: just bench-cluster
+
       - name: Cache cargo-release binary
         uses: actions/cache@v4
         with:
@@ -108,24 +114,16 @@ jobs:
           branch: main
           tags: true
 
-      - name: Run SBE benchmarks (LTO + no-LTO)
+      - name: Archive SBE benchmark results
         run: |
-          just bench
-          # Archive the run artifacts
-          RUN_ID=$(ls -t target/bench-runs/ | head -1)
-          echo "SBE run id: $RUN_ID"
-          cp target/bench-runs/"$RUN_ID"/lto/criterion/estimates.json bench-sbe-lto.json
-          cp target/bench-runs/"$RUN_ID"/no-lto/criterion/estimates.json bench-sbe-no-lto.json
-          cp target/bench-runs/"$RUN_ID"/run-manifest.json run-manifest-sbe.json
+          tar -czf bench-sbe-lto.tar.gz -C target/bench-runs .
+          echo "SBE benchmarks archived"
 
-      - name: Run cluster benchmarks (LTO + no-LTO)
+      - name: Archive cluster benchmark results
         run: |
-          just bench-cluster
-          # Cluster benches write to target/criterion (default Criterion dir), not
-          # target/bench-runs/ (which is SBE-only via scripts/run-sbe-bench.sh).
-          cp target/criterion/estimates.json bench-cluster-lto.json
-          cp target/bench-no-lto/criterion/estimates.json bench-cluster-no-lto.json
-          echo "Cluster bench artifacts copied"
+          tar -czf bench-cluster-lto.tar.gz -C target criterion
+          tar -czf bench-cluster-no-lto.tar.gz -C target/bench-no-lto criterion 2>/dev/null || true
+          echo "Cluster benchmarks archived"
 
       - name: Build release artifacts
         run: cargo build --release --workspace
@@ -154,7 +152,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-sbe-lto.json
+          asset_path: bench-sbe-lto.tar.gz
           asset_name: bench-sbe-lto-${{ steps.version.outputs.version }}.json
           asset_content_type: application/json
 
@@ -164,7 +162,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-sbe-no-lto.json
+          asset_path: bench-sbe-no-lto.tar.gz
           asset_name: bench-sbe-no-lto-${{ steps.version.outputs.version }}.json
           asset_content_type: application/json
 

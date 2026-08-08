@@ -37,8 +37,17 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
+      - uses: extractions/setup-just@v2
+
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev libbsd-dev
+
+      - name: Check out Aeron ${{ matrix.aeron-version }}
+        run: |
+          cd aeron
+          git fetch --tags
+          git checkout "${{ matrix.aeron-version }}"
+          cd ..
 
       - name: Build Aeron JARs
         run: just build-aeron-jars

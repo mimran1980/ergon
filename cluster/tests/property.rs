@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use ergo_aeron_cluster::cluster_codec_types::{
     ChallengeDecoder, ChallengeEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, SessionEventDecoder,
     SessionEventEncoder, SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,

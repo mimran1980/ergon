@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Egress fragmentation tests — verify message reassembly through
 //! `AeronCluster::poll_egress`. Requires `test-harness` (Java Echo service).
 //!

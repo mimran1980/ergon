@@ -689,11 +689,11 @@ pub(crate) fn generate_domain_recursive(
             #[cfg(feature = "compact_str")]
             crate::config::DomainVarData::CompactStrings => {
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
-                struct_fields.push(quote::quote! { pub #vd_ident: compact_str::CompactString });
+                struct_fields.push(quote::quote! { pub #vd_ident: ergo_sbe::compact_str::CompactString });
                 from_exprs.push(quote::quote! {
                     #vd_ident: match dec.#vd_ident() {
                         Ok(data) => match core::str::from_utf8(data) {
-                            Ok(s) => compact_str::CompactString::new(s),
+                            Ok(s) => ergo_sbe::compact_str::CompactString::new(s),
                             Err(error) => {
                                 return Err(sbe_rt::DecodeError::InvalidUtf8 {
                                     field: #field_name_lit,
@@ -711,11 +711,11 @@ pub(crate) fn generate_domain_recursive(
             #[cfg(feature = "smol_str")]
             crate::config::DomainVarData::SmolStrings => {
                 let field_name_lit = syn::LitStr::new(&vd_snake, span);
-                struct_fields.push(quote::quote! { pub #vd_ident: smol_str::SmolStr });
+                struct_fields.push(quote::quote! { pub #vd_ident: ergo_sbe::smol_str::SmolStr });
                 from_exprs.push(quote::quote! {
                     #vd_ident: match dec.#vd_ident() {
                         Ok(data) => match core::str::from_utf8(data) {
-                            Ok(s) => smol_str::SmolStr::new(s),
+                            Ok(s) => ergo_sbe::smol_str::SmolStr::new(s),
                             Err(error) => {
                                 return Err(sbe_rt::DecodeError::InvalidUtf8 {
                                     field: #field_name_lit,
@@ -732,10 +732,10 @@ pub(crate) fn generate_domain_recursive(
             }
             #[cfg(feature = "bytes")]
             crate::config::DomainVarData::BytesCrate => {
-                struct_fields.push(quote::quote! { pub #vd_ident: bytes::Bytes });
+                struct_fields.push(quote::quote! { pub #vd_ident: ergo_sbe::bytes::Bytes });
                 from_exprs.push(quote::quote! {
                     #vd_ident: match dec.#vd_ident() {
-                        Ok(data) => bytes::Bytes::copy_from_slice(data),
+                        Ok(data) => ergo_sbe::bytes::Bytes::copy_from_slice(data),
                         Err(e) => return Err(e),
                     }
                 });
@@ -865,11 +865,11 @@ pub(crate) fn generate_domain_recursive(
                 crate::config::DomainVarData::Bytes => "Vec<u8>",
                 crate::config::DomainVarData::Strings => "String",
                 #[cfg(feature = "compact_str")]
-                crate::config::DomainVarData::CompactStrings => "compact_str::CompactString",
+                crate::config::DomainVarData::CompactStrings => "ergo_sbe::compact_str::CompactString",
                 #[cfg(feature = "smol_str")]
-                crate::config::DomainVarData::SmolStrings => "smol_str::SmolStr",
+                crate::config::DomainVarData::SmolStrings => "ergo_sbe::smol_str::SmolStr",
                 #[cfg(feature = "bytes")]
-                crate::config::DomainVarData::BytesCrate => "bytes::Bytes",
+                crate::config::DomainVarData::BytesCrate => "ergo_sbe::bytes::Bytes",
             };
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),

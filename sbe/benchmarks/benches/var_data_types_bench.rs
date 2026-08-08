@@ -28,9 +28,8 @@ fn criterion_benchmark(c: &mut criterion::Criterion) {
         #[cfg(feature = "compact_str")]
         c.bench_function(&format!("{label}/CompactString"), |b| {
             b.iter(|| {
-                let s = compact_str::CompactString::new(
-                    std::str::from_utf8(black_box(&data)).unwrap(),
-                );
+                let s =
+                    compact_str::CompactString::new(std::str::from_utf8(black_box(&data)).unwrap());
                 black_box(s)
             });
         });
@@ -39,9 +38,7 @@ fn criterion_benchmark(c: &mut criterion::Criterion) {
         #[cfg(feature = "smol_str")]
         c.bench_function(&format!("{label}/SmolStr"), |b| {
             b.iter(|| {
-                let s = smol_str::SmolStr::new(
-                    std::str::from_utf8(black_box(&data)).unwrap(),
-                );
+                let s = smol_str::SmolStr::new(std::str::from_utf8(black_box(&data)).unwrap());
                 black_box(s)
             });
         });

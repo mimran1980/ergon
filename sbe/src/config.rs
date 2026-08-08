@@ -846,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_lean_disables_size_knobs_and_domains() -> Result<(), Box<dyn std::error::Error>> {
+    fn profile_lean_preserves_explicit_conversions_and_domain_types() -> Result<(), Box<dyn std::error::Error>> {
         let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
         assert!(full.enable_display_debug);
         assert!(full.enable_meta_attributes);
@@ -860,8 +860,10 @@ mod tests {
         assert!(!lean.enable_meta_attributes);
         assert!(!lean.enable_dispatch);
         assert!(!lean.domain_objects);
-        assert!(!lean.has_conversions());
-        assert!(lean.domain_types.is_empty());
+        // Explicit conversions and domain types survive Lean — they're
+        // deliberate schema choices with higher precedence than a bulk preset.
+        assert!(lean.has_conversions(), "explicit conversions must survive Lean");
+        assert!(!lean.domain_types.is_empty(), "explicit domain types must survive Lean");
 
         // Later overrides still win.
         let override_dispatch = GenerationConfig::new("m")
