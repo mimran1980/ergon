@@ -44,9 +44,10 @@ let config = GenerationConfig::new("msgs")
 Generated DTO:
 
 ```rust,ignore
+// Type paths use ergo_sbe re-exports — no need to add compact_str directly.
 pub struct QuoteDomain {
-    pub symbol: compact_str::CompactString,  // was String
-    pub venue: compact_str::CompactString,
+    pub symbol: ergo_sbe::compact_str::CompactString,  // was String
+    pub venue: ergo_sbe::compact_str::CompactString,
     pub price: Decimal,
     // …
 }
@@ -158,7 +159,7 @@ let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
 
 // Encode
 enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(chrono::NaiveDateTime::from_timestamp_opt(1_720_000_000, 0).unwrap())?;
+enc.try_updated_at(chrono::DateTime::from_timestamp(1_720_000_000, 0).unwrap().naive_utc())?;
 ```
 
 ### Direct converters
