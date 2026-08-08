@@ -27,6 +27,7 @@
   - [Flyweight vs Whole-Struct](./sbe/core-concepts/flyweight-vs-struct.md)
   - [Composite Layout & Endianness](./sbe/core-concepts/composite-layout.md)
 - [Configuration](./sbe/configuration.md)
+  - [Feature Integrations](./sbe/configuration/feature-integrations.md)
   - [with_conversion vs with_domain_type](./sbe/configuration/conversion-vs-domain.md)
   - [GenerationConfig Options](./sbe/configuration/generation-config.md)
   - [Code-Generation Hooks](./sbe/configuration/hooks.md)
