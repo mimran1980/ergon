@@ -135,7 +135,13 @@ pub(crate) fn parse_with_context(
 ) -> Result<Ir, ParseError> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return Err(ParseError::malformed_xml(&warn_state.name, e.to_string(), xml)),
+        Err(e) => {
+            return Err(ParseError::malformed_xml(
+                &warn_state.name,
+                e.to_string(),
+                xml,
+            ));
+        }
     };
     let input = doc.input_text();
     let root = doc

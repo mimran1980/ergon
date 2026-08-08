@@ -18,17 +18,23 @@ use crate::fragment::Fragment;
 /// - `Commit` — commit the current position and continue
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlledPollAction {
+    /// Keep dispatching fragments.
     Continue,
+    /// Stop and re-deliver this fragment next poll.
     Abort,
+    /// Stop; do not re-deliver this fragment.
     Break,
+    /// Commit the current position and continue.
     Commit,
 }
 
 /// Controlled variant of `EgressListener`. Only `on_message` returns an
 /// action — lifecycle, challenge, and admin callbacks default to no-ops.
 pub trait ControlledEgressListener {
+    /// Application message from the cluster. Return the desired poll action.
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]) -> ControlledPollAction;
 
+    /// Session lifecycle event (connect result, state change). Default: no-op.
     fn on_session_event(
         &mut self,
         _correlation_id: i64,
@@ -39,6 +45,7 @@ pub trait ControlledEgressListener {
         _detail: &str,
     ) {
     }
+    /// New leader elected. Default: no-op.
     fn on_new_leader(
         &mut self,
         _cluster_session_id: i64,
@@ -47,7 +54,9 @@ pub trait ControlledEgressListener {
         _ingress_endpoints: &str,
     ) {
     }
+    /// Auth challenge from the cluster. Default: no-op.
     fn on_challenge(&mut self, _correlation_id: i64, _cluster_session_id: i64, _encoded_challenge: &[u8]) {}
+    /// Administrative response (heartbeat ack, etc.). Default: no-op.
     fn on_admin_response(
         &mut self,
         _cluster_session_id: i64,
@@ -67,6 +76,7 @@ pub struct ControlledEgressAdapter<L: ControlledEgressListener> {
 }
 
 impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
+    /// Create an adapter that dispatches all fragments (no session filter).
     pub fn new(listener: L) -> Self {
         Self {
             listener,
@@ -74,6 +84,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         }
     }
 
+    /// Create an adapter that only dispatches fragments matching `session_id`.
+    /// Messages from other sessions are silently dropped.
     pub fn with_session_filter(listener: L, session_id: i64) -> Self {
         Self {
             listener,
@@ -81,10 +93,12 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         }
     }
 
+    /// Update the session filter after construction.
     pub fn set_expected_session_id(&mut self, id: i64) {
         self.expected_session_id = Some(id);
     }
 
+    /// Immutable borrow of the inner listener.
     pub fn listener(&self) -> &L {
         &self.listener
     }
@@ -116,7 +130,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     /// decoded (e.g. one decode shared between state tracking and dispatch
     /// on the poll path).
     #[inline]
-    pub fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<ControlledPollAction, ClusterError> {
+    pub(crate) fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<ControlledPollAction, ClusterError> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_controlled(frag)));
         match result {
             Ok(r) => r,

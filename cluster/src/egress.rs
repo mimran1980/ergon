@@ -106,6 +106,7 @@ pub struct EgressAdapter<L: EgressListener> {
 }
 
 impl<L: EgressListener> EgressAdapter<L> {
+    /// Create an adapter that dispatches all fragments (no session filter).
     pub fn new(listener: L) -> Self {
         Self {
             listener,
@@ -113,6 +114,8 @@ impl<L: EgressListener> EgressAdapter<L> {
         }
     }
 
+    /// Create an adapter that only dispatches fragments matching `session_id`.
+    /// Messages from other sessions are silently dropped.
     pub fn with_session_filter(listener: L, session_id: i64) -> Self {
         Self {
             listener,
@@ -120,14 +123,17 @@ impl<L: EgressListener> EgressAdapter<L> {
         }
     }
 
+    /// Update the session filter after construction.
     pub fn set_expected_session_id(&mut self, id: i64) {
         self.expected_session_id = Some(id);
     }
 
+    /// Mutable listener accessor — allows state updates between polls.
     pub fn listener_mut(&mut self) -> &mut L {
         &mut self.listener
     }
 
+    /// Immutable borrow of the inner listener.
     pub fn listener(&self) -> &L {
         &self.listener
     }
@@ -152,7 +158,7 @@ impl<L: EgressListener> EgressAdapter<L> {
     /// decoded (e.g. one decode shared between state tracking and listener
     /// dispatch on the poll path).
     #[inline]
-    pub fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<bool, crate::ClusterError> {
+    pub(crate) fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<bool, crate::ClusterError> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.dispatch(frag);
         }));

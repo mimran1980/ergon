@@ -149,6 +149,7 @@ pub(crate) fn generate_message_encoder(
         let stage_name = stage.to_string();
         let stage_name_lit = syn::LitStr::new(&stage_name, span);
         ts.extend(quote::quote! {
+            #[doc = concat!("Encoder stage `", #stage_name_lit, "` — write tail elements in wire order.")]
             #[must_use = "encoder must be consumed to write the message"]
             pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
                 buf: &'a mut [u8],

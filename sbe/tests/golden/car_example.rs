@@ -502,6 +502,7 @@ impl TryFrom<BooleanType> for bool {
         val.as_bool().ok_or(())
     }
 }
+/// SBE enum `Model` — wire discriminant u8.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Model {
@@ -562,6 +563,7 @@ impl core::str::FromStr for Model {
         }
     }
 }
+/// SBE enum `BoostType` — wire discriminant u8.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BoostType {
@@ -626,6 +628,7 @@ impl core::str::FromStr for BoostType {
         }
     }
 }
+/// SBE bitset `OptionalExtras` — wire type u8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[repr(transparent)]
 pub struct OptionalExtras(pub u8);
@@ -841,6 +844,7 @@ impl MessageHeader {
         }
     }
 }
+/// Flyweight decoder for the `messageHeader` composite.
 #[derive(Clone, Copy)]
 pub struct MessageHeaderDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -891,6 +895,7 @@ impl GroupSizeEncoding {
     }
 }
 const _: () = assert!(core::mem::size_of:: < GroupSizeEncoding > () == 4);
+/// Flyweight decoder for the `groupSizeEncoding` composite.
 #[derive(Clone, Copy)]
 pub struct GroupSizeEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -931,6 +936,7 @@ impl VarStringEncoding {
     }
 }
 const _: () = assert!(core::mem::size_of:: < VarStringEncoding > () == 4);
+/// Flyweight decoder for the `varStringEncoding` composite.
 #[derive(Clone, Copy)]
 pub struct VarStringEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -971,6 +977,7 @@ impl VarAsciiEncoding {
     }
 }
 const _: () = assert!(core::mem::size_of:: < VarAsciiEncoding > () == 4);
+/// Flyweight decoder for the `varAsciiEncoding` composite.
 #[derive(Clone, Copy)]
 pub struct VarAsciiEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -1011,6 +1018,7 @@ impl VarDataEncoding {
     }
 }
 const _: () = assert!(core::mem::size_of:: < VarDataEncoding > () == 4);
+/// Flyweight decoder for the `varDataEncoding` composite.
 #[derive(Clone, Copy)]
 pub struct VarDataEncodingDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -1029,6 +1037,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
         []
     }
 }
+/// SBE composite `Booster` — 2 byte wire image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 2]);
@@ -1057,6 +1066,7 @@ impl Booster {
     }
 }
 const _: () = assert!(core::mem::size_of:: < Booster > () == 2);
+/// Flyweight decoder for the `Booster` composite.
 #[derive(Clone, Copy)]
 pub struct BoosterDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -1077,6 +1087,7 @@ impl<'a> BoosterDecoder<'a> {
         u8::from_le_bytes(unsafe { read_addr_unchecked::<1>(self.base_addr, 1) })
     }
 }
+/// SBE composite `Engine` — 10 byte wire image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Engine(pub [u8; 10]);
@@ -1154,6 +1165,7 @@ impl Engine {
     }
 }
 const _: () = assert!(core::mem::size_of:: < Engine > () == 10);
+/// Flyweight decoder for the `Engine` composite.
 #[derive(Clone, Copy)]
 pub struct EngineDecoder<'a> {
     pub(crate) buf: &'a [u8],
@@ -1206,6 +1218,10 @@ impl<'a> EngineDecoder<'a> {
         Booster(unsafe { read_addr_unchecked::<2>(self.base_addr, 8) })
     }
 }
+#[doc = concat!(
+    "Schema constants for the `", stringify!(CarSchema),
+    "` message: `SCHEMA_ID`, `SCHEMA_VERSION`, `TEMPLATE_ID`, `BLOCK_LENGTH`, `HEADER_LENGTH`."
+)]
 pub struct CarSchema;
 impl CarSchema {
     pub const SCHEMA_ID: u16 = 1;
@@ -2439,6 +2455,10 @@ impl<'a> core::fmt::Debug for CarDecoder<'a> {
         d.finish()
     }
 }
+#[doc = concat!(
+    "Group `", stringify!(FuelFiguresDecoder),
+    "` decoder — iterate entries in wire order."
+)]
 /// This group has entries with nested groups or var-data —
 /// there is no constant stride, so `entry_at` (O(1) random
 /// access) is **not** available. Use the [`Iterator`]
@@ -2796,6 +2816,10 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for FuelFiguresDecoder<'a, C> {
 /// adaptor that has cached this fuse.
 impl<'a, C: sbe_rt::GroupContext> core::iter::FusedIterator
 for FuelFiguresDecoder<'a, C> {}
+#[doc = concat!(
+    "Entry decoder for the `", stringify!(FuelFiguresEntryDecoder),
+    "` group — access fixed fields and var-data for one entry."
+)]
 pub struct FuelFiguresEntryDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -3194,6 +3218,10 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+#[doc = concat!(
+    "Group `", stringify!(PerformanceFiguresDecoder),
+    "` decoder — iterate entries in wire order."
+)]
 /// This group has entries with nested groups or var-data —
 /// there is no constant stride, so `entry_at` (O(1) random
 /// access) is **not** available. Use the [`Iterator`]
@@ -3563,6 +3591,10 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for PerformanceFiguresDecoder<'a, C> 
 /// adaptor that has cached this fuse.
 impl<'a, C: sbe_rt::GroupContext> core::iter::FusedIterator
 for PerformanceFiguresDecoder<'a, C> {}
+#[doc = concat!(
+    "Entry decoder for the `", stringify!(PerformanceFiguresEntryDecoder),
+    "` group — access fixed fields and var-data for one entry."
+)]
 pub struct PerformanceFiguresEntryDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -3736,6 +3768,10 @@ impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
+#[doc = concat!(
+    "Group `", stringify!(PerformanceFiguresAccelerationDecoder),
+    "` decoder — iterate entries in wire order."
+)]
 pub struct PerformanceFiguresAccelerationDecoder<
     'a,
     C: sbe_rt::GroupContext = sbe_rt::Detached,
@@ -4085,6 +4121,10 @@ for PerformanceFiguresAccelerationDecoder<'a, C> {
         self.count
     }
 }
+#[doc = concat!(
+    "Entry decoder for the `", stringify!(PerformanceFiguresAccelerationEntryDecoder),
+    "` group — access fixed fields and var-data for one entry."
+)]
 pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -5545,6 +5585,9 @@ impl CarDomain {
     }
 }
 ///Description of a basic Car
+#[doc = concat!(
+    "Encoder stage `", "CarEncoder", "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarEncoder<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     buf: &'a mut [u8],
@@ -5574,6 +5617,9 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarEncoder<'a, H> {
         }
     }
 }
+#[doc = concat!(
+    "Encoder stage `", "CarAfterFuelFigures", "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarAfterFuelFigures<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     buf: &'a mut [u8],
@@ -5603,6 +5649,10 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarAfterFuelFigures<'a, H>
         }
     }
 }
+#[doc = concat!(
+    "Encoder stage `", "CarAfterPerformanceFigures",
+    "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarAfterPerformanceFigures<
     'a,
@@ -5636,6 +5686,9 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarAfterPerformanceFigures
         }
     }
 }
+#[doc = concat!(
+    "Encoder stage `", "CarAfterManufacturer", "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarAfterManufacturer<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     buf: &'a mut [u8],
@@ -5665,6 +5718,9 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarAfterManufacturer<'a, H
         }
     }
 }
+#[doc = concat!(
+    "Encoder stage `", "CarAfterModel", "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarAfterModel<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     buf: &'a mut [u8],
@@ -5694,6 +5750,9 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarAfterModel<'a, H> {
         }
     }
 }
+#[doc = concat!(
+    "Encoder stage `", "CarComplete", "` — write tail elements in wire order."
+)]
 #[must_use = "encoder must be consumed to write the message"]
 pub struct CarComplete<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
     buf: &'a mut [u8],
@@ -6865,6 +6924,10 @@ impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
+#[doc = concat!(
+    "Encoder for the `", stringify!(FuelFiguresEncoder),
+    "` group — call `add()` to write entries."
+)]
 #[must_use = "group encoder must call add() to write entries"]
 pub struct FuelFiguresEncoder<'a> {
     buf: &'a mut [u8],
@@ -7002,6 +7065,9 @@ impl<'a> FuelFiguresEncoder<'a> {
         self.written
     }
 }
+#[doc = concat!(
+    "Proven-complete entry for the `", stringify!(FuelFiguresEntryComplete), "` group."
+)]
 pub struct FuelFiguresEntryComplete<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
@@ -7012,6 +7078,10 @@ impl<'a> FuelFiguresEntryComplete<'a> {
         self.pos
     }
 }
+#[doc = concat!(
+    "Entry encoder for the `", stringify!(FuelFiguresEntryEncoder),
+    "` group — set fields then call `complete()`."
+)]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct FuelFiguresEntryEncoder<'a> {
     buf: &'a mut [u8],
@@ -7094,6 +7164,10 @@ Only for entries with no required tails — an entry that has them reaches this 
         Ok(self)
     }
 }
+#[doc = concat!(
+    "Encoder for the `", stringify!(PerformanceFiguresEncoder),
+    "` group — call `add()` to write entries."
+)]
 #[must_use = "group encoder must call add() to write entries"]
 pub struct PerformanceFiguresEncoder<'a> {
     buf: &'a mut [u8],
@@ -7235,6 +7309,10 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         self.written
     }
 }
+#[doc = concat!(
+    "Proven-complete entry for the `", stringify!(PerformanceFiguresEntryComplete),
+    "` group."
+)]
 pub struct PerformanceFiguresEntryComplete<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
@@ -7245,6 +7323,10 @@ impl<'a> PerformanceFiguresEntryComplete<'a> {
         self.pos
     }
 }
+#[doc = concat!(
+    "Entry encoder for the `", stringify!(PerformanceFiguresEntryEncoder),
+    "` group — set fields then call `complete()`."
+)]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresEntryEncoder<'a> {
     buf: &'a mut [u8],
@@ -7369,6 +7451,10 @@ Only for entries with no required tails — an entry that has them reaches this 
         Ok(self)
     }
 }
+#[doc = concat!(
+    "Encoder for the `", stringify!(PerformanceFiguresAccelerationEncoder),
+    "` group — call `add()` to write entries."
+)]
 #[must_use = "group encoder must call add() to write entries"]
 pub struct PerformanceFiguresAccelerationEncoder<'a> {
     buf: &'a mut [u8],
@@ -7621,6 +7707,10 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         )
     }
 }
+#[doc = concat!(
+    "Proven-complete entry for the `",
+    stringify!(PerformanceFiguresAccelerationEntryComplete), "` group."
+)]
 pub struct PerformanceFiguresAccelerationEntryComplete<'a> {
     buf: &'a mut [u8],
     entry_start: usize,
@@ -7631,6 +7721,10 @@ impl<'a> PerformanceFiguresAccelerationEntryComplete<'a> {
         self.pos
     }
 }
+#[doc = concat!(
+    "Entry encoder for the `", stringify!(PerformanceFiguresAccelerationEntryEncoder),
+    "` group — set fields then call `complete()`."
+)]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     buf: &'a mut [u8],
@@ -8647,6 +8741,8 @@ pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     let value = u16::from_le_bytes(bytes) as u64;
     u16::try_from(value).ok()
 }
+/// Tagged union of every message type in the schema — decode once,
+/// then `match` to access the typed decoder.
 #[non_exhaustive]
 pub enum AnyMessage<'a> {
     Car(CarDecoder<'a>),
@@ -8657,17 +8753,21 @@ pub enum AnyMessage<'a> {
         frame: &'a [u8],
     },
 }
+/// One decoded message with its buffer range and length.
 pub struct DecodedFrame<'a> {
     pub message: AnyMessage<'a>,
     pub range: core::ops::Range<usize>,
     pub len: usize,
 }
+/// How frames are delimited in a stream: length-prefixed or fixed-size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FramingPolicy {
     LengthPrefixU32Le,
     LengthPrefixU16Le,
     Fixed(usize),
 }
+/// Iterator that yields [`DecodedFrame`]s from a byte buffer according
+/// to a [`FramingPolicy`].
 pub struct FrameCursor<'a> {
     buf: &'a [u8],
     pos: usize,

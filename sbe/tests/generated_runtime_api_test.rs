@@ -20,7 +20,8 @@ mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
 #[test]
-fn any_message_visitor_dispatches_known_template_to_correct_arm() -> Result<(), Box<dyn std::error::Error>> {
+fn any_message_visitor_dispatches_known_template_to_correct_arm()
+-> Result<(), Box<dyn std::error::Error>> {
     // Schema with two messages — verify that AnyMessage dispatch routes each
     // template_id to the correct visitor arm, and visit_unknown is NOT called
     // for known templates.
@@ -41,7 +42,7 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm() -> Result<(), 
     <field name="y" id="1" type="uint32" offset="0"/>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{Generator, GenerationConfig, Schema, parse};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
     let ir = parse(multi)?;
     let schema = Schema::from_ir(ir);
     let src = Generator::new(GenerationConfig::new("visitor_test"))
@@ -54,7 +55,10 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm() -> Result<(), 
     // Must contain an AnyMessage enum with both message arms
     assert!(src.contains("Alpha"), "must contain Alpha: {src}");
     assert!(src.contains("Beta"), "must contain Beta: {src}");
-    assert!(src.contains("pub enum AnyMessage"), "must emit AnyMessage dispatch");
+    assert!(
+        src.contains("pub enum AnyMessage"),
+        "must emit AnyMessage dispatch"
+    );
     // Must generate a FrameCursor for multi-template dispatch
     assert!(src.contains("FrameCursor"), "must emit FrameCursor");
     // Verify the generated code compiles and dispatches both messages

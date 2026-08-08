@@ -58,9 +58,13 @@ proptest = "1.11"
 rusteron-media-driver = { workspace = true }
 serial_test = { version = "3", features = ["file_locks"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+trybuild = "1"
 
 [build-dependencies]
 ergo-sbe = { workspace = true }
+
+[lints.rust]
+missing_docs = "warn"
 
 [[bench]]
 name = "cluster_codec_bench"

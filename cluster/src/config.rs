@@ -34,6 +34,7 @@ use crate::{ClusterError, CredentialsSupplier};
 /// }
 /// ```
 #[derive(Clone)]
+#[must_use = "retain the builder; each setter consumes self and returns a new builder"]
 pub struct SessionBuilder {
     /// Normalized ingress channel (C string for rusteron).
     ingress_c: Option<CString>,
@@ -107,16 +108,20 @@ impl SessionBuilder {
         self
     }
 
+    /// Override the ingress stream id (default: cluster-configured).
     pub fn ingress_stream_id(mut self, stream_id: i32) -> Self {
         self.ingress_stream_id = stream_id;
         self
     }
 
+    /// Override the egress stream id (default: cluster-configured).
     pub fn egress_stream_id(mut self, stream_id: i32) -> Self {
         self.egress_stream_id = stream_id;
         self
     }
 
+    /// Deadline for the connect sequence, keep-alives, and re-offers.
+    /// Default: 5 seconds.
     pub fn message_timeout(mut self, timeout: Duration) -> Self {
         self.message_timeout_ms = timeout.as_millis() as u64;
         self
@@ -199,15 +204,15 @@ impl SessionBuilder {
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
         // Surface channel parse errors first — they are the real cause.
-        if self.ingress_c.is_none() {
-            if let Some(ref err) = self.ingress_err {
-                return Err(err.clone());
-            }
+        if self.ingress_c.is_none()
+            && let Some(ref err) = self.ingress_err
+        {
+            return Err(err.clone());
         }
-        if self.egress_c.is_none() {
-            if let Some(ref err) = self.egress_err {
-                return Err(err.clone());
-            }
+        if self.egress_c.is_none()
+            && let Some(ref err) = self.egress_err
+        {
+            return Err(err.clone());
         }
         let has_ingress = self.ingress_c.is_some();
         let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());

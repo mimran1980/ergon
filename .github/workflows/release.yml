@@ -108,6 +108,25 @@ jobs:
           branch: main
           tags: true
 
+      - name: Run SBE benchmarks (LTO + no-LTO)
+        run: |
+          just bench
+          # Archive the run artifacts
+          RUN_ID=$(ls -t target/bench-runs/ | head -1)
+          echo "SBE run id: $RUN_ID"
+          cp target/bench-runs/"$RUN_ID"/lto/criterion/estimates.json bench-sbe-lto.json
+          cp target/bench-runs/"$RUN_ID"/no-lto/criterion/estimates.json bench-sbe-no-lto.json
+          cp target/bench-runs/"$RUN_ID"/run-manifest.json run-manifest-sbe.json
+
+      - name: Run cluster benchmarks (LTO + no-LTO)
+        run: |
+          just bench-cluster
+          RUN_ID=$(ls -t target/bench-runs/ | head -1)
+          echo "Cluster run id: $RUN_ID"
+          cp target/bench-runs/"$RUN_ID"/lto/criterion/estimates.json bench-cluster-lto.json
+          cp target/bench-runs/"$RUN_ID"/no-lto/criterion/estimates.json bench-cluster-no-lto.json
+          cp target/bench-runs/"$RUN_ID"/run-manifest.json run-manifest-cluster.json
+
       - name: Build release artifacts
         run: cargo build --release --workspace
 
@@ -119,6 +138,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,3 +147,53 @@ jobs:
           release_name: v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
+
+      - name: Upload SBE bench artifacts (LTO)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: bench-sbe-lto.json
+          asset_name: bench-sbe-lto-${{ steps.version.outputs.version }}.json
+          asset_content_type: application/json
+
+      - name: Upload SBE bench artifacts (no-LTO)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: bench-sbe-no-lto.json
+          asset_name: bench-sbe-no-lto-${{ steps.version.outputs.version }}.json
+          asset_content_type: application/json
+
+      - name: Upload cluster bench artifacts (LTO)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: bench-cluster-lto.json
+          asset_name: bench-cluster-lto-${{ steps.version.outputs.version }}.json
+          asset_content_type: application/json
+
+      - name: Upload cluster bench artifacts (no-LTO)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: bench-cluster-no-lto.json
+          asset_name: bench-cluster-no-lto-${{ steps.version.outputs.version }}.json
+          asset_content_type: application/json
+
+      - name: Upload run manifests
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: run-manifest-sbe.json
+          asset_name: run-manifest-sbe-${{ steps.version.outputs.version }}.json
+          asset_content_type: application/json

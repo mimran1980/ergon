@@ -13,28 +13,44 @@ use crate::codecs::session::{ChallengeEncoder, NewLeaderEventEncoder, SessionEve
 pub enum EgressEvent {
     /// A SessionEvent — connect result / state change.
     SessionEvent {
+        /// Echo of the connect request correlation id.
         correlation_id: i64,
+        /// Cluster-assigned session id.
         cluster_session_id: i64,
+        /// Current leadership term.
         leadership_term_id: i64,
+        /// Current leader member id.
         leader_member_id: i32,
+        /// Status code (OK, ERROR, REDIRECT, AUTH_REJECTED).
         code: EventCode,
+        /// Human-readable detail string from the cluster.
         detail: String,
     },
     /// An auth challenge.
     Challenge {
+        /// Echo of the connect request correlation id.
         correlation_id: i64,
+        /// Cluster-assigned session id.
         cluster_session_id: i64,
+        /// Encoded challenge data to pass to the credential supplier.
         encoded_challenge: Vec<u8>,
     },
     /// A new leader was elected.
     NewLeader {
+        /// Cluster-assigned session id.
         cluster_session_id: i64,
+        /// New leadership term.
         leadership_term_id: i64,
+        /// New leader member id.
         leader_member_id: i32,
+        /// Member-endpoint map string for the new leader.
         ingress_endpoints: String,
     },
     /// An unrecognised / non-connect-phase message.
-    Other { template_id: u16 },
+    Other {
+        /// The unknown SBE template id.
+        template_id: u16,
+    },
 }
 
 /// Parse a single egress fragment into an `EgressEvent`.

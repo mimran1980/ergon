@@ -4,28 +4,16 @@
 
 ### SBE codec gate — `just bench`
 
-Ratios are ergon / sbe-tool. Every maintained comparison has a strict `1.00`
-ceiling plus the gate's 0.5% noise tolerance. The table uses Criterion's
-regression point estimate—the estimator printed as `time` by Criterion and
-used by the gate. Tiny operations and full wire encode repeat 1,024 operations
-per Criterion iteration; their displayed values below are derived per
-operation. Do not treat those absolute sub-nanosecond values as portable
-latencies.
+Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
+ceiling with zero tolerance** (SBE) or **0.005 tolerance** (cluster). The
+executable policy is in `scripts/check-bench-gate.sh`.
 
-| Scenario | LTO ergon / sbe-tool | LTO ratio | No-LTO ergon / sbe-tool | No-LTO ratio |
-|---|---:|---:|---:|---:|
-| decode scalar | 0.708 / 0.773 ns | 0.9159 | 0.553 / 0.625 ns | 0.8850 |
-| decode array | 0.512 / 0.842 ns | 0.6080 | 0.500 / 0.843 ns | 0.5938 |
-| decode composite | 0.540 / 0.587 ns | 0.9211 | 0.526 / 0.570 ns | 0.9229 |
-| decode full message | 10.794 / 13.347 ns | 0.8087 | 10.887 / 13.350 ns | 0.8156 |
-| decode entry point | 0.684 / 1.186 ns | 0.5767 | 0.678 / 0.950 ns | 0.7138 |
-| encode scalar, header + body | 1.481 / 2.049 ns | 0.7226 | 1.454 / 2.037 ns | 0.7140 |
-| encode scalar, body only | 1.192 / 1.208 ns | 0.9867 | 1.186 / 1.210 ns | 0.9801 |
-| encode throughput, 10k | 12.349 / 14.251 µs | 0.8665 | 12.260 / 13.986 µs | 0.8766 |
-| decode throughput, 10k | 8.687 / 9.357 µs | 0.9284 | 8.481 / 9.359 µs | 0.9062 |
-| full wire encode | 3.780 / 5.697 ns | 0.6634 | 4.489 / 5.693 ns | 0.7885 |
+Do not copy point estimates into this file. Current results live in
+provenance-stamped artifacts under `target/bench-runs/<run-id>/`. Quote a
+result by naming its run id, commit, host, rustc, profile, and manifest hash —
+or do not quote it.
 
-Notes from this cycle:
+### Prior cycle notes
 
 - Previous decode results were invalid: sbe-tool direct decoders were wrapped
   at the header offset and read header bytes as body fields.

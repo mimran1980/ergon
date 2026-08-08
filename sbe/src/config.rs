@@ -394,7 +394,8 @@ impl std::fmt::Debug for GenerationConfig {
 }
 
 impl GenerationConfig {
-    /// Create a config for output module `{module_name}.rs`.
+    /// Create a config for output module `{module_name}.rs` with
+    /// [`GenerationProfile::Full`] defaults.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;
@@ -421,14 +422,30 @@ impl GenerationConfig {
         }
     }
 
+    /// Create a config with [`GenerationProfile::Lean`] defaults (no
+    /// Display/Debug, no meta attributes, no dispatch, no domain objects).
+    ///
+    /// Equivalent to `GenerationConfig::new(name).profile(GenerationProfile::Lean)`
+    /// but more direct. Explicit `with_*` settings (conversions, domain types,
+    /// auto-bool) can be added after — they are not cleared.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let c = GenerationConfig::lean("minimal");
+    /// ```
+    #[must_use]
+    pub fn lean(module_name: impl Into<String>) -> Self {
+        Self::new(module_name).profile(GenerationProfile::Lean)
+    }
+
     /// The module name for generated output.
     #[must_use]
     pub(crate) fn module_name(&self) -> &str {
         &self.module_name
     }
 
-    /// Override the module name set in [`new`]. Use when cloning a base
-    /// config across several schemas — set the placeholder in [`new`], then
+    /// Override the module name set in [`new`](Self::new). Use when cloning a base
+    /// config across several schemas — set the placeholder in [`new`](Self::new), then
     /// call `.clone().with_module_name("orderbook")` on each.
     ///
     /// ```rust
@@ -440,7 +457,12 @@ impl GenerationConfig {
     /// ```
     #[must_use]
     pub fn with_module_name(mut self, name: impl Into<String>) -> Self {
-        self.module_name = name.into();
+        let name = name.into();
+        debug_assert!(
+            is_valid_module_ident(&name),
+            "module name '{name}' contains path separators, '.', '..', or is empty"
+        );
+        self.module_name = name;
         self
     }
 
@@ -683,11 +705,12 @@ impl GenerationConfig {
     /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
     /// |---------|---------------|------------|----------|----------------|
     /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
-    /// | [`GenerationProfile::Lean`] | off | off | off | forced off |
+    /// | [`GenerationProfile::Lean`] | off | off | off | off |
     ///
-    /// **`Lean` also clears conversions** — `with_conversion`, `with_domain_type`,
-    /// and `with_bool_domain_type` are silently discarded. Call `profile` BEFORE
-    /// any conversion/domain-type config, or re-apply those calls after it.
+    /// Explicit `with_*` settings (conversions, domain types, auto-bool) win
+    /// regardless of order — `profile()` only sets the knobs it owns and
+    /// never clears explicit configuration. Prefer
+    /// [`lean`](Self::lean) for a clean Lean baseline.
     ///
     /// Chain further `with_*` calls after `profile` to override individual
     /// knobs. Example:
@@ -709,9 +732,9 @@ impl GenerationConfig {
                 self.enable_meta_attributes = false;
                 self.enable_dispatch = false;
                 self.domain_objects = false;
-                self.conversions.clear();
-                self.domain_types.clear();
-                self.auto_bool_domain = false;
+                // ponytail: explicit conversion/domain-type settings survive
+                // profile() — they represent deliberate schema choices with
+                // higher precedence than a bulk surface preset.
             }
         }
         self
@@ -914,4 +937,10 @@ mod tests {
         assert!(config.deprecated_attrs);
         Ok(())
     }
+}
+
+/// Reject module names that contain path separators, `.`, `..`, or are empty.
+/// A module name must be a single Rust identifier segment.
+pub(crate) fn is_valid_module_ident(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
 }

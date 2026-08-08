@@ -1,0 +1,50 @@
+# Public API baseline — machine-readable manifest of representative generated
+# surfaces. Each fixture is compiled, its public API extracted, and diffed
+# against the latest semver release by scripts/check-public-api.sh.
+#
+# Adding a fixture: copy the template, fill the fields, add to the [[fixtures]]
+# list. Removing a fixture: delete the section and update CI if it was gated.
+
+[[fixtures]]
+name = "car_full"
+description = "Full-profile car example schema — the primary API review artifact"
+schema = "sbe/tests/schemas/example/car-example-schema.xml"
+profile = "Full"
+generated_module = "car_example"
+
+[[fixtures]]
+name = "car_lean"
+description = "Lean-profile car — minimal surface, no Display/Debug/dispatch"
+schema = "sbe/tests/schemas/example/car-example-schema.xml"
+profile = "Lean"
+generated_module = "car_lean"
+
+[[fixtures]]
+name = "car_domain"
+description = "Car with domain objects enabled — DTO struct API surface"
+schema = "sbe/tests/schemas/example/car-example-schema.xml"
+profile = "Full"
+generated_module = "car_domain"
+config_extra = "with_domain_objects(true)"
+
+[[fixtures]]
+name = "multi_schema_shared"
+description = "Multi-schema sharing — two schemas, shared common module"
+schema = "sbe/tests/schemas/multi-schema/multi-a.xml"
+profile = "Full"
+generated_module = "multi_shared"
+shared_schema = "sbe/tests/schemas/multi-schema/multi-b.xml"
+
+[[fixtures]]
+name = "cluster_session"
+description = "Aeron cluster session schema 111 — cluster codec surface"
+schema = "cluster/schemas/aeron-cluster-codecs.xml"
+profile = "Full"
+generated_module = "session"
+package = "ergo-aeron-cluster"
+
+[metadata]
+# Semver baseline: compare against the last published release.
+baseline_tag = "v0.1.13"
+# Generated crates to check (publishable).
+packages = ["ergo-sbe", "ergo-aeron-cluster"]

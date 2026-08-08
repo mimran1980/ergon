@@ -28,8 +28,7 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
     let ir = parse_file(&Paths::example_schema())?;
     let schema_b = Schema::from_ir(ir);
     let mut g = Generator::new(
-        GenerationConfig::new("consumer_rt")
-            .with_external_sbe_rt("super::shared_rt::sbe_rt"),
+        GenerationConfig::new("consumer_rt").with_external_sbe_rt("super::shared_rt::sbe_rt"),
     );
     let ms = g.generate(&schema_b)?;
     let source_b = ms.modules().next().unwrap().source.clone();

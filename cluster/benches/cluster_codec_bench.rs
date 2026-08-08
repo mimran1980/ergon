@@ -3,6 +3,7 @@
 //! Both codecs encode byte-identical **body** output; this measures speed on
 //! **equal work**. The sbe-tool codecs remain only for these benches under
 //! `reference_sbe/`.
+#![allow(missing_docs)]
 //!
 //! ## Header equal-work (mandatory)
 //!

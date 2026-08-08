@@ -155,6 +155,7 @@ pub(crate) fn generate_message_decoder(
     let marker_name = schema_ident.to_string();
     schema_markers.insert(marker_name.clone());
     ts.extend(quote::quote! {
+        #[doc = concat!("Schema constants for the `", stringify!(#schema_ident), "` message: `SCHEMA_ID`, `SCHEMA_VERSION`, `TEMPLATE_ID`, `BLOCK_LENGTH`, `HEADER_LENGTH`.")]
         pub struct #schema_ident;
         impl #schema_ident {
             pub const SCHEMA_ID: u16 = #schema_id_lit;

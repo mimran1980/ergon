@@ -134,13 +134,13 @@ pub mod state;
 /// Aeron channel URI helpers (`AeronUriStringBuilder`).
 mod uri;
 
-pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
+pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim, ConnectStep};
 pub use config::SessionBuilder;
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
 pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
-pub use error::{ClusterError, PublicationFailure};
+pub use error::{AeronErrorSource, ClusterError, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
 pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
@@ -157,6 +157,7 @@ pub mod test_support;
 pub use test_support::{EmbeddedArchiveDriver, TestCluster};
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     #[test]
     fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {

@@ -148,6 +148,10 @@ pub(crate) fn generate_group_decoder(
     // Struct definition + wrap() + wrap_with_parent() + is_empty()
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
+    } else {
+        ts.extend(quote::quote! {
+            #[doc = concat!("Group `", stringify!(#decoder_ident), "` decoder — iterate entries in wire order.")]
+        });
     }
     // When entries have nested groups or var-data, there is no constant stride,
     // so O(1) random access is not available — use the iterator or skip_n().
@@ -1640,6 +1644,10 @@ pub(crate) fn generate_group_decoder(
 
     if let Some(ref desc) = g.description {
         ts.extend(doc_attr_tokens(desc));
+    } else {
+        ts.extend(quote::quote! {
+            #[doc = concat!("Entry decoder for the `", stringify!(#entry_decoder_ident), "` group — access fixed fields and var-data for one entry.")]
+        });
     }
     if total_tail == 0 {
         ts.extend(quote::quote! {

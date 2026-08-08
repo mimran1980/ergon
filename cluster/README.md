@@ -59,7 +59,8 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
     session.validate()?;
     let mut client = session.connect("/path/to/aeron-dir")?;
     client.offer(b"application payload")?;
-    client.close()?
+    client.close()?;
+    Ok(())
 }
 ```
 
@@ -102,14 +103,13 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
     enc.leadership_term_id(7)
         .cluster_session_id(99)
         .timestamp(42);
 
     // into_remaining_mut() returns the unwritten region after this message
     SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
-        .unwrap()
         .leadership_term_id(7)
         .cluster_session_id(99);
 
@@ -165,11 +165,7 @@ for the common benchmark rules.
 
 ## Limitations
 
-- No production support or compatibility guarantee.
-- No Cluster server, service container, archive, backup, or administration
-  implementation.
-- Shared ingress publications and externally injected Aeron ownership are not
-  supported by the current configuration validator.
-- Java interoperability depends on the local Aeron harness and environment.
+See the [Compatibility](https://mimran1980.github.io/ergon/cluster/compatibility.html)
+page in the book for supported stacks, failure modes, and current limitations.
 
 Apache-2.0.

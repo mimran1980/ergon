@@ -56,7 +56,9 @@ jobs:
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
       - run: cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-      - run: cargo doc --no-deps --workspace
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
+      - run: ./scripts/check-public-api.sh
 
   test:
     needs: policy

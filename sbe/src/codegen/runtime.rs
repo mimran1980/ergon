@@ -1016,6 +1016,12 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
 
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str(&format!(
+            "/// SBE enum `{name}` — wire discriminant {r_type}.\n",
+            name = &tokens[0].name,
+            r_type = r_type
+        ));
     }
 
     let tokens = quote::quote! {
@@ -1140,6 +1146,12 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
     // Emit set doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str(&format!(
+            "/// SBE bitset `{name}` — wire type {r_type}.\n",
+            name = &tokens[0].name,
+            r_type = r_type
+        ));
     }
 
     let tokens = quote::quote! {
@@ -1473,6 +1485,12 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str(&format!(
+            "/// SBE composite `{name}` — {size} byte wire image.\n",
+            name = &tokens[0].name,
+            size = size_lit
+        ));
     }
 
     let ts = quote::quote! {
@@ -1698,6 +1716,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     }
 
     let decoder_name = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    src.push_str(&format!(
+        "/// Flyweight decoder for the `{}` composite.\n",
+        tokens[0].name
+    ));
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
@@ -1974,6 +1996,8 @@ pub(crate) fn generate_any_message(
             });
         }
         out.extend(quote::quote! {
+            /// Tagged union of every message type in the schema — decode once,
+            /// then `match` to access the typed decoder.
             #[non_exhaustive]
             pub enum AnyMessage<'a> {
                 #enum_variants
@@ -1988,6 +2012,7 @@ pub(crate) fn generate_any_message(
     }
 
     out.extend(quote::quote! {
+        /// One decoded message with its buffer range and length.
         pub struct DecodedFrame<'a> {
             pub message: AnyMessage<'a>,
             pub range: core::ops::Range<usize>,
@@ -1996,6 +2021,7 @@ pub(crate) fn generate_any_message(
     });
 
     out.extend(quote::quote! {
+        /// How frames are delimited in a stream: length-prefixed or fixed-size.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum FramingPolicy {
             LengthPrefixU32Le,
@@ -2005,6 +2031,8 @@ pub(crate) fn generate_any_message(
     });
 
     out.extend(quote::quote! {
+        /// Iterator that yields [`DecodedFrame`]s from a byte buffer according
+        /// to a [`FramingPolicy`].
         pub struct FrameCursor<'a> {
             buf: &'a [u8],
             pos: usize,

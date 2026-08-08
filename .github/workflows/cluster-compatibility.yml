@@ -1,0 +1,47 @@
+name: Cluster Compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cluster/**'
+      - 'cluster/schemas/**'
+      - '.github/workflows/cluster-compatibility.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cluster/**'
+      - 'cluster/schemas/**'
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["17"]
+        aeron-version: ["1.46.8"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Build Aeron JARs
+        run: just build-aeron-jars
+
+      - name: Multi-node cluster tests
+        run: just test-aeron-cluster-harness

@@ -501,7 +501,7 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
                 "error must mention the keyword issue: {error}"
             );
         }
-        other => panic!("expected InvalidGeneratedSource, got {other:?}"),
+        other => unreachable!("expected InvalidGeneratedSource, got {other:?}"),
     }
 
     Ok(())

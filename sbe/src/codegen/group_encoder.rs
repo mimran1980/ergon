@@ -172,6 +172,7 @@ pub(crate) fn generate_group_encoder(
 
     let mut ts = proc_macro2::TokenStream::new();
     ts.extend(quote::quote! {
+        #[doc = concat!("Encoder for the `", stringify!(#group_enc_ident), "` group — call `add()` to write entries.")]
         #[must_use = "group encoder must call add() to write entries"]
         pub struct #group_enc_ident<'a> {
             buf: &'a mut [u8],
@@ -725,6 +726,7 @@ pub(crate) fn generate_group_encoder(
     }
 
     ts.extend(quote::quote! {
+        #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
         pub struct #entry_complete_ident<'a> {
             buf: &'a mut [u8], entry_start: usize, pos: usize,
         }
@@ -733,6 +735,7 @@ pub(crate) fn generate_group_encoder(
         }
     });
     ts.extend(quote::quote! {
+        #[doc = concat!("Entry encoder for the `", stringify!(#entry_enc_ident), "` group — set fields then call `complete()`.")]
         #[must_use = "entry encoder fields must be set before the next entry"]
         pub struct #entry_enc_ident<'a> {
             buf: &'a mut [u8],

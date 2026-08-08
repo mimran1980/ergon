@@ -1,0 +1,16 @@
+error: unused `SessionBuilder` that must be used
+ --> tests/must_use/session_builder.rs:7:5
+  |
+7 |     SessionBuilder::default().message_timeout(Duration::from_secs(5)); // discarded — must_use violation
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: retain the builder; each setter consumes self and returns a new builder
+note: the lint level is defined here
+ --> tests/must_use/session_builder.rs:1:9
+  |
+1 | #![deny(unused_must_use)]
+  |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+  |
+7 |     let _ = SessionBuilder::default().message_timeout(Duration::from_secs(5)); // discarded — must_use violation
+  |     +++++++

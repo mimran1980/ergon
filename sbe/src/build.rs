@@ -203,6 +203,18 @@ fn write_generated(
         return Err(BuildError::Empty);
     }
     for m in modules.modules() {
+        // Defense in depth: reject paths with directory components.
+        // Generated module paths must be simple basenames like "car.rs".
+        let path_str = &m.path;
+        if path_str.contains('/') || path_str.contains('\\') || path_str.contains("..") {
+            return Err(BuildError::Generate(
+                crate::codegen::GenerateError::InvalidConfiguration {
+                    option: "module_path".into(),
+                    value: path_str.clone(),
+                    reason: "module path must be a plain .rs basename — no path separators".into(),
+                },
+            ));
+        }
         let dest = out.join(&m.path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
@@ -258,7 +270,13 @@ macro_rules! sbe_mod {
                 non_camel_case_types,
                 non_snake_case,
                 unexpected_cfgs,
-                clippy::all
+                unused_unsafe,
+                clippy::all,
+                clippy::pedantic,
+                clippy::nursery,
+                clippy::unwrap_used,
+                clippy::expect_used,
+                clippy::panic
             )]
             include!(concat!(env!("OUT_DIR"), "/", stringify!($name), ".rs"));
         }
@@ -273,10 +291,16 @@ macro_rules! sbe_mod {
                 unused_assignments,
                 unused_must_use,
                 unused_comparisons,
+                unused_unsafe,
                 non_camel_case_types,
                 non_snake_case,
                 unexpected_cfgs,
-                clippy::all
+                clippy::all,
+                clippy::pedantic,
+                clippy::nursery,
+                clippy::unwrap_used,
+                clippy::expect_used,
+                clippy::panic
             )]
             include!(concat!(env!("OUT_DIR"), "/", stringify!($name), ".rs"));
         }

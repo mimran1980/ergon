@@ -56,9 +56,7 @@ pub(crate) fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, st
             let snippet = text[last_nl..line_end].trim();
             eprintln!(
                 "{}:{}:{}: {message}\n  |\n  | {snippet}\n  |",
-                state.name,
-                line,
-                col,
+                state.name, line, col,
             );
         } else {
             eprintln!("warning: {message}");

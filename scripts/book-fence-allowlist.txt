@@ -1,0 +1,26 @@
+# Allowlist of `rust,ignore` fences in book/.
+# Format: path:line rationale
+# CI fails if a fence is added, removed, or moved to a different line
+# without updating this file. Every entry must have a reason.
+book/src/cluster/chained-decoding.md:8 — Aeron dependency; cannot compile in book harness
+book/src/cluster/session-builder.md:5 — AsyncClusterConnect poll loop; Aeron dependency
+book/src/sbe/configuration/conversion-vs-domain.md:27 — synthetic type names; not real generated API
+book/src/sbe/configuration/conversion-vs-domain.md:39 — synthetic type names; not real generated API
+book/src/sbe/configuration/conversion-vs-domain.md:45 — synthetic type names; not real generated API
+book/src/sbe/configuration/hooks.md:21 — synthetic hook; not real generated API
+book/src/sbe/design-notes/nullval.md:40 — BooleanType sketch; illustrative not compilable
+book/src/sbe/feature-tour/generated-code.md:7 — import block; no harness context
+book/src/sbe/feature-tour/generated-code.md:47 — multi-template sketch
+book/src/sbe/feature-tour/generated-code.md:88 — multi-template sketch
+book/src/sbe/feature-tour/generated-code.md:102 — multi-template sketch
+book/src/sbe/feature-tour/generated-code.md:112 — multi-template sketch
+book/src/sbe/feature-tour/generated-code.md:142 — multi-template sketch
+book/src/sbe/feature-tour/generated-code.md:163 — multi-template sketch
+book/src/sbe/getting-started/encode-decode.md:39 — partial encode example; not full crate
+book/src/sbe/getting-started/include.md:6 — schematic; includes are compile-checked via other tests
+book/src/sbe/getting-started/multi-schema.md:17 — multi-schema sketch; not a real crate
+book/src/sbe/getting-started/multi-schema.md:40 — multi-schema sketch; not a real crate
+book/src/sbe/getting-started/multi-schema.md:78 — multi-schema sketch; not a real crate
+book/src/sbe/getting-started/multi-schema.md:106 — multi-schema sketch; not a real crate
+book/src/sbe/recipes/aeron-try-claim.md:10 — Aeron dependency; not compilable in book harness
+book/src/sbe/recipes/aeron-try-claim.md:39 — Aeron dependency; not compilable in book harness

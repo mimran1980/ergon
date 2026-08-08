@@ -1,5 +1,69 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+- **`SessionState::AwaitingNewLeader` variant removed.** The state machine now
+  uses `NotConnected` during leader re-election. Matches on `SessionState` that
+  reference the removed variant need a wildcard arm — the enum was already
+  `#[non_exhaustive]`.
+- **`ClusterError` changes.** `AeronErrorSource` is now `pub` (was
+  `pub(crate)`) with a private inner value and an `as_aeron_error()` accessor.
+  `ClusterError` gains `InvalidTimeout` and `PayloadTooLarge` variants. The
+  enum remains `#[non_exhaustive]`, so exhaustive matches must include a
+  wildcard.
+- **`AsyncClusterConnect::step()` returns `ConnectStep`.** The return type
+  changed from an opaque state to the named `#[non_exhaustive]` enum. Callers
+  that previously inspected internal fields must now match on `ConnectStep`
+  variants with a wildcard arm for forward compatibility.
+- **`GenerationConfig::profile(Lean)` no longer clears explicit
+  domain/conversion settings.** Settings set before `profile()` are preserved.
+  Use `GenerationConfig::lean(module_name)` for a clean Lean baseline.
+
+### Added
+- **`#[must_use]` on `SessionBuilder`, `AsyncClusterConnect`, `ClusterClaim`.**
+  Discarding any of these values under `#![deny(unused_must_use)]` produces a
+  compile error with a descriptive message. Normal chaining and completion
+  remain warning-free.
+- **`ConnectStep` re-exported at crate root.** Import as
+  `ergo_aeron_cluster::ConnectStep`. The enum is `#[non_exhaustive]` with
+  variants `CreateTransport`, `SendConnect`, `PollResponse`, `Done`.
+- **`GenerationConfig: Clone`.** Clone a base config and override individual
+  settings per schema with `with_module_name`.
+- **`GenerateError::InvalidGeneratedSource`.** Carries the failing module name
+  and syntax error, replacing the previous generic fallback.
+- **`with_module_name`** on `GenerationConfig` for per-schema module naming.
+- **Single-decode egress dispatch.** Known frames are decoded exactly once;
+  malformed frames (including frames shorter than the 8-byte SBE header)
+  produce `ClusterError::ProtocolError` instead of being silently classified
+  as unknown.
+- **Large-offer fragmentation fallback** with `offer_parts` gathering (zero
+  allocation on the fragmented path).
+- **`AeronErrorSource` public** with `as_aeron_error()` accessor, re-exported
+  from the crate root for `Error::source()` downcasting.
+- **Strict documentation gates.** `check-generated-docs` uses syn-based
+  parsing; `check-book-fences.sh` enforces an allowlist. Both run in
+  `check-products` and `release-check`.
+
+### Fixed
+- **Parser source-name diagnostics.** Schema parse errors now report the
+  failing file name and line number.
+- **Fail-closed generation.** Module name validation rejects path separators,
+  `..`, absolute paths, and empty keyword suffixes. Generated output paths are
+  contained within the declared output directory.
+- **Generated consumers warning-free.** Removed blanket `allow(unused,
+  dead_code)` from consumer tests; emitters omit unused locals, unnecessary
+  `mut`, and spurious `unsafe` blocks for schema shapes that don't need them.
+- **Timeout precision.** `SessionBuilder` setters now accept and store
+  `Duration` directly; sub-millisecond values are preserved and
+  `Instant::checked_add` failures return a typed error instead of panicking.
+- **Cluster rustdoc.** All manual public items in `ergo-aeron-cluster` are
+  documented; `#[allow(missing_docs)]` is confined to the unstable generated
+  codec seam.
+- **`#[must_use]` on session lifecycle types.** `SessionBuilder`,
+  `AsyncClusterConnect`, and `ClusterClaim` detect discarded values at compile
+  time.
+
 ## [0.1.13] — 2026-08-07
 
 ### Breaking

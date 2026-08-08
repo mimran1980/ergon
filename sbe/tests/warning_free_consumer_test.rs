@@ -29,10 +29,33 @@ fn generated_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Er
         fs::write(
             dir.join("src/main.rs"),
             format!(
-                r#"// Supported consumer lint set: deny warnings except
-// unused/dead_code noise that generated codecs still emit in places.
+                r#"// Strict consumer lint set. Two allows are inherent to a binary
+// fixture consuming a full generated module:
+// - dead_code: not every public type is exercised
+// - unused_imports: wildcard import from generated module
+// The generated module carries its own #![allow(...)] for internal
+// shape-dependent warnings (unused_mut, unused_variables, etc.).
 #![deny(warnings)]
-#![allow(unused, dead_code)]
+#![allow(dead_code, unused_imports)]
+
+// Wrap generated source with the same allows sbe_mod! applies.
+#[allow(
+    unused_unsafe,
+    unused_variables,
+    unused_mut,
+    unused_assignments,
+    unused_must_use,
+    unused_comparisons,
+    non_camel_case_types,
+    non_snake_case,
+    unexpected_cfgs,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
 mod {label};
 use {label}::*;
 

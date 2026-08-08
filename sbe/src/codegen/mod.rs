@@ -157,6 +157,15 @@ pub enum GenerateError {
         /// The syn parse error.
         error: String,
     },
+    /// A [`GenerationConfig`] field was rejected by codegen validation.
+    InvalidConfiguration {
+        /// Which config option was rejected.
+        option: String,
+        /// The rejected value.
+        value: String,
+        /// Why it was rejected.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for GenerateError {
@@ -190,6 +199,16 @@ impl core::fmt::Display for GenerateError {
                 write!(
                     f,
                     "generated module '{module}' failed Rust syntax validation: {error}"
+                )
+            }
+            Self::InvalidConfiguration {
+                option,
+                value,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "invalid configuration option '{option}': value '{value}' — {reason}"
                 )
             }
         }
@@ -402,11 +421,31 @@ impl Generator {
     /// Validate user-supplied paths that will be parsed by syn later. Catches
     /// typos at config-validation time rather than as panics in codegen.
     fn validate_paths(&self) -> Result<(), GenerateError> {
+        // Module name must be a single Rust identifier (no path separators).
+        let mn = self.config.module_name();
+        if !crate::config::is_valid_module_ident(mn) {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "module_name".into(),
+                value: mn.into(),
+                reason:
+                    "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
+                        .into(),
+            });
+        }
         if let Some(ref err_path) = self.config.error_from_path {
             syn::parse_str::<syn::Type>(err_path).map_err(|e| {
                 GenerateError::InvalidConversion {
                     selector: "error_from_path".into(),
                     reason: format!("error-from path is not a valid Rust type: {e}"),
+                }
+            })?;
+        }
+        if let Some(ref rt_path) = self.config.external_sbe_rt_path {
+            syn::parse_str::<syn::Path>(rt_path).map_err(|e| {
+                GenerateError::InvalidConfiguration {
+                    option: "external_sbe_rt".into(),
+                    value: rt_path.clone(),
+                    reason: format!("not a valid Rust path: {e}"),
                 }
             })?;
         }

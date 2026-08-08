@@ -7,6 +7,11 @@ use crate::codecs::session::sbe_rt::DecodeError;
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
 use crate::error::ClusterError;
 
+/// Every SBE frame begins with an 8-byte message header (blockLength,
+/// templateId, schemaId, version). Per the SBE specification § Message
+/// Header, this field is fixed and never varies.
+const SBE_MESSAGE_HEADER_LENGTH: usize = 8;
+
 /// A fully-decoded egress fragment, ready for listener dispatch.
 #[derive(Debug)]
 pub(crate) enum Fragment<'a> {
@@ -53,11 +58,18 @@ impl<'a> Fragment<'a> {
     /// Decode one egress fragment from wire bytes.
     ///
     /// Returns `Ok(None)` for unknown template IDs (not an error — the
-    /// cluster may send messages not in our schema). Returns `Err` only
-    /// for malformed frames, invalid text, or buffer overruns.
+    /// cluster may send messages not in our schema). Returns `Err` for
+    /// malformed frames (including frames too short to contain a complete
+    /// 8-byte SBE header), invalid text, or buffer overruns.
     pub(crate) fn decode(data: &'a [u8]) -> Result<Option<Self>, ClusterError> {
-        if data.len() < 8 {
-            return Ok(None);
+        if data.len() < SBE_MESSAGE_HEADER_LENGTH {
+            return Err(ClusterError::ProtocolError {
+                reason: format!(
+                    "frame too short for SBE header: {} bytes (need at least {})",
+                    data.len(),
+                    SBE_MESSAGE_HEADER_LENGTH
+                ),
+            });
         }
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,

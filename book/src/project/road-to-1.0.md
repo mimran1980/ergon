@@ -49,5 +49,22 @@ Cluster may remain `0.x` after sbe 1.0.
 
 ## Tracking
 
-Release process: [Verification & Release](verification.md).  
-Changelog: repository root `CHANGELOG.md`.
+- Release process: [Verification & Release](verification.md).
+- Changelog: repository root `CHANGELOG.md`.
+- External pilot: [External Schema Pilot](external-pilot.md).
+- Cluster compatibility: [Cluster Compatibility](../cluster/compatibility.md).
+- API baseline manifest: `api/public-api-baseline.toml` (checked by `scripts/check-public-api.sh`).
+- Performance ledger: [Performance Release Ledger](performance-release-ledger.md) —
+  artifacts uploaded to each GitHub release by `.github/workflows/release.yml`.
+
+### Status (2026-08)
+
+| Criterion | Status |
+|-----------|--------|
+| 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC |
+| 2. Warning-free consumers | Done (0.1.14) |
+| 3. Book complete | Done |
+| 4. Three consecutive minors at ≤1.00 | In progress (0.1.13 ✅, 0.1.14 ✅, need 0.1.15) |
+| 5. Migration docs | Done (CHANGELOG.md + book) |
+| 6. External signal | Pilot page created; execution pending |
+| Cluster 1.0 criteria | Compatibility page + CI workflow created |

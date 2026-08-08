@@ -32,10 +32,7 @@ mod tests {
     #[test]
     fn test_states_are_distinct() -> Result<(), Box<dyn std::error::Error>> {
         assert_ne!(SessionState::Connected, SessionState::Closed);
-        assert_ne!(
-            SessionState::AwaitingNewLeader,
-            SessionState::PendingClose
-        );
+        assert_ne!(SessionState::AwaitingNewLeader, SessionState::PendingClose);
 
         Ok(())
     }
