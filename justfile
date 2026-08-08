@@ -179,6 +179,15 @@ test: policy
     @echo ""
     @echo "=== test: complete ==="
 
+# Build Aeron JARs from the vendored submodule (requires Java 17+ and Gradle).
+build-aeron-jars:
+    cd aeron && ./gradlew jar
+
+# Run cluster harness tests with Java lifecycle (requires `build-aeron-jars` first).
+test-aeron-cluster-harness: build-aeron-jars
+    cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
+    cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
+
 # Workspace unit tests only.
 test-unit: policy
     cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1

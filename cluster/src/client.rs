@@ -91,7 +91,13 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: 
     // Decode once — the Fragment is used for state tracking AND listener dispatch.
     let frag = match crate::fragment::Fragment::decode(data) {
         Ok(Some(f)) => f,
-        _ => return,
+        Ok(None) => return, // unknown template — forward-compat, not an error
+        Err(e) => {
+            if ctx.decode_err.is_none() {
+                *ctx.decode_err = Some(e);
+            }
+            return;
+        }
     };
     // State tracking — no second decode
     match &frag {
@@ -128,7 +134,13 @@ fn dispatch_controlled<L: ControlledEgressListener>(
     // Decode once — shared between state tracking and listener dispatch.
     let frag = match crate::fragment::Fragment::decode(data) {
         Ok(Some(f)) => f,
-        _ => return AeronAction::AERON_ACTION_CONTINUE,
+        Ok(None) => return AeronAction::AERON_ACTION_CONTINUE, // unknown template
+        Err(e) => {
+            if ctx.decode_err.is_none() {
+                *ctx.decode_err = Some(e);
+            }
+            return AeronAction::AERON_ACTION_ABORT;
+        }
     };
     // State tracking — no second decode
     match &frag {
@@ -518,7 +530,13 @@ impl AeronCluster {
         if self.state != SessionState::Connected {
             return Err(ClusterError::NotConnected);
         }
-        let total = MSG_HDR_TOTAL + payload.len();
+        let total = MSG_HDR_TOTAL
+            .checked_add(payload.len())
+            .ok_or(ClusterError::PayloadTooLarge {
+                operation: "offer",
+                requested: payload.len(),
+                maximum: self.max_message_length,
+            })?;
         // Reject frames that exceed the publication's max message length
         // before making any Aeron call.
         if self.max_message_length > 0 && total > self.max_message_length {
