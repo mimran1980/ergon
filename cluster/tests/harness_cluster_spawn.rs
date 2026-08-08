@@ -1,4 +1,5 @@
 #![cfg(feature = "test-harness")]
+#![allow(missing_docs)]
 
 use ergo_aeron_cluster::TestCluster;
 use serial_test::serial;
