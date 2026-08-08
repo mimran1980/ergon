@@ -65,8 +65,8 @@ fn enum_nullval_defaults() -> Result<(), Box<dyn Error>> {
     let src = generate_from_str(CUSTOM_NULL_SCHEMA, "null_enum");
     // Default NullVal for uint8 is 255 (max value of the encoding type)
     assert!(src.contains("NullVal = 255"), "uint8 NullVal must default to 255");
-    // Default NullVal for int8 is 127
-    assert!(src.contains("NullVal = 127"), "int8 NullVal must default to 127");
+    // Default NullVal for int8 is -128 (i8::MIN — SBE uses min for signed)
+    assert!(src.contains("NullVal = -128"), "int8 NullVal must default to -128");
     // Variant discriminants
     assert!(src.contains("Low = 10"), "Low variant");
     assert!(src.contains("Medium = 50"), "Medium variant");
@@ -78,7 +78,7 @@ fn enum_nullval_defaults() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn signed_encoding_nullval_is_correct_width() -> Result<(), Box<dyn Error>> {
-    // Verify that int8 NullVal = 127 (not -1, not i8::MIN).
+    // Verify that int8 NullVal = -128 (i8::MIN per SBE convention).
     // The SBE spec says nullValue defaults to the max positive value for
     // the encoding type. For int8 that's 127.
     let src = generate_from_str(CUSTOM_NULL_SCHEMA, "signed_null");
