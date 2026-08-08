@@ -224,8 +224,16 @@ pub fn compile_fails_with_diagnostics(
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
-    let cargo =
-        format!("[package]\nname=\"{module_name}_cf\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("sbe");
+    let cargo = format!(
+        "[package]\nname=\"{module_name}_cf\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+        sbe_path.display(),
+    );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let target_dir = dir.join("target_ci");
@@ -531,8 +539,16 @@ pub fn compile_and_run_two_modules(
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
-    let cargo =
-        format!("[package]\nname=\"{test_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("sbe");
+    let cargo = format!(
+        "[package]\nname=\"{test_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+        sbe_path.display(),
+    );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let target_dir = dir.join("target_ci");
