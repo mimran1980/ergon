@@ -65,13 +65,16 @@ pub fn datetime_to_i64_nanos(dt: DateTime<Utc>) -> i64 {
 /// chrono representable limits for out-of-range values.
 #[must_use]
 pub fn i64_micros_to_naive(micros: i64) -> NaiveDateTime {
-    chrono::DateTime::from_timestamp_micros(micros).map(|dt| dt.naive_utc()).unwrap_or_else(|| {
-        if micros < 0 {
-            DateTime::<Utc>::MIN_UTC.naive_utc()
-        } else {
-            DateTime::<Utc>::MAX_UTC.naive_utc()
-        }
-    })
+    chrono::DateTime::from_timestamp_micros(micros).map_or_else(
+        || {
+            if micros < 0 {
+                DateTime::<Utc>::MIN_UTC.naive_utc()
+            } else {
+                DateTime::<Utc>::MAX_UTC.naive_utc()
+            }
+        },
+        |dt| dt.naive_utc(),
+    )
 }
 
 /// Convert [`NaiveDateTime`] → SBE `i64` wire microseconds.
