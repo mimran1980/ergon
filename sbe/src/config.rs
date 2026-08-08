@@ -798,6 +798,12 @@ impl Default for GenerationConfig {
     }
 }
 
+/// Reject module names that contain path separators, `.`, `..`, or are empty.
+/// A module name must be a single Rust identifier segment.
+pub(crate) fn is_valid_module_ident(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
@@ -937,10 +943,4 @@ mod tests {
         assert!(config.deprecated_attrs);
         Ok(())
     }
-}
-
-/// Reject module names that contain path separators, `.`, `..`, or are empty.
-/// A module name must be a single Rust identifier segment.
-pub(crate) fn is_valid_module_ident(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
 }

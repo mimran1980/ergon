@@ -34,15 +34,15 @@ rusteron-archive = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
-missing_docs = "warn"
+missing_docs = "deny"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [profile.bench]
 lto = true
