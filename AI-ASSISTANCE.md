@@ -905,7 +905,7 @@ See:
 - [`ordered_decoder_stages_test.rs`](sbe/tests/ordered_decoder_stages_test.rs)
 - [`l3_consuming_stages_test.rs`](sbe/tests/l3_consuming_stages_test.rs)
 - [`encoded_length_api_test.rs`](sbe/tests/encoded_length_api_test.rs)
-- [`sbe_tool_reference/README.md`](sbe/tests/sbe_tool_reference/README.md)
+- [`sbe_tool_reference/README.md`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/sbe_tool_reference/README.md)
 
 The strongest compatibility test is differential, not self-referential. For
 the same schema and logical values, the suite encodes with both `ergo-sbe` and
@@ -952,7 +952,7 @@ included asymmetric allocation or different buffer traversal. One official
 encode arm even risked overlapping header and body work. These were corrected
 so the maintained comparison uses the same input or byte-identical output and
 equivalent field work. The current methodology is documented in
-[`BENCHMARKS.md`](sbe/BENCHMARKS.md).
+[`BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md).
 
 Repeated benchmark execution likely explains part of the enormous token count.
 An agent would implement a change, benchmark it, discover a regression, revise
@@ -1785,7 +1785,7 @@ of real users who tell me:
 - what defects or operational surprises they found.
 
 The reports I most want are already listed in the
-[`ergo-sbe` README](sbe/README.md): multi-schema streams, DTO use, exact sizing with
+[`ergo-sbe` README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md): multi-schema streams, DTO use, exact sizing with
 Aeron/IPC claims, nested or ragged books, and mixed acting versions.
 
 Until that evidence exists, treat the crate as 0.x experimental software. Pin

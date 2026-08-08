@@ -20,10 +20,10 @@ order — there is no staged builder in 0.1.13.
 ```rust,no_run
   let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
   let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
-      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .fixed(&HeartbeatFixedFields { sequence: 7 })
       .encoded_length_with_header();
   let dec = HeartbeatDecoder::try_decode(&buf[..len], 0)?;
-  assert_eq!(dec.seq(), 7);
+  assert_eq!(dec.sequence(), 7);
 ```
 
 ## Optional fields and `apply_nulls`

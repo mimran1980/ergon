@@ -69,31 +69,36 @@ fields from nanos/micros fields with a single-element composite:
 ```
 
 This generates `TimestampMillis(pub u64)` — a distinct Rust type from `u64`.
-Now implement `TryFromSbe` / `TryToSbe` for it in your application crate:
+Now implement `TryFromSbe` / `TryToSbe` for it in your application crate.
+The traits are emitted into the generated module as `sbe_rt::TryFromSbe` /
+`sbe_rt::TryToSbe` — import them from your generated codec module, not from
+`ergo_sbe::codegen` (which is crate-private):
 
 ```rust,no_run
-use ergo_sbe::codegen::conversion_traits::{TryFromSbe, TryToSbe};
+// my_msgs is the module name passed to GenerationConfig::new("my_msgs")
+use my_msgs::sbe_rt::{TryFromSbe, TryToSbe};
+use my_msgs::TimestampMillis;
 
-impl TryFromSbe<u64> for chrono::NaiveDateTime {
-    type Error = ergo_sbe::DecodeError;
-    fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
-        // wire is milliseconds since epoch
-        let secs = (wire / 1000) as i64;
-        let nsecs = ((wire % 1000) * 1_000_000) as u32;
+impl TryFromSbe<TimestampMillis> for chrono::NaiveDateTime {
+    type Error = my_msgs::sbe_rt::DecodeError;
+    fn try_from_sbe(wire: TimestampMillis) -> Result<Self, Self::Error> {
+        let ms = wire.0; // TimestampMillis is a transparent wrapper around u64
+        let secs = (ms / 1000) as i64;
+        let nsecs = ((ms % 1000) * 1_000_000) as u32;
         chrono::DateTime::from_timestamp(secs, nsecs)
             .map(|dt| dt.naive_utc())
-            .ok_or_else(|| ergo_sbe::DecodeError::ValueOutOfRange {
+            .ok_or_else(|| my_msgs::sbe_rt::DecodeError::ValueOutOfRange {
                 field: "received_at",
-                value: wire as i128,
+                actual: ms as i128,
                 min: 0,
                 max: i64::MAX as i128,
             })
     }
 }
 
-impl TryToSbe<u64> for chrono::NaiveDateTime {
-    fn try_to_sbe(&self) -> Result<u64, ergo_sbe::EncodeError> {
-        Ok(self.and_utc().timestamp_millis() as u64)
+impl TryToSbe<TimestampMillis> for chrono::NaiveDateTime {
+    fn try_to_sbe(&self) -> Result<TimestampMillis, ergo_sbe::EncodeError> {
+        Ok(TimestampMillis(self.and_utc().timestamp_millis() as u64))
     }
 }
 ```

@@ -62,9 +62,9 @@ Cluster may remain `0.x` after sbe 1.0.
 | Criterion | Status |
 |-----------|--------|
 | 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC |
-| 2. Warning-free consumers | Done (0.1.14) |
-| 3. Book complete | Done |
-| 4. Three consecutive minors at ≤1.00 | In progress (0.1.13 ✅, 0.1.14 ✅, need 0.1.15) |
-| 5. Migration docs | Done (CHANGELOG.md + book) |
-| 6. External signal | Pilot page created; execution pending |
+| 2. Parity gate at ≤1.00 | Done (0.1.13 ✅, 0.1.14 ✅, need 0.1.15 for three-in-a-row) |
+| 3. Wire compatibility | Done (FIX SBE conformance, sbe-tool parity tests) |
+| 4. Warning-free consumers | Done (0.1.14) |
+| 5. Book + migration docs | Done (CHANGELOG.md + book + feature-integrations page) |
+| 6. External signal | Pilot page created; FIX SBE conformance suite passing |
 | Cluster 1.0 criteria | Compatibility page + CI workflow created |

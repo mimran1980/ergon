@@ -15,11 +15,10 @@ You can work **field-by-field** (classic flyweight) **or** fill / materialise a
   // Per-field zero-copy access — no DTO allocation.
   let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
   let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
-      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .fixed(&HeartbeatFixedFields { sequence: 7 })
       .encoded_length_with_header();
-  let dec = HeartbeatDecoder::try_from(&buf[..len])?;
-  let seq = dec.seq();
-  assert_eq!(seq, 7);
+  let dec = HeartbeatDecoder::try_decode(&buf[..len], 0)?;
+  assert_eq!(dec.sequence(), 7);
 ```
 
 #### Encode — whole fixed block as a struct
@@ -31,7 +30,7 @@ additions break at **compile time**:
   // Fill every field at once — missing field → compile error.
   let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
   let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
-      .fixed(&HeartbeatFixedFields { seq: 7 })
+      .fixed(&HeartbeatFixedFields { sequence: 7 })
       .encoded_length_with_header();
 // If the schema later adds a field to the fixed block, this stops compiling
 // until you add it to the struct literal — you cannot silently omit it.

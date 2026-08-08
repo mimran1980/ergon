@@ -6,7 +6,7 @@ schemas with **official-SBE wire fidelity** inside the published profile
 ([compatibility](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)).
 Wire-order safety is enforced at **compile time** — calling methods out of schema
 order is a type error. All 10 maintained SBE parity benchmarks pass at or below the
-`1.00×` sbe-tool ceiling under both LTO profiles (0.1.10).
+`1.00×` sbe-tool ceiling under both LTO profiles (0.1.14).
 
 ## Quick start
 
