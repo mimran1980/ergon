@@ -7,7 +7,7 @@
 mod common;
 use common::{Paths, compile_and_run};
 
-fn test_compiles(label: &str, features: &[&str], code: &str) {
+fn test_compiles(label: &str, _features: &[&str], code: &str) {
     let ir = ergo_sbe::parse_file(&Paths::example_schema()).expect("parse schema");
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config =

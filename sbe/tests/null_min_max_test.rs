@@ -39,7 +39,7 @@ const CUSTOM_NULL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn generate_from_str(xml: &str, module_name: &str) -> String {
     let ir = ergo_sbe::parse(xml).unwrap_or_else(|e| panic!("parse custom schema: {e}"));
     let schema = ergo_sbe::Schema::from_ir(ir);
-    let mut g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name));
+    let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name));
     let ms = g.generate(&schema).unwrap();
     ms.modules().next().unwrap().source.clone()
 }
