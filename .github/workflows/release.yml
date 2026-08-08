@@ -121,11 +121,11 @@ jobs:
       - name: Run cluster benchmarks (LTO + no-LTO)
         run: |
           just bench-cluster
-          RUN_ID=$(ls -t target/bench-runs/ | head -1)
-          echo "Cluster run id: $RUN_ID"
-          cp target/bench-runs/"$RUN_ID"/lto/criterion/estimates.json bench-cluster-lto.json
-          cp target/bench-runs/"$RUN_ID"/no-lto/criterion/estimates.json bench-cluster-no-lto.json
-          cp target/bench-runs/"$RUN_ID"/run-manifest.json run-manifest-cluster.json
+          # Cluster benches write to target/criterion (default Criterion dir), not
+          # target/bench-runs/ (which is SBE-only via scripts/run-sbe-bench.sh).
+          cp target/criterion/estimates.json bench-cluster-lto.json
+          cp target/bench-no-lto/criterion/estimates.json bench-cluster-no-lto.json
+          echo "Cluster bench artifacts copied"
 
       - name: Build release artifacts
         run: cargo build --release --workspace

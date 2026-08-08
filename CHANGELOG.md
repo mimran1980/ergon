@@ -3,10 +3,10 @@
 ## [Unreleased]
 
 ### Breaking
-- **`SessionState::AwaitingNewLeader` variant removed.** The state machine now
-  uses `NotConnected` during leader re-election. Matches on `SessionState` that
-  reference the removed variant need a wildcard arm — the enum was already
-  `#[non_exhaustive]`.
+- **`SessionState::AwaitingNewLeaderConnection` variant removed.** The
+  separate reconnection-pending state was merged into `AwaitingNewLeader`.
+  Matches on `SessionState` that reference the removed variant need a
+  wildcard arm — the enum was already `#[non_exhaustive]`.
 - **`ClusterError` changes.** `AeronErrorSource` is now `pub` (was
   `pub(crate)`) with a private inner value and an `as_aeron_error()` accessor.
   `ClusterError` gains `InvalidTimeout` and `PayloadTooLarge` variants. The

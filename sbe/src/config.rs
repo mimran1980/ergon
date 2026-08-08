@@ -810,10 +810,17 @@ impl Default for GenerationConfig {
     }
 }
 
-/// Reject module names that contain path separators, `.`, `..`, or are empty.
-/// A module name must be a single Rust identifier segment.
+/// Reject module names that contain path separators, `.`, `..`, are empty,
+/// or start with a digit (not a legal Rust identifier). Full identifier
+/// validation (`syn::parse_str::<syn::Ident>`) happens at generation time;
+/// this fast check catches the most common escape attempts early.
 pub(crate) fn is_valid_module_ident(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
+        && !name.starts_with(|c: char| c.is_ascii_digit())
 }
 
 #[cfg(test)]

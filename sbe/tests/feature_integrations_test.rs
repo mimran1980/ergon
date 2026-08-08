@@ -43,7 +43,9 @@ fn compact_strings_domain_roundtrip() {
         &["compact_str"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use compact_domain::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1,
@@ -84,7 +86,9 @@ fn smol_strings_domain_roundtrip() {
         &["smol_str"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use smol_domain::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,
@@ -115,7 +119,9 @@ fn bytes_domain_roundtrip() {
         &["bytes"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use bytes_domain::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,
@@ -148,7 +154,9 @@ fn codec_compact_str_accessor() {
         &["compact_str"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use codec_compact::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,
@@ -181,7 +189,9 @@ fn codec_bytes_accessor_roundtrip() {
         &["bytes"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use codec_bytes::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,
@@ -257,7 +267,9 @@ fn all_features_together_compile() {
         &["compact_str", "bytes", "chrono"],
         r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
     use all_feats::*;
-    let mut buf = [0u8; 512];
+    // Test buffer: car schema with "Porsche"+"Carrera" and empty groups fits well under 256 bytes.
+// Production code must use compute_length_with_header(); this test checks feature integration, not sizing.
+let mut buf = [0u8; 256];
     let len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&FixedFields {
             serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,

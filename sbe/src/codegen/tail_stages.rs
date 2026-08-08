@@ -366,7 +366,7 @@ pub(crate) fn generate_owner_consuming_stages(
             });
         }
 
-        // Feature-gated: into_<field>_as_bytes() — zero-copy Bytes.
+        // Feature-gated: into_<field>_as_bytes() — shared-ownership Bytes (one copy from wire).
         #[cfg(feature = "bytes")]
         {
             let as_bytes_ident =
@@ -375,7 +375,7 @@ pub(crate) fn generate_owner_consuming_stages(
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     /// Consume this stage, read the next var-data field as
-                    /// [`bytes::Bytes`] (zero-copy shared buffer), and advance.
+                    /// [`bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
                     #[inline]
                     pub fn #as_bytes_ident(self) -> Result<(bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
                         let (data, next) = self.#into_ident()?;

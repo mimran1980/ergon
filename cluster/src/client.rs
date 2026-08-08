@@ -547,7 +547,12 @@ impl AeronCluster {
             });
         }
         // Fast path: zero-alloc claim when the payload fits in one fragment.
-        if payload.len() <= self.max_payload_length || self.max_payload_length == 0 {
+        // max_payload_length == 0 means the publication constants haven't been
+        // cached yet (fresh connect, get_constants failed, or transport not ready).
+        // In that case we always attempt try_claim — it will fail with a proper
+        // Aeron error if the payload is too large.
+        let claim_eligible = payload.len() <= self.max_payload_length || self.max_payload_length == 0;
+        if claim_eligible {
             return match self.try_claim(payload.len()) {
                 Ok(mut claim) => {
                     claim.payload_mut().copy_from_slice(payload);

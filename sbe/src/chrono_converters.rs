@@ -7,7 +7,8 @@
 //!
 //! # Usage (build.rs)
 //!
-//! ```rust,ignore
+//! ```rust,no_run
+//! # // This compiles only with --features chrono; no_run lets it pass doc-tests.
 //! use ergo_sbe::{GenerationConfig, ConversionSelector};
 //!
 //! let config = GenerationConfig::new("msgs")
@@ -23,7 +24,8 @@
 //!
 //! # Generated API
 //!
-//! ```rust,ignore
+//! ```rust,no_run
+//! # // Compiles only with chrono feature enabled.
 //! // Decoder
 //! let ts: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
 //! // Encoder

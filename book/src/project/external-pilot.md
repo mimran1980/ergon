@@ -3,27 +3,17 @@
 > The final ergo-sbe exit criterion (roadmap § 1.0) requires an external
 > schema family to exercise the full pipeline.
 
-## Status: ✅ Complete
+## Status: ✅ Complete (pre-existing test suite)
 
-The **FIX SBE Conformance Suite** is implemented and passing. Wire parity
-against the Real Logic Java reference is verified for multiple message
-shapes including nested groups and var-data.
+The **FIX SBE Conformance Suite** (`sbe/tests/fix_sbe_conformance_test.rs`,
+fixtures, and `scripts/run-fix-sbe-conformance.sh`) has been in the
+repository since 0.1.10 and continues to pass. Wire parity against the
+Real Logic Java reference is verified for multiple message shapes
+including nested groups and var-data.
 
-## Implementation
-
-| Artifact | Location |
-|----------|----------|
-| Conformance test | `sbe/tests/fix_sbe_conformance_test.rs` |
-| Fixtures (RL golden responses) | `sbe/tests/fixtures/fix-sbe-conformance/` |
-| RL Validator script | `scripts/run-fix-sbe-conformance.sh` |
-
-### Test coverage
-
-- **7 tests passing** (2026-08-08)
-- Byte-identical encode against Real Logic Java golden responses
-- Suite tests 1, 2, and 3: nested repeating groups + var-data
-- Optional Java RLValidator acceptance (`scripts/run-fix-sbe-conformance.sh`)
-- Encoded-length matrix validation
+This page documents the existing pilot as the 1.0 external-signal
+criterion. No new code was required on this branch — the suite was
+already complete.
 
 ### Schema
 

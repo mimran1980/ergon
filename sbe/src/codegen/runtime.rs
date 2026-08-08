@@ -1017,11 +1017,11 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     } else {
-        src.push_str(&format!(
-            "/// SBE enum `{name}` — wire discriminant {r_type}.\n",
-            name = &tokens[0].name,
-            r_type = r_type
-        ));
+        src.push_str("/// SBE enum `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — wire discriminant ");
+        src.push_str(&r_type);
+        src.push_str(".\n");
     }
 
     let tokens = quote::quote! {
@@ -1147,11 +1147,11 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     } else {
-        src.push_str(&format!(
-            "/// SBE bitset `{name}` — wire type {r_type}.\n",
-            name = &tokens[0].name,
-            r_type = r_type
-        ));
+        src.push_str("/// SBE bitset `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — wire type ");
+        src.push_str(&r_type);
+        src.push_str(".\n");
     }
 
     let tokens = quote::quote! {
@@ -1486,11 +1486,11 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
     } else {
-        src.push_str(&format!(
-            "/// SBE composite `{name}` — {size} byte wire image.\n",
-            name = &tokens[0].name,
-            size = size_lit
-        ));
+        src.push_str("/// SBE composite `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — ");
+        src.push_str(&size_lit.to_string());
+        src.push_str(" byte wire image.\n");
     }
 
     let ts = quote::quote! {
@@ -1716,10 +1716,9 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     }
 
     let decoder_name = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
-    src.push_str(&format!(
-        "/// Flyweight decoder for the `{}` composite.\n",
-        tokens[0].name
-    ));
+    src.push_str("/// Flyweight decoder for the `");
+    src.push_str(&tokens[0].name);
+    src.push_str("` composite.\n");
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
