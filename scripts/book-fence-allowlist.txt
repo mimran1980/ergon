@@ -15,8 +15,6 @@ book/src/sbe/configuration/conversion-vs-domain.md:45 — synthetic type names; 
 book/src/sbe/configuration/hooks.md:21 — synthetic hook; not real generated API
 book/src/sbe/core-concepts/composite-layout.md:22 — const size assert sketch; not compilable
 book/src/sbe/core-concepts/wire-order-stages.md:46 — approximate generated shape; not compilable
-book/src/sbe/design-notes/nullval.md:12 — rejected Option sketch; not compilable
-book/src/sbe/design-notes/nullval.md:40 — BooleanType sketch; illustrative not compilable
 book/src/sbe/design-notes/type-state.md:10 — stage-field tuple sketch; not compilable
 book/src/sbe/design-notes/type-state.md:51 — approximate generated shape; not compilable
 book/src/sbe/feature-tour/generated-code.md:7 — import block; no harness context
@@ -53,3 +51,8 @@ book/src/sbe/configuration/feature-integrations.md:138 — chrono config; needs 
 book/src/sbe/configuration/feature-integrations.md:154 — generated chrono API sketch
 book/src/sbe/configuration/feature-integrations.md:166 — direct converter usage; needs chrono feature
 book/src/sbe/configuration/feature-integrations.md:209 — combined features config; needs multiple features
+book/src/sbe/design-notes/nullval.md:12 — rejected Option sketch; illustrative not compilable
+book/src/sbe/design-notes/nullval.md:40 — BooleanType sketch; illustrative not compilable
+book/src/sbe/design-notes/nullval.md:72 — NullVal→Option config sketch; needs feature not in harness
+book/src/sbe/design-notes/nullval.md:90 — generated before/after sketch; illustrative not compilable
+book/src/sbe/design-notes/nullval.md:98 — BooleanType Option sketch; illustrative not compilable

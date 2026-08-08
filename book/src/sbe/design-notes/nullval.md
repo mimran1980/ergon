@@ -55,3 +55,50 @@ On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
 `wrap_and_apply_header` when any optional may be left unset — otherwise stale
 buffer bytes ship as if they were intentional values. See
 [Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
+
+## Opting into `Option<T>` (configurable)
+
+The `NullVal` default is the right choice for most schemas — zero-cost, matches
+the schema's declared value domain, and keeps generated code lean. But when a
+codebase already uses `Option` heavily, or when every access site already checks
+for null, the boilerplate of `if code == EventCode::NullVal` can outweigh the
+simplicity.
+
+Ergon supports **opt-in `Option<T>` mapping** per selector — the wire format
+stays identical (`NullVal` discriminant → `None`, any other value → `Some(v)`),
+but the generated accessors use `Option<EventCode>` (for enums) and
+`Option<bool>` (for `BooleanType`):
+
+```rust,ignore
+use ergo_sbe::{ConversionSelector, GenerationConfig};
+
+// Enum fields matching this selector → Option<EventCode>
+let config = GenerationConfig::new("msgs")
+    .with_null_as_option(ConversionSelector::named_type("EventCode"));
+
+// All boolean fields → Option<bool>
+let config = GenerationConfig::new("msgs")
+    .with_null_as_option(ConversionSelector::named_type("BooleanType"));
+
+// Every enum in the schema
+let config = GenerationConfig::new("msgs")
+    .with_null_as_option(ConversionSelector::all_enums());
+```
+
+Generated diff (enum):
+
+```rust,ignore
+// Default (NullVal)                    // with_null_as_option
+pub fn code(&self) -> EventCode { … }   →   pub fn code(&self) -> Option<EventCode> { … }
+pub fn set_code(&mut self, v: EventCode) →   pub fn set_code(&mut self, v: Option<EventCode>)
+```
+
+Generated diff (bool):
+
+```rust,ignore
+pub fn available(&self) -> BooleanType { … }   →   pub fn available(&self) -> Option<bool> { … }
+```
+
+The wire encoding is byte-identical either way — `None` writes the `NullVal`
+discriminant, `Some(v)` writes `v`. The choice is pure API preference.
+
