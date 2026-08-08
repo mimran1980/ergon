@@ -12,6 +12,6 @@
 | **`Cents`**, **`rust_decimal::Decimal`**, … | **App** — what your code wants to use |
 
 ```rust,ignore
-  app  ──price_from / price()──►  wire Decimal on the buffer
-  buf  ──price_as / price()──►   app value
+  app  ──price_from / try_price──►  wire Decimal on the buffer
+  buf  ──price_as / try_price──►   app value
 ```

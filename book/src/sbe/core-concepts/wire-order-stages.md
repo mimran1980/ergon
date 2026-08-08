@@ -36,9 +36,9 @@ zero-sized orthogonal marker for header-present vs body-only mode — it tracks
 header capability, not wire-order progression. Duplicating the stage graph
 for `HeaderPresent` and `HeaderAbsent` would provide no latency advantage.
 
-All 10 maintained SBE parity comparisons pass at or below the `1.00×` ceiling
-under both LTO-on and LTO-off profiles. The closest case is LTO body-only
-encode at `0.9867×` sbe-tool.
+All maintained SBE parity comparisons pass at or below the `1.00×` ceiling
+under both LTO-on and LTO-off profiles. Current results are in
+[Benchmarks](../benchmarks.md); see the methodology page for reproduction.
 
 Generated code emits **separate types** for each stage, same fields, different
 methods:

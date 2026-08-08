@@ -8,7 +8,7 @@ your hot path needs, keep compilation lean otherwise.
 | Feature | Best for | Cost |
 |---------|----------|------|
 | `compact_str` | Tickers, symbols, venue codes (≤24 B) | 0 alloc, 46–56% faster than `String` at ≤24 B; converges at 32 B+ |
-| `smol_str` | Long-lived DTOs, shared/cached objects | Consistent ~5 ns, O(1) clone |
+| `smol_str` | Long-lived DTOs, shared/cached objects | O(1) clone; from_utf8 cost grows with size (5–25 ns) |
 | `bytes` | Relay/forwarding, zero-copy pipelines | Competitive at all sizes, best at 256 B+ |
 | `chrono` | Typed timestamps on encode/decode | +2–6 ns vs raw `i64` (4–8× slower but negligible vs I/O) |
 
@@ -78,8 +78,8 @@ let (symbol, next_stage) = stage.into_symbol_as_compact_str()?;
 | 256 B | 19.1 ns | 19.2 ns | 25.3 ns | **13.6 ns** | 14.1 ns |
 
 **Takeaway:** CompactString is 46–56% faster for symbols ≤24 bytes (no heap).
-At larger sizes it converges with String. Bytes wins at 256 B+. SmolStr is
-consistent ~5 ns across all sizes (O(1) clone cost is elsewhere).
+At larger sizes it converges with String. Bytes wins at 256 B+. SmolStr has
+O(1) clone regardless of length; `from_utf8` cost grows with payload size.
 
 Run: `cargo bench -p ergo-sbe-benchmarks --bench var_data_types_bench --all-features`
 
