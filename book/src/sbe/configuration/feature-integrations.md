@@ -186,8 +186,8 @@ assert_eq!(naive_to_i64_micros(naive), 1_720_000_000_000_000);
 
 | Operation | Time | vs `raw i64` | Notes |
 |-----------|------|-------------|-------|
-| `i64_nanos_to_datetime` | **2.8 ns** | 4.1× | Wire → DateTime<Utc> (decode) |
-| `datetime_to_i64_nanos` | **4.8 ns** | 7.0× | DateTime<Utc> → wire (encode) |
+| `i64_nanos_to_datetime` | **2.8 ns** | 4.1× | Wire → `DateTime<Utc>` (decode) |
+| `datetime_to_i64_nanos` | **4.8 ns** | 7.0× | `DateTime<Utc>` → wire (encode) |
 | `i64_micros_to_naive` | **5.5 ns** | 8.1× | Wire → NaiveDateTime (decode) |
 | `naive_to_i64_micros` | **5.6 ns** | 8.2× | NaiveDateTime → wire (encode) |
 | `raw i64` no-op | **0.68 ns** | baseline | Identity pass-through |
