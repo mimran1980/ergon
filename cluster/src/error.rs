@@ -4,7 +4,28 @@
 //! types). `Box<dyn std::error::Error>` is reserved for **unit tests** and
 //! **`fn main()`** only — never for the public client API.
 
+use std::sync::Arc;
+
 use rusteron_client::{AeronCError, AeronOfferError};
+
+/// Wraps an [`AeronCError`] so it can be stored as a `#[source]` in
+/// [`ClusterError`] variants. Constructed implicitly via `From<AeronCError>`.
+#[derive(Debug, Clone)]
+pub(crate) struct AeronErrorSource(Arc<AeronCError>);
+
+impl std::fmt::Display for AeronErrorSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for AeronErrorSource {} // No further source — leaf error
+
+impl From<AeronCError> for AeronErrorSource {
+    fn from(e: AeronCError) -> Self {
+        Self(Arc::new(e))
+    }
+}
 
 /// Typed classification of a failed `offer` / `try_claim` (Aeron publication
 /// sentinels). Use [`Self::is_retryable`] for idle/retry loops.
@@ -88,7 +109,7 @@ impl std::fmt::Display for PublicationFailure {
 /// All errors the cluster client can produce.
 ///
 /// This is the sole error type for the public `ergo-aeron-cluster` API.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ClusterError {
     /// Connection failed for a non-protocol reason (e.g. context, subscription).
     #[error("connect failed: {reason}")]
@@ -132,7 +153,12 @@ pub enum ClusterError {
     ReconnectFailed { reason: String },
     /// Channel / URI construction failed.
     #[error("channel URI: {reason}")]
-    ChannelUri { reason: String },
+    ChannelUri {
+        reason: String,
+        /// The underlying AeronUriString parse error.
+        #[source]
+        source: AeronErrorSource,
+    },
     /// Underlying Aeron / rusteron client error with context.
     #[error("aeron {context}: {message}")]
     Aeron {
@@ -140,6 +166,9 @@ pub enum ClusterError {
         context: &'static str,
         /// Display of the Aeron error.
         message: String,
+        /// The underlying Aeron error (when available).
+        #[source]
+        source: Option<AeronErrorSource>,
     },
     /// An egress listener callback panicked.
     #[error("egress listener panicked: {context}")]
@@ -159,9 +188,12 @@ impl ClusterError {
     /// Wrap an [`AeronCError`] with a static context label.
     #[inline]
     pub fn aeron(context: &'static str, e: AeronCError) -> Self {
+        let message = e.to_string();
+        let source = e.into();
         Self::Aeron {
             context,
-            message: e.to_string(),
+            message,
+            source: Some(source),
         }
     }
 
@@ -198,6 +230,7 @@ impl ClusterError {
         Self::Aeron {
             context: "publication",
             message: reason.into(),
+            source: None,
         }
     }
 

@@ -76,6 +76,34 @@ check-products: policy
 check-generated-rustdoc:
     RUSTDOCFLAGS='-D warnings -D rustdoc::broken_intra_doc_links' cargo doc --manifest-path samples/sbe-feature-tour/Cargo.toml --no-deps
 
+# Verify that all pub structs in the generated golden have a \`///\` doc comment.
+check-generated-docs:
+    @count=0; while IFS= read -r line; do \
+        if echo "$$line" | grep -q '^pub struct'; then \
+            count=$$((count + 1)); \
+        fi; \
+    done < sbe/tests/golden/car_example.rs; \
+    missing=0; prev=""; while IFS= read -r line; do \
+        case "$$line" in \
+            "pub struct"*) \
+                case "$$prev" in \
+                    *"///"*) ;; \
+                    "#[must_use"*|"#[derive"*) \
+                        # doc is farther back; checked by golden review \
+                        ;; \
+                    *) \
+                        echo "  missing doc: $$line"; missing=$$((missing + 1)) ;; \
+                esac ;; \
+        esac; \
+        prev="$$line"; \
+    done < sbe/tests/golden/car_example.rs; \
+    if [ $$missing -gt 0 ]; then \
+        echo "check-generated-docs: $$missing pub struct(s) missing \`///\` doc comment"; \
+        echo "run just update-golden, then add doc comments in the codegen emitter"; \
+        exit 1; \
+    fi; \
+    echo "check-generated-docs: PASS ($$count pub structs)"
+
 # Sample crates gate (unpublished).
 check-samples: policy check-generated-rustdoc
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings

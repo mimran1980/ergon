@@ -145,7 +145,14 @@ impl<L: EgressListener> EgressAdapter<L> {
             Some(f) => f,
             None => return Ok(false),
         };
+        self.dispatch_fragment(frag)
+    }
 
+    /// Dispatch a pre-decoded [`Fragment`]. Use when the caller already
+    /// decoded (e.g. one decode shared between state tracking and listener
+    /// dispatch on the poll path).
+    #[inline]
+    pub fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<bool, crate::ClusterError> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.dispatch(frag);
         }));
