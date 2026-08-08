@@ -65,7 +65,7 @@ pub fn datetime_to_i64_nanos(dt: DateTime<Utc>) -> i64 {
 /// chrono representable limits for out-of-range values.
 #[must_use]
 pub fn i64_micros_to_naive(micros: i64) -> NaiveDateTime {
-    chrono::NaiveDateTime::from_timestamp_micros(micros).unwrap_or_else(|| {
+    chrono::DateTime::from_timestamp_micros(micros).map(|dt| dt.naive_utc()).unwrap_or_else(|| {
         if micros < 0 {
             DateTime::<Utc>::MIN_UTC.naive_utc()
         } else {
@@ -80,7 +80,7 @@ pub fn i64_micros_to_naive(micros: i64) -> NaiveDateTime {
 /// microsecond-precision timestamps round-trip exactly without saturating
 /// through the narrower nanosecond range.
 #[must_use]
-pub fn naive_to_i64_micros(dt: NaiveDateTime) -> i64 {
+pub const fn naive_to_i64_micros(dt: NaiveDateTime) -> i64 {
     dt.and_utc().timestamp_micros()
 }
 
