@@ -4,7 +4,12 @@
 //!
 //! Run with:
 //!   cargo bench -p ergo-sbe-benchmarks --bench var_data_types_bench --all-features
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::implicit_clone,
+    clippy::doc_markdown
+)]
 
 use std::hint::black_box;
 

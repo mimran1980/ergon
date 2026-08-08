@@ -281,8 +281,18 @@ fn _compile_and_run(
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
-    let mut cargo =
-        format!("[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n");
+    let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("sbe");
+    // Enable all optional features so generated code that references
+    // compact_str/smol_str/bytes/chrono types resolves.
+    let mut cargo = format!(
+        "[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+        sbe_path.display(),
+    );
     if !features.is_empty() {
         cargo.push_str("[features]\n");
         for f in features {
@@ -290,7 +300,6 @@ fn _compile_and_run(
         }
     }
     if !deps.is_empty() {
-        cargo.push_str("[dependencies]\n");
         cargo.push_str(deps);
     }
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
