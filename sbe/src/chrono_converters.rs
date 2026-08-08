@@ -59,23 +59,31 @@ pub fn datetime_to_i64_nanos(dt: DateTime<Utc>) -> i64 {
 }
 
 /// Convert SBE `i64` wire microseconds → [`NaiveDateTime`].
+///
+/// Uses microsecond-native construction to preserve the full `i64` range
+/// (valid microsecond timestamps span ±292 000 years). Saturates at the
+/// chrono representable limits for out-of-range values.
 #[must_use]
 pub fn i64_micros_to_naive(micros: i64) -> NaiveDateTime {
-    let secs = micros.div_euclid(1_000_000);
-    let nsecs: u32 = (micros.rem_euclid(1_000_000) * 1000) as u32;
-    DateTime::from_timestamp_nanos(
-        secs.saturating_mul(1_000_000_000)
-            .saturating_add(i64::from(nsecs)),
-    )
-    .naive_utc()
+    DateTime::from_timestamp_micros(micros)
+        .map(|dt| dt.naive_utc())
+        .unwrap_or_else(|| {
+            if micros < 0 {
+                DateTime::<Utc>::MIN_UTC.naive_utc()
+            } else {
+                DateTime::<Utc>::MAX_UTC.naive_utc()
+            }
+        })
 }
 
 /// Convert [`NaiveDateTime`] → SBE `i64` wire microseconds.
+///
+/// Uses microsecond-native extraction (`timestamp_micros()`) so valid
+/// microsecond-precision timestamps round-trip exactly without saturating
+/// through the narrower nanosecond range.
 #[must_use]
 pub fn naive_to_i64_micros(dt: NaiveDateTime) -> i64 {
-    dt.and_utc()
-        .timestamp_nanos_opt()
-        .map_or(i64::MAX, |n| n / 1000)
+    dt.and_utc().timestamp_micros()
 }
 
 #[cfg(test)]
