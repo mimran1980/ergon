@@ -418,6 +418,44 @@ impl Generator {
         Ok(())
     }
 
+    /// Validate conversions against the token union of all schemas in a
+    /// multi-schema generation. A [`crate::ConversionSelector::NamedType`]
+    /// that only exists in one schema's type declarations is valid as long
+    /// as at least one schema in the union contains the named type.
+    fn validate_conversions_union(
+        &self,
+        union: &[(&Schema, crate::structured_ir::SchemaElements)],
+    ) -> Result<(), GenerateError> {
+        if !self.config.has_conversions() {
+            return Ok(());
+        }
+        for sel in &self.config.conversions {
+            if let crate::ConversionSelector::NamedType(name) = sel {
+                let matched = union.iter().any(|(_, elements)| {
+                    elements.composites.iter().any(|c| c[0].name == *name)
+                        || elements.enums.iter().any(|e| e[0].name == *name)
+                        || elements.sets.iter().any(|s| s[0].name == *name)
+                });
+                if !matched {
+                    return Err(GenerateError::InvalidConversion {
+                        selector: format!("{sel:?}"),
+                        reason: "no matching type found in any schema".into(),
+                    });
+                }
+            }
+            // SemanticType and FieldPath are validated during codegen per-field.
+        }
+        for (sel, rust_type) in &self.config.domain_types {
+            syn::parse_str::<syn::Type>(rust_type).map_err(|e| {
+                GenerateError::InvalidConversion {
+                    selector: format!("{sel:?}"),
+                    reason: format!("domain type path is not a valid Rust type: {e}"),
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     /// Validate user-supplied paths that will be parsed by syn later. Catches
     /// typos at config-validation time rather than as panics in codegen.
     fn validate_paths(&self) -> Result<(), GenerateError> {
@@ -568,9 +606,20 @@ impl Generator {
         let mut shared_types: HashSet<String> = HashSet::new();
         let empty_set: HashSet<String> = HashSet::new();
 
+        // Validate conversions against the union of all schemas' types, not
+        // each schema individually. A NamedType selector may only exist in
+        // one schema's type declarations (valid), and the union covers all.
+        {
+            let mut union_elements: Vec<(&Schema, crate::structured_ir::SchemaElements)> =
+                Vec::with_capacity(schemas.len());
+            for (schema, _) in schemas.iter() {
+                union_elements.push((schema, partition_tokens(&schema.ir.tokens)));
+            }
+            self.validate_conversions_union(&union_elements)?;
+        }
+
         for (i, (schema, module_name)) in schemas.iter().enumerate() {
             self.validate_header_values(schema)?;
-            self.validate_conversions(schema)?;
             if i == 0 {
                 let elements = partition_tokens(&schema.ir.tokens);
                 for et in &elements.enums {
