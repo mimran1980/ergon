@@ -608,3 +608,20 @@ confidence failures; only the exact decision to yank remains undocumented.
 - Multi-template dispatch (`AnyMessage`, `FrameCursor`)
 - Schema evolution (`sinceVersion`, `deprecated`)
 - `build.rs` integration
+
+## [0.1.15] — 2026-08-09
+
+### Added
+- `with_null_as_option` / `with_all_enums_as_option` — enum NullVal -> Option<T>
+- `as_option()` on every generated enum
+- `nullValue` on `<enum>` elements now parsed from XML
+- Group-entry enum fields support `with_null_as_option`
+- `generate_with_config` test helper reduces boilerplate
+
+### Changed
+- Crate description: `"Simple Binary Encoding (SBE)..."` for crates.io visibility
+- Tests now return `Result<(), Box<dyn Error>>` with `?`
+
+### Fixed
+- Duplicated `raw_ident` codegen consolidated
+- `with_all_enums_as_option` doc corrected
