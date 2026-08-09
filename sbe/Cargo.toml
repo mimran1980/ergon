@@ -43,7 +43,6 @@ miette = { version = "7", features = ["derive"] }
 syn = { version = "3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-<<<<<<< HEAD
 prettyplease = "0.3"
 sha2 = "0.11"
 compact_str = { version = "0.8", optional = true }
