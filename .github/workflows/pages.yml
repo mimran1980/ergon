@@ -27,7 +27,7 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
 
       - name: Install system dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
@@ -42,7 +42,7 @@ jobs:
         run: just book-ci
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: target/book
 
@@ -55,4 +55,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

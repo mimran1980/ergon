@@ -443,6 +443,11 @@ impl BooleanType {
             _ => Self::NullVal,
         }
     }
+    /// Map [`NullVal`] → [`None`], any other variant → [`Some`].
+    #[inline]
+    pub const fn as_option(self) -> Option<Self> {
+        if matches!(self, Self::NullVal) { None } else { Some(self) }
+    }
     /// Returns `Some(true)` / `Some(false)` for the valid boolean
     /// values. Returns `None` for `NullVal` or any unknown raw
     /// discriminant — the SBE boolean wire type is tri-state
@@ -528,6 +533,11 @@ impl Model {
             _ => Self::NullVal,
         }
     }
+    /// Map [`NullVal`] → [`None`], any other variant → [`Some`].
+    #[inline]
+    pub const fn as_option(self) -> Option<Self> {
+        if matches!(self, Self::NullVal) { None } else { Some(self) }
+    }
 }
 impl From<Model> for u8 {
     #[inline]
@@ -590,6 +600,11 @@ impl BoostType {
             b'K' => Self::KERS,
             _ => Self::NullVal,
         }
+    }
+    /// Map [`NullVal`] → [`None`], any other variant → [`Some`].
+    #[inline]
+    pub const fn as_option(self) -> Option<Self> {
+        if matches!(self, Self::NullVal) { None } else { Some(self) }
     }
 }
 impl From<BoostType> for u8 {

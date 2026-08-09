@@ -599,6 +599,9 @@ pub(crate) fn parse_enum(
             deprecated: node.attribute("deprecated").is_some(),
             description: collect_description(node),
             semantic_type,
+            null_value: node
+                .attribute("nullValue")
+                .and_then(|s| parse_u64_val(s, Some(encoding_type))),
             ..Encoding::default()
         },
         span: None,

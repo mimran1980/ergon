@@ -1051,6 +1051,12 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 }
             }
 
+            /// Map [`NullVal`] → [`None`], any other variant → [`Some`].
+            #[inline]
+            pub const fn as_option(self) -> Option<Self> {
+                if matches!(self, Self::NullVal) { None } else { Some(self) }
+            }
+
             #as_bool_method
         }
 

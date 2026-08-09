@@ -83,6 +83,132 @@ fn enum_nullval_defaults() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn enum_custom_null_value_is_parsed() -> Result<(), Box<dyn Error>> {
+    let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2024/sbe"
+    package="cust_null" id="1" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="EventCode" encodingType="uint8" nullValue="99">
+            <validValue name="Ok">0</validValue>
+            <validValue name="Error">1</validValue>
+        </enum>
+        <enum name="Priority" encodingType="int8" nullValue="-1">
+            <validValue name="Low">0</validValue>
+            <validValue name="High">1</validValue>
+        </enum>
+    </types>
+    <sbe:message name="Msg" id="1">
+        <field name="code" id="1" type="EventCode" offset="0"/>
+        <field name="prio" id="2" type="Priority" offset="1"/>
+    </sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergo_sbe::parse(schema)?;
+    let schema_obj = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("cust_null");
+    let modules = ergo_sbe::Generator::new(config).generate(&schema_obj)?;
+    let src = &modules.modules().next().unwrap().source;
+
+    // uint8 enum with nullValue="99" → NullVal = 99 (not 255)
+    assert!(
+        src.contains("NullVal = 99"),
+        "uint8 custom NullVal must be 99"
+    );
+    // int8 enum with nullValue="-1" → NullVal = -1 (not -128)
+    assert!(
+        src.contains("NullVal = -1"),
+        "int8 custom NullVal must be -1"
+    );
+    Ok(())
+}
+
+#[test]
+fn with_null_as_option_generates_option_accessor() -> Result<(), Box<dyn Error>> {
+    let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2024/sbe"
+    package="opt_enum" id="1" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="Buy">1</validValue>
+            <validValue name="Sell">2</validValue>
+        </enum>
+    </types>
+    <sbe:message name="Order" id="1">
+        <field name="side" id="1" type="Side" offset="0"/>
+    </sbe:message>
+</sbe:messageSchema>"#;
+
+    let ir = ergo_sbe::parse(schema)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("opt_enum")
+        .with_null_as_option(ergo_sbe::ConversionSelector::named_type("Side"));
+    let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+
+    // Generated getter returns Option<Side>
+    assert!(
+        src.contains("-> Option<Side>"),
+        "getter must return Option<Side>, got:\n{src}"
+    );
+    // as_option() method exists on the enum
+    assert!(
+        src.contains("fn as_option"),
+        "as_option() must be generated"
+    );
+    // NullVal is still present
+    assert!(
+        src.contains("NullVal = 255"),
+        "NullVal discriminant must be present"
+    );
+    Ok(())
+}
+
+#[test]
+fn with_all_enums_as_option_catches_every_enum() -> Result<(), Box<dyn Error>> {
+    let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2024/sbe"
+    package="all_opt" id="1" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="Buy">1</validValue>
+        </enum>
+    </types>
+    <sbe:message name="Order" id="1">
+        <field name="side" id="1" type="Side" offset="0"/>
+    </sbe:message>
+</sbe:messageSchema>"#;
+
+    let ir = ergo_sbe::parse(schema)?;
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let config = ergo_sbe::GenerationConfig::new("all_opt").with_all_enums_as_option();
+    let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+
+    assert!(
+        src.contains("-> Option<Side>"),
+        "all_enums_as_option must produce Option<Side>"
+    );
+    Ok(())
+}
+
+#[test]
 fn signed_encoding_nullval_is_correct_width() -> Result<(), Box<dyn Error>> {
     // Verify that int8 NullVal = -128 (i8::MIN per SBE convention).
     // The SBE spec says nullValue defaults to the max positive value for
