@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.15.1] — 2026-08-10
+## [0.1.16] — 2026-08-10
 
 ### Changed
 - Decoder structs use `offset` field (matching sbe-tool naming), replacing internal `base_addr` cache. `read_addr_unchecked` helper removed.
