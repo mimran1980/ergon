@@ -1733,6 +1733,8 @@ pub(crate) fn generate_message_decoder(
             domain_types,
             enable_meta_attributes,
             enable_dispatch,
+            null_as_option,
+            all_enums_as_option,
         ));
     }
 

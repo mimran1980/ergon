@@ -1,6 +1,6 @@
 [package]
 name = "ergo-sbe"
-description = "Opinionated, idiomatic Rust code generation for Simple Binary Encoding."
+description = "Simple Binary Encoding (SBE) — opinionated, idiomatic Rust code generation for low-latency trading protocols."
 keywords = ["sbe", "codegen", "binary", "protocol", "simplebinaryencoding"]
 categories = ["encoding", "parser-implementations", "development-tools"]
 readme = "README.md"

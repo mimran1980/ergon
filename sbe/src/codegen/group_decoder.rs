@@ -10,7 +10,9 @@ use crate::structured_ir::{
     rust_type,
 };
 
-use super::conversion_helpers::{field_has_conversion_free, find_domain_type};
+use super::conversion_helpers::{
+    enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
+};
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
 use super::runtime::{
@@ -26,6 +28,8 @@ pub(crate) fn generate_group_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
     enable_meta_attributes: bool,
     enable_dispatch: bool,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let span = proc_macro2::Span::call_site();
@@ -1101,21 +1105,42 @@ pub(crate) fn generate_group_decoder(
                         }
                     });
                 } else {
-                    entry_body.extend(quote::quote! {
-                        #[inline]
-                        pub fn #f_name_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
-                            #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
-                        }
+                    if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
+                        entry_body.extend(quote::quote! {
+                            /// Returns [`None`] when the wire discriminant equals
+                            /// [`#target_ident::NullVal`]; [`Some`] otherwise.
+                            #[inline]
+                            pub fn #f_name_ident(&self) -> Option<#target_ident> {
+                                let offset = self.pos + #offset_lit;
+                                let raw = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) });
+                                #target_ident::from_raw(raw).as_option()
+                            }
 
-                        #[inline]
-                        pub const fn #raw_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            let mut bytes = [0u8; #prim_size_lit];
-                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                            #r_type_ty::#order_fn(bytes)
-                        }
-                    });
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> #r_type_ty {
+                                let offset = self.pos + #offset_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                                #r_type_ty::#order_fn(bytes)
+                            }
+                        });
+                    } else {
+                        entry_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #f_name_ident(&self) -> #target_ident {
+                                let offset = self.pos + #offset_lit;
+                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                            }
+
+                            #[inline]
+                            pub const fn #raw_ident(&self) -> #r_type_ty {
+                                let offset = self.pos + #offset_lit;
+                                let mut bytes = [0u8; #prim_size_lit];
+                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                                #r_type_ty::#order_fn(bytes)
+                            }
+                        });
+                    }
                 }
 
                 if crate::structured_ir::is_bool_enum(elements, enum_name) {
@@ -1698,6 +1723,8 @@ pub(crate) fn generate_group_decoder(
             domain_types,
             enable_meta_attributes,
             enable_dispatch,
+            null_as_option,
+            all_enums_as_option,
         ));
     }
 
