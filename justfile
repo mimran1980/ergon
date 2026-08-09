@@ -277,32 +277,7 @@ bench-historic:
 # Regenerate historic baselines after verifying no regressions.
 bench-historic-update:
     cargo bench -p ergo-sbe-benchmarks --bench ergo_historic_bench
-    @just _update-historic-baseline
-
-_update-historic-baseline:
-    #!/usr/bin/env python3
-    import json, os
-    baselines = {}
-    for root, _, files in os.walk('target/criterion'):
-        if 'new' in root and 'estimates.json' in files:
-            rel = os.path.relpath(root, 'target/criterion')
-            parts = rel.split('/')
-            if len(parts) >= 3 and parts[-1] == 'new':
-                group_dir = parts[0]
-                fn_name = parts[1]
-                key = group_dir.replace('ergo_historic_', 'ergo_historic/', 1)
-                key = f'{key}/{fn_name}'
-                with open(os.path.join(root, 'estimates.json')) as fh:
-                    e = json.load(fh)
-                baselines[key] = e.get('slope', e['median'])['point_estimate']
-    baseline = 'sbe/benchmarks/ergo-historic-baseline.env'
-    with open(baseline, 'w') as fh:
-        fh.write('# Historic ergo benchmark baselines.\\n')
-        fh.write('# Gate: scripts/check-bench-historic.sh\\n')
-        for k, v in sorted(baselines.items()):
-            fh.write(f'{k}={v}\\n')
-    print(f'Wrote {len(baselines)} baselines to {baseline}')
-    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
+    scripts/update-historic-baseline.sh
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
 bench-diagnostics:
