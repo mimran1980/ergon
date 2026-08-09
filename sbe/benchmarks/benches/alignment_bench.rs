@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::codec_matrix::{Fixed64Decoder, Fixed64Encoder, Fixed64FixedFields};
+use std::hint::black_box;
 
 #[repr(align(64))]
 struct Aligned([u8; 512]);
