@@ -27,7 +27,7 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
 
       - name: Install system dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
