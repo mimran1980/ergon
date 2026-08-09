@@ -371,6 +371,8 @@ pub struct GenerationConfig {
     pub(crate) all_enums_as_option: bool,
     /// Emit `bool` ↔ BooleanType converters automatically for every enum
     /// detected as boolean (name `BooleanType` or `semanticType="Boolean"`).
+    /// Equivalent to calling `with_domain_type(named_type(name), "bool")` for
+    /// each — saves boilerplate on schemas with many boolean flags.
     pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
     /// Appended when a name is a Rust keyword (default `"_"`).

@@ -1105,6 +1105,15 @@ pub(crate) fn generate_group_decoder(
                         }
                     });
                 } else {
+                    let raw_getter = quote::quote! {
+                        #[inline]
+                        pub const fn #raw_ident(&self) -> #r_type_ty {
+                            let offset = self.pos + #offset_lit;
+                            let mut bytes = [0u8; #prim_size_lit];
+                            bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
+                            #r_type_ty::#order_fn(bytes)
+                        }
+                    };
                     if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
                         entry_body.extend(quote::quote! {
                             /// Returns [`None`] when the wire discriminant equals
@@ -1115,15 +1124,8 @@ pub(crate) fn generate_group_decoder(
                                 let raw = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) });
                                 #target_ident::from_raw(raw).as_option()
                             }
-
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> #r_type_ty {
-                                let offset = self.pos + #offset_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                #r_type_ty::#order_fn(bytes)
-                            }
                         });
+                        entry_body.extend(raw_getter);
                     } else {
                         entry_body.extend(quote::quote! {
                             #[inline]
@@ -1131,15 +1133,8 @@ pub(crate) fn generate_group_decoder(
                                 let offset = self.pos + #offset_lit;
                                 #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                             }
-
-                            #[inline]
-                            pub const fn #raw_ident(&self) -> #r_type_ty {
-                                let offset = self.pos + #offset_lit;
-                                let mut bytes = [0u8; #prim_size_lit];
-                                bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
-                                #r_type_ty::#order_fn(bytes)
-                            }
                         });
+                        entry_body.extend(raw_getter);
                     }
                 }
 
