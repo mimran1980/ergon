@@ -28,7 +28,12 @@ fn generate_with_config(
     let ir = ergo_sbe::parse(&xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
-    let source = modules.modules().next().ok_or("no module generated")?.source.clone();
+    let source = modules
+        .modules()
+        .next()
+        .ok_or("no module generated")?
+        .source
+        .clone();
     Ok(source)
 }
 
@@ -103,8 +108,14 @@ fn null_as_option_generates_option_getter() -> Result<(), Box<dyn Error>> {
     let config = ergo_sbe::GenerationConfig::new("nao_rt")
         .with_null_as_option(ergo_sbe::ConversionSelector::named_type("Side"));
     let src = generate_with_config(config.clone(), types, fields)?;
-    assert!(src.contains("as_option()"), "getter must use as_option() for NullVal→None mapping");
-    assert!(src.contains("-> Option<Side>"), "getter must return Option<Side>");
+    assert!(
+        src.contains("as_option()"),
+        "getter must use as_option() for NullVal→None mapping"
+    );
+    assert!(
+        src.contains("-> Option<Side>"),
+        "getter must return Option<Side>"
+    );
     Ok(())
 }
 
