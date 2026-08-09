@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::codec_matrix::*;
+use std::hint::black_box;
 
 fn fixed_frames() -> ([u8; 24], [u8; 72], [u8; 264]) {
     let mut fixed16 = [0u8; Fixed16Encoder::ENCODED_LENGTH];

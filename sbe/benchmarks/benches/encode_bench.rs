@@ -21,6 +21,7 @@
 use ergo_sbe_benchmarks::ergo_car::*;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 #[path = "_common.rs"]
 mod common;

@@ -37,6 +37,7 @@
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::large_comp::{BigBlock, WideDecoder, WideEncoder};
+use std::hint::black_box;
 
 /// Mid-block field under test (schema name `f15`, offset 15 * 8 = 120).
 const TARGET_FIELD_VALUE: u64 = 0x0123_4567_89AB_CDEF;

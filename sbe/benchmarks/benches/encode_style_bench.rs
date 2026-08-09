@@ -30,6 +30,7 @@ use ergo_sbe_benchmarks::ergo_car::{
 };
 use ergo_sbe_benchmarks::large_comp as le;
 use ergo_sbe_benchmarks::large_comp_be as be;
+use std::hint::black_box;
 
 /// Native values vary with `seed` so construction cannot be fully folded away.
 fn engine_from_seed(seed: u64) -> Engine {

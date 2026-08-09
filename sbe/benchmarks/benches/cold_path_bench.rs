@@ -6,6 +6,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use std::hint::black_box;
 
 const SCHEMA: &str = include_str!("../schemas/codec-matrix.xml");
 
