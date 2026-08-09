@@ -110,7 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -118,7 +119,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                CreateRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                CreateRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(correlation)
                 .expire_time_ms(60_000)
@@ -149,7 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -157,7 +160,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                QuoteRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                QuoteRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(quote_corr)
                 .rfq_id(1)
@@ -184,7 +188,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -192,7 +197,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                AcceptRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                AcceptRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc.correlation(accept_corr).rfq_id(1).accept_user_id(500);
         }
         for _ in 0..10 {

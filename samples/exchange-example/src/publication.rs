@@ -185,7 +185,8 @@ impl<P: Publication> ClaimPublisher<P> {
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
-                            let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
+                            let mut enc =
+                                L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
                             enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
@@ -247,7 +248,8 @@ impl<P: Publication> ClaimPublisher<P> {
                     let _ = after.payload_with(
                         inner_len,
                         |payload| -> Result<(), sbe_rt::EncodeError> {
-                            let mut enc = TradeEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
+                            let mut enc =
+                                TradeEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
                             enc.source(Source::Bitget)
                                 .exchange_timestamp(*exchange_ts_ns)
                                 .receive_timestamp(*receive_ts_ns)
