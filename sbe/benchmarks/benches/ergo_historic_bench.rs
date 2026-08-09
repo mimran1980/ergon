@@ -11,13 +11,20 @@
 //! Gate: `scripts/check-bench-historic.sh`.
 
 #![allow(
-    clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery,
-    missing_docs, unused, unused_variables, unused_must_use, unsafe_code
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    missing_docs,
+    unused,
+    unused_variables,
+    unused_must_use,
+    unsafe_code
 )]
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use ergo_sbe_benchmarks::null_option::*;
 use ergo_sbe_benchmarks::converters::*;
+use ergo_sbe_benchmarks::null_option::*;
 use std::hint::black_box;
 
 // ── Null-as-option encode / decode ────────────────────────────────────────

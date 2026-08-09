@@ -52,7 +52,8 @@ fn test_symbols(tests_dir: &Path) -> Result<BTreeSet<String>, Box<dyn std::error
 fn parity_manifest_covers_every_reference_crate_and_supported_feature()
 -> Result<(), Box<dyn std::error::Error>> {
     let tests_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let manifest = toml::from_str::<toml::Value>(&fs::read_to_string(tests_dir.join("parity-cases.toml"))?)?;
+    let manifest =
+        toml::from_str::<toml::Value>(&fs::read_to_string(tests_dir.join("parity-cases.toml"))?)?;
     let root = manifest
         .as_table()
         .ok_or("parity-cases.toml must contain a table")?;

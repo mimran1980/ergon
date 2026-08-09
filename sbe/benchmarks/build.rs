@@ -90,11 +90,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let converters_schema = manifest.join("schemas/bench-converters.xml");
     ergo_sbe::generate_to_out_dir(
         &converters_schema,
-        ergo_sbe::GenerationConfig::new("converters_bench")
-            .with_domain_type(
-                ergo_sbe::ConversionSelector::named_type("Decimal"),
-                "rust_decimal::Decimal",
-            ),
+        ergo_sbe::GenerationConfig::new("converters_bench").with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "rust_decimal::Decimal",
+        ),
     )?;
 
     // Extended parity schemas (test fixtures with sbe-tool reference crates).
