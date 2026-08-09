@@ -8,7 +8,7 @@ For a schema with one message (`Car`), `ergo-sbe` emits a single Rust module wit
 // Each message gets a zero-allocation decoder.
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) base_addr: usize,
+    pub(crate) offset: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }

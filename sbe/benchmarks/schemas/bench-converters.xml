@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="bench_converters"
+                   id="1201"
+                   version="0"
+                   semanticVersion="1.0"
+                   description="Benchmark: all converter types — Decimal, compact_str, smol_str, bytes, chrono"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Standard SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <!-- Standard SBE Decimal: mantissa (int64) + exponent (int8 constant -2) -->
+        <composite name="Decimal" description="SBE decimal with constant exponent -2">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8" presence="constant">-2</type>
+        </composite>
+        <!-- Var-data encoding composites -->
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="ASCII"/>
+        </composite>
+        <composite name="varDataEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0"/>
+        </composite>
+    </types>
+    <sbe:message name="Converters" id="1" description="Converter benchmark message">
+        <!-- Decimal composite: maps to rust_decimal::Decimal -->
+        <field name="price" type="Decimal" id="1" offset="0"/>
+        <field name="qty" type="Decimal" id="2" offset="9"/>
+        <!-- Timestamp fields with semanticType for chrono converters -->
+        <field name="timestampNanos" type="int64" id="3" offset="18"
+               semanticType="UTCTimestampNanos"/>
+        <field name="timestampMicros" type="int64" id="4" offset="26"
+               semanticType="UTCTimestampMicros"/>
+        <!-- Var-data string field for compact_str/smol_str/bytes converters -->
+        <data name="symbol" id="5" type="varStringEncoding"/>
+        <!-- Var-data binary field for bytes converter -->
+        <data name="payload" id="6" type="varDataEncoding"/>
+    </sbe:message>
+</sbe:messageSchema>

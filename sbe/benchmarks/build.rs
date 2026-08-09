@@ -81,8 +81,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");
+    let null_option_schema = manifest.join("schemas/bench-null-option.xml");
+    ergo_sbe::generate_to_out_dir(
+        &null_option_schema,
+        ergo_sbe::GenerationConfig::new("null_option_bench"),
+    )?;
+
+    let converters_schema = manifest.join("schemas/bench-converters.xml");
+    ergo_sbe::generate_to_out_dir(
+        &converters_schema,
+        ergo_sbe::GenerationConfig::new("converters_bench")
+            .with_domain_type(
+                ergo_sbe::ConversionSelector::named_type("Decimal"),
+                "rust_decimal::Decimal",
+            ),
+    )?;
+
+    // Extended parity schemas (test fixtures with sbe-tool reference crates).
+    let oe_schema = sbe_root.join("tests/fixtures/schemas/optional_enum_nullify.xml");
+    ergo_sbe::generate_to_out_dir(
+        &oe_schema,
+        ergo_sbe::GenerationConfig::new("parity_optional_enum_nullify_bench"),
+    )?;
+    let ext_schema = sbe_root.join("tests/fixtures/schemas/example-extension-schema.xml");
+    ergo_sbe::generate_to_out_dir(
+        &ext_schema,
+        ergo_sbe::GenerationConfig::new("parity_extension_bench"),
+    )?;
+    let gwd_schema = sbe_root.join("tests/fixtures/schemas/group-with-data-schema.xml");
+    ergo_sbe::generate_to_out_dir(
+        &gwd_schema,
+        ergo_sbe::GenerationConfig::new("parity_group_with_data_bench"),
+    )?;
+
     println!("cargo:rerun-if-changed=schemas/orderbook.xml");
     println!("cargo:rerun-if-changed=schemas/orderbook-decimal.xml");
     println!("cargo:rerun-if-changed=schemas/l2-book.xml");
+    println!("cargo:rerun-if-changed=schemas/bench-null-option.xml");
+    println!("cargo:rerun-if-changed=schemas/bench-converters.xml");
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/optional_enum_nullify.xml");
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/example-extension-schema.xml");
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/group-with-data-schema.xml");
     Ok(())
 }

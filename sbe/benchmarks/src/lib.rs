@@ -40,6 +40,14 @@ ergo_sbe::sbe_mod!(pub orderbook = "orderbook_bench");
 ergo_sbe::sbe_mod!(pub orderbook_decimal = "orderbook_decimal_bench");
 // L2 orderbook with Decimal (rust_decimal conversion) for converter benchmarks.
 ergo_sbe::sbe_mod!(pub l2book = "l2book_bench");
+// Null/optional field benchmark schema.
+ergo_sbe::sbe_mod!(pub null_option = "null_option_bench");
+// Converter benchmark schema (Decimal, compact_str, chrono, bytes).
+ergo_sbe::sbe_mod!(pub converters = "converters_bench");
+// Extended parity schemas (ergo side — codegen from test fixtures).
+ergo_sbe::sbe_mod!(pub parity_optional_enum_nullify = "parity_optional_enum_nullify_bench");
+ergo_sbe::sbe_mod!(pub parity_extension = "parity_extension_bench");
+ergo_sbe::sbe_mod!(pub parity_group_with_data = "parity_group_with_data_bench");
 /// sbe-tool-generated Car codec (checked in, stable reference).
 pub mod sbe_tool_car {
     include!("sbe_tool_car_patched.rs");

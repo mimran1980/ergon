@@ -116,7 +116,7 @@ pub(crate) fn generate_group_decoder(
     };
 
     let dynamic_entry_extent_proof = quote::quote! {
-        let __available = self.buf.len().saturating_sub(self.pos);
+        let __available = self.buf.len().saturating_sub(self.offset);
         if self.min_entry_extent > __available {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: #g_name_lit,
@@ -171,7 +171,7 @@ pub(crate) fn generate_group_decoder(
     ts.extend(quote::quote! {
         pub struct #decoder_ident<'a, C: sbe_rt::GroupContext = sbe_rt::Detached> {
             buf: &'a [u8],
-            pos: usize,
+            offset: usize,
             count: usize,
             start: usize,
             total: usize,
@@ -199,31 +199,31 @@ pub(crate) fn generate_group_decoder(
             ///
             /// # Safety
             /// `parent_pos` and `parent_block_length` must describe the message
-            /// body this group is genuinely nested in, and `pos` must be that
+            /// body this group is genuinely nested in, and `offset` must be that
             /// message's real dimension-header offset for this group. The
             /// dimension header, the acting block length, and the group extent
             /// are still validated here and may be untrusted.
             #[inline]
             unsafe fn wrap_with_parent(
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_version: u16,
                 parent_pos: usize,
                 parent_block_length: usize,
             ) -> Result<#decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
-                if #dim_size_lit > buf.len().saturating_sub(pos) {
+                if #dim_size_lit > buf.len().saturating_sub(offset) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
                         needed: #dim_size_lit,
-                        available: buf.len().saturating_sub(pos),
+                        available: buf.len().saturating_sub(offset),
                     });
                 }
-                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, pos);
+                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, offset);
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
-                let entries_start = pos + #dim_size_lit;
+                let entries_start = offset + #dim_size_lit;
                 // SBE acting-version rule at the flyweight trust boundary: an
                 // entry whose wire block length cannot hold the required fixed
                 // fields active at this version is malformed, and a required
@@ -240,7 +240,7 @@ pub(crate) fn generate_group_decoder(
                 #fixed_extent_validation
                 Ok(#decoder_ident {
                     buf,
-                    pos: entries_start,
+                    offset: entries_start,
                     count,
                     start: entries_start,
                     total: count,
@@ -289,7 +289,7 @@ pub(crate) fn generate_group_decoder(
             #[inline]
             pub fn wrap(
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_version: u16,
             ) -> Result<#decoder_ident<'a, sbe_rt::Detached>, sbe_rt::DecodeError> {
                 // SAFETY: a standalone group has no parent to prove; the zero
@@ -297,12 +297,12 @@ pub(crate) fn generate_group_decoder(
                 // decoder cannot reach a message stage.
                 let attached = unsafe {
                     <#decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
-                        buf, pos, acting_version, 0, 0,
+                        buf, offset, acting_version, 0, 0,
                     )?
                 };
                 Ok(#decoder_ident {
                     buf: attached.buf,
-                    pos: attached.pos,
+                    offset: attached.offset,
                     count: attached.count,
                     start: attached.start,
                     total: attached.total,
@@ -333,23 +333,23 @@ pub(crate) fn generate_group_decoder(
             /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
             ///
             /// # Safety
-            /// `pos + dimension_header_size` must not overflow and must be
+            /// `offset + dimension_header_size` must not overflow and must be
             /// ≤ `buf.len()`. For fixed-block groups (no nested tail),
-            /// `pos + dim + count * acting_block_length` must also fit. Entry
+            /// `offset + dim + count * acting_block_length` must also fit. Entry
             /// accessors then use unchecked fixed-field reads under that proof.
             #[inline]
             pub(crate) unsafe fn wrap_trusted(
-                buf: &'a [u8], pos: usize, acting_version: u16,
+                buf: &'a [u8], offset: usize, acting_version: u16,
                 parent_pos: usize, parent_block_length: usize,
             ) -> Self {
-                let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, pos) };
+                let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, offset) };
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_length = header.#bl_field_ident() as usize;
                 let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
                 #dyn_extent_decl
                 Self {
-                    buf, pos: pos + #dim_size_lit, count, start: pos + #dim_size_lit,
+                    buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,
                     total: count, acting_version, acting_block_length: block_length,
                     parent_pos, parent_block_length,
                     #poison_init
@@ -365,7 +365,7 @@ pub(crate) fn generate_group_decoder(
             /// is sound even after an entry failed.
             #[inline]
             pub fn rewind(&mut self) -> &mut Self {
-                self.pos = self.start;
+                self.offset = self.start;
                 self.count = self.total;
                 #clear_poison
                 self
@@ -394,7 +394,7 @@ pub(crate) fn generate_group_decoder(
                     field_reads.extend(quote::quote! {
                         #f_name: {
                             let mut bytes = [0u8; #f_size];
-                            bytes.copy_from_slice(&self.buf[pos + #f_offset..pos + #f_offset + #f_size]);
+                            bytes.copy_from_slice(&self.buf[offset + #f_offset..offset + #f_offset + #f_size]);
                             #f_ty(bytes)
                         },
                     });
@@ -404,7 +404,7 @@ pub(crate) fn generate_group_decoder(
                     field_reads.extend(quote::quote! {
                         #f_name: {
                             let raw = #r_ty::#order_fn(
-                                self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
+                                self.buf[offset + #f_offset..offset + #f_offset + #f_size].try_into().unwrap()
                             );
                             raw.into()
                         },
@@ -418,7 +418,7 @@ pub(crate) fn generate_group_decoder(
                             let mut arr = [0 as #r_ty; #len_lit];
                             let mut i = 0usize;
                             while i < #len_lit {
-                                let elem_offset = pos + #f_offset + i * core::mem::size_of::<#r_ty>();
+                                let elem_offset = offset + #f_offset + i * core::mem::size_of::<#r_ty>();
                                 arr[i] = #r_ty::#order_fn(
                                     self.buf[elem_offset..][..core::mem::size_of::<#r_ty>()].try_into().unwrap()
                                 );
@@ -432,7 +432,7 @@ pub(crate) fn generate_group_decoder(
                     let r_ty = syn::Ident::new(&rust_type(*pt), span);
                     field_reads.extend(quote::quote! {
                         #f_name: #r_ty::#order_fn(
-                            self.buf[pos + #f_offset..pos + #f_offset + #f_size].try_into().unwrap()
+                            self.buf[offset + #f_offset..offset + #f_offset + #f_size].try_into().unwrap()
                         ),
                     });
                 }
@@ -459,19 +459,19 @@ pub(crate) fn generate_group_decoder(
                             needed: usize::MAX,
                             available: 0,
                         })?;
-                    if self.pos + needed > self.buf.len() {
+                    if self.offset + needed > self.buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed,
-                            available: self.buf.len().saturating_sub(self.pos),
+                            available: self.buf.len().saturating_sub(self.offset),
                         });
                     }
                     let cap = self.count;
                     dst.clear();
                     dst.reserve(cap);
                     for _ in 0..cap {
-                        let pos = self.pos;
-                        self.pos += self.acting_block_length;
+                        let offset = self.offset;
+                        self.offset += self.acting_block_length;
                         dst.push(#entry_struct_ident { #field_reads });
                     }
                     self.count = 0;
@@ -505,7 +505,7 @@ pub(crate) fn generate_group_decoder(
                             available: self.count.saturating_mul(self.acting_block_length),
                         });
                     }
-                    self.pos += n.saturating_mul(self.acting_block_length);
+                    self.offset += n.saturating_mul(self.acting_block_length);
                     self.count -= n;
                     Ok(())
                 }
@@ -532,12 +532,12 @@ pub(crate) fn generate_group_decoder(
                         let entry = unsafe {
                             #entry_decoder_ident::wrap(
                                 self.buf,
-                                self.pos,
+                                self.offset,
                                 self.acting_block_length,
                                 self.acting_version,
                             )
                         };
-                        self.pos += entry.encoded_length()?;
+                        self.offset += entry.encoded_length()?;
                         self.count -= 1;
                     }
                     Ok(())
@@ -651,16 +651,16 @@ pub(crate) fn generate_group_decoder(
                         return None;
                     }
                     // SAFETY: wrap_with_parent validated dim + count*block_length
-                    // for fixed groups; pos walks that region one block at a time.
+                    // for fixed groups; offset walks that region one block at a time.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
-                            self.pos,
+                            self.offset,
                             self.acting_block_length,
                             self.acting_version,
                         )
                     };
-                    self.pos += self.acting_block_length;
+                    self.offset += self.acting_block_length;
                     self.count -= 1;
                     Some(entry)
                 }
@@ -688,7 +688,7 @@ pub(crate) fn generate_group_decoder(
                     }
                     // Extent resolved once at wrap: the hot path is a
                     // subtraction and a comparison.
-                    let available = self.buf.len().saturating_sub(self.pos);
+                    let available = self.buf.len().saturating_sub(self.offset);
                     if self.min_entry_extent > available {
                         let error = sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
@@ -703,13 +703,13 @@ pub(crate) fn generate_group_decoder(
                         self.count = 0;
                         return Some(Err(error));
                     }
-                    // SAFETY: acting fixed block at pos proven directly above;
+                    // SAFETY: acting fixed block at offset proven directly above;
                     // encoded_length() re-validates the dynamic tail before
                     // advancing.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
-                            self.pos,
+                            self.offset,
                             self.acting_block_length,
                             self.acting_version,
                         )
@@ -722,7 +722,7 @@ pub(crate) fn generate_group_decoder(
                             return Some(Err(e));
                         }
                     };
-                    self.pos += size;
+                    self.offset += size;
                     self.count -= 1;
                     Some(Ok(entry))
                 }
@@ -762,22 +762,22 @@ pub(crate) fn generate_group_decoder(
             pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
             /// Private entry wrap after the group iterator (or equivalent)
-            /// has proven the acting fixed block is in-bounds at `pos`.
+            /// has proven the acting fixed block is in-bounds at `offset`.
             ///
             /// # Safety
-            /// `pos + max(acting_block_length, ENTRY_BLOCK_LENGTH)` (and any
+            /// `offset + max(acting_block_length, ENTRY_BLOCK_LENGTH)` (and any
             /// field offset used by accessors) must not overflow and must be
             /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
             #[inline]
             unsafe fn wrap(
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_block_length: usize,
                 acting_version: u16,
             ) -> Self {
                 Self {
                     buf,
-                    pos,
+                    offset,
                     acting_version,
                     acting_block_length,
                 }
@@ -790,18 +790,18 @@ pub(crate) fn generate_group_decoder(
             /// Private entry wrap after the group iterator has proven extents.
             ///
             /// # Safety
-            /// Fixed block at `pos` and every dynamic tail extent this entry
+            /// Fixed block at `offset` and every dynamic tail extent this entry
             /// will traverse must be fully in-bounds in `buf`.
             #[inline]
             unsafe fn wrap(
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_block_length: usize,
                 acting_version: u16,
             ) -> Self {
                 Self {
                     buf,
-                    pos,
+                    offset,
                     acting_version,
                     acting_block_length,
                     tail_end: core::cell::Cell::new(None),
@@ -890,7 +890,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return [0 as #r_type_ty; #len_lit];
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, offset) };
                             [#(#elem_exprs),*]
                         }
@@ -922,7 +922,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             let val = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) });
                             if #null_check_expr {
                                 None
@@ -948,7 +948,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#r_type_ty::#order_fn(
                                 unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                             ))
@@ -958,7 +958,7 @@ pub(crate) fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
                         }
                     });
@@ -994,16 +994,16 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
-                            Some(#target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset })
+                            let offset = self.offset + #offset_lit;
+                            Some(#target_decoder_name { buf: self.buf, offset: offset })
                         }
                     });
                 } else {
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
-                            let offset = self.pos + #offset_lit;
-                            #target_decoder_name { buf: self.buf, base_addr: self.buf.as_ptr() as usize + offset }
+                            let offset = self.offset + #offset_lit;
+                            #target_decoder_name { buf: self.buf, offset: offset }
                         }
                     });
                 }
@@ -1019,7 +1019,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#target_ident(
                                 unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) }
                             ))
@@ -1032,7 +1032,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#target_ident(
                                 unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) }
                             ))
@@ -1042,13 +1042,13 @@ pub(crate) fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
                         }
 
                         #[inline]
                         pub const fn #raw_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             let mut bytes = [0u8; #comp_size_lit];
                             bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #comp_size_lit) });
                             #target_ident(bytes)
@@ -1085,7 +1085,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#target_ident::from_raw(#r_type_ty::#order_fn(
                                 unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                             )))
@@ -1098,7 +1098,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#r_type_ty::#order_fn(
                                 unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                             ))
@@ -1108,7 +1108,7 @@ pub(crate) fn generate_group_decoder(
                     let raw_getter = quote::quote! {
                         #[inline]
                         pub const fn #raw_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             let mut bytes = [0u8; #prim_size_lit];
                             bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
                             #r_type_ty::#order_fn(bytes)
@@ -1120,7 +1120,7 @@ pub(crate) fn generate_group_decoder(
                             /// [`#target_ident::NullVal`]; [`Some`] otherwise.
                             #[inline]
                             pub fn #f_name_ident(&self) -> Option<#target_ident> {
-                                let offset = self.pos + #offset_lit;
+                                let offset = self.offset + #offset_lit;
                                 let raw = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) });
                                 #target_ident::from_raw(raw).as_option()
                             }
@@ -1130,7 +1130,7 @@ pub(crate) fn generate_group_decoder(
                         entry_body.extend(quote::quote! {
                             #[inline]
                             pub fn #f_name_ident(&self) -> #target_ident {
-                                let offset = self.pos + #offset_lit;
+                                let offset = self.offset + #offset_lit;
                                 #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                             }
                         });
@@ -1222,7 +1222,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#target_ident(#r_type_ty::#order_fn(
                                 unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                             )))
@@ -1235,7 +1235,7 @@ pub(crate) fn generate_group_decoder(
                             {
                                 return None;
                             }
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             Some(#r_type_ty::#order_fn(
                                 unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
                             ))
@@ -1245,13 +1245,13 @@ pub(crate) fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_ident {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                         }
 
                         #[inline]
                         pub const fn #raw_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
+                            let offset = self.offset + #offset_lit;
                             let mut bytes = [0u8; #prim_size_lit];
                             bytes.copy_from_slice(unsafe { core::slice::from_raw_parts(self.buf.as_ptr().add(offset), #prim_size_lit) });
                             #target_ident(#r_type_ty::#order_fn(bytes)).0
@@ -1268,14 +1268,14 @@ pub(crate) fn generate_group_decoder(
     entry_body.extend(quote::quote! {
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            if self.acting_block_length > self.buf.len().saturating_sub(self.pos) {
+            if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "group entry",
                     needed: self.acting_block_length,
-                    available: self.buf.len().saturating_sub(self.pos),
+                    available: self.buf.len().saturating_sub(self.offset),
                 });
             }
-            Ok(self.pos + self.acting_block_length)
+            Ok(self.offset + self.acting_block_length)
         }
     });
 
@@ -1304,13 +1304,13 @@ pub(crate) fn generate_group_decoder(
                 let header = #dim_name_ident(bytes);
                 let count = header.#count_field_ident() as usize;
                 let block_len = header.#bl_field_ident() as usize;
-                let mut pos = start + #dim_size_lit;
+                let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
-                    pos = #ng_decoder_entry_ident::skip(self.buf, pos, block_len, self.acting_version)?;
+                    offset = #ng_decoder_entry_ident::skip(self.buf, offset, block_len, self.acting_version)?;
                     idx += 1;
                 }
-                Ok(pos)
+                Ok(offset)
             }
         });
         k += 1;
@@ -1364,7 +1364,7 @@ pub(crate) fn generate_group_decoder(
                 // `Iterator::next` cached the complete validated entry extent,
                 // so this first-tail offset cannot overflow or exceed `buf`.
                 if self.tail_end.get().is_some() {
-                    let offset = self.pos + self.acting_block_length;
+                    let offset = self.offset + self.acting_block_length;
                     // SAFETY: tail_end proves the nested group dim is in-bounds.
                     return Ok(unsafe {
                         #ng_decoder_ident::wrap_trusted(
@@ -1412,7 +1412,7 @@ pub(crate) fn generate_group_decoder(
                     // extent, including this prefix and payload.
                     if let Some(end) = self.tail_end.get() {
                         let data_offset =
-                            self.pos + self.acting_block_length + #prefix_size_lit;
+                            self.offset + self.acting_block_length + #prefix_size_lit;
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                     }
                 }
@@ -1488,15 +1488,15 @@ pub(crate) fn generate_group_decoder(
                 self.acting_block_length
             }
             #[inline]
-            pub fn skip(buf: &'a [u8], pos: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-                if block_len > buf.len().saturating_sub(pos) {
+            pub fn skip(buf: &'a [u8], offset: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                if block_len > buf.len().saturating_sub(offset) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,
-                        available: buf.len().saturating_sub(pos),
+                        available: buf.len().saturating_sub(offset),
                     });
                 }
-                Ok(pos + block_len)
+                Ok(offset + block_len)
             }
         });
     } else {
@@ -1504,29 +1504,29 @@ pub(crate) fn generate_group_decoder(
             #[inline]
             pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
                 if let Some(end) = self.tail_end.get() {
-                    return Ok(end - self.pos);
+                    return Ok(end - self.offset);
                 }
                 let end = self.#tail_total_fn()?;
                 self.tail_end.set(Some(end));
-                Ok(end - self.pos)
+                Ok(end - self.offset)
             }
             #[inline]
             pub fn skip(
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 block_len: usize,
                 acting_version: u16,
             ) -> Result<usize, sbe_rt::DecodeError> {
-                if block_len > buf.len().saturating_sub(pos) {
+                if block_len > buf.len().saturating_sub(offset) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,
-                        available: buf.len().saturating_sub(pos),
+                        available: buf.len().saturating_sub(offset),
                     });
                 }
                 // SAFETY: fixed block length proven above; tail_total validates
                 // nested groups and var-data extents before returning the end.
-                let entry = unsafe { Self::wrap(buf, pos, block_len, acting_version) };
+                let entry = unsafe { Self::wrap(buf, offset, block_len, acting_version) };
                 entry.#tail_total_fn()
             }
         });
@@ -1673,7 +1673,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             pub struct #entry_decoder_ident<'a> {
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_version: u16,
                 acting_block_length: usize,
             }
@@ -1682,7 +1682,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             pub struct #entry_decoder_ident<'a> {
                 buf: &'a [u8],
-                pos: usize,
+                offset: usize,
                 acting_version: u16,
                 acting_block_length: usize,
                 /// One-shot entry-extent cache: filled by
