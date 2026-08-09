@@ -57,7 +57,8 @@ required-features = ["test-harness"]
 proptest = "1.11"
 rusteron-media-driver = { workspace = true }
 serial_test = { version = "3", features = ["file_locks"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+<<<<<<< HEAD
+criterion = { version = "0.8", features = ["html_reports"] }
 trybuild = "1"
 
 [build-dependencies]

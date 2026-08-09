@@ -42,7 +42,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
 
       - name: Mandatory pre-release verification
         run: just release-check

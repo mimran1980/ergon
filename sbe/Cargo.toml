@@ -37,14 +37,15 @@ bytes = ["dep:bytes"]
 chrono = ["dep:chrono"]
 
 [dependencies]
-roxmltree = "0.20"
+roxmltree = "0.21"
 thiserror = "2"
 miette = { version = "7", features = ["derive"] }
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-prettyplease = "0.2"
-sha2 = "0.10"
+<<<<<<< HEAD
+prettyplease = "0.3"
+sha2 = "0.11"
 compact_str = { version = "0.8", optional = true }
 smol_str = { version = "0.3", optional = true }
 bytes = { version = "1", optional = true }
@@ -111,9 +112,9 @@ name = "warning_free_consumer_test"
 name = "fix_sbe_conformance_test"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 serial_test = "3"
-toml = "0.8"
+toml = "1.1"
 # fancy-no-backtrace (not "fancy"): GraphicalReportHandler for tests proving
 # the miette rendering pipeline actually snippets — skips the heavier
 # backtrace/backtrace-ext deps that "fancy" pulls in.
