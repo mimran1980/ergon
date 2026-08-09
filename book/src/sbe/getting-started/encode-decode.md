@@ -18,12 +18,7 @@ order — there is no staged builder in 0.1.13.
 **Individual setters** (chainable, set only what you need):
 
 ```rust,no_run
-  let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
-  let len = HeartbeatEncoder::wrap_and_apply_header(&mut buf, 0)
-      .fixed(&HeartbeatFixedFields { seq: 7 })
-      .encoded_length_with_header();
-  let dec = HeartbeatDecoder::try_decode(&buf[..len], 0)?;
-  assert_eq!(dec.seq(), 7);
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_fixed_heartbeat}}
 ```
 
 ## Optional fields and `apply_nulls`

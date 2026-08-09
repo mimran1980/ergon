@@ -887,24 +887,47 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     let raw_ident = quote::format_ident!("raw_{}", fname_snake);
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub fn #fname_ident(&self) -> Option<#target_ident> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
+                    if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
+                        impl_body.extend(quote::quote! {
+                            /// Returns [`None`] when the field is absent at this version
+                            /// OR the wire discriminant equals [`#target_ident::NullVal`].
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })).as_option()
                             }
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
-                        }
-                        /// Raw wire discriminant — bypasses enum mapping.
-                        /// Returns `None` when the field is not present in the acting version.
-                        #[inline]
-                        pub fn #raw_ident(&self) -> Option<#r_type_ty> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            /// Returns `None` when the field is not present in the acting version.
+                            #[inline]
+                            pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                             }
-                            Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
-                        }
-                    });
+                        });
+                    } else {
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
+                            }
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            /// Returns `None` when the field is not present in the acting version.
+                            #[inline]
+                            pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                            }
+                        });
+                    }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {

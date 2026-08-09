@@ -28,7 +28,7 @@ fn generate_with_config(
     let ir = ergo_sbe::parse(&xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
-    let source = modules.modules().next().unwrap().source.clone();
+    let source = modules.modules().next().ok_or("no module generated")?.source.clone();
     Ok(source)
 }
 
