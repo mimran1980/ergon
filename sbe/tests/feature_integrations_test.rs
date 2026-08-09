@@ -28,7 +28,8 @@ fn generate_with_config(
     let ir = ergo_sbe::parse(&xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
-    Ok(modules.modules().next().unwrap().source)
+    let source = modules.modules().next().unwrap().source.clone();
+    Ok(source)
 }
 
 // ── Null-as-option ────────────────────────────────────────────────────────
