@@ -33,12 +33,9 @@ fn bench_offsets(c: &mut Criterion) {
             let len = encode_at(&mut storage, offset);
             b.iter(|| {
                 black_box(
-                    Fixed64Decoder::try_wrap_and_apply_header(
-                        black_box(&storage[..offset + len]),
-                        offset,
-                    )
-                    .unwrap()
-                    .value(),
+                    Fixed64Decoder::try_decode(black_box(&storage[..offset + len]), offset)
+                        .unwrap()
+                        .value(),
                 )
             });
         });
@@ -50,12 +47,9 @@ fn bench_offsets(c: &mut Criterion) {
                 let len = encode_at(&mut storage, offset);
                 b.iter(|| {
                     black_box(
-                        Fixed64Decoder::try_wrap_and_apply_header(
-                            black_box(&storage[..offset + len]),
-                            offset,
-                        )
-                        .unwrap()
-                        .value(),
+                        Fixed64Decoder::try_decode(black_box(&storage[..offset + len]), offset)
+                            .unwrap()
+                            .value(),
                     )
                 });
             },
@@ -68,12 +62,9 @@ fn bench_offsets(c: &mut Criterion) {
                 let len = encode_at(&mut storage.0, offset);
                 b.iter(|| {
                     black_box(
-                        Fixed64Decoder::try_wrap_and_apply_header(
-                            black_box(&storage.0[..offset + len]),
-                            offset,
-                        )
-                        .unwrap()
-                        .value(),
+                        Fixed64Decoder::try_decode(black_box(&storage.0[..offset + len]), offset)
+                            .unwrap()
+                            .value(),
                     )
                 });
             },

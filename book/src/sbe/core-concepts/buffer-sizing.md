@@ -20,15 +20,6 @@ block + Σ(groups) + Σ(var-data).
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_size_and_encode}}
 ```
 *(From `sbe-feature-tour` — EncodedLength + exact buffer encode, tested in CI.)*
-    .fuel_figures(2, |g| { /* … */ Ok(()) })?
-    .performance_figures(1, |g| { /* … */ Ok(()) })?
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"active")?
-    .encoded_length_with_header()
-        .expect("header present");
-assert_eq!(actual_len, len);
-```
 
 Nested books:
 [`book_encoded_length`](https://github.com/mimran1980/ergon/blob/main/samples/l3-book/src/lib.rs).

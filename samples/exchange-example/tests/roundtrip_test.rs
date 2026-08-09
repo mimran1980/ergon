@@ -29,7 +29,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1712345678000u64)
         .bid1_price(50000123456i64)
@@ -81,7 +81,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1)
         .bid1_price(2)
@@ -121,7 +121,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = Depth50Encoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = Depth50Encoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1000u64)
         .seq(1u64)
@@ -187,7 +187,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
 
     // Tail components in wire order: asks -> bids -> symbol. The consuming
-    // stages enforce this order (DECISIONS.md §3/§10); symbol is read last.
+    // Stages enforce this order; symbol is read last.
     let mut asks = decoder.into_asks().expect("asks group decode");
     let mut ask_prices = Vec::new();
     while let Some(e) = asks.next() {
@@ -240,9 +240,6 @@ fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// Encoder buffer-too-short test removed: encoder is infallible (panics on OOB
-// via slice indexing, matching Aeron). Decoder validates (returns Result).
-
 // ── Binance: ServerTimeResponse (template 102) ────────────────────────────
 
 #[test]
@@ -254,7 +251,7 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(expected_ts);
     let encoded = encoder.as_bytes_with_header();
 
@@ -272,7 +269,7 @@ fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     use exchange_example::binance_spot::ServerTimeResponseEncoder;
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(42);
     let encoded = encoder.as_bytes_with_header();
 
@@ -307,7 +304,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(-5i8)
         .size_exponent(-3i8)
@@ -403,7 +400,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(-8i8)
         .size_exponent(-2i8)
@@ -452,7 +449,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = TradeEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .price_exponent(0i8)
         .size_exponent(0i8)
@@ -491,7 +488,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 
     // Consuming stages: trades group before var-data (wire order)
     let trades = decoder.into_trades().expect("trades group decode");
-    let entry = trades.nth(0).expect("first trade entry");
+    let entry = trades.entry_at(0).expect("first trade entry");
     assert_eq!(entry.ts(), 0, "entry ts");
     assert_eq!(entry.exec_id(), 0, "entry exec_id");
     assert_eq!(entry.price(), 0, "entry price");
@@ -521,7 +518,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = WebSocketSessionLogonResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = WebSocketSessionLogonResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
@@ -590,7 +587,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = WebSocketResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = WebSocketResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .sbe_schema_id_version_deprecated(BoolEnum::False)
         .status(200u16);
@@ -734,7 +731,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = BestBidAskEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .ts(1u64)
         .bid1_price(2i64)
@@ -903,7 +900,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder.server_time(42);
     let encoded = encoder.as_bytes_with_header();
 
@@ -917,7 +914,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-// ── Task 10: AppMessage/L2Book/Trade roundtrip ─────────────────────────
+// ── AppMessage / L2Book / Trade roundtrip ─────────────────────────────
 
 #[test]
 fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -942,7 +939,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_storage = [0u8; 8192];
     assert!(outer_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..outer_len];
-    let mut outer = AppMessageEncoder::wrap_and_apply_header(&mut buf, 0);
+    let mut outer = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     outer.sent_ts(1_700_000_000_000_000_000);
 
     // Nested encode via payload_with
@@ -950,7 +947,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         .app_name(app_name)
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0);
+            let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
             book.source(Source::Bitget);
             book.exchange_timestamp(1_700_000_000_000_000_001);
             book.receive_timestamp(1_700_000_000_000_000_002);
@@ -988,7 +985,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(complete.as_bytes_with_header().len(), outer_len);
 
     // Decode outer -> inner
-    let outer_dec = AppMessageDecoder::try_wrap_and_apply_header(&buf, 0).unwrap();
+    let outer_dec = AppMessageDecoder::try_decode(&buf, 0).unwrap();
     assert_eq!(outer_dec.sent_ts(), 1_700_000_000_000_000_000);
     let (name, after_name) = outer_dec.into_app_name().unwrap();
     assert_eq!(name, app_name);

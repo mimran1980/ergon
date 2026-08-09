@@ -1,84 +1,19 @@
-# Benchmarks
+# Benchmark Results
 
-> **Benchmark review requested.** Generated-codec benchmarking is notoriously
-> difficult and easy to get wrong. Surprising results should be presumed to be
-> benchmark defects until wire parity, equal work, optimizer opacity,
-> sufficiently amplified timing, both LTO profiles, and optimized
-> assembly/instruction counts agree. Please review the methodology and report
-> mistakes; these tables are evidence under review, not unquestionable facts.
-
-ergon's maintained benchmarks compare generated codecs with official
-**sbe-tool** output performing equivalent work. Results are machine- and
-toolchain-specific, so this repository documents the method and gate rather
-than retaining dated point estimates as release guarantees.
-
-## What the numbers actually measure
-
-Most of the measured difference between ergo-sbe and sbe-tool comes down to
-**bounds checking**, not fundamental codegen quality. Minor variations in how
-headers are written or how bulk operations are laid out account for the rest.
-If you had to call `try_wrap_and_apply_header` (which validates `template_id`
-and `schema_id`) every time, ergo-sbe would be slower than sbe-tool —
-sbe-tool's `wrap` + `header()` does no such validation in release builds. The
-benchmarks therefore use infallible `wrap` / `wrap_and_apply_header` on both
-arms: equal work, equal trust assumptions.
-
-The benchmark gate exists to prove that ergo-sbe is **not slower than**
-sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
-parity. When ergo-sbe occasionally shows a lower ratio, that is a data point to
-investigate for unequal work, not a product claim.
-
-### Regression check: compare against your own previous release
-
-The sbe-tool ceiling catches regressions against the reference, but it does
-**not** catch regressions against your own prior work. If ergon was 0.73×
-sbe-tool in 0.1.7 and 0.89× in 0.1.8, both pass the 1.00 ceiling — but you
-just got 22% slower. That is a blocking defect.
-
-Every release must therefore compare **two** things:
-
-1. **Ratio vs sbe-tool** — must stay ≤ 1.00. This proves you haven't fallen
-   behind the reference implementation.
-2. **Absolute ergon time vs the previous release** — must not regress
-   meaningfully. Check out the prior tag in a worktree, run the same
-   benchmarks, and diff the Criterion point estimates. A shift larger than
-   the reported confidence interval requires investigation before publishing.
-
-The second check found the `msg_offset` regression in 0.1.8: `decode_entry_point`
-went from 0.73× to 0.89× because a new field was added to the decoder struct.
-The sbe-tool ratio still passed — only the self-comparison caught it.
-
-The real win is elsewhere: ergo-sbe pushes wire-order safety and buffer sizing
-into the **type system at compile time**. Swapping `bids` and `asks` is a type
-error. Using a partially-written encoder as a complete message is a type error.
-Allocating a scratch buffer with a guessed size instead of using the exact
-`EncodedLength` is a compile-time lint. These are enforced before the binary
-exists, not at runtime.
+> Methodology, gate rules, and fairness policy: [Benchmark Methodology](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/methodology.md).
 
 ### SBE codec gate — `just bench`
 
-Ratios are ergon / sbe-tool. Every maintained comparison has a strict `1.00`
-ceiling plus the gate's 0.5% noise tolerance. The table uses Criterion's
-regression point estimate—the estimator printed as `time` by Criterion and
-used by the gate. Tiny operations and full wire encode repeat 1,024 operations
-per Criterion iteration; their displayed values below are derived per
-operation. Do not treat those absolute sub-nanosecond values as portable
-latencies.
+Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
+ceiling with zero tolerance** (SBE) or **0.005 tolerance** (cluster). The
+executable policy is in `scripts/check-bench-gate.sh`.
 
-| Scenario | LTO ergon / sbe-tool | LTO ratio | No-LTO ergon / sbe-tool | No-LTO ratio |
-|---|---:|---:|---:|---:|
-| decode scalar | 0.708 / 0.773 ns | 0.9159 | 0.553 / 0.625 ns | 0.8850 |
-| decode array | 0.512 / 0.842 ns | 0.6080 | 0.500 / 0.843 ns | 0.5938 |
-| decode composite | 0.540 / 0.587 ns | 0.9211 | 0.526 / 0.570 ns | 0.9229 |
-| decode full message | 10.794 / 13.347 ns | 0.8087 | 10.887 / 13.350 ns | 0.8156 |
-| decode entry point | 0.684 / 1.186 ns | 0.5767 | 0.678 / 0.950 ns | 0.7138 |
-| encode scalar, header + body | 1.481 / 2.049 ns | 0.7226 | 1.454 / 2.037 ns | 0.7140 |
-| encode scalar, body only | 1.192 / 1.208 ns | 0.9867 | 1.186 / 1.210 ns | 0.9801 |
-| encode throughput, 10k | 12.349 / 14.251 µs | 0.8665 | 12.260 / 13.986 µs | 0.8766 |
-| decode throughput, 10k | 8.687 / 9.357 µs | 0.9284 | 8.481 / 9.359 µs | 0.9062 |
-| full wire encode | 3.780 / 5.697 ns | 0.6634 | 4.489 / 5.693 ns | 0.7885 |
+Do not copy point estimates into this file. Current results live in
+provenance-stamped artifacts under `target/bench-runs/<run-id>/`. Quote a
+result by naming its run id, commit, host, rustc, profile, and manifest hash —
+or do not quote it.
 
-Notes from this cycle:
+### Prior cycle notes
 
 - Previous decode results were invalid: sbe-tool direct decoders were wrapped
   at the header offset and read header bytes as body fields.
@@ -175,7 +110,7 @@ Every gated ergon/sbe-tool pair uses the same header mode on both arms:
 | decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
 | decode full / batch 10k | body wrap + same fields | same | same |
 | cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
-| cluster decode | header+body parse | `try_wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
+| cluster decode | header+body parse | `wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
 
 Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
 throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
@@ -240,7 +175,7 @@ Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
 **Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
 small engine once the rest of the fixed block is written; BE build is slightly
 slower than LE on an LE host; preheld memcpy is endian-independent. See README
-[Encode — FixedFields vs setters…](../core-concepts/composite-layout.md).
+[Encode — FixedFields vs setters…](core-concepts/composite-layout.md).
 
 ```sh
 cd sbe/benchmarks && cargo bench --bench encode_style_bench
@@ -251,8 +186,9 @@ cd sbe/benchmarks && cargo bench --bench encode_style_bench
 The two cluster encode scenarios (`session_keep_alive`, `claim_shaped`) previously
 failed at 1.19× and 1.28×. Root cause: generated field setters used
 `self.buf[offset..offset+N].copy_from_slice(...)`, which re-checks bounds on every
-field write. After `wrap`/`try_wrap` validates `buf.len() >= BLOCK_LENGTH`, field
-offsets are in-bounds by construction — the per-write bounds check was redundant.
+field write. After `wrap`/`wrap_and_apply_header` validates
+`buf.len() >= BLOCK_LENGTH`, field offsets are in-bounds by construction — the
+per-write bounds check was redundant.
 
 **Fix:** field setters now use `get_unchecked_mut` after the trust boundary. This
 restored the encode paths to parity: `session_keep_alive` went from 1.19× slower to
@@ -303,7 +239,7 @@ just bench-diagnostics
 | Dynamic shape | sequential flat groups; ragged nested groups with nested var-data |
 | Wire configuration | little-endian, big-endian, custom header |
 | Evolution | acting version 0 and current version 1 |
-| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `nth`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
+| Operations | checked/trusted entry, full `verify`, scalar read, traversal, `entry_at`, encode, exact sizing, `AnyMessage`, static metadata lookup, DTO conversion, round trip |
 
 The timed encode paths reuse caller-owned buffers. Metadata lookup is the
 generated static `(schema_id, template_id)` match and is also protected by the
@@ -348,19 +284,37 @@ offset):
 The aligned buffer did not improve the aggregate result, so this release adds
 no mandatory aligned-buffer or pooling API.
 
-### Stable instruction counts
+### Amplified timing diagnostic (`instruction_counts`)
 
-`instruction_counts` uses Iai-Callgrind for checked entry, trusted scalar
-access, full verification, metadata lookup, and amplified ergon/sbe-tool scalar
-and composite parity. This avoids treating sub-nanosecond wall-clock noise as
-an instruction regression. The suite is runnable on Linux with Valgrind; there
-is not yet a checked-in scheduled Iai workflow or instruction baseline, so no
-automated instruction-regression claim is made here.
+`instruction_counts` is an amplified Criterion **timing** harness. Each
+operation is repeated `ACCESS_REPETITIONS` times inside a single Criterion
+iteration to amplify sub-nanosecond differences. Its output is wall-clock, not
+instruction counts:
 
 ```sh
-# Linux with Valgrind and iai-callgrind-runner 0.16.1 installed
-just bench-instructions
+cargo bench -p ergo-sbe-benchmarks --bench instruction_counts
 ```
+
+### Instruction and disassembly evidence (`perf-probe`)
+
+Deterministic mechanism-level evidence comes from named, `#[inline(never)]`,
+unmangled probe symbols measured under raw Callgrind:
+
+```sh
+just bench-instructions                                      # both profiles
+./scripts/run-sbe-instruction-probes.sh --all-profiles --topic decode
+```
+
+Each probe performs exactly 10,000 opaque logical operations and returns an
+observed checksum; setup and validation run before the probe is entered, so
+`--toggle-collect=<symbol>` excludes them. The driver normalises instructions,
+branches, and mispredicts per operation, disassembles the exact binary it
+measured, and records commit, rustc, target, Valgrind version, profile, run id,
+symbol, operation count, and checksum.
+
+The lane needs Linux plus Valgrind and `llvm-objdump`, and fails closed
+elsewhere rather than substituting a timing harness. There is no
+`iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
 
 ### Warmed latency distributions
 
@@ -402,16 +356,17 @@ Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
   does not use noisy wall-clock ratios as a merge gate. A suspicious shared-runner
   result triggers a stable-runner rerun and fairness review.
 - A dedicated stable runner, when configured, must reject a hot-path Criterion
-  regression-estimate increase above 3%, an Iai instruction-count regression
-  above 2%, any new allocation, or a warmed batch/cluster p99 regression above
+  regression-estimate increase above 3%, a normalised instruction-count
+  regression above 2% from `scripts/run-sbe-instruction-probes.sh`, any new allocation, or a warmed batch/cluster p99 regression above
   5%.
 - Criterion's regression estimate and confidence interval are the maintained
   microbenchmark estimator. HDR p50/p99/p99.9 applies only to warmed batch and
   Aeron/cluster end-to-end measurements.
 
 The expanded Criterion matrix, alignment, cold-path, and HDR suites were
-executed on 2026-07-27 with rustc 1.95.0. Iai-Callgrind is compile-validated
-but was not executed on this macOS host because Valgrind is unavailable.
+executed on 2026-07-27 with rustc 1.95.0. The instruction-probe lane needs
+Linux and Valgrind, so it does not run on a macOS development host; it fails
+closed there rather than reporting a substitute measurement.
 Machine-specific observations belong in CI artifacts or a release record;
 they are not portable API promises.
 
@@ -446,7 +401,7 @@ work.
 
 ## Benchmark-only APIs
 
-`GenerationConfig::with_unchecked_companions` exists for explicit comparison
+The `unsafe` unchecked constructor lane exists for explicit comparison
 work. Application code should use checked generated entry points for untrusted
 buffers and reserve trusted-buffer methods for data whose complete bounds have
 already been established.

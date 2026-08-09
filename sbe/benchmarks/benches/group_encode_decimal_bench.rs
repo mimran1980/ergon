@@ -71,7 +71,12 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                 .levels(n as u16, |g| {
                     for e in &domain_entries {
                         g.add(|entry| {
-                            entry.price(e.price).qty(e.qty).side(e.side);
+                            entry
+                                .try_price(e.price)
+                                .unwrap()
+                                .try_qty(e.qty)
+                                .unwrap()
+                                .side(e.side);
                             Ok(())
                         })?;
                     }
@@ -129,7 +134,12 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                         .levels(n as u16, |g| {
                             for e in entries {
                                 g.add(|entry| {
-                                    entry.price(e.price).qty(e.qty).side(e.side);
+                                    entry
+                                        .try_price(e.price)
+                                        .unwrap()
+                                        .try_qty(e.qty)
+                                        .unwrap()
+                                        .side(e.side);
                                     Ok(())
                                 })?;
                             }

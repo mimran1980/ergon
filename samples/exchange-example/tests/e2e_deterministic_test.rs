@@ -15,7 +15,7 @@ use exchange_example::normalized_app::{
 use rusteron_client::cformat;
 
 /// The embedded media driver aborts when several launch concurrently in one
-/// process — serialise it (plan Task 11: real singleton resources only).
+/// process — serialise it (real singleton resources only).
 static DRIVER_LOCK: Mutex<()> = Mutex::new(());
 
 /// Per-test expectations carried through the poll context.
@@ -59,13 +59,13 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
     let mut claim = pubn.try_claim_owned(outer_len).expect("claim");
     {
         let buf = claim.data();
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0);
+        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
         let _ = outer.sent_ts(1);
         let _ = outer
             .app_name(app_name)
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0);
+                let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
                 let _ = book
                     .source(Source::Bitget)
                     .exchange_timestamp(1)
@@ -125,7 +125,7 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
 }
 
 fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
-    let outer = AppMessageDecoder::try_wrap_and_apply_header(buf, 0).expect("wrap");
+    let outer = AppMessageDecoder::try_decode(buf, 0).expect("wrap");
     let (_name, after_name) = outer.into_app_name().expect("app");
     let (frame, _complete) = after_name.into_payload_as_message().expect("payload");
     if let AnyMessage::L2Book(book) = frame.message {

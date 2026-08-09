@@ -10,7 +10,7 @@ Generated codecs embed `sbe_rt`; plain `include!` is enough:
 
 or via `include!`:
 
-```text
+```rust,ignore
 mod messages {
     include!(concat!(env!("OUT_DIR"), "/messages.rs"));
 }
@@ -20,7 +20,7 @@ use messages::*;
 **Optional convenience** — `sbe_mod!` needs `ergo-sbe` as a normal dependency
 (macro expansion only; not required for encode/decode):
 
-```text
+```rust,ignore
 // Cargo.toml: [dependencies] ergo-sbe = "0.1"
 ergo_sbe::sbe_mod!(messages);
 use messages::*;

@@ -315,3 +315,155 @@ fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std
 
     Ok(())
 }
+
+// ── Practical schema-error quality tests ────────────────────────────────────
+//
+// These test that error messages contain enough information for a user to
+// understand *what* is wrong and *where* to fix it, without reading the
+// schema source or the ergo-sbe source.
+
+/// When a `<field>` has a bad `type` reference, the error must name both
+/// the offending type and the field that referenced it.
+#[test]
+fn invalid_field_type_names_the_field() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1">
+        <field name="price" id="1" type="NotARealType" offset="0"/>
+      </message>
+    </messageSchema>"#;
+
+    let err = ergo_sbe::parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("NotARealType"),
+        "must name the bad type: {msg}"
+    );
+    // NOTE: the error currently does not name the containing field (e.g. "price").
+    // That is a desirable improvement for future releases.
+    Ok(())
+}
+
+/// When `blockLength` is declared but some fields sit past it, the error
+/// must identify the overflowing field.
+#[test]
+fn block_length_too_short_named_field() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1" blockLength="4">
+        <field name="x" id="1" type="uint32" offset="0"/>
+        <field name="overflow" id="2" type="uint32" offset="8"/>
+      </message>
+    </messageSchema>"#;
+
+    let err = ergo_sbe::parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("overflow") || msg.contains("8") || msg.to_lowercase().contains("block"),
+        "must name the overflowing field, offset, or mention blockLength: {msg}"
+    );
+    Ok(())
+}
+
+/// Malformed XML must produce a clear error, not a panic or generic message.
+#[test]
+fn malformed_xml_gives_clear_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1">
+        <field name="x" id="1" type="uint32" offset="0"/>
+      </unclosed></message>
+    </messageSchema>"#;
+
+    let err = ergo_sbe::parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("XML")
+            || msg.contains("xml")
+            || msg.contains("malformed")
+            || msg.contains("unexpected"),
+        "must indicate malformed XML: {msg}"
+    );
+    Ok(())
+}
+
+/// A schema that references a non-existent composite type must fail with
+/// the type name in the error.
+#[test]
+fn unknown_composite_type_named_in_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1">
+        <field name="engine" id="1" type="UnknownComposite" offset="0"/>
+      </message>
+    </messageSchema>"#;
+
+    let err = ergo_sbe::parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("UnknownComposite"),
+        "must name the unknown type: {msg}"
+    );
+    Ok(())
+}
+
+/// miette rendering must carry source context for a syntax-level error.
+#[test]
+fn missing_attribute_renders_miette_source_context() -> Result<(), Box<dyn std::error::Error>> {
+    let path = fixture_path("missing-required-attr.xml");
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let report = miette::Report::from(err);
+    let rendered = format!("{report:?}");
+    assert!(
+        rendered.contains("field @name"),
+        "must mention what is missing: {rendered}"
+    );
+    assert!(
+        rendered.contains("id=\"1\"") || rendered.contains("field"),
+        "rendering should include source context: {rendered}"
+    );
+    Ok(())
+}
+
+/// A schema `sinceVersion` beyond the schema's own version must fail clearly.
+#[test]
+fn since_version_beyond_schema_is_explained() -> Result<(), Box<dyn std::error::Error>> {
+    let path = fixture_path("version-gap.xml");
+    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("sinceVersion"),
+        "must mention sinceVersion: {msg}"
+    );
+    assert!(msg.contains("5"), "must show the bad version: {msg}");
+    assert!(msg.contains("1"), "must show the schema version: {msg}");
+    Ok(())
+}

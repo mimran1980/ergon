@@ -96,13 +96,13 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
     {
         let buf = claim.data();
         assert_eq!(buf.len(), outer_len);
-        let mut outer = AppMessageEncoder::wrap_and_apply_header(buf, 0);
+        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
         outer.sent_ts(epoch_ns);
         let complete = outer
             .app_name(app_name)
             .expect("app_name")
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut book = L2BookEncoder::wrap_and_apply_header(payload, 0);
+                let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
                 book.source(Source::Bitget);
                 book.exchange_timestamp(epoch_ns + 1);
                 book.receive_timestamp(epoch_ns + 2);
@@ -149,7 +149,7 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
 fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
     use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 
-    let outer = AppMessageDecoder::try_wrap_and_apply_header(buf, 0).expect("wrap decoder");
+    let outer = AppMessageDecoder::try_decode(buf, 0).expect("wrap decoder");
     assert_eq!(outer.sent_ts(), 1_700_000_000_000_000_000);
     let (_name, after_name) = outer.into_app_name().expect("into_app_name");
     let (frame, _complete) = after_name.into_payload_as_message().expect("into_payload");

@@ -1,15 +1,15 @@
 # Chained Message Decoding
 
 A `SessionMessageHeader` is followed by application payload bytes (another SBE
-message). Use the decoder's `remaining()` to get the payload, then
+message). Use `get_metadata().remaining()` to get the payload byte slice, then
 `AnyMessage::decode` to parse the next message. This uses the non-stable
 `cluster_codec_types` seam described above:
 
-```text
+```rust,ignore
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (24 bytes).
     // Both lengths are const, so size the frame on the stack.
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
@@ -25,10 +25,10 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         .cluster_session_id(99);
 
     // Decode the first message
-    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
 
-    // remaining() returns the bytes after the header (the SessionKeepAlive)
-    let tail = smh.remaining();
+    // get_metadata().remaining() returns bytes after this message
+    let tail = smh.get_metadata().remaining();
     assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
 
     // Decode the next message via AnyMessage
@@ -36,7 +36,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         AnyMessage::SessionKeepAlive(dec) => {
             assert_eq!(dec.cluster_session_id(), 99);
             // Fully decoded — nothing left
-            assert!(dec.remaining().is_empty());
+            assert!(dec.get_metadata().remaining().is_empty());
         }
         _ => panic!("unexpected message type"),
     }
@@ -44,4 +44,6 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`buffer()` returns the entire original buffer (header + payload).
+`get_metadata().buffer()` returns the entire original buffer. `remaining()`
+returns bytes after this message — both scoped in the metadata struct so
+no schema field can ever collide with them.

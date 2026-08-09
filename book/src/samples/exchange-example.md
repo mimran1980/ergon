@@ -12,7 +12,7 @@ no `with_domain_type`. `publish = false`.
 
 That emits **generic** methods. The app supplies `TryFromSbe` / `TryToSbe`:
 
-```text
+```rust,ignore
 // encode: app Decimal → wire
 e.price_from(&d)?;
 

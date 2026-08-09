@@ -71,9 +71,24 @@ fn composite_decode_streams_equal_fields_from_equal_message_offsets()
         source.contains("replicate_baseline(MICRO_BATCH_SIZE)"),
         "composite decode must traverse a prebuilt contiguous message stream"
     );
+    // Equal work, per the documented validation class. sbe-tool's `wrap` only
+    // stores buffer/offset/block-length/version; ergon's bare `wrap` proves the
+    // version-aware fixed extent on every message. Timing the validating
+    // constructor against the unvalidating one charges ergon for a bounds proof
+    // its reference never performs, so the timed region must use the unchecked
+    // constructor — with the extent proven once, outside the measurement.
     assert!(
-        ergo.contains("CarDecoder::wrap(buf, off, bl_e, ver_e)"),
-        "Ergo composite decode must wrap each message at its absolute message_offset"
+        source.contains("assert_stream_wrap_extent(&buf, msg_len, MICRO_BATCH_SIZE, bl_e, ver_e)"),
+        "composite decode must prove the stream extent in an untimed preflight"
+    );
+    assert!(
+        ergo.contains("CarDecoder::wrap_unchecked(buf, off, bl_e, ver_e)"),
+        "Ergo composite decode must wrap each message at its absolute message_offset \
+         using the unchecked constructor that matches sbe-tool's zero-check wrap"
+    );
+    assert!(
+        !ergo.contains("CarDecoder::wrap(buf"),
+        "a validating wrap in the timed region would not be equal work"
     );
     assert!(
         tool.contains("sbe_tool_car_body_decoder(buf, off, bl, ver)"),
@@ -209,13 +224,21 @@ fn strip_line_comments(src: &str) -> String {
 fn arm_writes_message_header(arm: &str) -> bool {
     // Ignore // comments — body-only arms may mention header(0) in notes.
     let code = strip_line_comments(arm);
+    // wrap_and_apply_header / wrap_and_apply_header_unchecked write the
+    // MessageHeader; bare wrap / wrap_unchecked do not.
     code.contains("wrap_and_apply_header") || code.contains(".header(")
 }
 
 fn arm_is_body_only_encode(arm: &str) -> bool {
     // Body-only: wraps without applying/writing the MessageHeader.
-    let has_wrap =
-        arm.contains("::wrap(") || arm.contains(".wrap(") || arm.contains("Encoder::wrap(");
+    // Prefer wrap_unchecked when matching sbe-tool's zero-check wrap (equal work).
+    let code = strip_line_comments(arm);
+    let has_wrap = code.contains("wrap_unchecked(")
+        || code.contains("::wrap(")
+        || code.contains(".wrap(")
+        || code.contains("Encoder::wrap(");
+    // Exclude wrap_and_apply_header* false positives: those contain "wrap(" after
+    // stripping only if we match too loosely — header writer check covers them.
     has_wrap && !arm_writes_message_header(arm)
 }
 

@@ -136,7 +136,7 @@ fn bench_groups(c: &mut Criterion) {
                     .unwrap()
                     .into_rows()
                     .unwrap();
-                b.iter(|| black_box(rows.nth(usize::from(count - 1)).unwrap().value()));
+                b.iter(|| black_box(rows.entry_at(usize::from(count - 1)).unwrap().value()));
             });
         }
         group.bench_with_input(

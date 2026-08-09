@@ -18,7 +18,7 @@ full IR access.
 
 **Example — add serde Serialize + Deserialize to every enum and set:**
 
-```text
+```rust,ignore
 // build.rs
 use ergo_sbe::{GenerationConfig, ItemContext};
 use quote::quote;
@@ -44,7 +44,11 @@ fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                         let s = <&str>::deserialize(d)?;
                         match s {
                             #(#labels => Ok(Self::#from_labels),)*
-                            _ => Ok(Self::NullVal),
+                            "NullVal" => Ok(Self::NullVal),
+                            // Reject unknown values — fallback is app policy,
+                            // not codec behaviour.
+                            other => Err(serde::de::Error::unknown_variant(
+                                other, &[#(#labels,)* "NullVal"])),
                         }
                     }
                 }
@@ -70,7 +74,9 @@ fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                         for n in &names {
                             match *n {
                                 #(#labels => val = val.#froms(),)*
-                                _ => {}
+                                // Reject unknown labels — don't silently drop.
+                                other => return Err(serde::de::Error::unknown_variant(
+                                    other, &[#(#labels),*])),
                             }
                         }
                         Ok(val)

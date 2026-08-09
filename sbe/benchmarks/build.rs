@@ -15,10 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let car_schema = sbe_root.join("tests/fixtures/schemas/example-schema.xml");
     // Benchmarks measure flyweights only — no domain objects.
     // Enable unchecked companions for single-binary checked vs unchecked comparison.
-    ergo_sbe::generate_to_out_dir(
-        &car_schema,
-        ergo_sbe::GenerationConfig::new("car_bench").with_unchecked_companions(),
-    )?;
+    ergo_sbe::generate_to_out_dir(&car_schema, ergo_sbe::GenerationConfig::new("car_bench"))?;
 
     let large_schema = manifest.join("schemas/large-composite.xml");
     ergo_sbe::generate_to_out_dir(
@@ -36,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         &matrix_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_bench")
-            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let matrix_be_schema = manifest.join("schemas/codec-matrix-be.xml");
@@ -65,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ergo_sbe::generate_to_out_dir(
         &orderbook_schema,
         ergo_sbe::GenerationConfig::new("orderbook_bench")
-            .enable_domain_objects(ergo_sbe::DomainVarData::Bytes),
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let ob_decimal_schema = manifest.join("schemas/orderbook-decimal.xml");

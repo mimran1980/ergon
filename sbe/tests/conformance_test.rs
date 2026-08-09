@@ -329,10 +329,10 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         let dec = NestedGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.exchange_id(), 8888, "exchange_id");
 
-        // nth() must walk the first entry's nested group and var-data rather
-        // than assuming root blockLength is the complete entry stride.
+        // scan_entry_at() must walk the first entry's nested group and var-data
+        // rather than assuming root blockLength is the complete entry stride.
         let mut bids = dec.into_bids()?;
-        let b1 = bids.nth(1)?;
+        let b1 = bids.scan_entry_at(1)?;
         assert_eq!(b1.price(), 4999, "random bid[1].price");
         assert_eq!(b1.venue()?, b"X", "random bid[1].venue");
 
@@ -653,7 +653,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
             other => panic!("unexpected error: {other:?}"),
         }
 
-        let result2 = FlatGroupDecoder::try_from(&[][..]);
+        let result2 = FlatGroupDecoder::try_decode(&[], 0);
         assert!(result2.is_err(), "expected DecodeError");
         match result2.unwrap_err() {
             sbe_rt::DecodeError::BufferTooShort { .. } => {}
@@ -670,7 +670,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
         truncated_group[6..8].copy_from_slice(&0u16.to_le_bytes());
         truncated_group[16..18].copy_from_slice(&12u16.to_le_bytes());
         truncated_group[18..20].copy_from_slice(&2u16.to_le_bytes());
-        let decoded = FlatGroupDecoder::try_from(truncated_group.as_slice())?;
+        let decoded = FlatGroupDecoder::try_decode(truncated_group.as_slice(), 0)?;
         assert!(
             decoded.into_bids().is_err(),
             "fixed-entry group extent must be validated before iteration"
@@ -690,7 +690,7 @@ fn conformance_error_group_full() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(42);
         let result = enc.bids(1, |bids| {
             bids.add(|e| { e.price(1).qty(2); Ok(()) })?;
@@ -751,14 +751,14 @@ fn conformance_error_group_count_mismatch() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
+fn conformance_error_wrong_template() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&conformance_path(), "conformance");
     compile_and_run(
-        "conformance_err_schema",
+        "conformance_err_template",
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = FlatGroupEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.symbol(1);
         let complete = enc.bids(0, |_| Ok(())).unwrap()
             .asks(0, |_| Ok(())).unwrap()
@@ -767,14 +767,14 @@ fn conformance_error_wrong_schema() -> Result<(), Box<dyn std::error::Error>> {
 
         let result = FixedOnlyDecoder::try_from(encoded);
         match result {
-            Err(sbe_rt::DecodeError::WrongSchema { expected, actual, .. }) => {
+            Err(sbe_rt::DecodeError::WrongTemplate { expected, actual, .. }) => {
                 assert_eq!(expected, 1, "expected template id 1");
                 assert_eq!(actual, 2, "actual template id 2");
             }
-            other => panic!("expected WrongSchema, got: {other:?}"),
+            other => panic!("expected WrongTemplate, got: {other:?}"),
         }
 
-        println!("PASS: conformance_error_wrong_schema");
+        println!("PASS: conformance_error_wrong_template");
         "#,
     );
     Ok(())

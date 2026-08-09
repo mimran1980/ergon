@@ -1,14 +1,11 @@
 //! Regression tests for hook metadata correctness.
 //!
-//! These guard three findings the earlier serde test did not exercise:
-//!   * enum discriminants above `i64::MAX` must still reach the hook
-//!     (previously `parse::<i64>()` silently dropped them → empty variant list);
-//!   * composite hook metadata must list real primitive fields with correct
-//!     Rust types, and report nested composites/enums by their type name — not
-//!     omit the primitive and mislabel containers as `u8`;
-//!   * `DomainStruct` hooks must fire for the top-level DTO *and* every
-//!     generated `*EntryDomain`, and the top-level context must include group
-//!     and var-data fields (not just fixed fields).
+//! Guards hook metadata correctness:
+//!   * enum discriminants above `i64::MAX` must reach the hook;
+//!   * composite hooks list real primitive fields with correct Rust types and
+//!     report nested composites/enums by type name;
+//!   * `DomainStruct` hooks fire for the top-level DTO and every
+//!     `*EntryDomain`, including group and var-data fields.
 
 #![allow(clippy::expect_used)]
 
@@ -115,7 +112,7 @@ const SCHEMA_XML: &str = r#"<messageSchema package="hookmeta" id="7" version="0"
 fn capture_all() -> Result<Vec<Captured>, Box<dyn std::error::Error>> {
     let sink = Arc::new(Mutex::new(Vec::new()));
     let config = GenerationConfig::new("hookmeta")
-        .enable_domain_objects(DomainVarData::Bytes)
+        .with_domain_objects(DomainVarData::Bytes)
         .with_hook(capture_hook(Arc::clone(&sink)));
     let schema = Schema::from_ir(parse(SCHEMA_XML)?);
     let _ = Generator::new(config).generate(&schema)?;
@@ -123,9 +120,7 @@ fn capture_all() -> Result<Vec<Captured>, Box<dyn std::error::Error>> {
     Ok(out)
 }
 
-/// A `uint64` enum discriminant above `i64::MAX` must still reach the hook —
-/// previously `parse::<i64>()` returned `Err` and the variant was silently
-/// dropped from the context, so the hook saw an empty/short variant list.
+/// A `uint64` enum discriminant above `i64::MAX` must still reach the hook.
 #[test]
 fn enum_discriminant_above_i64_max_reaches_hook() -> Result<(), Box<dyn std::error::Error>> {
     let captured = capture_all()?;
@@ -247,7 +242,7 @@ fn domain_hook_covers_message_group_and_vardata() -> Result<(), Box<dyn std::err
 fn hook_extends_message_and_entry_domain_and_compiles() {
     let sink = Arc::new(Mutex::new(Vec::new()));
     let config = GenerationConfig::new("hookext")
-        .enable_domain_objects(DomainVarData::Bytes)
+        .with_domain_objects(DomainVarData::Bytes)
         .with_hook({
             let sink = Arc::clone(&sink);
             move |ctx: &ItemContext| {

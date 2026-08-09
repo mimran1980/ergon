@@ -4,6 +4,16 @@
 //! on [`rusteron_client`] **0.2** (latest 0.2.x), using **ergo-sbe-generated**
 //! session codecs (schema 111).
 //!
+//! # Documentation
+//!
+//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — cluster client
+//!   guide
+//! - [Overview](https://mimran1980.github.io/ergon/cluster/overview.html) ·
+//!   [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html) ·
+//!   [Egress listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html) ·
+//!   [Chained decoding](https://mimran1980.github.io/ergon/cluster/chained-decoding.html)
+//! - [Crate README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
+//!
 //! ⚠️ **Prototype.** LLM-assisted and less tested than the Java reference.
 //! Bugs in Rusteron pub/sub **or** this reimplementation may cause undefined
 //! behaviour, segfaults, or data loss. Replace when official Cluster C client
@@ -69,7 +79,8 @@
 //! }
 //! ```
 //!
-//! See the crate [README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
+//! See the [book](https://mimran1980.github.io/ergon/cluster/overview.html) and
+//! [crate README](https://github.com/mimran1980/ergon/blob/main/cluster/README.md)
 //! for recipes, maintained benches, and the HA sample.
 
 // Verify rusteron-client types are accessible across the crate boundary
@@ -123,13 +134,13 @@ pub mod state;
 /// Aeron channel URI helpers (`AeronUriStringBuilder`).
 mod uri;
 
-pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim};
+pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim, ConnectStep};
 pub use config::SessionBuilder;
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
 pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
-pub use error::{ClusterError, PublicationFailure};
+pub use error::{AeronErrorSource, ClusterError, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
 pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
@@ -146,6 +157,7 @@ pub mod test_support;
 pub use test_support::{EmbeddedArchiveDriver, TestCluster};
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     #[test]
     fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {

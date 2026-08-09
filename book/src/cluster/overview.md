@@ -52,11 +52,9 @@ for the common benchmark rules.
 
 ## Limitations
 
-- No production support or compatibility guarantee.
-- No Cluster server, service container, archive, backup, or administration
-  implementation.
-- Shared ingress publications and externally injected Aeron ownership are not
-  supported by the current configuration validator.
+The current limitations are documented in the [Compatibility](./compatibility.md)
+page, which also lists supported Aeron/rusteron versions, schema identities,
+failure modes, and the CI multi-node test matrix.
 - Java interoperability depends on the local Aeron harness and environment.
 
 Apache-2.0.

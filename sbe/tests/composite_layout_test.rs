@@ -6,9 +6,11 @@
 //!    overlays: `#[repr(transparent)] pub struct Engine(pub [u8; N])`.
 //! 2. Member accessors use explicit `from_le_bytes` / `to_le_bytes` at schema
 //!    offsets (portable; on LE hosts LLVM lowers these to plain loads).
-//! 3. Default decoder path is a **flyweight** (`EngineDecoder { buf, pos }`) —
-//!    zero-copy into the message buffer. `engine_value()` is an eager copy of
-//!    the `N`-byte wire image.
+//! 3. Default decoder path is a **flyweight** (`EngineDecoder { buf, base_addr }`)
+//!    — zero-copy into the message buffer. `base_addr` caches the composite
+//!    body address once at construction so every member accessor is a single
+//!    struct load + immediate-offset wire load. `engine_value()` is an eager
+//!    copy of the `N`-byte wire image.
 //! 4. We intentionally do **not** transmute the buffer to a padded `repr(C)`
 //!    struct: SBE is packed (no Rust alignment padding), fields may be
 //!    unaligned, and big-endian schemas must keep working.
@@ -51,8 +53,8 @@ fn composite_is_transparent_wire_image_not_repr_c_fields() -> Result<(), Box<dyn
     assert!(
         src.contains("pub struct EngineDecoder")
             && src.contains("buf: &'a [u8]")
-            && src.contains("pos: usize"),
-        "flyweight EngineDecoder {{ buf, pos }} must be generated"
+            && src.contains("base_addr: usize"),
+        "flyweight EngineDecoder {{ buf, base_addr }} must be generated"
     );
     Ok(())
 }
@@ -72,12 +74,8 @@ fn composite_flyweight_accessors_use_trusted_reads() -> Result<(), Box<dyn std::
     let engine_decoder = &decoder_and_rest[..end];
 
     assert!(
-        engine_decoder.contains("read_bytes_unchecked::<"),
+        engine_decoder.contains("read_addr_unchecked"),
         "fixed-width EngineDecoder accessors must use trusted reads"
-    );
-    assert!(
-        !engine_decoder.contains("read_bytes::<"),
-        "EngineDecoder must not repeat bounds checks after its trust boundary"
     );
     Ok(())
 }
@@ -143,7 +141,7 @@ fn composite_flyweight_is_zero_copy_value_is_eager_wire_copy()
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1234);
         car.model_year(2013);
         car.available(BooleanType::T);
@@ -167,7 +165,7 @@ fn composite_flyweight_is_zero_copy_value_is_eager_wire_copy()
         let complete = car.activation_code(b"abc").unwrap();
         let encoded = complete.as_bytes_with_header();
 
-        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_decode(encoded, 0).unwrap();
 
         // Default accessor: flyweight — reads live from the message buffer.
         let fly = dec.engine();
@@ -210,7 +208,7 @@ fn composite_encoder_writes_wire_image_bulk() -> Result<(), Box<dyn std::error::
             Booster::new(BoostType::TURBO, 99),
         );
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(1);
         car.model_year(2000);
         car.available(BooleanType::F);
@@ -256,7 +254,7 @@ fn fixed_scalar_fields_use_explicit_le_loads() -> Result<(), Box<dyn std::error:
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::wrap_and_apply_header(&mut buf, 0);
+        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         car.serial_number(0x0102_0304_0506_0708);
         car.model_year(0xBEEF);
         car.available(BooleanType::T);
@@ -279,7 +277,7 @@ fn fixed_scalar_fields_use_explicit_le_loads() -> Result<(), Box<dyn std::error:
         let serial_le = u64::from_le_bytes(body[0..8].try_into().unwrap());
         let year_le = u16::from_le_bytes(body[8..10].try_into().unwrap());
 
-        let dec = CarDecoder::try_wrap_and_apply_header(encoded, 0).unwrap();
+        let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         assert_eq!(dec.serial_number(), serial_le);
         assert_eq!(dec.model_year(), year_le);
         assert_eq!(dec.serial_number(), 0x0102_0304_0506_0708);

@@ -4,7 +4,39 @@
 //! types). `Box<dyn std::error::Error>` is reserved for **unit tests** and
 //! **`fn main()`** only — never for the public client API.
 
+use std::sync::Arc;
+
 use rusteron_client::{AeronCError, AeronOfferError};
+
+/// Wraps an [`AeronCError`] so it can be stored as a `#[source]` in
+/// [`ClusterError`] variants. Constructed implicitly via `From<AeronCError>`.
+///
+/// The inner value is deliberately private — access it through
+/// [`as_aeron_error`](Self::as_aeron_error) rather than reaching into the
+/// storage.
+#[derive(Debug, Clone)]
+pub struct AeronErrorSource(Arc<AeronCError>);
+
+impl AeronErrorSource {
+    /// Borrow the wrapped [`AeronCError`].
+    pub fn as_aeron_error(&self) -> &AeronCError {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for AeronErrorSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for AeronErrorSource {} // No further source — leaf error
+
+impl From<AeronCError> for AeronErrorSource {
+    fn from(e: AeronCError) -> Self {
+        Self(Arc::new(e))
+    }
+}
 
 /// Typed classification of a failed `offer` / `try_claim` (Aeron publication
 /// sentinels). Use [`Self::is_retryable`] for idle/retry loops.
@@ -88,17 +120,25 @@ impl std::fmt::Display for PublicationFailure {
 /// All errors the cluster client can produce.
 ///
 /// This is the sole error type for the public `ergo-aeron-cluster` API.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ClusterError {
     /// Connection failed for a non-protocol reason (e.g. context, subscription).
     #[error("connect failed: {reason}")]
-    ConnectFailed { reason: String },
+    ConnectFailed {
+        /// Human-readable description of the failure.
+        reason: String,
+    },
     /// The cluster rejected authentication.
     #[error("authentication rejected")]
     AuthRejected,
     /// A step timed out.
     #[error("timeout in phase '{phase}' after {after_ms}ms")]
-    Timeout { phase: &'static str, after_ms: u64 },
+    Timeout {
+        /// Which phase timed out (`connect`, `poll`, `keep_alive`, …).
+        phase: &'static str,
+        /// Milliseconds elapsed before the timeout fired.
+        after_ms: u64,
+    },
     /// Operation attempted on a session that is not connected.
     #[error("session is not connected")]
     NotConnected,
@@ -109,16 +149,30 @@ pub enum ClusterError {
     /// or the ingress publication reported CLOSED / max-position. The caller
     /// may reconnect on a new leader or treat the session as dead.
     #[error("session disconnected: {reason}")]
-    Disconnected { reason: String },
+    Disconnected {
+        /// Human-readable reason (egress closed, publication CLOSED, …).
+        reason: String,
+    },
     /// The protocol stream contained an unexpected or malformed message.
     #[error("protocol error: {reason}")]
-    ProtocolError { reason: String },
+    ProtocolError {
+        /// Description of the protocol violation.
+        reason: String,
+    },
     /// The cluster redirected us to a different leader during connect.
     #[error("redirect to leader: {leader_endpoints}")]
-    Redirect { leader_endpoints: String },
+    Redirect {
+        /// Member-endpoint map string for the new leader.
+        leader_endpoints: String,
+    },
     /// A buffer was too small for the operation.
     #[error("buffer too small: need {needed} bytes, have {actual}")]
-    BufferTooSmall { needed: usize, actual: usize },
+    BufferTooSmall {
+        /// Minimum bytes required by the operation.
+        needed: usize,
+        /// Bytes actually available.
+        actual: usize,
+    },
     /// A publication offer/claim/commit failed.
     #[error("{context}: {failure}")]
     Publication {
@@ -129,10 +183,19 @@ pub enum ClusterError {
     },
     /// Reconnect to a new leader after `NewLeaderEvent` failed.
     #[error("reconnect failed: {reason}")]
-    ReconnectFailed { reason: String },
+    ReconnectFailed {
+        /// Why the reconnect attempt failed.
+        reason: String,
+    },
     /// Channel / URI construction failed.
     #[error("channel URI: {reason}")]
-    ChannelUri { reason: String },
+    ChannelUri {
+        /// Description of the channel URI problem.
+        reason: String,
+        /// The underlying AeronUriString parse error.
+        #[source]
+        source: AeronErrorSource,
+    },
     /// Underlying Aeron / rusteron client error with context.
     #[error("aeron {context}: {message}")]
     Aeron {
@@ -140,6 +203,11 @@ pub enum ClusterError {
         context: &'static str,
         /// Display of the Aeron error.
         message: String,
+        /// The underlying Aeron error (when available). Access via
+        /// [`source()`](std::error::Error::source) or
+        /// [`as_aeron_error()`](AeronErrorSource::as_aeron_error).
+        #[source]
+        source: Option<AeronErrorSource>,
     },
     /// An egress listener callback panicked.
     #[error("egress listener panicked: {context}")]
@@ -153,15 +221,39 @@ pub enum ClusterError {
         /// Field name from the schema.
         field: &'static str,
     },
+    /// An invalid or impossible timeout was set. Zero or overflow durations
+    /// are rejected at builder validation time (connect) or at the first
+    /// async poll.
+    #[error("invalid timeout in phase '{phase}': {reason}")]
+    InvalidTimeout {
+        /// Which phase produced the invalid timeout.
+        phase: &'static str,
+        /// Why the duration was rejected (zero, overflow, …).
+        reason: &'static str,
+    },
+    /// The application payload plus the session message header exceeds the
+    /// Aeron publication's maximum message length.
+    #[error("payload too large for {operation}: {requested} bytes requested, {maximum} maximum")]
+    PayloadTooLarge {
+        /// Which operation was attempted (`offer`, `try_claim`).
+        operation: &'static str,
+        /// The total frame length requested (header + payload).
+        requested: usize,
+        /// The publication's maximum allowed frame length.
+        maximum: usize,
+    },
 }
 
 impl ClusterError {
     /// Wrap an [`AeronCError`] with a static context label.
     #[inline]
     pub fn aeron(context: &'static str, e: AeronCError) -> Self {
+        let message = e.to_string();
+        let source = e.into();
         Self::Aeron {
             context,
-            message: e.to_string(),
+            message,
+            source: Some(source),
         }
     }
 
@@ -198,6 +290,7 @@ impl ClusterError {
         Self::Aeron {
             context: "publication",
             message: reason.into(),
+            source: None,
         }
     }
 

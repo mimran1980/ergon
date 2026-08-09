@@ -33,7 +33,7 @@ are unpublished playgrounds, not a security surface.
 
 ## What "checked" means here
 
-Checked entry points (`try_wrap`, `try_wrap_and_apply_header`, decoder
+Checked entry points (`decode` / `try_from` / `wrap` / `wrap_and_apply_header`, decoder
 construction from untrusted buffers) are expected to report malformed input
 as an error rather than panicking, reading out of bounds, or manufacturing a
 default/lossy value. A checked entry point that panics or reads

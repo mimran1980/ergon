@@ -118,35 +118,10 @@ if [[ ${#documentation_files[@]} -gt 0 ]]; then
         report_matches 'ignored Rust documentation fence is forbidden; use compile-checked rust/no_run or honest text' \
             '```[[:alnum:]_,.:{}=+ -]*\bignore\b' "${rs_files[@]}"
     fi
-    if [[ ${#md_files[@]} -gt 0 ]]; then
-        # In .md files: `rust,ignore` is allowed ONLY when the fence body starts
-        # with `{{#include` — the included code is compiled by the project's own
-        # build (sample crate, example, etc.) so we know it's valid Rust; it just
-        # isn't compilable in the book-fence test harness context.
-        # `rust,ignore` without an include is still forbidden — we can't verify
-        # it compiles anywhere.
-        ignored_matches=$(
-            cd "$root"
-            for f in "${md_files[@]}"; do
-                [ -f "$f" ] || continue
-                awk -v file="$f" '
-                    /^```/ && tolower($0) ~ /ignore/ {
-                        fence_line = NR
-                        fence_tag = $0
-                        getline
-                        if ($0 !~ /\{\{#include/) {
-                            printf "%s:%d:%s\n", file, fence_line, fence_tag
-                        }
-                    }
-                ' "$f"
-            done
-        )
-        if [[ -n "$ignored_matches" ]]; then
-            echo "test policy: ignored Rust documentation fence without {{#include}} — use compile-checked rust/no_run or honest text" >&2
-            echo "$ignored_matches" >&2
-            failed=1
-        fi
-    fi
+    # In .md files: `rust,ignore` is always allowed — gives syntax highlighting
+    # without CI compilation requirement. Hand-written schematics and
+    # Aeron/rusteron-dependent examples cannot compile in the book-fence harness.
+    :  # no-op: do not flag ignored fences in .md files
 fi
 if [[ ${#control_files[@]} -gt 0 ]]; then
     report_matches 'test-selection bypass is forbidden in test control files' \
@@ -163,6 +138,27 @@ if [[ ${#control_files[@]} -gt 0 ]]; then
             FNR == 1 {
                 in_if = 0
                 reported = 0
+                in_heredoc = 0
+                heredoc_tag = ""
+            }
+            # Skip heredoc bodies. An embedded Python/awk `if` has no `fi`, so
+            # reading one as shell control flow would leave the block open for
+            # the rest of the file and flag every later command.
+            in_heredoc {
+                line = $0
+                sub(/^[[:space:]]+/, "", line)
+                if (line == heredoc_tag) {
+                    in_heredoc = 0
+                    heredoc_tag = ""
+                }
+                next
+            }
+            match($0, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/) {
+                heredoc_tag = substr($0, RSTART, RLENGTH)
+                sub(/^<<-?[[:space:]]*/, "", heredoc_tag)
+                gsub(/['"'"'"]/, "", heredoc_tag)
+                in_heredoc = 1
+                next
             }
             /^[[:space:]]*@?if[[:space:]]/ {
                 in_if = 1

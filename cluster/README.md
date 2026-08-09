@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/ergo-aeron-cluster)](https://crates.io/crates/ergo-aeron-cluster)
 [![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
 [![API Docs](https://docs.rs/ergo-aeron-cluster/badge.svg)](https://docs.rs/ergo-aeron-cluster/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
 `ergo-aeron-cluster` is an experimental Rust client for Aeron Cluster. It uses
 rusteron for transport and ergo-sbe-generated codecs for Aeron's Cluster
@@ -10,6 +11,19 @@ protocol.
 
 > Hobby project. Do not use it as a production substitute for official Aeron
 > Cluster client support.
+
+## Full documentation
+
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-aeron-cluster/)):
+
+- [Cluster Client overview](https://mimran1980.github.io/ergon/cluster/overview.html)
+- [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html)
+- [Egress Listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html)
+- [Chained Message Decoding](https://mimran1980.github.io/ergon/cluster/chained-decoding.html)
+
+API reference: [docs.rs/ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/).
 
 ## Scope
 
@@ -45,7 +59,8 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
     session.validate()?;
     let mut client = session.connect("/path/to/aeron-dir")?;
     client.offer(b"application payload")?;
-    client.close()
+    client.close()?;
+    Ok(())
 }
 ```
 
@@ -75,7 +90,7 @@ without a semver bump. Normal applications should use `AeronCluster`.
 ## Decoding chained session messages (advanced)
 
 A `SessionMessageHeader` is followed by application payload bytes (another SBE
-message). Use the decoder's `remaining()` to get the payload, then
+message). Use `get_metadata().remaining()` to get the payload byte slice, then
 `AnyMessage::decode` to parse the next message. This uses the non-stable
 `cluster_codec_types` seam described above:
 
@@ -83,7 +98,7 @@ message). Use the decoder's `remaining()` to get the payload, then
 use ergo_aeron_cluster::cluster_codec_types::*;
 
 fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
-    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (32 bytes).
+    // Encode: SessionMessageHeader (32 bytes) + SessionKeepAlive (24 bytes).
     // Both lengths are const, so size the frame on the stack.
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
@@ -93,16 +108,16 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         .cluster_session_id(99)
         .timestamp(42);
 
-    // remaining_mut() returns the unwritten region after this message
-    SessionKeepAliveEncoder::wrap_and_apply_header(enc.remaining_mut(), 0)
+    // into_remaining_mut() returns the unwritten region after this message
+    SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
         .leadership_term_id(7)
         .cluster_session_id(99);
 
     // Decode the first message
-    let smh = SessionMessageHeaderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+    let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
 
-    // remaining() returns the bytes after the header (the SessionKeepAlive)
-    let tail = smh.remaining();
+    // get_metadata().remaining() returns bytes after the header (SessionKeepAlive)
+    let tail = smh.get_metadata().remaining();
     assert_eq!(tail.len(), SessionKeepAliveEncoder::ENCODED_LENGTH);
 
     // Decode the next message via AnyMessage
@@ -110,7 +125,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         AnyMessage::SessionKeepAlive(dec) => {
             assert_eq!(dec.cluster_session_id(), 99);
             // Fully decoded — nothing left
-            assert!(dec.remaining().is_empty());
+            assert!(dec.get_metadata().remaining().is_empty());
         }
         _ => panic!("unexpected message type"),
     }
@@ -118,7 +133,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`whole_buffer()` returns the entire original buffer (header + payload).
+`get_metadata().buffer()` returns the entire original buffer (header + payload).
 
 ## Features and harness
 
@@ -150,11 +165,7 @@ for the common benchmark rules.
 
 ## Limitations
 
-- No production support or compatibility guarantee.
-- No Cluster server, service container, archive, backup, or administration
-  implementation.
-- Shared ingress publications and externally injected Aeron ownership are not
-  supported by the current configuration validator.
-- Java interoperability depends on the local Aeron harness and environment.
+See the [Compatibility](https://mimran1980.github.io/ergon/cluster/compatibility.html)
+page in the book for supported stacks, failure modes, and current limitations.
 
 Apache-2.0.

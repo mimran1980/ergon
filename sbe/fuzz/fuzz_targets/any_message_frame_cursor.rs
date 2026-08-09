@@ -13,12 +13,12 @@ fuzz_target!(|data: &[u8]| {
         .unwrap_or(available)
         .min(available);
 
-    let _ = AnyMessage::decode(data, pos);
+    let _ = AnyMessage::try_decode(data, pos);
     let _ = AnyMessage::decode_frame(data, pos, frame_len);
 
     for policy in [
-        FramingPolicy::LengthPrefixU16,
-        FramingPolicy::LengthPrefixU32,
+        FramingPolicy::LengthPrefixU16Le,
+        FramingPolicy::LengthPrefixU32Le,
         FramingPolicy::Fixed(frame_len),
     ] {
         let mut cursor = FrameCursor::new(data, policy);

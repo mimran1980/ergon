@@ -7,6 +7,8 @@ Cargo.lock
 CLAUDE.md
 .claude/
 tmp/
+# Local cargo registry when sandbox/host blocks ~/.cargo (do not commit).
+.cargo-local/
 /aeron/
 /simple-binary-encoding/
 
@@ -20,3 +22,4 @@ aeron-cluster-[0-9]/
 .superpowers/
 docs/superpowers/
 mutants.out*/
+.cargo-home/

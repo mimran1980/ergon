@@ -2,7 +2,7 @@
 
 `SessionBuilder` is the supported configuration entry point:
 
-```text
+```rust,ignore
 use std::sync::Arc;
 use std::time::Duration;
 use ergo_aeron_cluster::{SessionBuilder, StaticCredentials};

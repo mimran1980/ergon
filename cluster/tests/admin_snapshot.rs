@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Admin request/response integration test — exercises
 //! `AeronCluster::send_admin_request_to_take_snapshot` against a live Java
 //! cluster and verifies the reply arrives on `on_admin_response`.

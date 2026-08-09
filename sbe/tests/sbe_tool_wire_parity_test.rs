@@ -478,7 +478,7 @@ fn dual_encode(label: &str, p: &CarPayload) -> Vec<u8> {
 
 /// Decode fixed fields from an ergo frame and check against the payload.
 fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
-    let car = ErgoDec::try_wrap_and_apply_header(frame, 0).unwrap();
+    let car = ErgoDec::decode(frame, 0).unwrap();
     assert_eq!(car.serial_number(), p.serial);
     assert_eq!(car.model_year(), p.year);
     assert_eq!(car.available(), CarPayload::ergo_bool(p.available));

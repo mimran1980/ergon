@@ -8,6 +8,7 @@ use crate::ClusterError;
 /// One `(member_id, host:port)` entry from a Java-style endpoints map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngressEndpoint {
+    /// Cluster member id (from the endpoints map key).
     pub member_id: i32,
     /// `host:port` (no `aeron:` prefix).
     pub endpoint: String,

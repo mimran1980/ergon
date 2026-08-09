@@ -13,15 +13,28 @@ pub(crate) fn generate_sbe_rt_src() -> String {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum DecodeError {
+                /// Buffer shorter than needed for `field` (`needed` vs `available` bytes).
                 BufferTooShort { field: &'static str, needed: usize, available: usize },
+                /// Wire `schemaId` does not match this codec (`expected` name/id vs `actual`).
                 WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+                /// Wire `templateId` does not match this message (`expected` name/id vs `actual`).
+                WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
+                /// Multi-template stream saw an id with no registered length/decoder.
                 UnknownTemplateLength { template_id: u16 },
+                /// Header field value exceeds the supported maximum for this platform.
                 InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
+                /// Length-prefix for var-data exceeds schema max or platform size.
                 InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
                 /// Field/group/data was added in a schema version later than the wire message.
                 FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
+                /// Text var-data is not valid UTF-8.
                 InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+                /// Text var-data is not valid ASCII.
                 InvalidAscii { field: &'static str },
+                /// Boolean wire enum was `NullVal` or an unknown discriminant.
+                InvalidBoolean { field: &'static str, discriminant: u64 },
+                /// Domain `try_*` conversion failed.
+                DomainConversionFailed { field: &'static str, reason: &'static str },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -30,12 +43,15 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     match self {
                         Self::BufferTooShort { field, needed, available } => write!(f, "field '{}': needed {} bytes, {} available", field, needed, available),
                         Self::WrongSchema { expected, actual, expected_name } => write!(f, "wrong schema: expected id {} ({}), got id {}", expected, expected_name, actual),
+                        Self::WrongTemplate { expected, actual, expected_name } => write!(f, "wrong template: expected id {} ({}), got id {}", expected, expected_name, actual),
                         Self::UnknownTemplateLength { template_id } => write!(f, "unknown template id {}: SBE messages do not carry length. Use decode_frame() with an external frame length.", template_id),
                         Self::InvalidHeaderValue { field, value, maximum } => write!(f, "message header field '{}': value {} exceeds supported maximum {}", field, value, maximum),
-                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}: length {} exceeds max {}", field, length, max_length),
+                        Self::InvalidVarDataLength { field, length, max_length } => write!(f, "var data field '{}': length {} exceeds max {}", field, length, max_length),
                         Self::FieldNotInVersion { field, wire_version, since_version } => write!(f, "field '{}' not in wire version {} (added in version {})", field, wire_version, since_version),
                         Self::InvalidUtf8 { field, error } => write!(f, "field '{}': invalid UTF-8: {}", field, error),
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
+                        Self::InvalidBoolean { field, discriminant } => write!(f, "field '{}': invalid boolean (discriminant {discriminant:#x})", field),
+                        Self::DomainConversionFailed { field, reason } => write!(f, "field '{}': domain conversion failed: {}", field, reason),
                     }
                 }
             }
@@ -44,12 +60,17 @@ pub(crate) fn generate_sbe_rt_src() -> String {
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
-                BufferTooShort { needed: usize, available: usize },
+                /// Encode buffer shorter than needed for `field` (`needed` vs `available`).
+                BufferTooShort { field: &'static str, needed: usize, available: usize },
+                /// Claim buffer length does not match ENCODED_LENGTH.
+                ClaimLengthMismatch { expected: usize, actual: usize },
+                /// Var-data payload longer than the schema max for `field`.
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Fixed char/byte array source longer than the schema length.
                 FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Domain/DTO value outside the schema min/max range.
                 ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
+                /// Tried to write more group entries than the declared count.
                 GroupFull { declared: u32, attempted: u32 },
                 /// Known-size group closure returned without adding enough entries.
                 GroupCountMismatch { declared: u32, actual: u32 },
@@ -57,6 +78,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 GroupCountOverflow { maximum: u32, actual: u32 },
                 /// Checked arithmetic overflow in encoded length computation.
                 EncodedLengthOverflow,
+                /// Domain `try_*` conversion failed.
+                DomainConversionFailed { field: &'static str, reason: &'static str },
+                /// Nested decode failure during encode/verify paths.
                 Decode(DecodeError),
             }
 
@@ -64,7 +88,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 #[cold]
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
-                        Self::BufferTooShort { needed, available } => write!(f, "buffer too short: needed {}, available {}", needed, available),
+                        Self::BufferTooShort { field, needed, available } => write!(f, "buffer too short for {field}: needed {needed}, available {available}"),
+                        Self::ClaimLengthMismatch { expected, actual } => write!(f, "claim buffer length mismatch: expected {}, got {}", expected, actual),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::FixedArrayTooLong { field, max_length, actual } => write!(f, "fixed array too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::ValueOutOfRange { field, min, max, actual } => write!(f, "value out of range for field {}: min {}, max {}, actual {}", field, min, max, actual),
@@ -72,14 +97,23 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
                         Self::GroupCountOverflow { maximum, actual } => write!(f, "group count overflow: max {maximum}, actual {actual}"),
                         Self::EncodedLengthOverflow => write!(f, "encoded length computation overflowed"),
+                        Self::DomainConversionFailed { field, reason } => write!(f, "domain conversion failed for field {field}: {reason}"),
                         Self::Decode(e) => write!(f, "decode error: {e}"),
                     }
                 }
             }
 
-            impl core::error::Error for EncodeError {}
+            impl core::error::Error for EncodeError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::Decode(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
 
             impl From<DecodeError> for EncodeError {
+                #[inline]
                 fn from(e: DecodeError) -> Self {
                     Self::Decode(e)
                 }
@@ -100,11 +134,17 @@ pub(crate) fn generate_sbe_rt_src() -> String {
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum VerifyError {
+                /// Buffer shorter than the message header.
                 HeaderTooShort,
+                /// Wire block length below the minimum readable for this version.
                 InvalidBlockLength { expected_min: usize, actual: usize },
+                /// Group dimension header for `field` lies past the buffer end.
                 GroupDimOutOfBounds { field: &'static str, offset: usize },
+                /// Var-data region for `field` lies past the buffer end.
                 VarDataOutOfBounds { field: &'static str, offset: usize, length: u64 },
+                /// Full message (header + tails) longer than available bytes.
                 MessageTooShort { needed: usize, available: usize },
+                /// Nested decode error while verifying.
                 DecodeError(DecodeError),
             }
 
@@ -123,12 +163,20 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             }
 
             impl From<DecodeError> for VerifyError {
+                #[inline]
                 fn from(e: DecodeError) -> Self {
                     VerifyError::DecodeError(e)
                 }
             }
 
-            impl core::error::Error for VerifyError {}
+            impl core::error::Error for VerifyError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::DecodeError(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
 
             /// Convert a wire var-data length without truncation and validate
             /// the complete region with overflow-safe offset arithmetic.
@@ -195,20 +243,53 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 })
             }
 
+            /// Compile-time metadata for a generated SBE message.
+            ///
+            /// Sealed: the supertrait lives in a private child of the generated
+            /// module, so only code generated alongside these types can name
+            /// it. Generic framing code can therefore trust that a
+            /// `T: SbeMessage` carries this schema's real template id, block
+            /// length, schema id, and version.
             #[diagnostic::on_unimplemented(
                 message = "`{Self}` is not a generated SBE message type",
                 note = "SbeMessage is a sealed trait — only types generated by `ergo_sbe::Generator` can implement it. Import the generated module and use the provided decoder/encoder types directly."
             )]
-            pub trait SbeMessage {
+            pub trait SbeMessage: super::__sbe_message_sealed::Sealed {
                 const TEMPLATE_ID: u16;
                 const BLOCK_LENGTH: usize;
                 const SCHEMA_ID: u16;
                 const SCHEMA_VERSION: u16;
             }
 
-            pub mod private {
+            mod private {
                 pub trait Sealed {}
             }
+
+            /// How a group decoder was obtained.
+            ///
+            /// A group reached through its message's tail is **attached**: the
+            /// decoder knows the real parent body, so completing it can hand
+            /// back the next message stage. A group wrapped standalone is
+            /// **detached**: it iterates, random-accesses, and rewinds, but has
+            /// no parent to return to, so it exposes no message-stage
+            /// completion. The distinction is a zero-sized type parameter —
+            /// no runtime field, branch, or allocation.
+            pub trait GroupContext: private::Sealed {}
+
+            /// Standalone group: no parent message stage. Default context.
+            #[doc(hidden)]
+            pub struct Detached(());
+            impl private::Sealed for Detached {}
+            impl GroupContext for Detached {}
+
+            /// Group reached through a message tail; completion is available.
+            ///
+            /// There is deliberately no safe public constructor: attachment is
+            /// a proof, not a claim a consumer can make.
+            #[doc(hidden)]
+            pub struct Attached(());
+            impl private::Sealed for Attached {}
+            impl GroupContext for Attached {}
 
             // Zero-sized header-state markers (defined per-module to avoid
             // forcing a runtime dependency on ergo_sbe).
@@ -228,9 +309,11 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 fn into_group_result(self) -> GroupResult;
             }
             impl IntoGroupResult for () {
+                #[inline]
                 fn into_group_result(self) -> GroupResult { Ok(()) }
             }
             impl IntoGroupResult for GroupResult {
+                #[inline]
                 fn into_group_result(self) -> GroupResult { self }
             }
 
@@ -260,6 +343,59 @@ pub(crate) fn with_keyword_append<R>(token: &str, f: impl FnOnce() -> R) -> R {
 
 fn keyword_append_token() -> String {
     KEYWORD_APPEND.with(|c| c.borrow().clone())
+}
+
+/// Path to the module holding the `SbeMessage` sealing trait, as seen from the
+/// generated module currently being emitted.
+///
+/// A module that emits its own `sbe_rt` owns the sealing module outright, so the
+/// path is the bare private child. A module importing a shared runtime has to
+/// name the owner's copy instead — otherwise its message types could not satisfy
+/// the shared `SbeMessage` supertrait at all.
+thread_local! {
+    static SEALED_PATH: std::cell::RefCell<String> =
+        std::cell::RefCell::new(SEALED_MODULE.into());
+}
+
+/// Name of the generated module's private sealing child.
+pub(crate) const SEALED_MODULE: &str = "__sbe_message_sealed";
+
+/// Set the sealing path for the module about to be generated. `gen_schema`
+/// calls this before emitting any message, and generation is not re-entrant, so
+/// a plain set is enough.
+pub(crate) fn set_sealed_path(path: &str) {
+    SEALED_PATH.with(|cell| *cell.borrow_mut() = path.to_string());
+}
+
+/// The sealing module path as tokens, e.g. `__sbe_message_sealed` or
+/// `super::common_types::__sbe_message_sealed`.
+pub(crate) fn sealed_path_tokens() -> TokenStream {
+    let path = SEALED_PATH.with(|cell| cell.borrow().clone());
+    syn::parse_str::<syn::Path>(&path)
+        .map(|p| quote::quote!(#p))
+        .expect("sealing module path must be a valid Rust path")
+}
+
+/// The private sealing module declaration for a generated module that owns the
+/// runtime. `exported` widens it to `pub(super)` so sibling modules generated
+/// against a shared runtime can still implement it; a self-contained module
+/// keeps it fully private, which is what makes `SbeMessage` unimplementable
+/// outside the generated module.
+pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
+    // Always pub(crate): sibling generated modules in the same crate can
+    // still name `super::shared::__sbe_message_sealed`, but external crates
+    // cannot implement SbeMessage. The `pub mod` path was a metadata-forgery
+    // risk when the shared module itself is public.
+    let _ = exported; // kept for API compatibility, always crate-private
+    let visibility = "pub(crate) ";
+    format!(
+        "/// Sealing marker for [`sbe_rt::SbeMessage`]. Private to this generated\n\
+         /// module: no consumer can name it, so no consumer can forge message\n\
+         /// metadata by implementing `SbeMessage` for its own type.\n\
+         {visibility}mod {SEALED_MODULE} {{\n    \
+         pub trait Sealed {{}}\n\
+         }}\n\n"
+    )
 }
 
 thread_local! {
@@ -338,6 +474,7 @@ pub(crate) fn is_rust_keyword(s: &str) -> bool {
             | "virtual"
             | "yield"
             | "gen"
+            | "union"
     )
 }
 
@@ -634,6 +771,66 @@ pub(crate) fn emit_field_consts(f: &MessageField) -> proc_macro2::TokenStream {
     tokens
 }
 
+/// Emit the version-aware `min_readable_fixed_extent` body:
+/// `let mut m = N; if acting_version >= V { m = M; } … m`.
+///
+/// Required, non-constant fields that are active at `max_version` must fit.
+/// Optional and Constant fields are excluded: constants occupy no wire bytes,
+/// and optional getters carry their own block-length guard.
+///
+/// This is NOT purely a safety bound — it doubles as a frame validity check.
+/// Including a since-versioned required field in the extent rejects a
+/// malformed frame *before* the decoder is constructed, rather than letting
+/// the getter silently return `None`.
+pub(crate) fn emit_readable_extent_body(fields: &[MessageField]) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let in_extent =
+        |f: &&MessageField| f.presence != Presence::Optional && f.presence != Presence::Constant;
+    let extent_at = |max_version: u16| -> usize {
+        fields
+            .iter()
+            .filter(in_extent)
+            .filter(|f| f.since_version <= max_version)
+            .map(|f| f.offset.saturating_add(f.field_type.size()))
+            .max()
+            .unwrap_or(0)
+    };
+
+    let mut versions: Vec<u16> = fields
+        .iter()
+        .filter(in_extent)
+        .map(|f| f.since_version)
+        .collect();
+    versions.sort_unstable();
+    versions.dedup();
+
+    let m0 = extent_at(0);
+    let m0_lit = syn::LitInt::new(&m0.to_string(), span);
+
+    // Build one TokenStream per version guard branch so we can splice them
+    // into one quote! block.
+    let mut version_arms = proc_macro2::TokenStream::new();
+    for &v in &versions {
+        if v == 0 {
+            continue;
+        }
+        let v_lit = syn::LitInt::new(&v.to_string(), span);
+        let m = extent_at(v);
+        let m_lit = syn::LitInt::new(&m.to_string(), span);
+        version_arms.extend(quote::quote! {
+            if acting_version >= #v_lit {
+                m = #m_lit;
+            }
+        });
+    }
+
+    quote::quote! {
+        let mut m = #m0_lit;
+        #version_arms
+        m
+    }
+}
+
 pub(crate) fn find_matching_end(
     tokens: &[Token],
     start: usize,
@@ -744,7 +941,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     };
 
     // From<bool> / From<Name> for bool impls for boolean types
-    let from_bool_impl = if let (Some(ref fv), Some(ref tv)) = (false_ident, true_ident) {
+    let from_bool_impl = if let (Some(fv), Some(tv)) = (&false_ident, &true_ident) {
         quote::quote! {
             impl From<bool> for #name_ident {
                 #[inline]
@@ -753,10 +950,33 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 }
             }
 
-            impl From<#name_ident> for bool {
+            impl TryFrom<#name_ident> for bool {
+                type Error = ();
                 #[inline]
-                fn from(val: #name_ident) -> bool {
-                    val as #r_type_ty != 0
+                fn try_from(val: #name_ident) -> Result<Self, Self::Error> {
+                    val.as_bool().ok_or(())
+                }
+            }
+        }
+    } else {
+        quote::quote! {}
+    };
+
+    // as_bool() merged into the main impl block to avoid a separate impl
+    // block that shifts code layout (LTO alignment regression).
+    let as_bool_method = if let (Some(fv), Some(tv)) = (&false_ident, &true_ident) {
+        quote::quote! {
+            /// Returns `Some(true)` / `Some(false)` for the valid boolean
+            /// values. Returns `None` for `NullVal` or any unknown raw
+            /// discriminant — the SBE boolean wire type is tri-state
+            /// (F, T, null). Prefer this (or `TryFrom`) over treating the
+            /// raw discriminant as a Rust `bool`.
+            #[inline]
+            pub const fn as_bool(self) -> Option<bool> {
+                match self {
+                    Self::#fv => Some(false),
+                    Self::#tv => Some(true),
+                    _ => None,
                 }
             }
         }
@@ -798,6 +1018,12 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
 
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str("/// SBE enum `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — wire discriminant ");
+        src.push_str(&r_type);
+        src.push_str(".\n");
     }
 
     let tokens = quote::quote! {
@@ -810,16 +1036,22 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl #name_ident {
+            /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
+            /// regression when forced.
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
+            /// Reconstruct from a wire discriminant (`NullVal` for unknown).
+            /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
             pub const fn from_raw(val: #r_type_ty) -> Self {
                 match val {
                     #(#from_raw_arms,)*
                     _ => Self::NullVal,
                 }
             }
+
+            #as_bool_method
         }
 
         impl From<#name_ident> for #r_type_ty {
@@ -913,9 +1145,15 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         });
     }
 
-    // Emit set doc from the type's XML description (DECISIONS.md §9).
+    // Emit set doc from the type's XML description.
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str("/// SBE bitset `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — wire type ");
+        src.push_str(&r_type);
+        src.push_str(".\n");
     }
 
     let tokens = quote::quote! {
@@ -1188,6 +1426,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 let prim_size = encoding_type.size();
                 let prim_size_lit =
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
+                let raw_ident = syn::Ident::new(
+                    &format!("raw_{}", field_name),
+                    proc_macro2::Span::call_site(),
+                );
 
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
@@ -1197,6 +1439,13 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         #target_ident::from_raw(#r_type_ty::#from_method(
                             read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
                         ))
+                    }
+                    /// Raw wire discriminant — bypasses enum mapping.
+                    #[inline]
+                    pub fn #raw_ident(&self) -> #r_type_ty {
+                        #r_type_ty::#from_method(
+                            read_bytes::<#prim_size_lit>(&self.0, #offset_lit)
+                        )
                     }
                 });
 
@@ -1236,10 +1485,14 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         }
     }
 
-    // manual String param parsing instead of syn::FnArg, refactor when generated code interface stabilises
-
     if let Some(ref desc) = tokens[0].encoding.description {
         push_description_doc(src, desc);
+    } else {
+        src.push_str("/// SBE composite `");
+        src.push_str(&tokens[0].name);
+        src.push_str("` — ");
+        src.push_str(&size_lit.to_string());
+        src.push_str(" byte wire image.\n");
     }
 
     let ts = quote::quote! {
@@ -1250,6 +1503,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         impl #name_ident {
             #getters
 
+            #[inline]
             pub fn new(#(#ctor_params),*) -> Self {
                 let mut bytes = [0u8; #size_lit];
                 #ctor_body
@@ -1257,8 +1511,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
             }
         }
 
-        // DECISIONS.md §10: compile-time proof that the Rust struct matches the
-        // wire size — catches generator bugs at compile time, zero runtime cost.
+        // Compile-time proof that the Rust struct matches the wire size.
         const _: () = assert!(core::mem::size_of::<#name_ident>() == #size_lit);
     };
 
@@ -1272,12 +1525,20 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
             /// Canonical wire size of the SBE message header.
             pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = #hs_lit;
 
+            /// Parsed `(template_id, schema_id)` from [`MessageHeader::peek_header`].
+            /// Named fields prevent silent transposition of the two `u16` values.
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            pub struct PeekedHeader {
+                pub template_id: u16,
+                pub schema_id: u16,
+            }
+
             impl #name_ident {
-                /// Read `(template_id, schema_id)` from a frame without
-                /// constructing a full `MessageHeader`. Returns `None`
-                /// when the buffer is shorter than the header.
+                /// Read the header fields from a buffer without constructing a
+                /// full `MessageHeader`. Returns `None` when the buffer is
+                /// shorter than the header.
                 #[inline]
-                pub fn peek_header(data: &[u8]) -> Option<(u16, u16)> {
+                pub fn peek_header(data: &[u8]) -> Option<PeekedHeader> {
                     if data.len() < #hs_lit {
                         return None;
                     }
@@ -1288,7 +1549,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         u16::try_from(this.template_id() as u64).ok()?;
                     let schema_id =
                         u16::try_from(this.schema_id() as u64).ok()?;
-                    Some((template_id, schema_id))
+                    Some(PeekedHeader { template_id, schema_id })
                 }
 
                 /// Read `template_id` from a frame without constructing a full
@@ -1310,8 +1571,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 /// match. Use this for correct multi-schema dispatch.
                 #[inline]
                 pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
-                    let (tid, sid) = Self::peek_header(data)?;
-                    if sid == expected_schema_id { Some(tid) } else { None }
+                    let header = Self::peek_header(data)?;
+                    if header.schema_id == expected_schema_id { Some(header.template_id) } else { None }
                 }
             }
         };
@@ -1372,9 +1633,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 let mut res = [0 as #r_type_ty; #len_lit];
                                 let mut idx = 0;
                                 while idx < #len_lit {
-                                    let offset = self.pos + #offset_lit + idx * #prim_size_lit;
                                     res[idx] = #r_type_ty::#from_method(
-                                        read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)
+                                        unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit + idx * #prim_size_lit) }
                                     );
                                     idx += 1;
                                 }
@@ -1395,8 +1655,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     decoder_getters.extend(quote::quote! {
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
-                            let offset = self.pos + #offset_lit;
-                            #r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset))
+                            #r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
                         }
                     });
                 }
@@ -1413,8 +1672,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(read_bytes_unchecked::<#comp_size_lit>(self.buf, offset))
+                        #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
                     }
                 });
             }
@@ -1433,8 +1691,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident::from_raw(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                     }
                 });
             }
@@ -1453,8 +1710,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        let offset = self.pos + #offset_lit;
-                        #target_ident(#r_type_ty::#from_method(read_bytes_unchecked::<#prim_size_lit>(self.buf, offset)))
+                        #target_ident(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                     }
                 });
             }
@@ -1462,11 +1718,17 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     }
 
     let decoder_name = syn::Ident::new(&format!("{}Decoder", name), proc_macro2::Span::call_site());
+    src.push_str("/// Flyweight decoder for the `");
+    src.push_str(&tokens[0].name);
+    src.push_str("` composite.\n");
     let decoder_ts = quote::quote! {
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
             pub(crate) buf: &'a [u8],
-            pub(crate) pos: usize,
+            /// Absolute address of the composite body: `buf.as_ptr() as usize
+            /// + body_offset`. Cached once at construction so every accessor
+            /// becomes a single struct load + immediate-offset wire load.
+            pub(crate) base_addr: usize,
         }
 
         impl<'a> #decoder_name<'a> {
@@ -1477,10 +1739,9 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     src.push('\n');
 }
 
-/// Core generator for concrete consuming tail stages (DECISIONS.md §3), shared
-/// by message-level and entry-level tails. Emits non-`Copy` stage structs plus
-/// `into_*`, `finish`, and `skip_remaining` methods. Additive: does not touch
-/// the legacy `&self` random-access surface.
+/// Core generator for consuming tail stages, shared by message-level and
+/// entry-level tails. Emits non-`Copy` stage structs plus `into_*`, `finish`,
+/// and `skip_remaining`. Does not remove random-access `&self` accessors.
 ///
 /// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
 /// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.
@@ -1491,6 +1752,7 @@ pub(crate) fn generate_prelude(
     messages: &[MessageStructure],
     schema_id: u16,
     schema_version: u16,
+    enable_dispatch: bool,
 ) {
     writeln!(src, "pub const SCHEMA_ID: u16 = {schema_id};").unwrap();
     writeln!(src, "pub const SCHEMA_VERSION: u16 = {schema_version};").unwrap();
@@ -1524,14 +1786,16 @@ pub(crate) fn generate_prelude(
 
     // Module-level types (exported from super)
     src.push_str("    pub use super::{\n");
-    for ty in &[
-        "AnyMessage",
-        "DecodedFrame",
-        "FrameCursor",
-        "FramingPolicy",
-        "MessageVisitor",
-    ] {
-        writeln!(src, "        {ty},").unwrap();
+    if enable_dispatch {
+        for ty in &[
+            "AnyMessage",
+            "DecodedFrame",
+            "FrameCursor",
+            "FramingPolicy",
+            "MessageVisitor",
+        ] {
+            writeln!(src, "        {ty},").unwrap();
+        }
     }
     // Generated types (composites, enums, sets, messages)
     for ty in &gen_types {
@@ -1733,18 +1997,23 @@ pub(crate) fn generate_any_message(
             });
         }
         out.extend(quote::quote! {
+            /// Tagged union of every message type in the schema — decode once,
+            /// then `match` to access the typed decoder.
             #[non_exhaustive]
             pub enum AnyMessage<'a> {
                 #enum_variants
                 Unknown {
                     header: #header_type_ident,
-                    payload: &'a [u8],
+                    /// The complete frame: schema-declared message header
+                    /// followed by the unparsed body. Not the body alone.
+                    frame: &'a [u8],
                 },
             }
         });
     }
 
     out.extend(quote::quote! {
+        /// One decoded message with its buffer range and length.
         pub struct DecodedFrame<'a> {
             pub message: AnyMessage<'a>,
             pub range: core::ops::Range<usize>,
@@ -1753,15 +2022,18 @@ pub(crate) fn generate_any_message(
     });
 
     out.extend(quote::quote! {
+        /// How frames are delimited in a stream: length-prefixed or fixed-size.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum FramingPolicy {
-            LengthPrefixU32,
-            LengthPrefixU16,
+            LengthPrefixU32Le,
+            LengthPrefixU16Le,
             Fixed(usize),
         }
     });
 
     out.extend(quote::quote! {
+        /// Iterator that yields [`DecodedFrame`]s from a byte buffer according
+        /// to a [`FramingPolicy`].
         pub struct FrameCursor<'a> {
             buf: &'a [u8],
             pos: usize,
@@ -1775,32 +2047,49 @@ pub(crate) fn generate_any_message(
             }
         }
 
+        impl<'a> core::iter::FusedIterator for FrameCursor<'a> {}
+
         impl<'a> Iterator for FrameCursor<'a> {
             type Item = Result<DecodedFrame<'a>, sbe_rt::DecodeError>;
 
+            /// Fused after the first error.
+            ///
+            /// A framing error means the boundary between this frame and the
+            /// next is no longer known, so every later offset would be a guess.
+            /// The cursor moves to the terminal boundary instead: one `Err`,
+            /// then permanent `None`. Re-polling a broken stream used to return
+            /// the same error forever.
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 if self.pos >= self.buf.len() {
                     return None;
                 }
+                // Any error below is terminal; parking `pos` at the end is what
+                // fuses the iterator without adding a success-path state field.
+                let terminal = self.buf.len();
                 let (header_len, frame_len) = match self.framing {
-                    FramingPolicy::LengthPrefixU32 => {
+                    FramingPolicy::LengthPrefixU32Le => {
                         if 4 > self.buf.len().saturating_sub(self.pos) {
+                            let available = self.buf.len().saturating_sub(self.pos);
+                            self.pos = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
-                                available: self.buf.len().saturating_sub(self.pos),
+                                available,
                             }));
                         }
                         let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
                         let len = u32::from_le_bytes(bytes) as usize;
                         (4, len)
                     }
-                    FramingPolicy::LengthPrefixU16 => {
+                    FramingPolicy::LengthPrefixU16Le => {
                         if 2 > self.buf.len().saturating_sub(self.pos) {
+                            let available = self.buf.len().saturating_sub(self.pos);
+                            self.pos = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
-                                available: self.buf.len().saturating_sub(self.pos),
+                                available,
                             }));
                         }
                         let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
@@ -1810,40 +2099,46 @@ pub(crate) fn generate_any_message(
                     FramingPolicy::Fixed(len) => (0, len),
                 };
 
+                let available = self.buf.len().saturating_sub(self.pos);
                 let frame_start = match self.pos.checked_add(header_len) {
                     Some(value) => value,
                     None => {
+                        self.pos = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
-                            available: self.buf.len().saturating_sub(self.pos),
+                            available,
                         }));
                     }
                 };
                 let frame_end = match frame_start.checked_add(frame_len) {
                     Some(value) => value,
                     None => {
+                        self.pos = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
-                            available: self.buf.len().saturating_sub(self.pos),
+                            available,
                         }));
                     }
                 };
                 if frame_end > self.buf.len() {
+                    self.pos = terminal;
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
                         needed: header_len.saturating_add(frame_len),
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available,
                     }));
                 }
-                let res = AnyMessage::decode_frame(self.buf, frame_start, frame_len);
-                match res {
+                match AnyMessage::decode_frame(self.buf, frame_start, frame_len) {
                     Ok(frame) => {
                         self.pos = frame_end;
                         Some(Ok(frame))
                     }
-                    Err(e) => Some(Err(e)),
+                    Err(e) => {
+                        self.pos = terminal;
+                        Some(Err(e))
+                    }
                 }
             }
         }
@@ -1855,6 +2150,7 @@ pub(crate) fn generate_any_message(
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
         let mut decode_arms = proc_macro2::TokenStream::new();
+        let mut decode_arms_unchecked = proc_macro2::TokenStream::new();
         for m in messages {
             let name = quote::format_ident!("{}", to_pascal_case(&m.name));
             let decoder = quote::format_ident!("{}Decoder", to_pascal_case(&m.name));
@@ -1864,15 +2160,22 @@ pub(crate) fn generate_any_message(
             );
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(#decoder::wrap(buf, pos, block_length, version)))
+                    // try_wrap enforces version-aware fixed extent.
+                    Ok(Self::#name(#decoder::try_wrap(buf, pos, block_length, version)?))
+                }
+            });
+            decode_arms_unchecked.extend(quote::quote! {
+                #schema::TEMPLATE_ID => {
+                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, pos, block_length, version) }))
                 }
             });
         }
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
-                pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+                pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
                     if #header_size_lit > buf.len().saturating_sub(pos) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
@@ -1898,7 +2201,6 @@ pub(crate) fn generate_any_message(
                         "blockLength",
                         header.#bl_ident() as u64,
                     )?;
-                    let body_pos = pos + #header_size_lit;
 
                     #schema_id_validation
 
@@ -1906,6 +2208,17 @@ pub(crate) fn generate_any_message(
                         #decode_arms
                         _ => Err(sbe_rt::DecodeError::UnknownTemplateLength { template_id }),
                     }
+                }
+
+                /// Trusted multi-template dispatch. Same checks as
+                /// [`Self::try_decode`]; prefer `try_decode` at untrusted
+                /// boundaries. Dynamic tails remain checked on consume.
+                #[inline]
+                pub fn decode(
+                    buf: &'a [u8],
+                    pos: usize,
+                ) -> Result<Self, sbe_rt::DecodeError> {
+                    Self::try_decode(buf, pos)
                 }
             }
         });
@@ -1927,19 +2240,25 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let decoder = #decoder::wrap(buf, pos, block_length, version);
-                    let total_len = decoder.encoded_length_with_header()?;
-                    if total_len > frame_len {
+                    let frame_end = pos.checked_add(frame_len).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: #field_name,
+                            needed: frame_len,
+                            available: buf.len().saturating_sub(pos),
+                        }
+                    )?;
+                    if frame_end > buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
-                            needed: total_len,
-                            available: frame_len,
+                            needed: frame_len,
+                            available: buf.len().saturating_sub(pos),
                         });
                     }
+                    let decoder = #decoder::try_decode(&buf[..frame_end], pos)?;
                     Ok(DecodedFrame {
                         message: Self::#name(decoder),
-                        range: pos .. pos + total_len,
-                        len: total_len,
+                        range: pos .. frame_end,
+                        len: frame_len,
                     })
                 }
             });
@@ -1989,11 +2308,11 @@ pub(crate) fn generate_any_message(
                                     available: buf.len().saturating_sub(pos),
                                 });
                             }
-                            let payload = &buf[pos .. pos + frame_len];
+                            let frame = &buf[pos .. pos + frame_len];
                             Ok(DecodedFrame {
                                 message: Self::Unknown {
                                     header,
-                                    payload,
+                                    frame,
                                 },
                                 range: pos .. pos + frame_len,
                                 len: frame_len,
@@ -2020,7 +2339,7 @@ pub(crate) fn generate_any_message(
                 pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
                     match self {
                         #encoded_arms
-                        Self::Unknown { payload, .. } => Ok(payload.len()),
+                        Self::Unknown { frame, .. } => Ok(frame.len()),
                     }
                 }
             }
@@ -2040,13 +2359,14 @@ pub(crate) fn generate_any_message(
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
-                /// Complete SBE frame (message header + body) for known variants;
-                /// raw payload bytes for [`Self::Unknown`].
+                /// Complete SBE frame (message header + body) — for
+                /// [`Self::Unknown`] this is the same header-plus-body range
+                /// the cursor matched.
                 #[inline]
                 pub fn as_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     match self {
                         #as_bytes_arms
-                        Self::Unknown { payload, .. } => Ok(payload),
+                        Self::Unknown { frame, .. } => Ok(frame),
                     }
                 }
             }
@@ -2063,7 +2383,8 @@ pub(crate) fn generate_any_message(
                     // `len` is header-inclusive; copy the full frame, not body-only.
                     if len > buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                            needed: len,
+                                field: "AnyMessage::encode",
+                                needed: len,
                             available: buf.len(),
                         });
                     }
@@ -2080,15 +2401,16 @@ pub(crate) fn generate_any_message(
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     match self {
                         #encode_arms
-                        Self::Unknown { payload, .. } => {
-                            if payload.len() > buf.len() {
+                        Self::Unknown { frame, .. } => {
+                            if frame.len() > buf.len() {
                                 return Err(sbe_rt::EncodeError::BufferTooShort {
-                                    needed: payload.len(),
+                                    field: "AnyMessage::encode",
+                                    needed: frame.len(),
                                     available: buf.len(),
                                 });
                             }
-                            buf[..payload.len()].copy_from_slice(payload);
-                            Ok(payload.len())
+                            buf[..frame.len()].copy_from_slice(frame);
+                            Ok(frame.len())
                         }
                     }
                 }
@@ -2124,23 +2446,25 @@ pub(crate) fn generate_any_message(
                 #(#visitor_methods)*
 
                 /// Called for unknown template IDs (not in this schema).
-                /// `header` is the parsed schema-declared MessageHeader; `payload` is
-                /// the full frame (header + body). Default returns `unimplemented!()`.
+                ///
+                /// `header` is the parsed schema-declared MessageHeader.
+                /// `frame` is the complete frame — message header followed by
+                /// the unparsed body — not the body alone. Must be implemented;
+                /// there is no panicking default, because an unknown template
+                /// is application policy rather than a crash.
                 fn visit_unknown(
                     &mut self,
                     header: &#header_type_ident,
-                    payload: &[u8],
-                ) -> Self::Output {
-                    unimplemented!("unknown template id {} in schema {}",
-                        header.#ti_ident(), stringify!(#schema_name))
-                }
+                    frame: &[u8],
+                ) -> Self::Output;
             }
 
             impl<'a> AnyMessage<'a> {
+                #[inline]
                 pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
                     match self {
                         #(#visit_arms)*
-                        Self::Unknown { header, payload } => visitor.visit_unknown(header, payload),
+                        Self::Unknown { header, frame } => visitor.visit_unknown(header, frame),
                     }
                 }
             }
@@ -2186,8 +2510,7 @@ pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStre
 
 /// Append `///` rustdoc lines for a schema description (doctest-safe).
 ///
-/// Single-line style is `///Text` (no forced space) so existing provenance
-/// tests that match `///Description…` keep passing. Multi-line content is
+/// Single-line style is `///Text` (no forced space). Multi-line content is
 /// first fenced as `text` by [`sanitize_description_for_doc`].
 pub(crate) fn push_description_doc(src: &mut String, desc: &str) {
     for line in sanitize_description_for_doc(desc).lines() {

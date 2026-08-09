@@ -1,0 +1,16 @@
+{
+  "comparators": {
+    "sbe_tool_car_patched.rs": {
+      "output_sha256": "3e93a1ec88f0326178b897d9c9bb315a709606bc9643daac83132710e33972b1",
+      "schema": "sbe-samples/src/main/resources/example-schema.xml",
+      "schema_sha256": "ebb4959faea556560b78f58f17c8fc904a603b7a27e0ad3548ca472f1c73571f"
+    },
+    "sbe_tool_ob_patched.rs": {
+      "output_sha256": "fc7b3465cf471abd181c017dd4b97a685552a8c8cc7711e399dd2df6858df5e0",
+      "schema": "sbe/benchmarks/schemas/orderbook.xml",
+      "schema_sha256": "0d7d10d85cc94b54a293513a40bd2b075729ee6db1441f5e092573f6929784ad"
+    }
+  },
+  "tool_version": "1.40.0-SNAPSHOT",
+  "upstream_commit": "44b04492d67aff2cd1fab19da77f365860b1e8c8"
+}

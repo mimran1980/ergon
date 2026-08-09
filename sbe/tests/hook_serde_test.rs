@@ -40,7 +40,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let schema = ergo_sbe::Schema::from_ir(ir);
 
     let config = ergo_sbe::GenerationConfig::new("hook_serde")
-        .enable_domain_objects(ergo_sbe::DomainVarData::Bytes)
+        .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_hook(serde_hook);
 
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
@@ -109,7 +109,7 @@ fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         const LEN: usize = OrderEncoder::compute_length_with_header();
         let mut buf = [0u8; LEN];
         dto.encode(&mut buf)?;
-        let dec = OrderDecoder::try_wrap_and_apply_header(&buf, 0)?;
+        let dec = OrderDecoder::try_decode(&buf, 0)?;
         assert_eq!(dec.price(), 999);
         assert_eq!(dec.qty(), 50);
         assert_eq!(dec.code(), EventCode::Error);

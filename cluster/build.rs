@@ -4,6 +4,10 @@
 //!   cluster/schemas/aeron-cluster-codecs.xml
 //!   cluster/schemas/aeron-cluster-mark-codecs.xml
 //!
+//! Build scripts are allowed to panic/unwrap — they run at compile time and
+//! a failure should stop the build immediately.
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
+//!
 //! The generated files are `include!`d from `src/codecs/mod.rs` as public
 //! modules `session` and `mark`.
 

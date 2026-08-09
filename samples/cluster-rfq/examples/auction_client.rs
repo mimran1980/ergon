@@ -43,12 +43,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect + get session ID
     {
-        // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut buf = [0u8; 512];
-        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+        let channel = cluster.egress_channel.as_bytes();
+        let need = SessionConnectRequestEncoder::compute_length_with_header(channel.len(), 0, 0);
+        const PAD: usize = 512;
+        assert!(need <= PAD, "connect frame {need} exceeds pad {PAD}");
+        let mut storage = [0u8; PAD];
+        let buf = &mut storage[..need];
+        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0)?;
         enc.correlation_id(1).response_stream_id(102).version(0);
         let complete = enc
-            .response_channel(cluster.egress_channel.as_bytes())?
+            .response_channel(channel)?
             .encoded_credentials(b"")?
             .client_info(b"")?;
         let bytes = complete.as_bytes_with_header();
@@ -92,14 +96,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cid = next_correlation_id;
         next_correlation_id += 1;
 
-        // Build bid message with SessionMessageHeader
-        // TODO: MUST use ergo-sbe EncodedLength, not a magic-sized buffer (CLAUDE.md hard rule)
-        let mut msg = [0u8; 512];
-        let mut enc = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg, 0)?;
+        // Build bid message with SessionMessageHeader + app payload.
+        const HDR: usize = SessionMessageHeaderEncoder::compute_length_with_header();
+        const BID_PAYLOAD: usize = PRICE_OFFSET + 8;
+        let mut msg = [0u8; HDR + BID_PAYLOAD];
+        let mut enc = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..HDR], 0)?;
         enc.leadership_term_id(leadership_term_id)
             .cluster_session_id(cluster_session_id)
             .timestamp(0);
-        let hdr_len = enc.as_bytes_with_header().len();
+        let hdr_len = HDR;
         // Write bid payload after header
         msg[hdr_len + CORRELATION_ID_OFFSET..hdr_len + CORRELATION_ID_OFFSET + 8]
             .copy_from_slice(&cid.to_le_bytes());

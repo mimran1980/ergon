@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![cfg(feature = "test-harness")]
 
 use rusteron_client::cformat;

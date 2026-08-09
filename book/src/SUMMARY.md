@@ -11,10 +11,12 @@
   - [Encode and Decode](./sbe/getting-started/encode-decode.md)
   - [Method Chaining](./sbe/getting-started/method-chaining.md)
   - [Multi-Schema Patterns](./sbe/getting-started/multi-schema.md)
+  - [Coming from sbe-tool](./sbe/getting-started/from-sbe-tool.md)
 - [Feature Tour](./sbe/feature-tour.md)
   - [Exact Sizing](./sbe/feature-tour/exact-sizing.md)
   - [Bulk Arrays](./sbe/feature-tour/bulk-arrays.md)
   - [Consuming Decode Stages](./sbe/feature-tour/decode-stages.md)
+  - [What Generated Code Looks Like](./sbe/feature-tour/generated-code.md)
   - [Trust Boundaries](./sbe/feature-tour/trust-boundaries.md)
   - [Domain Objects (DTOs)](./sbe/feature-tour/domain-objects.md)
   - [Multi-Template Dispatch](./sbe/feature-tour/multi-template.md)
@@ -25,19 +27,24 @@
   - [Flyweight vs Whole-Struct](./sbe/core-concepts/flyweight-vs-struct.md)
   - [Composite Layout & Endianness](./sbe/core-concepts/composite-layout.md)
 - [Configuration](./sbe/configuration.md)
+  - [Feature Integrations](./sbe/configuration/feature-integrations.md)
   - [with_conversion vs with_domain_type](./sbe/configuration/conversion-vs-domain.md)
   - [GenerationConfig Options](./sbe/configuration/generation-config.md)
   - [Code-Generation Hooks](./sbe/configuration/hooks.md)
 - [Recipes](./sbe/recipes.md)
+  - [Aeron try_claim](./sbe/recipes/aeron-try-claim.md)
   - [Display / Debug](./sbe/recipes/display-debug.md)
   - [Schema Descriptions → Rustdoc](./sbe/recipes/schema-rustdoc.md)
   - [Domain DTOs](./sbe/recipes/domain-dtos.md)
   - [App Types on Composites](./sbe/recipes/app-types-composites.md)
   - [Timestamp Conversions](./sbe/recipes/timestamps.md)
 - [Design Notes](./sbe/design-notes.md)
+  - [Type-state is zero-cost](./sbe/design-notes/type-state.md)
+  - [API freeze decisions](./sbe/design-notes/api-freeze.md)
   - [Why NullVal Instead of Option](./sbe/design-notes/nullval.md)
   - [Feature Matrix](./sbe/design-notes/feature-matrix.md)
 - [Benchmarks](./sbe/benchmarks.md)
+  - [Methodology](./sbe/benchmarks/methodology.md)
 
 # ergo-aeron-cluster
 
@@ -45,6 +52,7 @@
   - [SessionBuilder](./cluster/session-builder.md)
   - [Egress Listeners](./cluster/egress-listeners.md)
   - [Chained Message Decoding](./cluster/chained-decoding.md)
+  - [Compatibility](./cluster/compatibility.md)
 
 # Samples
 
@@ -64,4 +72,7 @@
 - [Contributing](./project/contributing.md)
 - [AI Assistance Disclosure](./project/ai-assistance.md)
 - [Verification & Release](./project/verification.md)
+- [Road to 1.0](./project/road-to-1.0.md)
+- [Performance Release Ledger](./project/performance-release-ledger.md)
+- [External Schema Pilot](./project/external-pilot.md)
 - [Package Scope](./project/package-scope.md)

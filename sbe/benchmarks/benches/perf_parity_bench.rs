@@ -43,7 +43,9 @@
 
 // ergon generated code
 
-use ergo_sbe_benchmarks::{ergo_car::*, sbe_tool_car_body_decoder};
+use ergo_sbe_benchmarks::{
+    assert_encode_extent, assert_stream_wrap_extent, ergo_car::*, sbe_tool_car_body_decoder,
+};
 
 // sbe-tool Rust SBE generated code (patched for module inclusion)
 
@@ -290,6 +292,9 @@ fn bench_decode_composite(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
+    // Untimed: prove every message start the timed loop will wrap unchecked.
+    assert_stream_wrap_extent(&buf, msg_len, MICRO_BATCH_SIZE, bl_e, ver_e);
+
     let ergo_car = CarDecoder::wrap(&buf, 0, bl_e, ver_e);
     let ergo_engine = ergo_car.engine();
     let tool_engine = sbe_tool_car_body_decoder(&buf, 0, bl, ver).engine_decoder();
@@ -301,6 +306,14 @@ fn bench_decode_composite(c: &mut Criterion) {
 
     // Traverse a contiguous stream so the gate measures composite decoding,
     // not the code address of a loop repeatedly loading the same three bytes.
+    //
+    // Equal work: sbe-tool's `wrap` only stores buffer, offset, block length,
+    // and version — it performs no extent check. Ergon's bare `wrap` proves the
+    // version-aware fixed extent on every message, so timing it here would
+    // charge ergon for a bounds proof its reference never performs. The extent
+    // is proven once above (both arms decoded the same stream and agreed on
+    // every field), and the timed region uses the matching unchecked
+    // constructor — the same validation class the other maintained pairs use.
     group.bench_function("ergo-sbe_engine", |b| {
         b.iter(|| {
             let buf = black_box(buf.as_slice());
@@ -308,7 +321,9 @@ fn bench_decode_composite(c: &mut Criterion) {
             let mut total_cylinders = 0_u64;
             let mut off = 0;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(buf, off, bl_e, ver_e);
+                // SAFETY: `buf` is a prebuilt concat of whole baseline frames,
+                // so every `off` is a message start with a proven extent.
+                let car = unsafe { CarDecoder::wrap_unchecked(buf, off, bl_e, ver_e) };
                 let engine = car.engine();
                 total_capacity += u64::from(engine.capacity());
                 total_cylinders += u64::from(engine.num_cylinders());
@@ -353,19 +368,28 @@ fn bench_throughput_batch(c: &mut Criterion) {
     let ver = sbe_tool_version();
     // Validate the stream header once (real feed-handler pattern), then decode fast.
     let (bl_e, ver_e) = ergo_sbe_header_fields();
+    // Untimed: prove every message start the timed loop will wrap unchecked.
+    assert_stream_wrap_extent(&buf, msg_len, BATCH_SIZE, bl_e, ver_e);
 
     let mut group = c.benchmark_group("parity/throughput/batch_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     // Equal work: both arms stride absolute offsets into one prebuilt buffer
     // (no per-message re-slice). Body starts at off+8 after the LE header.
+    // sbe-tool `wrap` does no extent check — use ergon `wrap_unchecked` so the
+    // gated pair measures equal logical work (field loads), not product bare
+    // wrap's intentional version-aware bounds proof on every message.
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut total_year: u64 = 0;
             let mut off = 0;
             for _ in 0..BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(buf.as_slice()), off, bl_e, ver_e);
+                // SAFETY: `buf` is a prebuilt concat of full baseline frames;
+                // each `off` is a message start with proven header+body extent.
+                let car = unsafe {
+                    CarDecoder::wrap_unchecked(black_box(buf.as_slice()), off, bl_e, ver_e)
+                };
                 total += car.serial_number();
                 total_year += car.model_year() as u64;
                 off += msg_len;
@@ -483,13 +507,18 @@ fn bench_encode_scalar(c: &mut Criterion) {
             WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
         };
 
-        let mut ergon = [0u8; 18];
+        // Exact frame: header (8) + fixed block (45). No tails are written in
+        // this preflight, so the fixed extent is the exact frame size.
+        // `compute_length_with_header()` is runtime-only here (Car has tails),
+        // so the generated consts are the correct static sizing.
+        const NEED: usize = CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH;
+        let mut ergon = [0u8; NEED];
         black_box(
             CarEncoder::wrap_and_apply_header(&mut ergon, 0)
                 .serial_number(1234)
                 .model_year(2013),
         );
-        let mut sbe_tool = [0u8; 18];
+        let mut sbe_tool = [0u8; NEED];
         black_box(
             ToolCarEncoder::default()
                 .wrap(WriteBuf::new(&mut sbe_tool), 8)
@@ -499,7 +528,7 @@ fn bench_encode_scalar(c: &mut Criterion) {
                 .serial_number(1234)
                 .model_year(2013),
         );
-        assert_eq!(ergon, sbe_tool, "scalar header+body bytes");
+        assert_eq!(&ergon[..18], &sbe_tool[..18], "scalar header+body bytes");
     }
 
     // Header-inclusive API comparison.
@@ -560,14 +589,21 @@ fn bench_encode_scalar(c: &mut Criterion) {
         });
     });
 
-    // Body-only isolates the two scalar setters. ergon `wrap` takes the
-    // message start and reserves its header internally; sbe-tool `wrap` takes
-    // the absolute body offset.
+    // Body-only isolates the two scalar setters. ergon wrap takes the message
+    // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
+    // no extent check — use wrap_unchecked so the gated pair is equal work
+    // (same unfairness class as batch decode; product bare wrap still proves).
     group.bench_function("ergo-sbe_body_only", |b| {
         let mut buf = [0u8; 512];
+        // Untimed: prove the buffer holds a complete frame before the timed
+        // region wraps it unchecked.
+        // This arm writes only the fixed block, so header + block length is the
+        // exact extent the timed region touches.
+        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                CarEncoder::wrap(black_box(&mut buf), 0)
+                // SAFETY: extent asserted directly above.
+                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
                     .serial_number(black_box(1234))
                     .model_year(black_box(2013));
             }

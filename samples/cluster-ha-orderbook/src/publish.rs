@@ -70,7 +70,7 @@ impl ClaimIngress for RecordingClaimIngress {
         // Real ergon SessionMessageHeader (same encoder as AeronCluster::try_claim).
         {
             let mut enc =
-                SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf[..MSG_HDR_TOTAL], 0);
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut buf[..MSG_HDR_TOTAL], 0).unwrap();
             let _ = enc
                 .leadership_term_id(self.leadership_term_id)
                 .cluster_session_id(self.cluster_session_id)

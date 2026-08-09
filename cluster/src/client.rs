@@ -26,6 +26,25 @@ use crate::codecs::session::{
 fn connect_reoffer_interval_ms(message_timeout_ms: u64) -> u64 {
     (message_timeout_ms / 4).clamp(50, 1_000)
 }
+
+/// Create a deadline from now + `timeout_ms` milliseconds, or return
+/// [`ClusterError::InvalidTimeout`] if the timeout is zero or would overflow
+/// [`Instant`].
+fn checked_deadline(phase: &'static str, timeout_ms: u64) -> Result<Instant, ClusterError> {
+    if timeout_ms == 0 {
+        return Err(ClusterError::InvalidTimeout {
+            phase,
+            reason: "timeout must be positive",
+        });
+    }
+    Instant::now()
+        .checked_add(Duration::from_millis(timeout_ms))
+        .ok_or(ClusterError::InvalidTimeout {
+            phase,
+            reason: "deadline exceeds Instant::MAX",
+        })
+}
+
 use crate::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 use crate::egress::{EgressAdapter, EgressListener};
 use crate::error::ClusterError;
@@ -69,30 +88,38 @@ struct ControlledPollCtx<'a, L: ControlledEgressListener> {
 }
 
 fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], _hdr: rusteron_client::AeronHeader) {
-    if let Some(ref ev) = crate::poller::parse_event(data).ok().flatten() {
-        if let crate::poller::EgressEvent::NewLeader {
+    // Decode once — the Fragment is used for state tracking AND listener dispatch.
+    let frag = match crate::fragment::Fragment::decode(data) {
+        Ok(Some(f)) => f,
+        Ok(None) => return, // unknown template — forward-compat, not an error
+        Err(e) => {
+            if ctx.decode_err.is_none() {
+                *ctx.decode_err = Some(e);
+            }
+            return;
+        }
+    };
+    // State tracking — no second decode
+    match &frag {
+        crate::fragment::Fragment::NewLeader {
             leadership_term_id,
             leader_member_id,
             ingress_endpoints,
             cluster_session_id,
-            ..
-        } = ev
-            && ctx.new_leader.is_none()
-            && *cluster_session_id == ctx.expected_session_id
-        {
-            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.clone()));
+        } if ctx.new_leader.is_none() && *cluster_session_id == ctx.expected_session_id => {
+            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.to_string()));
         }
-        if let crate::poller::EgressEvent::SessionEvent {
+        crate::fragment::Fragment::SessionEvent {
             code: crate::codecs::session::EventCode::CLOSED,
             cluster_session_id,
             ..
-        } = ev
-            && *cluster_session_id == ctx.expected_session_id
-        {
+        } if *cluster_session_id == ctx.expected_session_id => {
             *ctx.session_closed = true;
         }
+        _ => {}
     }
-    if let Err(e) = ctx.adapter.on_fragment(data)
+    // Pass the already-decoded fragment — no second decode
+    if let Err(e) = ctx.adapter.dispatch_fragment(frag)
         && ctx.decode_err.is_none()
     {
         *ctx.decode_err = Some(e);
@@ -104,30 +131,37 @@ fn dispatch_controlled<L: ControlledEgressListener>(
     data: &[u8],
     _hdr: rusteron_client::AeronHeader,
 ) -> AeronAction {
-    if let Some(ref ev) = crate::poller::parse_event(data).ok().flatten() {
-        if let crate::poller::EgressEvent::NewLeader {
+    // Decode once — shared between state tracking and listener dispatch.
+    let frag = match crate::fragment::Fragment::decode(data) {
+        Ok(Some(f)) => f,
+        Ok(None) => return AeronAction::AERON_ACTION_CONTINUE, // unknown template
+        Err(e) => {
+            if ctx.decode_err.is_none() {
+                *ctx.decode_err = Some(e);
+            }
+            return AeronAction::AERON_ACTION_ABORT;
+        }
+    };
+    // State tracking — no second decode
+    match &frag {
+        crate::fragment::Fragment::NewLeader {
             leadership_term_id,
             leader_member_id,
             ingress_endpoints,
             cluster_session_id,
-            ..
-        } = ev
-            && ctx.new_leader.is_none()
-            && *cluster_session_id == ctx.expected_session_id
-        {
-            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.clone()));
+        } if ctx.new_leader.is_none() && *cluster_session_id == ctx.expected_session_id => {
+            *ctx.new_leader = Some((*leadership_term_id, *leader_member_id, ingress_endpoints.to_string()));
         }
-        if let crate::poller::EgressEvent::SessionEvent {
+        crate::fragment::Fragment::SessionEvent {
             code: crate::codecs::session::EventCode::CLOSED,
             cluster_session_id,
             ..
-        } = ev
-            && *cluster_session_id == ctx.expected_session_id
-        {
+        } if *cluster_session_id == ctx.expected_session_id => {
             *ctx.session_closed = true;
         }
+        _ => {}
     }
-    match ctx.adapter.on_fragment(data) {
+    match ctx.adapter.dispatch_fragment(frag) {
         Ok(action) => to_aeron_action(action),
         Err(e) => {
             if ctx.decode_err.is_none() {
@@ -171,8 +205,7 @@ pub struct AeronCluster {
     /// [`Self::poll_state_changes`].
     awaiting_leader_since: Option<Instant>,
     /// Configured ingress stream id, retained so a `NewLeaderEvent`
-    /// reconnect uses the same stream the session was established on
-    /// (the post-connect path no longer has the builder).
+    /// reconnect uses the same stream the session was established on.
     ingress_stream_id: i32,
     /// `newLeaderTimeout` from the builder (ms). Enforced by
     /// [`Self::poll_state_changes`].
@@ -181,6 +214,12 @@ pub struct AeronCluster {
     last_keep_alive: Instant,
     /// Interval between keep-alive sends (derived from message_timeout_ms).
     keep_alive_interval_ms: u64,
+    /// Cached from the ingress publication's constants — the maximum total
+    /// frame length (header + payload) that Aeron will accept in one offer.
+    max_message_length: usize,
+    /// Cached from the ingress publication's constants — the maximum payload
+    /// that fits in a single claim (excludes the 32-byte session header).
+    max_payload_length: usize,
     /// rusteron fragment assembler for regular egress.
     regular_assembler: AeronFragmentClosureAssembler,
     /// rusteron fragment assembler for controlled egress.
@@ -239,11 +278,14 @@ impl AeronCluster {
             new_leader_timeout_ms: builder.new_leader_timeout_ms,
             last_keep_alive: Instant::now(),
             keep_alive_interval_ms: connect_reoffer_interval_ms(builder.message_timeout_ms),
+            max_message_length: 0,
+            max_payload_length: 0,
             regular_assembler: AeronFragmentClosureAssembler::new()
                 .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
             controlled_assembler: AeronControlledFragmentClosureAssembler::new()
                 .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?,
         };
+        client.cache_publication_limits();
 
         client.handshake(builder)?;
         Ok(client)
@@ -266,7 +308,7 @@ impl AeronCluster {
         let mut last_offer = Instant::now();
         let reoffer_ms = connect_reoffer_interval_ms(builder.message_timeout_ms);
 
-        let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
+        let deadline = checked_deadline("connect", builder.message_timeout_ms)?;
         let idle_clone = builder.idle.clone();
         let mut captured: Option<crate::poller::EgressEvent> = None;
         while Instant::now() < deadline {
@@ -345,7 +387,7 @@ impl AeronCluster {
                 }
             }
             if let Some(ref idle) = idle_clone {
-                idle.lock().unwrap().idle(0);
+                idle.lock().expect("idle mutex poisoned").idle(0);
             } else {
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -363,14 +405,14 @@ impl AeronCluster {
         credentials: &[u8],
     ) -> Result<(), ClusterError> {
         let buf = Self::encode_connect_request(builder, credentials)?;
-        let deadline = Instant::now() + Duration::from_millis(builder.message_timeout_ms);
+        let deadline = checked_deadline("connect_request", builder.message_timeout_ms)?;
         let idle_clone = builder.idle.clone();
         while Instant::now() < deadline {
             if self.ingress.offer_raw(&buf, Handlers::NONE) > 0 {
                 return Ok(());
             }
             if let Some(ref idle) = idle_clone {
-                idle.lock().unwrap().idle(0);
+                idle.lock().expect("idle mutex poisoned").idle(0);
             } else {
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -462,20 +504,75 @@ impl AeronCluster {
         self.ingress = new_pub;
         self.regular_assembler = new_regular;
         self.controlled_assembler = new_controlled;
+        self.cache_publication_limits();
         Ok(())
+    }
+
+    /// Cache max_message_length and max_payload_length from the ingress
+    /// publication so size checks don't cross the FFI boundary on every offer.
+    fn cache_publication_limits(&mut self) {
+        if let Ok(constants) = self.ingress.get_constants() {
+            self.max_message_length = constants.max_message_length;
+            self.max_payload_length = constants.max_payload_length;
+        }
     }
 
     /// Publish an application message. Prepends the SessionMessageHeader
     /// (leadershipTermId + clusterSessionId + timestamp).
     ///
-    /// Allocation-free on success: the header is written and the payload copied
-    /// directly into the claimed ingress term buffer via [`Self::try_claim`],
-    /// mirroring Java `AeronCluster.offer(buffer)` (one copy into the term
-    /// buffer, no combined header+payload heap allocation).
+    /// Messages that fit in one term-buffer fragment use the zero-alloc
+    /// [`Self::try_claim`] path; larger messages fall back to an assembled
+    /// header+payload buffer via `offer_raw` (Aeron handles transport-level
+    /// fragmentation automatically). Returns the stream **position** assigned
+    /// by Aeron, not the payload length. Mirrors Java
+    /// `AeronCluster.offer(buffer)`.
     pub fn offer(&mut self, payload: &[u8]) -> Result<i64, ClusterError> {
-        let mut claim = self.try_claim(payload.len())?;
-        claim.payload_mut().copy_from_slice(payload);
-        claim.commit().map_err(|e| self.track_publication_error(e))
+        if self.state != SessionState::Connected {
+            return Err(ClusterError::NotConnected);
+        }
+        let total = MSG_HDR_TOTAL
+            .checked_add(payload.len())
+            .ok_or(ClusterError::PayloadTooLarge {
+                operation: "offer",
+                requested: payload.len(),
+                maximum: self.max_message_length,
+            })?;
+        // Reject frames that exceed the publication's max message length
+        // before making any Aeron call.
+        if self.max_message_length > 0 && total > self.max_message_length {
+            return Err(ClusterError::PayloadTooLarge {
+                operation: "offer",
+                requested: total,
+                maximum: self.max_message_length,
+            });
+        }
+        // Fast path: zero-alloc claim when the header+payload fits in one fragment.
+        // max_payload_length == 0 means the publication constants haven't been
+        // cached yet (fresh connect, get_constants failed, or transport not ready).
+        // In that case we always attempt try_claim — it will fail with a proper
+        // Aeron error if the payload is too large.
+        let claim_eligible = total <= self.max_payload_length || self.max_payload_length == 0;
+        if claim_eligible {
+            return match self.try_claim(payload.len()) {
+                Ok(mut claim) => {
+                    claim.payload_mut().copy_from_slice(payload);
+                    claim.commit().map_err(|e| self.track_publication_error(e))
+                }
+                Err(e) => Err(e),
+            };
+        }
+        // Fallback: gather header + payload in two slices via offer_parts.
+        // Aeron fragments automatically; no heap allocation, no payload copy.
+        let mut header = [0u8; MSG_HDR_TOTAL];
+        SessionMessageHeaderEncoder::wrap_and_apply_header(&mut header, 0)
+            .leadership_term_id(self.leadership_term_id)
+            .cluster_session_id(self.cluster_session_id)
+            .timestamp(0);
+        let r = self
+            .ingress
+            .offer_parts(&[&header, payload])
+            .map_err(|e| ClusterError::from_offer_error("offer", e));
+        self.track_ingress_publication_result_offer(r)
     }
 
     /// Publish a sub-range of application data — equivalent to Java
@@ -568,6 +665,33 @@ impl AeronCluster {
             self.awaiting_leader_since = Some(Instant::now());
         }
         err
+    }
+
+    /// Track the result of an `offer_parts` call. Unlike `track_ingress_publication_result`,
+    /// this takes a pre-mapped `Result<i64, ClusterError>`. The error is passed through
+    /// the fatal-publication tracker so `Closed` / `MaxPositionExceeded` transition the
+    /// session to `AwaitingNewLeader`.
+    fn track_ingress_publication_result_offer(
+        &mut self,
+        result: Result<i64, ClusterError>,
+    ) -> Result<i64, ClusterError> {
+        match result {
+            Ok(pos) => Ok(pos),
+            Err(e) => {
+                // Propagate fatal sentinels to the session state machine.
+                if let ClusterError::Publication { failure, .. } = &e
+                    && self.state == SessionState::Connected
+                    && matches!(
+                        *failure,
+                        PublicationFailure::Closed | PublicationFailure::MaxPositionExceeded
+                    )
+                {
+                    self.state = SessionState::AwaitingNewLeader;
+                    self.awaiting_leader_since = Some(Instant::now());
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Send an AdminRequest (e.g. snapshot) on the ingress publication.
@@ -714,15 +838,19 @@ impl AeronCluster {
         self.controlled_assembler = new_controlled;
         self.state = SessionState::Connected;
         self.awaiting_leader_since = None;
+        self.cache_publication_limits();
         Ok(())
     }
 
+    /// The cluster-assigned session id (set after connect completes).
     pub fn cluster_session_id(&self) -> i64 {
         self.cluster_session_id
     }
+    /// The current leadership term (set after connect completes).
     pub fn leadership_term_id(&self) -> i64 {
         self.leadership_term_id
     }
+    /// The current leader's member id (set after connect completes).
     pub fn leader_member_id(&self) -> i32 {
         self.leader_member_id
     }
@@ -781,6 +909,7 @@ impl AeronCluster {
     pub fn connect_async(builder: crate::SessionBuilder, aeron_dir: impl Into<String>) -> AsyncClusterConnect {
         AsyncClusterConnect::new(builder, aeron_dir.into())
     }
+    /// Current session state: `Connected`, `NotConnected`, `Closed`.
     pub fn state(&self) -> SessionState {
         self.state
     }
@@ -793,13 +922,15 @@ impl AeronCluster {
     /// # Errors
     ///
     /// - [`ClusterError::NotConnected`] if the session is not Connected
+    /// - [`ClusterError::PayloadTooLarge`] if header + payload exceeds the
+    ///   publication's max message length
     /// - [`ClusterError::Publication`] on claim failure / backpressure
     /// - [`ClusterError::BufferTooSmall`] if the claim buffer is shorter than
     ///   the 32-byte session header
     ///
     /// # Hot path
     ///
-    /// This is the HFT publish path. On success there is no temp buffer copy of
+    /// This is the hot publish path. On success there is no temp buffer copy of
     /// the application payload — fill [`ClusterClaim::payload_mut`] then
     /// [`ClusterClaim::commit`]. Abort with [`ClusterClaim::abort`] (or drop).
     ///
@@ -817,7 +948,20 @@ impl AeronCluster {
         if self.state != SessionState::Connected {
             return Err(ClusterError::NotConnected);
         }
-        let total = MSG_HDR_TOTAL + payload_len;
+        let total = MSG_HDR_TOTAL
+            .checked_add(payload_len)
+            .ok_or(ClusterError::PayloadTooLarge {
+                operation: "try_claim",
+                requested: payload_len,
+                maximum: self.max_message_length,
+            })?;
+        if self.max_message_length > 0 && total > self.max_message_length {
+            return Err(ClusterError::PayloadTooLarge {
+                operation: "try_claim",
+                requested: total,
+                maximum: self.max_message_length,
+            });
+        }
         let mut claim = self
             .ingress
             .try_claim_owned(total)
@@ -853,7 +997,7 @@ pub(crate) fn apply_state_transition(
             *state = SessionState::AwaitingNewLeader;
             *awaiting_leader_since = Some(Instant::now());
         }
-        SessionState::AwaitingNewLeader | SessionState::AwaitingNewLeaderConnection => {
+        SessionState::AwaitingNewLeader => {
             if let Some(since) = *awaiting_leader_since
                 && since.elapsed() >= Duration::from_millis(new_leader_timeout_ms)
             {
@@ -877,6 +1021,7 @@ pub(crate) fn apply_state_transition(
 /// A zero-copy claim on the ingress publication. The caller writes the
 /// application payload into `payload_mut()` (the bytes after the 32-byte
 /// SessionMessageHeader) then calls `commit()`.
+#[must_use = "call commit() to publish or abort() to discard the claim"]
 pub struct ClusterClaim {
     claim: AeronClaim,
     payload_len: usize,
@@ -914,6 +1059,7 @@ impl ClusterClaim {
 /// Not Tokio/`async`/`await`. Drive [`Self::poll`] from your event loop until
 /// [`Self::is_complete`], then [`Self::finish`]. Handles challenge-response and
 /// redirect between polls.
+#[must_use = "poll until is_complete(), then finish() to obtain the cluster client"]
 pub struct AsyncClusterConnect {
     aeron: Option<Aeron>,
     ingress: Option<AeronExclusivePublication>,
@@ -921,23 +1067,31 @@ pub struct AsyncClusterConnect {
     builder: crate::SessionBuilder,
     aeron_dir: String,
     credentials: Vec<u8>,
-    step: AsyncStep,
+    step: ConnectStep,
     connect_sent: bool,
     /// Wall-clock of last SessionConnectRequest offer attempt (success or not).
     last_connect_offer: Instant,
     reoffer_interval_ms: u64,
     started: Instant,
-    deadline: Instant,
+    /// Deadline computed on first poll (lazy to avoid panicking in `new`).
+    deadline: Option<Instant>,
     cluster_session_id: i64,
     leadership_term_id: i64,
     leader_member_id: i32,
 }
 
+/// State machine step for [`AsyncClusterConnect`]. Each call to
+/// [`AsyncClusterConnect::poll`] may advance one step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AsyncStep {
+#[non_exhaustive]
+pub enum ConnectStep {
+    /// Building the Aeron transport (client, publication, subscription).
     CreateTransport,
+    /// Offering the session-connect request.
     SendConnect,
+    /// Waiting for the NewLeaderEvent / OK response.
     PollResponse,
+    /// Connect complete — [`AsyncClusterConnect::finish`] may be called.
     Done,
 }
 
@@ -960,12 +1114,12 @@ impl AsyncClusterConnect {
             builder,
             aeron_dir,
             credentials: creds,
-            step: AsyncStep::CreateTransport,
+            step: ConnectStep::CreateTransport,
             connect_sent: false,
             last_connect_offer: past,
             reoffer_interval_ms: connect_reoffer_interval_ms(timeout_ms),
             started: Instant::now(),
-            deadline: Instant::now() + Duration::from_millis(timeout_ms),
+            deadline: None, // set on first poll via checked_deadline
             cluster_session_id: -1,
             leadership_term_id: -1,
             leader_member_id: -1,
@@ -973,31 +1127,57 @@ impl AsyncClusterConnect {
     }
 
     /// Current connect step.
-    pub fn step(&self) -> &'static str {
-        match self.step {
-            AsyncStep::CreateTransport => "create_transport",
-            AsyncStep::SendConnect => "send_connect",
-            AsyncStep::PollResponse => "poll_response",
-            AsyncStep::Done => "done",
-        }
+    ///
+    /// ```rust
+    /// # use ergo_aeron_cluster::{SessionBuilder, ConnectStep, ClusterError};
+    /// # fn poll_loop(builder: SessionBuilder) -> Result<(), ClusterError> {
+    /// let mut conn = builder.connect_async("/dev/shm/aeron-driver");
+    /// while !conn.is_complete() {
+    ///     conn.poll()?;
+    ///     match conn.step() {
+    ///         ConnectStep::CreateTransport => { /* Aeron init */ }
+    ///         ConnectStep::SendConnect     => { /* offered connect */ }
+    ///         ConnectStep::PollResponse    => { /* waiting for leader */ }
+    ///         ConnectStep::Done            => { /* ready */ }
+    ///         _ => { /* forward-compat: future steps */ }
+    ///     }
+    /// }
+    /// let _client = conn.finish()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Always include a wildcard (`_`) arm — the enum is
+    /// [`#[non_exhaustive]`](ConnectStep) so future releases may add steps
+    /// without a semver break.
+    pub fn step(&self) -> ConnectStep {
+        self.step
     }
 
     /// True once the connect has completed and `finish()` can be called.
     pub fn is_complete(&self) -> bool {
-        self.step == AsyncStep::Done
+        self.step == ConnectStep::Done
     }
 
     /// Advance the connect by one unit of work. Returns `Ok(true)` if
-    /// more polling is needed, `Ok(false)` once complete.
+    /// more polling is needed, `Ok(false)` once complete. Idempotent after
+    /// completion — calling `poll()` on an already-completed connect
+    /// returns `Ok(false)` regardless of the deadline.
     pub fn poll(&mut self) -> Result<bool, ClusterError> {
-        if Instant::now() > self.deadline {
+        // Lazy deadline — computed on first poll to avoid panicking in `new()`.
+        if self.deadline.is_none() {
+            self.deadline = Some(checked_deadline("async_connect", self.builder.message_timeout_ms)?);
+        }
+        // Skip deadline after completion — an extra defensive poll after a
+        // successful-but-slow connect must not throw away the recovered cluster.
+        if !self.is_complete() && Instant::now() > self.deadline.expect("deadline set above") {
             return Err(ClusterError::Timeout {
                 phase: "async_connect",
                 after_ms: self.started.elapsed().as_millis() as u64,
             });
         }
         match self.step {
-            AsyncStep::CreateTransport => {
+            ConnectStep::CreateTransport => {
                 self.builder.validate()?;
                 let dir_cstr = cformat!("{}", self.aeron_dir);
                 let ctx = AeronContext::new().map_err(|e| ClusterError::aeron("ctx", e))?;
@@ -1021,18 +1201,18 @@ impl AsyncClusterConnect {
                 self.aeron = Some(aeron);
                 self.ingress = Some(ingress);
                 self.egress = Some(egress);
-                self.step = AsyncStep::SendConnect;
+                self.step = ConnectStep::SendConnect;
                 Ok(true)
             }
-            AsyncStep::SendConnect => {
+            ConnectStep::SendConnect => {
                 // Retry the offer across polls until the publication
                 // connects and the connect request lands.
                 if self.encode_and_send_connect()? {
-                    self.step = AsyncStep::PollResponse;
+                    self.step = ConnectStep::PollResponse;
                 }
                 Ok(true)
             }
-            AsyncStep::PollResponse => {
+            ConnectStep::PollResponse => {
                 if let Some(ev) = self.poll_one_event()? {
                     use crate::poller::EgressEvent;
                     match ev {
@@ -1050,7 +1230,7 @@ impl AsyncClusterConnect {
                                     self.cluster_session_id = cluster_session_id;
                                     self.leadership_term_id = leadership_term_id;
                                     self.leader_member_id = leader_member_id;
-                                    self.step = AsyncStep::Done;
+                                    self.step = ConnectStep::Done;
                                     return Ok(false);
                                 }
                                 EventCode::AUTHENTICATIONREJECTED => {
@@ -1103,13 +1283,13 @@ impl AsyncClusterConnect {
                 }
                 Ok(true)
             }
-            AsyncStep::Done => Ok(false),
+            ConnectStep::Done => Ok(false),
         }
     }
 
     /// Consume the in-progress connect and yield the connected client.
     pub fn finish(self) -> Result<AeronCluster, ClusterError> {
-        if self.step != AsyncStep::Done {
+        if self.step != ConnectStep::Done {
             return Err(ClusterError::ConnectFailed {
                 reason: "connect not complete".into(),
             });
@@ -1125,7 +1305,7 @@ impl AsyncClusterConnect {
             leader_member_id,
             ..
         } = self;
-        Ok(AeronCluster {
+        let mut client = AeronCluster {
             _aeron: aeron.ok_or_else(|| ClusterError::connect("async connect finished without Aeron client"))?,
             ingress: ingress
                 .ok_or_else(|| ClusterError::connect("async connect finished without ingress publication"))?,
@@ -1139,12 +1319,16 @@ impl AsyncClusterConnect {
             ingress_stream_id: builder.ingress_stream_id,
             new_leader_timeout_ms: builder.new_leader_timeout_ms,
             last_keep_alive: Instant::now(),
+            max_message_length: 0,
+            max_payload_length: 0,
             keep_alive_interval_ms,
             regular_assembler: AeronFragmentClosureAssembler::new()
                 .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
             controlled_assembler: AeronControlledFragmentClosureAssembler::new()
                 .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?,
-        })
+        };
+        client.cache_publication_limits();
+        Ok(client)
     }
 
     fn encode_and_send_connect(&mut self) -> Result<bool, ClusterError> {
@@ -1354,28 +1538,29 @@ mod tests {
     }
 
     #[test]
-    fn test_offer_path_has_no_combined_heap_buffer() -> Result<(), Box<dyn std::error::Error>> {
-        // T9: Structural proof — the `offer` method body must delegate to
-        // `try_claim` (claim-based, allocation-free), never allocate a
-        // combined header+payload `vec!`.
+    fn test_offer_gathers_without_heap_allocation() -> Result<(), Box<dyn std::error::Error>> {
+        // Structural proof — the `offer` method's primary path delegates to
+        // `try_claim` (claim-based, allocation-free). Large messages that
+        // exceed the max payload use `offer_parts` with a stack-allocated
+        // header, avoiding any heap allocation or payload copy.
         let src = include_str!("client.rs");
-        // Find the `pub fn offer` body — search from its signature to the
-        // next `pub fn` (or the closing `}` at the same indent level).
         let off_start = src
             .find("pub fn offer(&mut self, payload: &[u8])")
             .ok_or("offer signature not found")?;
         let body_snippet = &src[off_start..];
-        // The body must not contain `vec!` (the only `vec!` in this file
-        // uses `compute_encoded_length_with_message_header`, not a magic N).
         let next_pub = body_snippet[20..].find("pub fn ").unwrap_or(body_snippet.len());
         let offer_body = &body_snippet[..next_pub + 20];
         assert!(
-            !offer_body.contains("vec!["),
-            "offer body must not allocate a combined heap buffer — use try_claim"
+            offer_body.contains("self.try_claim"),
+            "offer must delegate to try_claim as primary path"
         );
         assert!(
-            offer_body.contains("self.try_claim"),
-            "offer must delegate to try_claim"
+            offer_body.contains("offer_parts"),
+            "fallback must use offer_parts gather (no heap allocation)"
+        );
+        assert!(
+            !offer_body.contains("vec!["),
+            "offer must not allocate on the heap for fragmented messages"
         );
         Ok(())
     }

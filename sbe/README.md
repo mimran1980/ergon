@@ -3,19 +3,24 @@
 [![Crates.io](https://img.shields.io/crates/v/ergo-sbe)](https://crates.io/crates/ergo-sbe)
 [![CI](https://github.com/mimran1980/ergon/actions/workflows/ci.yml/badge.svg)](https://github.com/mimran1980/ergon/actions/workflows/ci.yml)
 [![API Docs](https://docs.rs/ergo-sbe/badge.svg)](https://docs.rs/ergo-sbe/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
-`ergo-sbe` generates **binary-compatible** Rust SBE codecs with compile-time
-wire-order enforcement, closure-based groups, exact buffer sizing, and zero
-heap allocation on hot paths.
+`ergo-sbe` generates Rust SBE codecs with compile-time wire-order enforcement,
+closure-based groups, exact buffer sizing, and zero heap allocation on hot
+paths. Wire compatibility with official SBE is claimed for the shapes the
+dual-encode parity suite exercises — see the normative
+[compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— not as an unqualified "implements every SBE edge case".
 
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
 > Details: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
 
-## 📖 Full Documentation
+## Full documentation
 
-**[The Ergon Book](https://mimran1980.github.io/ergon/)** is the comprehensive
-guide for ergo-sbe, covering:
+**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+guide for ergo-sbe (also linked from this crate on
+[docs.rs](https://docs.rs/ergo-sbe/)):
 
 - [Getting Started](https://mimran1980.github.io/ergon/sbe/getting-started.html) — depend, generate, encode, decode
 - [Feature Tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) — exact sizing, bulk arrays, decode stages, DTOs, trust boundaries
@@ -23,6 +28,19 @@ guide for ergo-sbe, covering:
 - [Configuration](https://mimran1980.github.io/ergon/sbe/configuration.html) — `with_conversion` vs `with_domain_type`, hooks
 - [Recipes](https://mimran1980.github.io/ergon/sbe/recipes.html) — Display/Debug, schema→rustdoc, domain DTOs, timestamps
 - [Benchmarks](https://mimran1980.github.io/ergon/sbe/benchmarks.html) — parity methodology and gates
+
+**Compatibility profile (normative):**
+[`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)
+— do not claim unqualified “SBE binary compatibility.”
+
+**Constructors:** book [Trust Boundary](https://mimran1980.github.io/ergon/sbe/core-concepts/trust-boundary.html)
+— three tiers: `try_*` (Result), bare names (panic if short), `unsafe *_unchecked`.
+
+**Placement utils:** buffer positions (`remaining` / `buffer` / `limit` /
+`message_offset`) live on `dec.get_metadata()`, not the decoder type — migrate
+`dec.remaining()` → `dec.get_metadata().remaining()`. A schema field named
+`remaining` keeps the natural accessor `dec.remaining()`. See book
+[Generated code — metadata](https://mimran1980.github.io/ergon/sbe/feature-tour/generated-code.html).
 
 ## Quick Example
 
@@ -51,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .generate(&schema)?;
     // In a real project you'd use a build script.
     // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
+    // Checked encode: MessageEncoder::try_wrap_and_apply_header(buf, 0)?
+    // Trusted (panic if short): wrap_and_apply_header; unsafe: *_unchecked.
     let _ = modules;
     Ok(())
 }

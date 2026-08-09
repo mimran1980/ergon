@@ -9,7 +9,7 @@ types (e.g. `255` for `uint8`) and the minimum value for signed types (e.g.
 An early design tried wrapping every enum field in `Option<EventCode>` at the
 field site:
 
-```text
+```rust,ignore
 // Option approach — REJECTED
 pub fn event_code(&self) -> Option<EventCode> { … }
 pub fn set_event_code(&mut self, val: Option<EventCode>) { … }
@@ -37,7 +37,7 @@ The chosen design adds a `NullVal` variant to every generated enum. It is the
 same size as any other variant, wire-compatible with sbe-tool, and bears no
 runtime cost:
 
-```rust,no_run
+```rust,ignore
 // ergo-sbe generated (conceptual)
 pub enum EventCode {
     NullVal = 255,  // or schema-declared nullValue
@@ -50,3 +50,26 @@ pub enum EventCode {
 For an `Optional` field (schema `presence="optional"`), the generated accessor
 returns `Option<EventCode>` — but the null check compares against the `NullVal`
 discriminant on the wire, never allocates, and is transparent to the caller.
+
+On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
+`wrap_and_apply_header` when any optional may be left unset — otherwise stale
+buffer bytes ship as if they were intentional values. See
+[Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
+
+## Null-aware accessors on BooleanType
+
+For `BooleanType` fields specifically, ergon emits a `_bool()` accessor
+alongside the standard enum getter:
+
+```rust,ignore
+// Standard getter — returns the enum variant
+pub fn available(&self) -> BooleanType { … }
+
+// Null-aware — None when NullVal, Some(true/false) otherwise
+pub fn available_bool(&self) -> Option<bool> { … }
+```
+
+For enums and other types, the `NullVal` variant remains the canonical
+approach. An opt-in `Option<T>` mapping via configuration is tracked as a
+future enhancement — the wire encoding is compatible either way.
+

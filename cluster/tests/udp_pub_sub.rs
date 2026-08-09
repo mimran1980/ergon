@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Verify the C embedded driver can create and use UDP publications.
 //! This gates whether cross-driver communication is possible at all.
 

@@ -5,7 +5,7 @@
 //! | API | When to use | Generated decode | Generated encode |
 //! |-----|-------------|------------------|------------------|
 //! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dep | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.price() -> path::Type` | `enc.price(value)` |
+//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
 //!
 //! `with_domain_type` **implies** conversion for that selector. Do **not** also
 //! call `with_conversion` for the same selector.
@@ -29,11 +29,10 @@
 //!
 //! | Builder | What generated code looks like |
 //! |---------|--------------------------------|
-//! | [`enable_domain_objects`](GenerationConfig::enable_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
+//! | [`with_domain_objects`](GenerationConfig::with_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
-//! | [`enable_error_from_impls`](GenerationConfig::enable_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
-//! | [`with_unchecked_companions`](GenerationConfig::with_unchecked_companions) | `serial_number_unchecked` style fast paths for benches |
+//! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
 //! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
 
@@ -85,27 +84,50 @@ impl ConversionSelector {
 
 /// How owned domain DTO `<data>` / var-data fields are typed.
 ///
-/// Passed to [`GenerationConfig::enable_domain_objects`]. Wire is always
+/// Passed to [`GenerationConfig::with_domain_objects`]. Wire is always
 /// length-prefixed **bytes**; this only chooses the **owned** DTO field type.
 ///
-/// | Variant | DTO field | Invalid UTF-8 on materialise |
-/// |---------|-----------|------------------------------|
-/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | n/a (raw copy) |
-/// | [`LossyStrings`](DomainVarData::LossyStrings) | `String` | **silent empty `""`** (not U+FFFD, not an error) |
-///
-/// **`LossyStrings` is not lossless on re-encode** of invalid UTF-8: materialise
-/// clears the field to `""`, and `dto.encode` writes empty var-data.
+/// | Variant | DTO field | Feature | Invalid UTF-8 |
+/// |---------|-----------|---------|---------------|
+/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | — | n/a |
+/// | [`Strings`](DomainVarData::Strings) | `String` | — | **`InvalidUtf8` error** |
+/// | `CompactStrings` | `CompactString` | `compact_str` | **`InvalidUtf8` error** |
+/// | `SmolStrings` | `SmolStr` | `smol_str` | **`InvalidUtf8` error** |
+/// | `BytesCrate` | `bytes::Bytes` | `bytes` | n/a |
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
     /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
     #[default]
     Bytes,
-    /// Text-friendly var-data (`String`). Invalid UTF-8 becomes `""` (empty).
-    ///
-    /// Re-encode writes `as_bytes()`, so a field that was invalid on the wire
-    /// becomes empty var-data (not a copy of the bad bytes). Prefer
-    /// [`DomainVarData::Bytes`] for audit/replay fidelity of non-UTF-8 tails.
-    LossyStrings,
+    /// Text-friendly var-data (`String`). Invalid UTF-8 returns
+    /// `DecodeError::InvalidUtf8` (strict).
+    Strings,
+    /// Inline short strings (`compact_str::CompactString`, ≤24 bytes on stack).
+    /// Requires feature `compact_str`.
+    #[cfg(feature = "compact_str")]
+    CompactStrings,
+    /// O(1)-clone strings (`smol_str::SmolStr`). Requires feature `smol_str`.
+    #[cfg(feature = "smol_str")]
+    SmolStrings,
+    /// Zero-copy shared buffer (`bytes::Bytes`). Requires feature `bytes`.
+    #[cfg(feature = "bytes")]
+    BytesCrate,
+}
+
+/// Generated-code surface presets.
+///
+/// Individual knobs (`with_display_debug`, …) still override after
+/// [`GenerationConfig::profile`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum GenerationProfile {
+    /// Display/Debug, field meta, multi-template dispatch, and all conveniences
+    /// that the boolean knobs enable by default.
+    #[default]
+    Full,
+    /// Byte codec + typed stages + exact sizing only. Omits Display/Debug,
+    /// meta-attribute constants, and `AnyMessage`/`FrameCursor` dispatch.
+    /// Domain DTOs and conversions stay off unless re-enabled explicitly.
+    Lean,
 }
 
 // ── Hook types ────────────────────────────────────────────────────────────
@@ -193,42 +215,71 @@ pub struct FieldInfo {
 /// hook body to return tokens appended after the generated item.
 // manual Debug/Clone because &Schema in every variant makes derive unhappy
 #[derive(Clone)]
-#[allow(missing_docs)]
 pub enum ItemContext<'a> {
+    /// An SBE enum after codegen of its Rust type.
     Enum {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Enum type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Variants in schema order.
         variants: Vec<EnumVariantInfo>,
     },
+    /// An SBE bitset after codegen.
     Set {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Set type name (PascalCase).
         name: String,
+        /// Wire encoding type (e.g. `"u8"`).
         encoding_type: String,
+        /// Bit choices in schema order.
         choices: Vec<SetChoiceInfo>,
     },
+    /// An SBE composite after codegen.
     Composite {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Composite type name (PascalCase).
         name: String,
+        /// Member fields in wire order.
         fields: Vec<FieldInfo>,
     },
+    /// A message decoder flyweight.
     MessageDecoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// A message encoder stage root.
     MessageEncoder {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Message name (PascalCase).
         name: String,
+        /// SBE template id.
         template_id: u16,
+        /// Compiled fixed block length in bytes.
         block_length: usize,
+        /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
     },
+    /// An owned domain DTO (`*Domain`) when domain objects are enabled.
     DomainStruct {
+        /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// DTO type name (PascalCase).
         name: String,
+        /// Fields on the DTO (including groups/var-data as owned types).
         fields: Vec<FieldInfo>,
     },
 }
@@ -253,10 +304,10 @@ impl std::fmt::Debug for ItemContext<'_> {
 /// Token streams returned by hooks — appended after the generated item.
 pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
-/// Wrapper so hooks can live in [`GenerationConfig`]. Not [`Clone`] or
-/// [`PartialEq`] — hook closures can't be cloned or compared.
-#[derive(Default)]
-pub(crate) struct Hooks(Vec<Box<HookFn>>);
+/// Wrapper so hooks can live in [`GenerationConfig`]. Uses [`Arc`] so
+/// `GenerationConfig` can derive [`Clone`].
+#[derive(Clone, Default)]
+pub(crate) struct Hooks(Vec<std::sync::Arc<HookFn>>);
 
 impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -264,10 +315,10 @@ impl std::fmt::Debug for Hooks {
     }
 }
 impl Hooks {
-    pub(crate) fn push(&mut self, hook: Box<HookFn>) {
+    pub(crate) fn push(&mut self, hook: std::sync::Arc<HookFn>) {
         self.0.push(hook);
     }
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Box<HookFn>> {
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, std::sync::Arc<HookFn>> {
         self.0.iter()
     }
     pub(crate) fn is_empty(&self) -> bool {
@@ -286,18 +337,19 @@ impl Hooks {
 /// use ergo_sbe::{DomainVarData, GenerationConfig, ConversionSelector};
 ///
 /// let config = GenerationConfig::new("market_data")
-///     .enable_domain_objects(DomainVarData::LossyStrings)
+///     .with_domain_objects(DomainVarData::Strings)
 ///     .with_domain_type(
 ///         ConversionSelector::named_type("Decimal"),
 ///         "rust_decimal::Decimal",
 ///     );
 /// ```
+#[derive(Clone)]
 pub struct GenerationConfig {
     /// Rust module name for the generated output file (`{module_name}.rs`).
     pub(crate) module_name: String,
     /// Sibling module that already owns shared types (multi-schema mode).
     pub(crate) shared_module: Option<String>,
-    /// Emit owned `*Domain` structs + `From<Decoder>` / `encode`.
+    /// Emit owned `*Domain` structs + `TryFrom<&Decoder>` / `encode`.
     pub(crate) domain_objects: bool,
     /// Var-data shape on DTOs when `domain_objects` is set.
     pub(crate) domain_var_data: DomainVarData,
@@ -316,11 +368,16 @@ pub struct GenerationConfig {
     /// each — saves boilerplate on schemas with many boolean flags.
     pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
-    pub(crate) unchecked_companions: bool,
     /// Appended when a name is a Rust keyword (default `"_"`).
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
     pub(crate) deprecated_attrs: bool,
+    /// Emit `Debug`/`Display` impls (default on; pass `false` to shrink output).
+    pub(crate) enable_display_debug: bool,
+    /// Emit meta-attribute constants (default on; pass `false` to shrink output).
+    pub(crate) enable_meta_attributes: bool,
+    /// Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch (default on).
+    pub(crate) enable_dispatch: bool,
     /// Hooks fired after each generated item (enum, set, composite, message).
     /// Returned tokens are appended after the item's definition.
     pub(crate) hooks: Hooks,
@@ -338,16 +395,19 @@ impl std::fmt::Debug for GenerationConfig {
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
             .field("error_from_path", &self.error_from_path)
             .field("auto_bool_domain", &self.auto_bool_domain)
-            .field("unchecked_companions", &self.unchecked_companions)
             .field("keyword_append_token", &self.keyword_append_token)
             .field("deprecated_attrs", &self.deprecated_attrs)
+            .field("enable_display_debug", &self.enable_display_debug)
+            .field("enable_meta_attributes", &self.enable_meta_attributes)
+            .field("enable_dispatch", &self.enable_dispatch)
             .field("hooks", &self.hooks)
             .finish()
     }
 }
 
 impl GenerationConfig {
-    /// Create a config for output module `{module_name}.rs`.
+    /// Create a config for output module `{module_name}.rs` with
+    /// [`GenerationProfile::Full`] defaults.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;
@@ -364,12 +424,30 @@ impl GenerationConfig {
             domain_types: Vec::new(),
             external_sbe_rt_path: None,
             error_from_path: None,
-            unchecked_companions: false,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             auto_bool_domain: false,
+            enable_display_debug: true,
+            enable_meta_attributes: true,
+            enable_dispatch: true,
             hooks: Hooks::default(),
         }
+    }
+
+    /// Create a config with [`GenerationProfile::Lean`] defaults (no
+    /// Display/Debug, no meta attributes, no dispatch, no domain objects).
+    ///
+    /// Equivalent to `GenerationConfig::new(name).profile(GenerationProfile::Lean)`
+    /// but more direct. Explicit `with_*` settings (conversions, domain types,
+    /// auto-bool) can be added after — they are not cleared.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let c = GenerationConfig::lean("minimal");
+    /// ```
+    #[must_use]
+    pub fn lean(module_name: impl Into<String>) -> Self {
+        Self::new(module_name).profile(GenerationProfile::Lean)
     }
 
     /// The module name for generated output.
@@ -378,13 +456,35 @@ impl GenerationConfig {
         &self.module_name
     }
 
+    /// Override the module name set in [`new`](Self::new). Use when cloning a base
+    /// config across several schemas — set the placeholder in [`new`](Self::new), then
+    /// call `.clone().with_module_name("orderbook")` on each.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let base = GenerationConfig::new("_");
+    /// let a = base.clone().with_module_name("md");
+    /// let b = base.clone().with_module_name("ob");
+    /// // `a` generates `md.rs`, `b` generates `ob.rs`, `base` unchanged.
+    /// ```
+    #[must_use]
+    pub fn with_module_name(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        debug_assert!(
+            is_valid_module_ident(&name),
+            "module name '{name}' contains path separators, '.', '..', or is empty"
+        );
+        self.module_name = name;
+        self
+    }
+
     #[must_use]
     pub(crate) fn domain_objects_enabled(&self) -> bool {
         self.domain_objects
     }
 
     pub(crate) fn has_conversions(&self) -> bool {
-        // `enable_bool_domain_type` is syntax sugar for `with_domain_type` on
+        // `with_bool_domain_type` is syntax sugar for `with_domain_type` on
         // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
         !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
     }
@@ -450,7 +550,7 @@ impl GenerationConfig {
     /// # Generated API
     ///
     /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
-    /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))` / `let p = dec.price()`.
+    /// Application: `enc.try_price(rust_decimal::Decimal::new(12345, 2))?` / `let p = dec.try_price()?`.
     ///
     /// # Example
     ///
@@ -476,7 +576,11 @@ impl GenerationConfig {
         if !self.conversions.contains(&sel) {
             self.conversions.push(sel.clone());
         }
-        if !self.domain_types.iter().any(|(s, _)| s == &sel) {
+        // Last-write-wins: calling with_domain_type(sel, "B") after
+        // with_domain_type(sel, "A") replaces the mapping.
+        if let Some(existing) = self.domain_types.iter_mut().find(|(s, _)| s == &sel) {
+            existing.1 = ty;
+        } else {
             self.domain_types.push((sel, ty));
         }
         self
@@ -484,10 +588,19 @@ impl GenerationConfig {
 
     /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
     ///
-    /// In build.rs: `.enable_error_from_impls("crate::AppError")`.
+    /// In build.rs: `.with_error_from_impls("crate::AppError")`.
     /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
+    ///
+    /// **Note:** The generated `From` impl uses `format!("sbe encode: {err}")` —
+    /// stringifying the typed error through its `Display` form, then calling
+    /// `YourType::from(String)`. This means (1) your error type must implement
+    /// `From<String>`, and (2) field-level error details (e.g.
+    /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
+    /// the conversion. If you need typed error matching, implement
+    /// `From<EncodeError>` / `From<DecodeError>` on your error type directly
+    /// instead.
     #[must_use]
-    pub fn enable_error_from_impls(mut self, path: impl Into<String>) -> Self {
+    pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
         self
     }
@@ -499,25 +612,25 @@ impl GenerationConfig {
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
     /// | [`DomainVarData::Bytes`] | `Vec<u8>` | n/a |
-    /// | [`DomainVarData::LossyStrings`] | `String` | silent empty `""` |
+    /// | [`DomainVarData::Strings`] | `String` | `InvalidUtf8` error (strict) |
     ///
     /// ```rust
     /// use ergo_sbe::{DomainVarData, GenerationConfig};
     /// let text = GenerationConfig::new("msgs")
-    ///     .enable_domain_objects(DomainVarData::LossyStrings);
+    ///     .with_domain_objects(DomainVarData::Strings);
     /// let bytes = GenerationConfig::new("msgs")
-    ///     .enable_domain_objects(DomainVarData::Bytes);
+    ///     .with_domain_objects(DomainVarData::Bytes);
     /// let _ = (text, bytes);
     /// ```
     ///
     /// # Generated API
     ///
-    /// `DomainVarData::LossyStrings` → `manufacturer: String`.
+    /// `DomainVarData::Strings` → `manufacturer: String`.
     /// `DomainVarData::Bytes` → `manufacturer: Vec<u8>`.
     ///
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
-    pub fn enable_domain_objects(mut self, var_data: DomainVarData) -> Self {
+    pub fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
         self.domain_var_data = var_data;
         self
@@ -533,17 +646,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `_unchecked` companion methods for micro-benchmarks.
-    ///
-    /// Hot path after you have already validated bounds:
-    /// `car.serial_number_unchecked()`.
-    #[must_use]
-    pub fn with_unchecked_companions(mut self) -> Self {
-        self.unchecked_companions = true;
-        self
-    }
-
-    /// Token appended when a schema name is a Rust keyword (default `"_"`).
+    /// Token appended when a schema name is a Rust keyword (default `”_”`).
     ///
     /// Schema field `name="type"` becomes method `type_()`; with token `"x"`,
     /// it becomes `typex()`.
@@ -570,15 +673,82 @@ impl GenerationConfig {
     /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
     /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
-    pub fn enable_bool_domain_type(mut self) -> Self {
-        self.auto_bool_domain = true;
+    pub fn with_bool_domain_type(mut self, enable: bool) -> Self {
+        self.auto_bool_domain = enable;
         self
     }
 
     /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
     #[must_use]
-    pub fn with_deprecated_attrs(mut self) -> Self {
-        self.deprecated_attrs = true;
+    pub fn with_deprecated_attrs(mut self, enable: bool) -> Self {
+        self.deprecated_attrs = enable;
+        self
+    }
+
+    /// Control generated `Debug` and `Display` impls (**enabled by default**).
+    /// Pass `false` to omit them and shrink generated output.
+    #[must_use]
+    pub fn with_display_debug(mut self, enable: bool) -> Self {
+        self.enable_display_debug = enable;
+        self
+    }
+
+    /// Control meta-attribute constants (**enabled by default**). Pass `false`
+    /// to omit — removes `*_meta_attribute`, `*_ENCODING_OFFSET`,
+    /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION`, null/min/max field
+    /// constants, and the per-message `*_field_meta` module.
+    #[must_use]
+    pub fn with_meta_attributes(mut self, enable: bool) -> Self {
+        self.enable_meta_attributes = enable;
+        self
+    }
+
+    /// Control `AnyMessage` / `FrameCursor` / `MessageVisitor` dispatch code
+    /// (**enabled by default**). Pass `false` to omit — saves ~300 lines;
+    /// only meaningful when you do not need multi-template frame dispatch.
+    #[must_use]
+    pub fn with_dispatch(mut self, enable: bool) -> Self {
+        self.enable_dispatch = enable;
+        self
+    }
+
+    /// Apply a product profile that sets the size knobs together.
+    ///
+    /// | Profile | Display/Debug | Meta attrs | Dispatch | Domain objects |
+    /// |---------|---------------|------------|----------|----------------|
+    /// | [`GenerationProfile::Full`] | on | on | on | unchanged |
+    /// | [`GenerationProfile::Lean`] | off | off | off | off |
+    ///
+    /// Explicit `with_*` settings (conversions, domain types, auto-bool) win
+    /// regardless of order — `profile()` only sets the knobs it owns and
+    /// never clears explicit configuration. Prefer
+    /// [`lean`](Self::lean) for a clean Lean baseline.
+    ///
+    /// Chain further `with_*` calls after `profile` to override individual
+    /// knobs. Example:
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, GenerationProfile};
+    /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::Lean);
+    /// ```
+    #[must_use]
+    pub fn profile(mut self, profile: GenerationProfile) -> Self {
+        match profile {
+            GenerationProfile::Full => {
+                self.enable_display_debug = true;
+                self.enable_meta_attributes = true;
+                self.enable_dispatch = true;
+            }
+            GenerationProfile::Lean => {
+                self.enable_display_debug = false;
+                self.enable_meta_attributes = false;
+                self.enable_dispatch = false;
+                self.domain_objects = false;
+                // ponytail: explicit conversion/domain-type settings survive
+                // profile() — they represent deliberate schema choices with
+                // higher precedence than a bulk surface preset.
+            }
+        }
         self
     }
 
@@ -612,7 +782,7 @@ impl GenerationConfig {
     where
         F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
-        self.hooks.push(Box::new(hook));
+        self.hooks.push(std::sync::Arc::new(hook));
         self
     }
 
@@ -640,9 +810,22 @@ impl Default for GenerationConfig {
     }
 }
 
+/// Reject module names that contain path separators, `.`, `..`, are empty,
+/// or start with a digit (not a legal Rust identifier). Full identifier
+/// validation (`syn::parse_str::<syn::Ident>`) happens at generation time;
+/// this fast check catches the most common escape attempts early.
+pub(crate) fn is_valid_module_ident(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ConversionSelector, DomainVarData, GenerationConfig};
+    use super::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
 
     #[test]
     fn default_config_is_clean() -> Result<(), Box<dyn std::error::Error>> {
@@ -659,6 +842,45 @@ mod tests {
             .with_conversion(ConversionSelector::named_type("Decimal"));
         assert!(config.has_conversions());
         assert_eq!(config.conversions.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_lean_preserves_explicit_conversions_and_domain_types()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let full = GenerationConfig::new("m").profile(GenerationProfile::Full);
+        assert!(full.enable_display_debug);
+        assert!(full.enable_meta_attributes);
+        assert!(full.enable_dispatch);
+
+        let lean = GenerationConfig::new("m")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_conversion(ConversionSelector::named_type("Decimal"))
+            .with_domain_type(
+                ConversionSelector::named_type("Decimal"),
+                "rust_decimal::Decimal",
+            )
+            .profile(GenerationProfile::Lean);
+        assert!(!lean.enable_display_debug);
+        assert!(!lean.enable_meta_attributes);
+        assert!(!lean.enable_dispatch);
+        assert!(!lean.domain_objects);
+        // Explicit conversions and domain types survive Lean — they're
+        // deliberate schema choices with higher precedence than a bulk preset.
+        assert!(
+            lean.has_conversions(),
+            "explicit conversions must survive Lean"
+        );
+        assert!(
+            !lean.domain_types.is_empty(),
+            "explicit domain types must survive Lean"
+        );
+
+        // Later overrides still win.
+        let override_dispatch = GenerationConfig::new("m")
+            .profile(GenerationProfile::Lean)
+            .with_dispatch(true);
+        assert!(override_dispatch.enable_dispatch);
         Ok(())
     }
 
@@ -713,15 +935,18 @@ mod tests {
         assert!(config.conversions.is_empty());
         assert!(config.domain_types.is_empty());
         assert_eq!(config.domain_var_data, DomainVarData::Bytes);
+        assert!(config.enable_display_debug);
+        assert!(config.enable_meta_attributes);
+        assert!(config.enable_dispatch);
         Ok(())
     }
 
     #[test]
-    fn enable_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
-        let text = GenerationConfig::new("m").enable_domain_objects(DomainVarData::LossyStrings);
+    fn with_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
+        let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::Strings);
         assert!(text.domain_objects_enabled());
-        assert_eq!(text.domain_var_data, DomainVarData::LossyStrings);
-        let bytes = GenerationConfig::new("m").enable_domain_objects(DomainVarData::Bytes);
+        assert_eq!(text.domain_var_data, DomainVarData::Strings);
+        let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
         Ok(())
@@ -737,16 +962,14 @@ mod tests {
         );
 
         let config = GenerationConfig::new("m")
-            .enable_error_from_impls("crate::AppError")
+            .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
-            .with_unchecked_companions()
             .with_keyword_append_token("x")
-            .enable_bool_domain_type()
-            .with_deprecated_attrs();
+            .with_bool_domain_type(true)
+            .with_deprecated_attrs(true);
 
         assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
         assert_eq!(config.shared_module.as_deref(), Some("shared"));
-        assert!(config.unchecked_companions);
         assert_eq!(config.keyword_append_token, "x");
         assert!(config.auto_bool_domain);
         assert!(config.deprecated_attrs);
