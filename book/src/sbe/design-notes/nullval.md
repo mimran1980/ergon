@@ -94,8 +94,9 @@ standard enum getter:
 // Standard getter — returns the enum variant
 pub fn available(&self) -> BooleanType { … }
 
-// Null-aware — None when NullVal, Some(true/false) otherwise
-pub fn available_bool(&self) -> Option<bool> { … }
+// Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
+// Required fields → Result<bool, DecodeError>; optional → Option<bool>.
+pub fn available_bool(&self) -> Result<bool, DecodeError> { … }
 ```
 
 For enums and other types, the `NullVal` variant remains the canonical

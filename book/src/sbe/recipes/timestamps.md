@@ -97,7 +97,8 @@ impl TryFromSbe<TimestampMillis> for chrono::NaiveDateTime {
 }
 
 impl TryToSbe<TimestampMillis> for chrono::NaiveDateTime {
-    fn try_to_sbe(&self) -> Result<TimestampMillis, ergo_sbe::EncodeError> {
+    type Error = my_msgs::sbe_rt::EncodeError;
+    fn try_to_sbe(&self) -> Result<TimestampMillis, Self::Error> {
         Ok(TimestampMillis(self.and_utc().timestamp_millis() as u64))
     }
 }
