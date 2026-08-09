@@ -35,7 +35,7 @@
     clippy::nursery
 )]
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::large_comp::{BigBlock, WideDecoder, WideEncoder};
 
 /// Mid-block field under test (schema name `f15`, offset 15 * 8 = 120).

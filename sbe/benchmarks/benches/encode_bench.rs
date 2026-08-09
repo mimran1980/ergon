@@ -20,7 +20,7 @@
 
 use ergo_sbe_benchmarks::ergo_car::*;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 #[path = "_common.rs"]
 mod common;

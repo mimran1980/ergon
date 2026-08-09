@@ -4,7 +4,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
 
 const SCHEMA: &str = include_str!("../schemas/codec-matrix.xml");

@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::codec_matrix::*;
 
 fn fixed_frames() -> ([u8; 24], [u8; 72], [u8; 264]) {

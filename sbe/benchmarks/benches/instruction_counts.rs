@@ -3,7 +3,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]
 
-use criterion::{Criterion, black_box};
+use criterion::{Criterion};
 use ergo_sbe_benchmarks::{ergo_car::*, sbe_tool_car_body_decoder};
 
 #[path = "_common.rs"]
