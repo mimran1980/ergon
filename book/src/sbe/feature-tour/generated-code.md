@@ -36,7 +36,7 @@ impl<'a> CarDecoder<'a> {
     // Fixed fields are random-access — zero-copy reads after a checked wrap.
     #[inline]
     pub fn serial_number(&self) -> u64 {
-        let offset = self.pos + 0;
+        let offset = self.offset + 0;
         u64::from_le_bytes(/* private read after extent proof */)
     }
 }
