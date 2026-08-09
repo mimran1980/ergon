@@ -19,7 +19,7 @@ chrono = "0.4"
 
 Then register the converters by `semanticType` in `build.rs`:
 
-```rust,no_run
+```rust,ignore
 use ergo_sbe::{ConversionSelector, GenerationConfig};
 
 let config = GenerationConfig::new("msgs")
@@ -43,7 +43,7 @@ Schema:
 Generated API — `try_created_at()` returns `DateTime<Utc>`, `try_updated_at()`
 returns `NaiveDateTime`:
 
-```rust,no_run
+```rust,ignore
 // Decode
 let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
 let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
@@ -74,7 +74,7 @@ The traits are emitted into the generated module as `sbe_rt::TryFromSbe` /
 `sbe_rt::TryToSbe` — import them from your generated codec module, not from
 `ergo_sbe::codegen` (which is crate-private):
 
-```rust,no_run
+```rust,ignore
 // my_msgs is the module name passed to GenerationConfig::new("my_msgs")
 use my_msgs::sbe_rt::{TryFromSbe, TryToSbe};
 use my_msgs::TimestampMillis;
@@ -105,7 +105,7 @@ impl TryToSbe<TimestampMillis> for chrono::NaiveDateTime {
 
 Then register it in `build.rs`:
 
-```rust,no_run
+```rust,ignore
 let config = GenerationConfig::new("msgs")
     .with_conversion(ConversionSelector::named_type("TimestampMillis"));
 ```

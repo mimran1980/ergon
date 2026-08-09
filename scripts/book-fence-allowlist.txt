@@ -40,7 +40,7 @@ book/src/sbe/feature-tour/generated-code.md:102 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:112 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:142 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:163 — deliberate; see page context
-book/src/sbe/getting-started/encode-decode.md:34 — deliberate; see page context
+book/src/sbe/getting-started/encode-decode.md:39 — deliberate; see page context
 book/src/sbe/getting-started/from-sbe-tool.md:18 — deliberate; see page context
 book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
@@ -55,4 +55,8 @@ book/src/sbe/recipes/aeron-try-claim.md:39 — deliberate; see page context
 book/src/sbe/recipes/display-debug.md:18 — deliberate; see page context
 book/src/sbe/recipes/domain-dtos.md:27 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:22 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:46 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:77 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:108 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
