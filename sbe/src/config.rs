@@ -362,10 +362,12 @@ pub struct GenerationConfig {
     pub(crate) external_sbe_rt_path: Option<String>,
     /// Emit `From<EncodeError/DecodeError>` for this error type path.
     pub(crate) error_from_path: Option<String>,
+    /// Map enum/boolean NullVal → `Option<T>`. Matched selectors produce
+    /// `Option<EventCode>` and `Option<bool>` accessors instead of bare enum
+    /// types. Wire is byte-identical: `None` writes the `NullVal` discriminant.
+    pub(crate) null_as_option: Vec<ConversionSelector>,
     /// Emit `bool` ↔ BooleanType converters automatically for every enum
     /// detected as boolean (name `BooleanType` or `semanticType="Boolean"`).
-    /// Equivalent to calling `with_domain_type(named_type(name), "bool")` for
-    /// each — saves boilerplate on schemas with many boolean flags.
     pub(crate) auto_bool_domain: bool,
     /// Emit `_unchecked` companions for benchmarking.
     /// Appended when a name is a Rust keyword (default `"_"`).
@@ -394,6 +396,7 @@ impl std::fmt::Debug for GenerationConfig {
             .field("domain_types", &self.domain_types)
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
             .field("error_from_path", &self.error_from_path)
+            .field("null_as_option", &self.null_as_option)
             .field("auto_bool_domain", &self.auto_bool_domain)
             .field("keyword_append_token", &self.keyword_append_token)
             .field("deprecated_attrs", &self.deprecated_attrs)
@@ -426,6 +429,7 @@ impl GenerationConfig {
             error_from_path: None,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
+            null_as_option: Vec::new(),
             auto_bool_domain: false,
             enable_display_debug: true,
             enable_meta_attributes: true,
@@ -537,6 +541,30 @@ impl GenerationConfig {
     pub fn with_conversion(mut self, selector: ConversionSelector) -> Self {
         if !self.conversions.contains(&selector) {
             self.conversions.push(selector);
+        }
+        self
+    }
+
+    /// Map matching enum fields from `NullVal` → `Option<T>`.
+    ///
+    /// Wire encoding is byte-identical: `None` writes the `NullVal`
+    /// discriminant, `Some(v)` writes `v`. Zero runtime cost.
+    ///
+    /// ```rust
+    /// use ergo_sbe::{ConversionSelector, GenerationConfig};
+    ///
+    /// // EventCode fields → Option<EventCode>
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_null_as_option(ConversionSelector::named_type("EventCode"));
+    ///
+    /// // All BooleanType fields → Option<bool>
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_null_as_option(ConversionSelector::named_type("BooleanType"));
+    /// ```
+    #[must_use]
+    pub fn with_null_as_option(mut self, selector: ConversionSelector) -> Self {
+        if !self.null_as_option.contains(&selector) {
+            self.null_as_option.push(selector);
         }
         self
     }
