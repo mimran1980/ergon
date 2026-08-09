@@ -13,7 +13,9 @@ use quote::format_ident;
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{DECODER_RESERVED, field_has_conversion_free, resolve_field_ident};
+use super::conversion_helpers::{
+    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, resolve_field_ident,
+};
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
@@ -42,6 +44,8 @@ pub(crate) fn generate_message_decoder(
     domain_types: &[(crate::ConversionSelector, String)],
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> (proc_macro2::TokenStream, String) {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -923,18 +927,35 @@ pub(crate) fn generate_message_decoder(
                     }
                 } else {
                     let raw_ident = quote::format_ident!("raw_{}", fname_snake);
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub fn #fname_ident(&self) -> #target_ident {
-                            #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
-                        }
-                        /// Raw wire discriminant — bypasses enum mapping.
-                        /// Use to inspect unknown/forward enum values without losing the original byte.
-                        #[inline]
-                        pub fn #raw_ident(&self) -> #r_type_ty {
-                            #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
-                        }
-                    });
+                    if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
+                        impl_body.extend(quote::quote! {
+                            /// Returns [`None`] when the wire discriminant equals
+                            /// [`#target_ident::NullVal`]; [`Some`] otherwise.
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                let raw = #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) });
+                                #target_ident::from_raw(raw).as_option()
+                            }
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            #[inline]
+                            pub fn #raw_ident(&self) -> #r_type_ty {
+                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                            }
+                        });
+                    } else {
+                        impl_body.extend(quote::quote! {
+                            #[inline]
+                            pub fn #fname_ident(&self) -> #target_ident {
+                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                            }
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            /// Use to inspect unknown/forward enum values without losing the original byte.
+                            #[inline]
+                            pub fn #raw_ident(&self) -> #r_type_ty {
+                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                            }
+                        });
+                    }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("try_{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {

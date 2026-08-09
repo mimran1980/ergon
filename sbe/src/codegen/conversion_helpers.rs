@@ -258,6 +258,19 @@ pub(crate) fn domain_encode_setter_name(
     }
 }
 
+/// Check whether `null_as_option` config matches an enum type — either via
+/// `all_enums_as_option` blanket or a specific NamedType selector.
+pub(crate) fn enum_uses_null_as_option(
+    enum_name: &str,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
+) -> bool {
+    all_enums_as_option
+        || null_as_option
+            .iter()
+            .any(|sel| matches!(sel, crate::ConversionSelector::NamedType(n) if n == enum_name))
+}
+
 #[cfg(test)]
 mod reserved_list_tests {
     use super::*;

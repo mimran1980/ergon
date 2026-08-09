@@ -1045,6 +1045,8 @@ impl Generator {
                 domain_types,
                 &self.config.hooks,
                 schema,
+                &self.config.null_as_option,
+                self.config.all_enums_as_option,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');

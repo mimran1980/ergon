@@ -56,10 +56,39 @@ On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
 buffer bytes ship as if they were intentional values. See
 [Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
 
+## Opting into `Option<T>` with `with_null_as_option`
+
+The `NullVal` is the right default, but some codebases prefer `Option`
+throughout. Use `with_null_as_option` to make generated enum accessors
+return `Option<Enum>` — `NullVal` maps to `None`, all other values to
+`Some(v)`. Wire bytes are identical either way.
+
+```rust,ignore
+use ergo_sbe::{ConversionSelector, GenerationConfig};
+
+// Individual enum → Option<Enum>
+let config = GenerationConfig::new("msgs")
+    .with_null_as_option(ConversionSelector::named_type("EventCode"));
+
+// Every enum in the schema → Option<Enum>
+let config = GenerationConfig::new("msgs")
+    .with_all_enums_as_option();
+```
+
+Generated diff (individual setter):
+
+```rust,ignore
+// Default (NullVal)                         // with_null_as_option
+pub fn code(&self) -> EventCode { … }   →   pub fn code(&self) -> Option<EventCode> { … }
+```
+
+The `as_option()` method is also generated on every enum for manual use:
+`event_code.as_option()` → `Option<EventCode>`.
+
 ## Null-aware accessors on BooleanType
 
-For `BooleanType` fields specifically, ergon emits a `_bool()` accessor
-alongside the standard enum getter:
+For `BooleanType` fields, ergon emits a `_bool()` accessor alongside the
+standard enum getter:
 
 ```rust,ignore
 // Standard getter — returns the enum variant
