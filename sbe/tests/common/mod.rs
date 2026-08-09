@@ -293,14 +293,17 @@ fn _compile_and_run(
         .parent()
         .unwrap()
         .join("sbe");
-    // Enable all optional features so generated code that references
-    // compact_str/smol_str/bytes/chrono types resolves.
     let mut cargo = format!(
         "[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\n\
-         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
-        sbe_path.display(),
+         [dependencies]\n",
     );
+    // Only add ergo-sbe if the caller hasn't already provided a custom dep string.
+    if !deps.contains("ergo-sbe") {
+        cargo.push_str(&format!(
+            "ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+            sbe_path.display(),
+        ));
+    }
     if !features.is_empty() {
         cargo.push_str("[features]\n");
         for f in features {
