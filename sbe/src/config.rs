@@ -573,9 +573,8 @@ impl GenerationConfig {
     /// Map **every** enum field in the schema to `Option<Enum>`.
     ///
     /// Shorthand for calling [`with_null_as_option`](Self::with_null_as_option)
-    /// on every named type. Use individual calls to opt individual enums back
-    /// out (a blacklist-style override isn't implemented yet — file an issue
-    /// if needed).
+    /// on every named type. Opt-out per-enum is not yet supported —
+    /// the blanket flag always wins.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;

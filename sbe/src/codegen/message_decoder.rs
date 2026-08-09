@@ -927,6 +927,14 @@ pub(crate) fn generate_message_decoder(
                     }
                 } else {
                     let raw_ident = quote::format_ident!("raw_{}", fname_snake);
+                    let raw_body = quote::quote! {
+                        /// Raw wire discriminant — bypasses enum mapping.
+                        /// Use to inspect unknown/forward enum values without losing the original byte.
+                        #[inline]
+                        pub fn #raw_ident(&self) -> #r_type_ty {
+                            #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                        }
+                    };
                     if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
                         impl_body.extend(quote::quote! {
                             /// Returns [`None`] when the wire discriminant equals
@@ -936,25 +944,16 @@ pub(crate) fn generate_message_decoder(
                                 let raw = #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) });
                                 #target_ident::from_raw(raw).as_option()
                             }
-                            /// Raw wire discriminant — bypasses enum mapping.
-                            #[inline]
-                            pub fn #raw_ident(&self) -> #r_type_ty {
-                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
-                            }
                         });
+                        impl_body.extend(raw_body);
                     } else {
                         impl_body.extend(quote::quote! {
                             #[inline]
                             pub fn #fname_ident(&self) -> #target_ident {
                                 #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
                             }
-                            /// Raw wire discriminant — bypasses enum mapping.
-                            /// Use to inspect unknown/forward enum values without losing the original byte.
-                            #[inline]
-                            pub fn #raw_ident(&self) -> #r_type_ty {
-                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
-                            }
                         });
+                        impl_body.extend(raw_body);
                     }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("try_{}_bool", fname_snake);
