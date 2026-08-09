@@ -518,7 +518,8 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = WebSocketSessionLogonResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
+    let mut encoder =
+        WebSocketSessionLogonResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
     encoder
         .authorized_since(1712345678000000i64)
         .connected_since(1712345679000000i64)
