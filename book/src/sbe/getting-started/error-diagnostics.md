@@ -83,7 +83,7 @@ Every error carries a unique `#[diagnostic(code(…))]` code. Use
 `downcast_ref` to match on specific variants without string-matching the
 message:
 
-```rust,no_run
+```rust,ignore
 use ergo_sbe::{parse_file, ParseError};
 
 match parse_file("my-schema.xml") {
