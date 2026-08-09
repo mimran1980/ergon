@@ -15,7 +15,7 @@ ergo-sbe = { path = ".." }
 rust_decimal = "1"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 hdrhistogram = "7"
 # iai-callgrind removed: pulled unmaintained proc-macro-error2
 # (RUSTSEC-2026-0173). instruction_counts is a Criterion timing harness.
