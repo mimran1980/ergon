@@ -155,7 +155,7 @@ fn as_option_method_present_on_all_enums() {
             <type name="schemaId" primitiveType="uint16"/>
             <type name="version" primitiveType="uint16"/>
         </composite>
-        <enum name="Status" encodingType="uint8">
+        <enum name="Status" encodingType="uint8" nullValue="99">
             <validValue name="Ok">0</validValue>
         </enum>
     </types>
@@ -176,10 +176,10 @@ fn as_option_method_present_on_all_enums() {
         src.contains("fn as_option"),
         "as_option() must always be generated"
     );
-    // Default NullVal = 255 for uint8
+    // Custom nullValue="99" on the <enum> element is now parsed
     assert!(
-        src.contains("NullVal = 255"),
-        "uint8 NullVal must default to 255"
+        src.contains("NullVal = 99"),
+        "custom NullVal = 99 must be present in generated source"
     );
 }
 
