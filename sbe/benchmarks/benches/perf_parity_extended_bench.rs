@@ -1,7 +1,6 @@
 //! Extended performance parity: ergon vs sbe-tool for gap-feature schemas.
 //!
-//! Covers null-as-option enums, version-gated fields, nested groups.
-//! Follows the same fairness rules as perf_parity_bench.
+//! Covers null-as-option enums. Follows the same fairness rules as perf_parity_bench.
 //!
 //! Run with:
 //!   cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench
@@ -35,7 +34,6 @@ fn bench_optional_enum_nullify(c: &mut Criterion) {
         .encoded_length_with_header();
     let encoded = &enc_buf[..enc_len];
 
-    // ergon decode
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             let dec = OptionalEnumNullifyDecoder::decode(black_box(encoded), black_box(0)).unwrap();
@@ -45,7 +43,6 @@ fn bench_optional_enum_nullify(c: &mut Criterion) {
         });
     });
 
-    // sbe-tool decode
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
             use sbe_tool_optional_enum_nullify::{
