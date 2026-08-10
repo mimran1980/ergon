@@ -109,13 +109,30 @@ release-check: test check-coverage check-generated-rustdoc
 # calling this. The version is read from workspace Cargo.toml.
 release: _check-release-notes
     just clean
-    @echo "=== Gate: test suite (inc. clippy) ==="
+    @echo "=== 1/8 supply-chain audit ==="
+    -cargo deny check
+    -cargo audit
+    @echo "=== 2/8 test suite (clippy + tests + samples + cluster) ==="
     just test
-    @echo "=== Gate: cluster benchmarks ==="
+    @echo "=== 3/8 miri UB detection ==="
+    cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+    @echo "=== 4/8 fuzz corpus replay ==="
+    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+    @echo "=== 5/8 benchmark gates (cluster + parity + historic) ==="
     just bench-cluster
-    @echo "=== Gate: SBE benchmarks ==="
     just bench
-    @echo "=== Release check ==="
+    just bench-historic
+    @echo "=== 6/8 mutation configuration ==="
+    just check-mutation
+    @echo "=== 7/8 reference reproducibility ==="
+    just check-sbe-references
+    just check-bench-reference
+    @echo "=== 8/8 release check + publish ==="
     just release-check
     @echo "=== publish ergo-sbe ==="
     cargo publish -p ergo-sbe
