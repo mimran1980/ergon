@@ -77,29 +77,40 @@ ergo_sbe::schema_parse::invalid
 Multi-line spans show the full element, with the label pointing to the
 offending attribute.
 
-## Matching errors in build scripts
+## Use in build scripts
 
-Every error carries a unique `#[diagnostic(code(…))]` code. Use
-`downcast_ref` to match on specific variants without string-matching the
-message:
+`ParseError` implements `miette::Diagnostic`. Wrap it in `miette::Report`
+to render the full diagnostic with source context:
+
+```rust,ignore
+use ergo_sbe::parse_file;
+
+match parse_file("my-schema.xml") {
+    Ok(_) => { /* regenerate codec */ }
+    Err(e) => {
+        let report = miette::Report::new(e);
+        eprintln!("{report:?}");
+        std::process::exit(1);
+    }
+}
+```
+
+For programmatic handling, match on the variant directly — `ParseError` is
+a plain enum, no downcast needed:
 
 ```rust,ignore
 use ergo_sbe::{parse_file, ParseError};
 
 match parse_file("my-schema.xml") {
-    Ok(_) => { /* regenerate */ }
+    Ok(_) => {}
+    Err(ParseError::Invalid { what, value, .. }) => {
+        eprintln!("invalid {what}: {value}");
+    }
+    Err(ParseError::Missing { what, .. }) => {
+        eprintln!("missing {what}");
+    }
     Err(e) => {
-        // Print the full miette diagnostic — includes source snippet.
-        let report = miette::Report::new(e);
-        eprintln!("{report:?}");
-
-        // Or match on the variant for build-script logic:
-        if let Some(ParseError::Invalid { what, value, .. }) =
-            report.downcast_ref::<ParseError>()
-        {
-            eprintln!("schema has an invalid {what}: {value}");
-            std::process::exit(1);
-        }
+        eprintln!("{e}");
     }
 }
 ```
