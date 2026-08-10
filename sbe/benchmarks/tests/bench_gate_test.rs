@@ -52,6 +52,11 @@ const PAIRS: &[(&str, &str, &str)] = &[
     ("parity_encode_throughput_10k", "ergo-sbe", "sbe-tool"),
     ("parity_throughput_batch_10k", "ergo-sbe", "sbe-tool"),
     ("parity_wire_parity_encode_full", "ergo-sbe", "sbe-tool"),
+    (
+        "parity_parity_extended_optional_enum_nullify",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
 ];
 
 const RUN_ID: &str = "b20260807T000000Z-1234-abcdef123456";

@@ -56,7 +56,6 @@ pub mod sbe_tool_car {
 pub mod sbe_tool_ob {
     include!("sbe_tool_ob_patched.rs");
 }
-
 /// Wrap the sbe-tool Car decoder at a framed message's body.
 ///
 /// `message_offset` points to the first byte of the standard eight-byte SBE

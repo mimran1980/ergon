@@ -153,6 +153,7 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         "encode_throughput_10k|encode/throughput_10k|ergo-sbe|sbe-tool|1.00"
         "throughput_batch_10k|throughput/batch_10k|ergo-sbe|sbe-tool|1.00"
         "wire_parity_encode_full|wire_parity/encode_full|ergo-sbe|sbe-tool|1.00"
+        "extended_optional_enum_nullify_decode|parity_extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.00"
     )
 
     for pair in "${pairs[@]}"; do
