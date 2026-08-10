@@ -128,7 +128,7 @@ pub(crate) fn generate_group_encoder(
         null_stmts.extend(quote::quote! {
             {
                 let null_bytes: [u8; #size_lit] = [#(#lits),*];
-                let offset = self.pos + #f_offset;
+                let offset = self.offset + #f_offset;
                 self.buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
             }
         });
@@ -143,11 +143,11 @@ pub(crate) fn generate_group_encoder(
             .into());
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.pos + block_len > self.buf.len() {
+        if self.offset + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "group entry",
                                 needed: block_len,
-                available: self.buf.len().saturating_sub(self.pos),
+                available: self.buf.len().saturating_sub(self.offset),
             }
             .into());
         }
@@ -158,13 +158,13 @@ pub(crate) fn generate_group_encoder(
     add_body.extend(quote::quote! {
         // SAFETY: same borrow-split pattern as the group encoder method above.
         // The closure `f` only operates on __entry (which holds __buf), never
-        // on `self`. The block scope drops __buf before `self.pos` is written.
+        // on `self`. The block scope drops __buf before `self.offset` is written.
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            // SAFETY: capacity check above proved pos+block_len ≤ buf.len().
-            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
+            // SAFETY: capacity check above proved offset+block_len ≤ buf.len().
+            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
             f(&mut __entry)?;
-            self.pos = __entry.pos;
+            self.offset = __entry.offset;
         }
         self.written += 1;
         Ok(())
@@ -176,7 +176,7 @@ pub(crate) fn generate_group_encoder(
         #[must_use = "group encoder must call add() to write entries"]
         pub struct #group_enc_ident<'a> {
             buf: &'a mut [u8],
-            pos: usize,
+            offset: usize,
             count: #count_ty,
             written: #count_ty,
         }
@@ -187,8 +187,8 @@ pub(crate) fn generate_group_encoder(
             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
 
             #[inline]
-            pub fn wrap(buf: &'a mut [u8], pos: usize, count: #count_ty) -> Self {
-                Self { buf, pos, count, written: 0 }
+            pub fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
+                Self { buf, offset, count, written: 0 }
             }
 
             /// Write one group entry. The closure may return `()` or
@@ -215,18 +215,18 @@ pub(crate) fn generate_group_encoder(
                     });
                 }
                 let block_len = Self::ENTRY_BLOCK_LENGTH;
-                if self.pos + block_len > self.buf.len() {
+                if self.offset + block_len > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available: self.buf.len().saturating_sub(self.offset),
                     });
                 }
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.pos) };
+                    let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
                     let __complete = f(__entry)?;
-                    self.pos = __complete.into_cursor();
+                    self.offset = __complete.into_cursor();
                 }
                 self.written += 1;
                 Ok(())
@@ -248,7 +248,7 @@ pub(crate) fn generate_group_encoder(
                 }
                 let block_len = Self::ENTRY_BLOCK_LENGTH;
                 if self
-                    .pos
+                    .offset
                     .checked_add(block_len)
                     .map(|end| end > self.buf.len())
                     .unwrap_or(true)
@@ -256,15 +256,15 @@ pub(crate) fn generate_group_encoder(
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "group entry",
                                 needed: block_len,
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available: self.buf.len().saturating_sub(self.offset),
                     });
                 }
-                let entry_pos = self.pos;
-                self.pos += block_len;
+                let entry_offset = self.offset;
+                self.offset += block_len;
                 self.written += 1;
-                // SAFETY: capacity check above proved entry_pos..entry_pos+block_len
+                // SAFETY: capacity check above proved entry_offset..entry_offset+block_len
                 // is in-bounds; entry wrap only writes fixed fields in that region.
-                Ok(unsafe { #entry_enc_ident::wrap(&mut self.buf[entry_pos..self.pos], 0) })
+                Ok(unsafe { #entry_enc_ident::wrap(&mut self.buf[entry_offset..self.offset], 0) })
             }
         }
     });
@@ -299,7 +299,7 @@ pub(crate) fn generate_group_encoder(
             match &f.field_type {
                 FieldType::Composite { .. } => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..pos + #f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
+                        self.buf[offset + #f_offset..offset + #f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
                     });
                     bulk_struct_write.extend(quote::quote! {
                         slot[#f_offset..#f_offset + #f_size].copy_from_slice(&entry.#f_name.0);
@@ -308,7 +308,7 @@ pub(crate) fn generate_group_encoder(
                 FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
                     let r_ty = syn::Ident::new(&rust_type(*encoding_type), span);
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                        self.buf[offset + #f_offset..offset + #f_offset + #f_size]
                             .copy_from_slice(&(#r_ty::from(entry.#f_name)).#to_endian());
                     });
                     bulk_struct_write.extend(quote::quote! {
@@ -322,7 +322,7 @@ pub(crate) fn generate_group_encoder(
                     struct_write.extend(quote::quote! {
                         let mut idx = 0usize;
                         while idx < #len_lit {
-                            let offset = pos + #f_offset + idx * #prim_size_lit;
+                            let offset = offset + #f_offset + idx * #prim_size_lit;
                             self.buf[offset..offset + #prim_size_lit]
                                 .copy_from_slice(&entry.#f_name[idx].#to_endian());
                             idx += 1;
@@ -340,7 +340,7 @@ pub(crate) fn generate_group_encoder(
                 }
                 FieldType::Primitive(_, None) => {
                     struct_write.extend(quote::quote! {
-                        self.buf[pos + #f_offset..pos + #f_offset + #f_size]
+                        self.buf[offset + #f_offset..offset + #f_offset + #f_size]
                             .copy_from_slice(&entry.#f_name.#to_endian());
                     });
                     bulk_struct_write.extend(quote::quote! {
@@ -370,15 +370,15 @@ pub(crate) fn generate_group_encoder(
                         });
                     }
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
-                    if self.pos + block_len > self.buf.len() {
+                    if self.offset + block_len > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "group entry",
                                 needed: block_len,
-                            available: self.buf.len().saturating_sub(self.pos),
+                            available: self.buf.len().saturating_sub(self.offset),
                         });
                     }
-                    let pos = self.pos;
-                    self.pos += block_len;
+                    let offset = self.offset;
+                    self.offset += block_len;
                     self.written += 1;
                     #struct_write
                     Ok(())
@@ -415,18 +415,18 @@ pub(crate) fn generate_group_encoder(
                         .checked_mul(block_len)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     let end = self
-                        .pos
+                        .offset
                         .checked_add(needed)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if end > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
                             field: "group entry",
                             needed,
-                            available: self.buf.len().saturating_sub(self.pos),
+                            available: self.buf.len().saturating_sub(self.offset),
                         });
                     }
                     {
-                        let region = &mut self.buf[self.pos..end];
+                        let region = &mut self.buf[self.offset..end];
                         for (entry, slot) in entries
                             .iter()
                             .zip(region.chunks_exact_mut(block_len))
@@ -434,7 +434,7 @@ pub(crate) fn generate_group_encoder(
                             write_entry(entry, slot)?;
                         }
                     }
-                    self.pos = end;
+                    self.offset = end;
                     self.written = attempted as #count_ty;
                     Ok(())
                 }
@@ -459,7 +459,7 @@ pub(crate) fn generate_group_encoder(
         #[doc = #complete_doc]
         #[inline]
         pub fn complete(self) -> #entry_complete_ident<'a> {
-            #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, pos: self.pos }
+            #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, offset: self.offset }
         }
 
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
@@ -468,14 +468,14 @@ pub(crate) fn generate_group_encoder(
         /// region fits (via `add` / `start_entry` capacity checks).
         ///
         /// # Safety
-        /// `pos + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
+        /// `offset + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
         /// for the lifetime of the returned encoder.
         #[inline]
-        unsafe fn wrap(buf: &'a mut [u8], pos: usize) -> Self {
+        unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
             Self {
                 buf,
-                entry_start: pos,
-                pos: pos + Self::ENTRY_BLOCK_LENGTH,
+                entry_start: offset,
+                offset: offset + Self::ENTRY_BLOCK_LENGTH,
             }
         }
     });
@@ -610,27 +610,27 @@ pub(crate) fn generate_group_encoder(
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
-                if self.pos + #ng_dim > self.buf.len() {
+                if self.offset + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "group entry",
                                 needed: #ng_dim,
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available: self.buf.len().saturating_sub(self.offset),
                     }
                     .into());
                 }
-                self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
-                self.buf[self.pos + #num_off_idx..self.pos + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
+                self.buf[self.offset..self.offset + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                self.buf[self.offset + #num_off_idx..self.offset + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
                 // SAFETY: the closure `f` only operates on the group encoder (which
                 // holds __buf), never on `self`. The block scope ensures __buf is
-                // dropped before `self.pos` is written. No aliasing occurs because
+                // dropped before `self.offset` is written. No aliasing occurs because
                 // `self.buf` is not accessed through `self` while __buf is live.
                 // This is the standard borrow-split pattern (same as split_at_mut
                 // internals) — the raw pointer cast is a borrow-checker workaround,
                 // not an actual aliasing violation.
-                let __pos;
+                let __offset;
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, count);
+                    let mut group = #ng_enc::wrap(__buf, self.offset + #ng_dim, count);
                     f(&mut group)?;
                     let written = group.written();
                     if written != count {
@@ -639,9 +639,9 @@ pub(crate) fn generate_group_encoder(
                             actual: written as u32,
                         });
                     }
-                    __pos = group.pos;
+                    __offset = group.offset;
                 }
-                self.pos = __pos;
+                self.offset = __offset;
                 Ok(self)
             }
 
@@ -651,27 +651,27 @@ pub(crate) fn generate_group_encoder(
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
-                if self.pos + #ng_dim > self.buf.len() {
+                if self.offset + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "group entry",
                                 needed: #ng_dim,
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available: self.buf.len().saturating_sub(self.offset),
                     }.into());
                 }
-                self.buf[self.pos..self.pos + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
-                let count_offset = self.pos + #num_off_idx;
+                self.buf[self.offset..self.offset + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                let count_offset = self.offset + #num_off_idx;
                 self.buf[count_offset..count_offset + #num_sz_lit].fill(0);
-                let __pos;
+                let __offset;
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let mut group = #ng_enc::wrap(__buf, self.pos + #ng_dim, #ng_count_ty::MAX);
+                    let mut group = #ng_enc::wrap(__buf, self.offset + #ng_dim, #ng_count_ty::MAX);
                     f(&mut group)?;
                     let actual: #ng_count_ty = group.written();
-                    __pos = group.pos;
+                    __offset = group.offset;
                     group.buf[count_offset..count_offset + #num_sz_lit]
                         .copy_from_slice(&actual.#to_endian());
                 }
-                self.pos = __pos;
+                self.offset = __offset;
                 Ok(self)
             }
         });
@@ -705,8 +705,8 @@ pub(crate) fn generate_group_encoder(
             pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
                 #schema_max_check
                 let needed = #pfx + data.len();
-                if self.pos + needed > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { field: "group entry", needed, available: self.buf.len().saturating_sub(self.pos) });
+                if self.offset + needed > self.buf.len() {
+                    return Err(sbe_rt::EncodeError::BufferTooShort { field: "group entry", needed, available: self.buf.len().saturating_sub(self.offset) });
                 }
                 let wire_length = #len_ty::try_from(data.len()).map_err(|_| {
                     sbe_rt::EncodeError::VarDataTooLong {
@@ -716,10 +716,10 @@ pub(crate) fn generate_group_encoder(
                     }
                 })?;
                 let len_bytes = wire_length.#to_endian();
-                self.buf[self.pos..self.pos + #pfx].copy_from_slice(&len_bytes);
-                let start = self.pos + #pfx;
+                self.buf[self.offset..self.offset + #pfx].copy_from_slice(&len_bytes);
+                let start = self.offset + #pfx;
                 self.buf[start..start + data.len()].copy_from_slice(data);
-                self.pos = start + data.len();
+                self.offset = start + data.len();
                 Ok(self)
             }
         });
@@ -728,10 +728,10 @@ pub(crate) fn generate_group_encoder(
     ts.extend(quote::quote! {
         #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
         pub struct #entry_complete_ident<'a> {
-            buf: &'a mut [u8], entry_start: usize, pos: usize,
+            buf: &'a mut [u8], entry_start: usize, offset: usize,
         }
         impl<'a> #entry_complete_ident<'a> {
-            pub(crate) fn into_cursor(self) -> usize { self.pos }
+            pub(crate) fn into_cursor(self) -> usize { self.offset }
         }
     });
     ts.extend(quote::quote! {
@@ -740,7 +740,7 @@ pub(crate) fn generate_group_encoder(
         pub struct #entry_enc_ident<'a> {
             buf: &'a mut [u8],
             entry_start: usize,
-            pos: usize,
+            offset: usize,
         }
 
         impl<'a> #entry_enc_ident<'a> {

@@ -1249,7 +1249,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
 /// Layout contract (do not “simplify” to `#[repr(C)]` native fields):
 /// - `#[repr(transparent)] pub struct Name(pub [u8; N])` — value == on-wire bytes
 /// - getters/setters use `from_{le,be}_bytes` / `to_{le,be}_bytes` at schema offsets
-/// - flyweight `NameDecoder { buf, pos }` for zero-copy reads from a message buffer
+/// - flyweight `NameDecoder { buf, offset }` for zero-copy reads from a message buffer
 /// - `const _: () = assert!(size_of::<Name>() == N)`
 ///
 /// On little-endian hosts, `from_le_bytes` is effectively a plain load; this is
@@ -1640,7 +1640,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                                 let mut idx = 0;
                                 while idx < #len_lit {
                                     res[idx] = #r_type_ty::#from_method(
-                                        unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit + idx * #prim_size_lit) }
+                                        unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit + idx * #prim_size_lit) }
                                     );
                                     idx += 1;
                                 }
@@ -1661,7 +1661,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     decoder_getters.extend(quote::quote! {
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
-                            #r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                            #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
                         }
                     });
                 }
@@ -1678,7 +1678,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
+                        #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) })
                     }
                 });
             }
@@ -1697,7 +1697,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                     }
                 });
             }
@@ -1716,7 +1716,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 decoder_getters.extend(quote::quote! {
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                        #target_ident(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                     }
                 });
             }
@@ -1731,10 +1731,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
             pub(crate) buf: &'a [u8],
-            /// Absolute address of the composite body: `buf.as_ptr() as usize
-            /// + body_offset`. Cached once at construction so every accessor
-            /// becomes a single struct load + immediate-offset wire load.
-            pub(crate) base_addr: usize,
+            /// Byte offset of the composite body within `self.buf`.
+            pub(crate) offset: usize,
         }
 
         impl<'a> #decoder_name<'a> {
@@ -2042,14 +2040,14 @@ pub(crate) fn generate_any_message(
         /// to a [`FramingPolicy`].
         pub struct FrameCursor<'a> {
             buf: &'a [u8],
-            pos: usize,
+            offset: usize,
             framing: FramingPolicy,
         }
 
         impl<'a> FrameCursor<'a> {
             #[inline]
             pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {
-                Self { buf, pos: 0, framing }
+                Self { buf, offset: 0, framing }
             }
         }
 
@@ -2067,49 +2065,49 @@ pub(crate) fn generate_any_message(
             /// the same error forever.
             #[inline]
             fn next(&mut self) -> Option<Self::Item> {
-                if self.pos >= self.buf.len() {
+                if self.offset >= self.buf.len() {
                     return None;
                 }
-                // Any error below is terminal; parking `pos` at the end is what
+                // Any error below is terminal; parking `offset` at the end is what
                 // fuses the iterator without adding a success-path state field.
                 let terminal = self.buf.len();
                 let (header_len, frame_len) = match self.framing {
                     FramingPolicy::LengthPrefixU32Le => {
-                        if 4 > self.buf.len().saturating_sub(self.pos) {
-                            let available = self.buf.len().saturating_sub(self.pos);
-                            self.pos = terminal;
+                        if 4 > self.buf.len().saturating_sub(self.offset) {
+                            let available = self.buf.len().saturating_sub(self.offset);
+                            self.offset = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
                                 available,
                             }));
                         }
-                        let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
+                        let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.offset);
                         let len = u32::from_le_bytes(bytes) as usize;
                         (4, len)
                     }
                     FramingPolicy::LengthPrefixU16Le => {
-                        if 2 > self.buf.len().saturating_sub(self.pos) {
-                            let available = self.buf.len().saturating_sub(self.pos);
-                            self.pos = terminal;
+                        if 2 > self.buf.len().saturating_sub(self.offset) {
+                            let available = self.buf.len().saturating_sub(self.offset);
+                            self.offset = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
                                 available,
                             }));
                         }
-                        let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
+                        let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.offset);
                         let len = u16::from_le_bytes(bytes) as usize;
                         (2, len)
                     }
                     FramingPolicy::Fixed(len) => (0, len),
                 };
 
-                let available = self.buf.len().saturating_sub(self.pos);
-                let frame_start = match self.pos.checked_add(header_len) {
+                let available = self.buf.len().saturating_sub(self.offset);
+                let frame_start = match self.offset.checked_add(header_len) {
                     Some(value) => value,
                     None => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -2120,7 +2118,7 @@ pub(crate) fn generate_any_message(
                 let frame_end = match frame_start.checked_add(frame_len) {
                     Some(value) => value,
                     None => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -2129,7 +2127,7 @@ pub(crate) fn generate_any_message(
                     }
                 };
                 if frame_end > self.buf.len() {
-                    self.pos = terminal;
+                    self.offset = terminal;
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
                         needed: header_len.saturating_add(frame_len),
@@ -2138,11 +2136,11 @@ pub(crate) fn generate_any_message(
                 }
                 match AnyMessage::decode_frame(self.buf, frame_start, frame_len) {
                     Ok(frame) => {
-                        self.pos = frame_end;
+                        self.offset = frame_end;
                         Some(Ok(frame))
                     }
                     Err(e) => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         Some(Err(e))
                     }
                 }
@@ -2167,12 +2165,12 @@ pub(crate) fn generate_any_message(
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
                     // try_wrap enforces version-aware fixed extent.
-                    Ok(Self::#name(#decoder::try_wrap(buf, pos, block_length, version)?))
+                    Ok(Self::#name(#decoder::try_wrap(buf, offset, block_length, version)?))
                 }
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, pos, block_length, version) }))
+                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, offset, block_length, version) }))
                 }
             });
         }
@@ -2181,15 +2179,15 @@ pub(crate) fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
-                pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                    if #header_size_lit > buf.len().saturating_sub(pos) {
+                pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
+                    if #header_size_lit > buf.len().saturating_sub(offset) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let header_bytes = read_bytes::<#header_size_lit>(buf, pos);
+                    let header_bytes = read_bytes::<#header_size_lit>(buf, offset);
                     let header = #header_type_ident(header_bytes);
                     let template_id = sbe_rt::checked_header_u16(
                         "templateId",
@@ -2222,9 +2220,9 @@ pub(crate) fn generate_any_message(
                 #[inline]
                 pub fn decode(
                     buf: &'a [u8],
-                    pos: usize,
+                    offset: usize,
                 ) -> Result<Self, sbe_rt::DecodeError> {
-                    Self::try_decode(buf, pos)
+                    Self::try_decode(buf, offset)
                 }
             }
         });
@@ -2246,24 +2244,24 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let frame_end = pos.checked_add(frame_len).ok_or(
+                    let frame_end = offset.checked_add(frame_len).ok_or(
                         sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
                             needed: frame_len,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         }
                     )?;
                     if frame_end > buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
                             needed: frame_len,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let decoder = #decoder::try_decode(&buf[..frame_end], pos)?;
+                    let decoder = #decoder::try_decode(&buf[..frame_end], offset)?;
                     Ok(DecodedFrame {
                         message: Self::#name(decoder),
-                        range: pos .. frame_end,
+                        range: offset .. frame_end,
                         len: frame_len,
                     })
                 }
@@ -2273,16 +2271,16 @@ pub(crate) fn generate_any_message(
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
                 #[inline]
-                pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+                pub fn decode_frame(buf: &'a [u8], offset: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
                     // Trust boundary: always validate header fits
-                    if #header_size_lit > buf.len().saturating_sub(pos) {
+                    if #header_size_lit > buf.len().saturating_sub(offset) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, pos);
+                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, offset);
                     let header = #header_type_ident(header_bytes);
                     let template_id = sbe_rt::checked_header_u16(
                         "templateId",
@@ -2300,27 +2298,27 @@ pub(crate) fn generate_any_message(
                         "blockLength",
                         header.#bl_ident() as u64,
                     )?;
-                    let body_pos = pos + #header_size_lit;
+                    let body_offset = offset + #header_size_lit;
 
                     #schema_id_validation
 
                     match template_id {
                         #decode_frame_arms
                         _ => {
-                            if frame_len > buf.len().saturating_sub(pos) {
+                            if frame_len > buf.len().saturating_sub(offset) {
                                 return Err(sbe_rt::DecodeError::BufferTooShort {
                                     field: "template body",
                                     needed: frame_len,
-                                    available: buf.len().saturating_sub(pos),
+                                    available: buf.len().saturating_sub(offset),
                                 });
                             }
-                            let frame = &buf[pos .. pos + frame_len];
+                            let frame = &buf[offset .. offset + frame_len];
                             Ok(DecodedFrame {
                                 message: Self::Unknown {
                                     header,
                                     frame,
                                 },
-                                range: pos .. pos + frame_len,
+                                range: offset .. offset + frame_len,
                                 len: frame_len,
                             })
                         }

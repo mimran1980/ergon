@@ -3,8 +3,9 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 #![allow(missing_docs, unused)]
 
-use criterion::{Criterion, black_box};
+use criterion::Criterion;
 use ergo_sbe_benchmarks::{ergo_car::*, sbe_tool_car_body_decoder};
+use std::hint::black_box;
 
 #[path = "_common.rs"]
 mod common;

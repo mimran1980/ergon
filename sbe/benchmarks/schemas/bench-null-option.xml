@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="bench_null_option"
+                   id="1200"
+                   version="0"
+                   semanticVersion="1.0"
+                   description="Benchmark: presence=optional and null-value fields"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Standard SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <!-- Encoding type for the required enum -->
+        <type name="EnumTypeEncoding" primitiveType="uint8"/>
+        <enum name="EnumType" encodingType="EnumTypeEncoding">
+            <validValue name="One">1</validValue>
+            <validValue name="Two">2</validValue>
+        </enum>
+        <!-- Encoding type for the optional (null-as-option) enum -->
+        <type name="OptionalEnumEncoding" primitiveType="uint8" presence="optional" nullValue="255"/>
+        <enum name="OptionalEnum" encodingType="OptionalEnumEncoding">
+            <validValue name="Alpha">3</validValue>
+            <validValue name="Beta">4</validValue>
+        </enum>
+        <!-- Composite with an optional field -->
+        <composite name="OptionalComposite">
+            <type name="counter" primitiveType="uint16" presence="optional" nullValue="0"/>
+            <type name="flag" primitiveType="uint8"/>
+        </composite>
+        <!-- Composite with a required enum field -->
+        <composite name="EnumComposite">
+            <type name="enumField" primitiveType="uint8"/>
+            <type name="value" primitiveType="uint32"/>
+        </composite>
+    </types>
+    <sbe:message name="NullOption" id="1" description="Null / optional field benchmark message">
+        <!-- presence=optional field: generates Option<EnumType> -->
+        <field name="optionalEnum" type="EnumType" id="1" presence="optional"/>
+        <!-- presence=optional on the encoding type: generates Option<OptionalEnum> via null-as-option -->
+        <field name="nullableEnum" type="OptionalEnum" id="2"/>
+        <!-- presence=optional scalar: Option<u32> -->
+        <field name="optionalScalar" type="uint32" id="3" presence="optional" nullValue="0"/>
+        <!-- presence=required scalar: plain u32 -->
+        <field name="requiredScalar" type="uint32" id="4"/>
+        <!-- Composite with optional internal field -->
+        <field name="optionalComposite" type="OptionalComposite" id="5"/>
+        <!-- Composite with enum field -->
+        <field name="enumComposite" type="EnumComposite" id="6"/>
+    </sbe:message>
+</sbe:messageSchema>

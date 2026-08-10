@@ -8,7 +8,7 @@ For a schema with one message (`Car`), `ergo-sbe` emits a single Rust module wit
 // Each message gets a zero-allocation decoder.
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) base_addr: usize,
+    pub(crate) offset: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
@@ -36,7 +36,7 @@ impl<'a> CarDecoder<'a> {
     // Fixed fields are random-access — zero-copy reads after a checked wrap.
     #[inline]
     pub fn serial_number(&self) -> u64 {
-        let offset = self.pos + 0;
+        let offset = self.offset + 0;
         u64::from_le_bytes(/* private read after extent proof */)
     }
 }

@@ -267,7 +267,17 @@ bench-groups:
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
     CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
-    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
+
+# Historic ergo-only benchmarks — null-as-option, converters, bulk_add.
+# Gate: compares against stored baselines to detect silent regressions.
+bench-historic:
+    cargo bench -p ergo-sbe-benchmarks --bench ergo_historic_bench
+    ./scripts/check-bench-historic.sh
+
+# Regenerate historic baselines after verifying no regressions.
+bench-historic-update:
+    cargo bench -p ergo-sbe-benchmarks --bench ergo_historic_bench
+    scripts/update-historic-baseline.sh
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
 bench-diagnostics:

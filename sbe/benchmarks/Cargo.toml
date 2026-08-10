@@ -83,6 +83,9 @@ harness = false
 [[bench]]
 name = "chrono_converter_bench"
 harness = false
+[[bench]]
+name = "ergo_historic_bench"
+harness = false
 
 [features]
 default = []

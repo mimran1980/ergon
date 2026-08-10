@@ -64,7 +64,7 @@ publish = false
 [workspace]
 
 [dependencies]
-ergo-sbe = {{ path = "{}" }}
+ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes"] }}
 
 [lib]
 path = "src/lib.rs"

@@ -20,7 +20,8 @@
 
 use ergo_sbe_benchmarks::ergo_car::*;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 #[path = "_common.rs"]
 mod common;
@@ -103,7 +104,7 @@ fn bench_throughput_unchecked(c: &mut Criterion) {
 }
 
 mod raw_decode {
-    use criterion::black_box;
+    use std::hint::black_box;
 
     #[inline(always)]
     unsafe fn read_u16_le(ptr: *const u8) -> u16 {

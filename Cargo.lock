@@ -557,7 +557,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.15"
+version = "0.1.17"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.15"
+version = "0.1.17"
 dependencies = [
  "bytes",
  "chrono",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.15"
+version = "0.1.17"
 dependencies = [
  "bytes",
  "chrono",

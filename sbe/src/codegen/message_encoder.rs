@@ -154,7 +154,7 @@ pub(crate) fn generate_message_encoder(
             pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
                 buf: &'a mut [u8],
                 msg_offset: usize,
-                pos: usize,
+                offset: usize,
                 _header: core::marker::PhantomData<H>,
             }
 
@@ -181,7 +181,7 @@ pub(crate) fn generate_message_encoder(
                             Ok(dec) => core::fmt::Debug::fmt(&dec, f),
                             Err(_) => f.debug_struct(#stage_name_lit)
                                 .field("msg_offset", &self.msg_offset)
-                                .field("pos", &self.pos)
+                                .field("offset", &self.offset)
                                 .field("buf_len", &self.buf.len())
                                 .finish(),
                         }
@@ -276,11 +276,11 @@ pub(crate) fn generate_message_encoder(
         /// Cold error constructor — never inlined into the hot path.
         #[cold]
         #[inline(never)]
-        fn buffer_too_short(buf: &[u8], pos: usize, needed: usize) -> sbe_rt::EncodeError {
+        fn buffer_too_short(buf: &[u8], offset: usize, needed: usize) -> sbe_rt::EncodeError {
             sbe_rt::EncodeError::BufferTooShort {
                 field: "message header+body",
                 needed,
-                available: buf.len().saturating_sub(pos),
+                available: buf.len().saturating_sub(offset),
             }
         }
     };
@@ -342,11 +342,11 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-            let body_pos = msg_offset + #header_size_lit;
+            let body_offset = msg_offset + #header_size_lit;
             #name_encoder_ident {
                 buf,
                 msg_offset,
-                pos: body_pos + #block_length_lit,
+                offset: body_offset + #block_length_lit,
                 _header: core::marker::PhantomData,
             }
         }
@@ -355,20 +355,20 @@ pub(crate) fn generate_message_encoder(
 
     let wrap_apply_fn = quote::quote! {
         /// Wrap a mutable buffer, write the header, with one bounds/overflow check.
-        /// `pos` is the **message start** (see [`Self::wrap`]).
+        /// `offset` is the **message start** (see [`Self::wrap`]).
         ///
         /// Optional-field nullification is **not** applied by default — call
         /// `apply_nulls()` if you want null sentinels.
         #[inline]
         pub fn try_wrap_and_apply_header(
             buf: &'a mut [u8],
-            pos: usize,
+            offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
-            if #needed_lit > buf.len().saturating_sub(pos) {
-                return Err(Self::buffer_too_short(buf, pos, #needed_lit));
+            if #needed_lit > buf.len().saturating_sub(offset) {
+                return Err(Self::buffer_too_short(buf, offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) })
+            Ok(unsafe { Self::wrap_and_apply_header_unchecked(buf, offset) })
         }
 
         /// Trusted full-frame wrap + header. Proves header + fixed-body extent
@@ -381,39 +381,39 @@ pub(crate) fn generate_message_encoder(
         #[inline]
         pub fn wrap_and_apply_header(
             buf: &'a mut [u8],
-            pos: usize,
+            offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            if #needed_lit > buf.len().saturating_sub(pos) {
-                panic!("{}", Self::buffer_too_short(buf, pos, #needed_lit));
+            if #needed_lit > buf.len().saturating_sub(offset) {
+                panic!("{}", Self::buffer_too_short(buf, offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
-            unsafe { Self::wrap_and_apply_header_unchecked(buf, pos) }
+            unsafe { Self::wrap_and_apply_header_unchecked(buf, offset) }
         }
 
         /// Zero-check full-frame wrap + header — `copy_nonoverlapping`, **UB**
         /// on OOB. Only for proven-tight hot loops.
         ///
         /// # Safety
-        /// `pos + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
+        /// `offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
         /// ≤ `buf.len()` for the lifetime of the encoder.
         #[inline]
         pub unsafe fn wrap_and_apply_header_unchecked(
             buf: &'a mut [u8],
-            pos: usize,
+            offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            // SAFETY: caller guarantees pos + HEADER_LENGTH ≤ buf.len().
+            // SAFETY: caller guarantees offset + HEADER_LENGTH ≤ buf.len().
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     Self::HEADER_TEMPLATE.as_ptr(),
-                    buf.as_mut_ptr().add(pos),
+                    buf.as_mut_ptr().add(offset),
                     #header_size_lit,
                 );
             }
-            let body_pos = pos + #header_size_lit;
+            let body_offset = offset + #header_size_lit;
             #name_encoder_ident {
                 buf,
-                msg_offset: pos,
-                pos: body_pos + #block_length_lit,
+                msg_offset: offset,
+                offset: body_offset + #block_length_lit,
                 _header: core::marker::PhantomData,
             }
         }
@@ -790,7 +790,7 @@ pub(crate) fn generate_message_encoder(
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
                 msg_offset: usize,
-                pos: usize,
+                offset: usize,
             }
         });
         impl_contents.extend(quote::quote! {
@@ -802,7 +802,7 @@ pub(crate) fn generate_message_encoder(
                 #raw_name {
                     buf: &mut self.buf[body_start..],
                     msg_offset: 0,
-                    pos: self.pos - body_start,
+                    offset: self.offset - body_start,
                 }
             }
         });
@@ -832,12 +832,12 @@ pub(crate) fn generate_message_encoder(
             /// Message body bytes written so far (header exclusive).
             #[inline]
             pub fn as_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.offset]
             }
             /// Header-inclusive frame bytes (message is fixed-only — complete).
             #[inline]
             pub fn as_bytes_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.offset]
             }
         }
     } else {
@@ -847,14 +847,14 @@ pub(crate) fn generate_message_encoder(
             /// `as_bytes_with_header`.
             #[inline]
             pub fn as_fixed_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.pos]
+                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.offset]
             }
             /// Header + fixed block only — **not** a complete SBE message when
             /// groups or var-data remain. Prefer the complete stage's
             /// `as_bytes_with_header`.
             #[inline]
             pub fn as_fixed_region_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.pos]
+                &self.encoder.buf[self.encoder.msg_offset..self.encoder.offset]
             }
         }
     };
@@ -878,7 +878,7 @@ pub(crate) fn generate_message_encoder(
             /// Absolute current write cursor within the original buffer.
             #[inline]
             pub const fn limit(&self) -> usize {
-                self.encoder.pos
+                self.encoder.offset
             }
             /// The complete original buffer this encoder wraps.
             #[inline]
@@ -953,21 +953,21 @@ pub(crate) fn generate_message_encoder(
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
-                        if self.pos + #dim_size_lit > self.buf.len() {
+                        if self.offset + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
-                                available: self.buf.len().saturating_sub(self.pos),
+                                available: self.buf.len().saturating_sub(self.offset),
                             }
                             .into());
                         }
-                        self.buf[self.pos..self.pos + #dim_size_lit]
+                        self.buf[self.offset..self.offset + #dim_size_lit]
                             .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
                         self.buf
-                            [self.pos + #num_offset_lit..self.pos + #num_offset_lit + #num_size_lit]
+                            [self.offset + #num_offset_lit..self.offset + #num_offset_lit + #num_size_lit]
                             .copy_from_slice(&count.#to_endian());
                         let mut group =
-                            #g_pascal_enc::wrap(self.buf, self.pos + #dim_size_lit, count);
+                            #g_pascal_enc::wrap(self.buf, self.offset + #dim_size_lit, count);
                         f(&mut group)?;
                         let written = group.written();
                         if written != count {
@@ -979,7 +979,7 @@ pub(crate) fn generate_message_encoder(
                         Ok(#next_stage {
                             buf: group.buf,
                             msg_offset: self.msg_offset,
-                            pos: group.pos,
+                            offset: group.offset,
                             _header: core::marker::PhantomData,
                         })
                     }
@@ -994,28 +994,28 @@ pub(crate) fn generate_message_encoder(
                     where
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
-                        if self.pos + #dim_size_lit > self.buf.len() {
+                        if self.offset + #dim_size_lit > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
-                                available: self.buf.len().saturating_sub(self.pos),
+                                available: self.buf.len().saturating_sub(self.offset),
                             }
                             .into());
                         }
-                        self.buf[self.pos..self.pos + #dim_size_lit]
+                        self.buf[self.offset..self.offset + #dim_size_lit]
                             .copy_from_slice(&#g_pascal_enc::GROUP_DIM_TEMPLATE);
-                        let count_offset = self.pos + #num_offset_lit;
+                        let count_offset = self.offset + #num_offset_lit;
                         self.buf[count_offset..count_offset + #num_size_lit].fill(0);
                         // Use MAX count to skip GroupFull checks during add().
                         // Run in a block so group's reborrow of self.buf ends
                         // before we back-patch the count.
-                        let (buf, pos, actual) = {
+                        let (buf, offset, actual) = {
                             let mut group = #g_pascal_enc::wrap(
-                                self.buf, self.pos + #dim_size_lit, #count_ty::MAX,
+                                self.buf, self.offset + #dim_size_lit, #count_ty::MAX,
                             );
                             f(&mut group)?;
                             let n = group.written();
-                            (group.buf, group.pos, n)
+                            (group.buf, group.offset, n)
                         };
                         // Back-patch the actual count.
                         buf[count_offset..count_offset + #num_size_lit]
@@ -1023,7 +1023,7 @@ pub(crate) fn generate_message_encoder(
                         Ok(#next_stage {
                             buf,
                             msg_offset: self.msg_offset,
-                            pos,
+                            offset,
                             _header: core::marker::PhantomData,
                         })
                     }
@@ -1073,11 +1073,11 @@ pub(crate) fn generate_message_encoder(
 
             let shared_body = quote::quote! {
                 let needed = #prefix_size_lit + data.len();
-                if self.pos + needed > self.buf.len() {
+                if self.offset + needed > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: stringify!(#vd_snake),
                         needed,
-                        available: self.buf.len().saturating_sub(self.pos),
+                        available: self.buf.len().saturating_sub(self.offset),
                     });
                 }
                 let wire_length = <#len_rust_type>::try_from(data.len()).map_err(|_| {
@@ -1088,14 +1088,14 @@ pub(crate) fn generate_message_encoder(
                     }
                 })?;
                 let len_bytes = wire_length.#to_endian();
-                self.buf[self.pos..self.pos + #prefix_size_lit]
+                self.buf[self.offset..self.offset + #prefix_size_lit]
                     .copy_from_slice(&len_bytes);
-                let start = self.pos + #prefix_size_lit;
+                let start = self.offset + #prefix_size_lit;
                 self.buf[start..start + data.len()].copy_from_slice(data);
                 Ok(#next_stage {
                     buf: self.buf,
                     msg_offset: self.msg_offset,
-                    pos: start + data.len(),
+                    offset: start + data.len(),
                     _header: core::marker::PhantomData,
                 })
             };
@@ -1153,11 +1153,11 @@ pub(crate) fn generate_message_encoder(
                     {
                         #with_checked_body
                         let needed = #prefix_size_lit + exact_len;
-                        if self.pos + needed > self.buf.len() {
+                        if self.offset + needed > self.buf.len() {
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#vd_snake),
                                 needed,
-                                available: self.buf.len().saturating_sub(self.pos),
+                                available: self.buf.len().saturating_sub(self.offset),
                             }.into());
                         }
                         let wire_length = <#len_rust_type>::try_from(exact_len).map_err(|_| {
@@ -1168,14 +1168,14 @@ pub(crate) fn generate_message_encoder(
                             }
                         })?;
                         let len_bytes = wire_length.#to_endian();
-                        self.buf[self.pos..self.pos + #prefix_size_lit]
+                        self.buf[self.offset..self.offset + #prefix_size_lit]
                             .copy_from_slice(&len_bytes);
-                        let start = self.pos + #prefix_size_lit;
+                        let start = self.offset + #prefix_size_lit;
                         f(&mut self.buf[start..start + exact_len])?;
                         Ok(#next_stage {
                             buf: self.buf,
                             msg_offset: self.msg_offset,
-                            pos: start + exact_len,
+                            offset: start + exact_len,
                             _header: core::marker::PhantomData,
                         })
                     }
@@ -1192,18 +1192,18 @@ pub(crate) fn generate_message_encoder(
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     let body_start = self.msg_offset + #header_size_lit;
-                    &self.buf[body_start..self.pos]
+                    &self.buf[body_start..self.offset]
                 }
                 /// SBE message body length (excluding the message header).
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
-                    self.pos - self.msg_offset - #header_size_lit
+                    self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
-                    self.pos - self.msg_offset
+                    self.offset - self.msg_offset
                 }
                 /// Unwritten region after this message's write cursor to the end of
                 /// the original buffer. Use for multi-message packing, e.g.
@@ -1213,7 +1213,7 @@ pub(crate) fn generate_message_encoder(
                 /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
-                    &mut self.buf[self.pos..]
+                    &mut self.buf[self.offset..]
                 }
             }
 
@@ -1222,7 +1222,7 @@ pub(crate) fn generate_message_encoder(
                 /// constructed via `wrap_and_apply_header` (not raw `wrap`).
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
-                    &self.buf[self.msg_offset..self.pos]
+                    &self.buf[self.msg_offset..self.offset]
                 }
             }
         });
@@ -1233,18 +1233,18 @@ pub(crate) fn generate_message_encoder(
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     let body_start = self.msg_offset + #header_size_lit;
-                    &self.buf[body_start..self.pos]
+                    &self.buf[body_start..self.offset]
                 }
                 /// SBE message body length (excluding the message header).
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
-                    self.pos - self.msg_offset - #header_size_lit
+                    self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Pure arithmetic — available for body-only wraps too.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
-                    self.pos - self.msg_offset
+                    self.offset - self.msg_offset
                 }
                 /// Unwritten region after this message's write cursor to the end of
                 /// the original buffer. Use for multi-message packing, e.g.
@@ -1254,7 +1254,7 @@ pub(crate) fn generate_message_encoder(
                 /// `get_metadata().limit()`.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
-                    &mut self.buf[self.pos..]
+                    &mut self.buf[self.offset..]
                 }
             }
 
@@ -1263,7 +1263,7 @@ pub(crate) fn generate_message_encoder(
                 /// constructed via `wrap_and_apply_header` (not raw `wrap`).
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
-                    &self.buf[self.msg_offset..self.pos]
+                    &self.buf[self.msg_offset..self.offset]
                 }
             }
         });
