@@ -423,7 +423,9 @@ pub(crate) mod __sbe_message_sealed {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BooleanType {
+    ///False value representation.
     F = 0,
+    ///True value representation.
     T = 1,
     /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal = 255,

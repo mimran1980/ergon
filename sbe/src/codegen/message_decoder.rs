@@ -1248,6 +1248,9 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {}
         };
+        if let Some(ref desc) = vd.description {
+            impl_body.extend(doc_attr_tokens(desc));
+        }
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {

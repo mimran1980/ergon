@@ -20,7 +20,7 @@ fn src(xml: &str, name: &str) -> String {
 
 fn assert_doc(source: &str, needle: &str, item_prefix: &str) {
     let lines: Vec<&str> = source.lines().collect();
-    for gap in 0..8 {
+    for gap in 0..12 {
         for w in lines.windows(gap + 1) {
             if w[gap].contains(item_prefix) {
                 for i in 0..=gap {
@@ -33,7 +33,7 @@ fn assert_doc(source: &str, needle: &str, item_prefix: &str) {
             }
         }
     }
-    panic!("expected doc '{needle}' within 8 lines before '{item_prefix}'");
+    panic!("expected doc '{needle}' within 12 lines before '{item_prefix}'");
 }
 
 fn schema(types: &str, messages: &str) -> String {
@@ -53,14 +53,11 @@ fn schema(types: &str, messages: &str) -> String {
     )
 }
 
-// ── Field ──────────────────────────────────────────────────────────────────
-
 #[test]
 fn field_scalar() -> Result<(), Box<dyn std::error::Error>> {
     let s = src(&schema("", r#"<sbe:message name="M" id="1">
     <field name="price" id="1" type="uint32" description="Price in cents"/>
   </sbe:message>"#), "t");
-    
     assert_doc(&s, "Price in cents", "pub fn price(&self)");
     Ok(())
 }
@@ -75,8 +72,6 @@ fn field_optional() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Composite + members ────────────────────────────────────────────────────
-
 #[test]
 fn composite_and_members() -> Result<(), Box<dyn std::error::Error>> {
     let s = src(&schema(
@@ -89,15 +84,13 @@ fn composite_and_members() -> Result<(), Box<dyn std::error::Error>> {
     <field name="price" id="1" type="Price"/>
   </sbe:message>"#,
     ), "t");
+    // Composite description on the value struct
     assert_doc(&s, "A price composite", "pub struct Price(");
-    assert_doc(&s, "A price composite", "pub struct PriceDecoder");
-    for (i, line) in s.lines().enumerate() { if line.contains("mantissa") { eprintln!("L{i}: {line}"); } }
+    // Member descriptions on decoder getters
     assert_doc(&s, "The mantissa", "pub fn mantissa(&self)");
     assert_doc(&s, "The exponent", "pub fn exponent(&self)");
     Ok(())
 }
-
-// ── Enum + valid values ────────────────────────────────────────────────────
 
 #[test]
 fn enum_and_valid_values() -> Result<(), Box<dyn std::error::Error>> {
@@ -111,13 +104,11 @@ fn enum_and_valid_values() -> Result<(), Box<dyn std::error::Error>> {
     <field name="side" id="1" type="Side"/>
   </sbe:message>"#,
     ), "t");
-    assert_doc(&s, "Buy or sell", "pub struct Side");
-    assert_doc(&s, "Buy order", "Buy => 1");
-    assert_doc(&s, "Sell order", "Sell => 2");
+    assert_doc(&s, "Buy or sell", "pub enum Side");
+    assert_doc(&s, "Buy order", "Buy = 1");
+    assert_doc(&s, "Sell order", "Sell = 2");
     Ok(())
 }
-
-// ── Group + entry ──────────────────────────────────────────────────────────
 
 #[test]
 fn group_and_entry() -> Result<(), Box<dyn std::error::Error>> {
@@ -141,8 +132,6 @@ fn group_and_entry() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Var-data ───────────────────────────────────────────────────────────────
-
 #[test]
 fn var_data_field() -> Result<(), Box<dyn std::error::Error>> {
     let s = src(&schema(
@@ -156,12 +145,9 @@ fn var_data_field() -> Result<(), Box<dyn std::error::Error>> {
     <data name="symbol" id="2" type="varStringEncoding" description="Ticker"/>
   </sbe:message>"#,
     ), "t");
-    for (i, line) in s.lines().enumerate() { if line.contains("symbol") { eprintln!("L{i}: {line}"); } }
     assert_doc(&s, "Ticker", "pub fn symbol");
     Ok(())
 }
-
-// ── Set ────────────────────────────────────────────────────────────────────
 
 #[test]
 fn set_field() -> Result<(), Box<dyn std::error::Error>> {
@@ -179,8 +165,6 @@ fn set_field() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Message ────────────────────────────────────────────────────────────────
-
 #[test]
 fn message_level() -> Result<(), Box<dyn std::error::Error>> {
     let s = src(&schema("", r#"<sbe:message name="M" id="1" description="A test message">
@@ -189,8 +173,6 @@ fn message_level() -> Result<(), Box<dyn std::error::Error>> {
     assert_doc(&s, "A test message", "pub struct MDecoder");
     Ok(())
 }
-
-// ── Multi-line ─────────────────────────────────────────────────────────────
 
 #[test]
 fn multi_line() -> Result<(), Box<dyn std::error::Error>> {

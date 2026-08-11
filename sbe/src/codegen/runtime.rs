@@ -867,6 +867,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     struct Variant {
         variant_ident: syn::Ident,
         disc: proc_macro2::TokenStream,
+        description: Option<String>,
     }
 
     let variants: Vec<Variant> = tokens
@@ -876,6 +877,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             let val = t.encoding.constant_value.as_ref()?;
             let variant_ident =
                 syn::Ident::new(&to_pascal_case(&t.name), proc_macro2::Span::call_site());
+            let variant_desc = t.encoding.description.clone();
             let disc: proc_macro2::TokenStream = if is_char {
                 let byte = val.as_bytes().first().copied().unwrap_or(0);
                 let lit = syn::LitByte::new(byte, proc_macro2::Span::call_site());
@@ -896,6 +898,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             Some(Variant {
                 variant_ident,
                 disc,
+                description: variant_desc,
             })
         })
         .collect();
@@ -1026,11 +1029,29 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         src.push_str(".\n");
     }
 
+    // Build variant declarations with doc comments
+    let variant_decls: Vec<proc_macro2::TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let name = &v.variant_ident;
+            let disc = &v.disc;
+            if let Some(ref desc) = v.description {
+                let doc = doc_attr_tokens(desc);
+                quote::quote! {
+                    #doc
+                    #name = #disc,
+                }
+            } else {
+                quote::quote! { #name = #disc, }
+            }
+        })
+        .collect();
+
     let tokens = quote::quote! {
         #[repr(#r_type_ty)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum #name_ident {
-            #(#variant_names = #variant_discs,)*
+            #(#variant_decls)*
             /// Unknown enum value — the wire discriminant did not match any known variant.
             NullVal = #null_disc_ts,
         }
@@ -1302,6 +1323,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         let field_name = to_snake_case(&m.name);
         let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
+
+        if let Some(ref desc) = m.description {
+            getters.extend(doc_attr_tokens(desc));
+        }
 
         match &m.member_type {
             MemberType::Primitive {
@@ -1591,6 +1616,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         let field_name = to_snake_case(&m.name);
         let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
+
+        if let Some(ref desc) = m.description {
+            getters.extend(doc_attr_tokens(desc));
+        }
 
         match &m.member_type {
             MemberType::Primitive {

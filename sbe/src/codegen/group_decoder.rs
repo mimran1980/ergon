@@ -822,6 +822,10 @@ pub(crate) fn generate_group_decoder(
         let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
         let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
 
+        if let Some(ref desc) = f.description {
+            entry_body.extend(doc_attr_tokens(desc));
+        }
+
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 let r_type = rust_type(*prim);
