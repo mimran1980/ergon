@@ -2517,6 +2517,52 @@ pub(crate) fn generate_any_message(
 /// Make schema XML descriptions safe for rustdoc doctests.
 ///
 /// Multi-line descriptions often carry indented ASCII protocol diagrams or
+/// Compute a canonical wire fingerprint for a token slice representing an
+/// enum, set, or composite.  Compares encoding, offsets, lengths, presence,
+/// constants, null/min/max, discriminants, and byte order.  Returns a
+/// deterministic string suitable for equality comparison only (not a hash).
+pub(crate) fn canonical_token_fingerprint(tokens: &[crate::ir::Token]) -> String {
+    use crate::ir::Signal;
+    use std::fmt::Write;
+    let mut fp = String::new();
+    for t in tokens {
+        let _ = write!(fp, "{}:{:?}:", t.name, t.signal);
+        let e = &t.encoding;
+        let _ = write!(fp, "sv{}:", e.since_version);
+        if let Some(p) = e.primitive_type {
+            let _ = write!(fp, "p{:?}:", p);
+        }
+        if let Some(o) = e.offset {
+            let _ = write!(fp, "o{}:", o);
+        }
+        if let Some(l) = e.length {
+            let _ = write!(fp, "l{}:", l);
+        }
+        if e.presence != crate::ir::Presence::Required {
+            let _ = write!(fp, "pr{:?}:", e.presence);
+        }
+        if let Some(ref cv) = e.constant_value {
+            let _ = write!(fp, "cv{}:", cv);
+        }
+        if let Some(nv) = e.null_value {
+            let _ = write!(fp, "nv{}:", nv);
+        }
+        if let Some(mi) = e.min_value {
+            let _ = write!(fp, "mi{}:", mi);
+        }
+        if let Some(mx) = e.max_value {
+            let _ = write!(fp, "mx{}:", mx);
+        }
+        if let Some(ref st) = e.semantic_type {
+            let _ = write!(fp, "st{}:", st);
+        }
+        if e.deprecated {
+            let _ = write!(fp, "dep:");
+        }
+    }
+    fp
+}
+
 /// XML-comment prose (e.g. cluster protocol codecs). Rustdoc treats 4-space
 /// indented blocks as Rust doctests, which then fail `cargo test --doc`.
 /// Fence multi-line content as `text` so it stays documentation only.

@@ -629,19 +629,78 @@ impl Generator {
                     });
                 }
             }
-            // If a shared module is configured, the first schema owns it and
-            // its module name must match.
-            if schemas.len() > 1
-                && self.config.shared_module.is_some()
-                && self.config.module_name() != schemas[0].1
-            {
-                return Err(GenerateError::InvalidConfiguration {
-                    option: "shared_module / module_name mismatch".into(),
-                    value: format!("shared={} first_schema={}", self.config.module_name(), schemas[0].1),
-                    reason:
-                        "shared module name must match the first schema's module name (the shared-type owner)"
-                            .into(),
-                });
+        }
+
+        // Validate shared types have identical wire fingerprints when names
+        // collide. A type name is not wire identity — same-name types with
+        // different layouts silently produce corrupted codecs.
+        if schemas.len() > 1 && self.config.shared_module.is_some() {
+            let first_elements = partition_tokens(&schemas[0].0.ir.tokens);
+            for (i, (schema, _)) in schemas.iter().enumerate().skip(1) {
+                let elements = partition_tokens(&schema.ir.tokens);
+                // Compare enums
+                for et in &elements.enums {
+                    let name = to_pascal_case(&et[0].name);
+                    if let Some(ref_et) = first_elements
+                        .enums
+                        .iter()
+                        .find(|e| to_pascal_case(&e[0].name) == name)
+                    {
+                        let a = canonical_token_fingerprint(ref_et);
+                        let b = canonical_token_fingerprint(et);
+                        if a != b {
+                            return Err(GenerateError::InvalidConfiguration {
+                                option: format!("shared enum {name} in schema[{i}]").into(),
+                                value: name.clone(),
+                                reason: format!(
+                                    "shared type '{name}' has different wire layout than the first schema's definition"
+                                ),
+                            });
+                        }
+                    }
+                }
+                // Compare sets
+                for st in &elements.sets {
+                    let name = to_pascal_case(&st[0].name);
+                    if let Some(ref_st) = first_elements
+                        .sets
+                        .iter()
+                        .find(|s| to_pascal_case(&s[0].name) == name)
+                    {
+                        let a = canonical_token_fingerprint(ref_st);
+                        let b = canonical_token_fingerprint(st);
+                        if a != b {
+                            return Err(GenerateError::InvalidConfiguration {
+                                option: format!("shared set {name} in schema[{i}]").into(),
+                                value: name.clone(),
+                                reason: format!(
+                                    "shared type '{name}' has different wire layout than the first schema's definition"
+                                ),
+                            });
+                        }
+                    }
+                }
+                // Compare composites
+                for ct in &elements.composites {
+                    let name = to_pascal_case(&ct[0].name);
+                    if let Some(ref_ct) = first_elements
+                        .composites
+                        .iter()
+                        .find(|c| to_pascal_case(&c[0].name) == name)
+                    {
+                        let a = canonical_token_fingerprint(ref_ct);
+                        let b = canonical_token_fingerprint(ct);
+                        if a != b {
+                            return Err(GenerateError::InvalidConfiguration {
+                                option: format!("shared composite {name} in schema[{i}]").into(),
+                                value: name.clone(),
+                                reason: format!(
+                                    "shared type '{name}' has different wire layout than the first schema's definition"
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
 
