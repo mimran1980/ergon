@@ -242,10 +242,17 @@ pub(crate) fn parse_message_child(
             ) {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
-                    if let Some(offset_str) = node.attribute("offset")
-                        && let Ok(offset) = offset_str.parse::<usize>()
-                    {
-                        first.encoding.offset = Some(offset);
+                    if let Some(offset_str) = node.attribute("offset") {
+                        match offset_str.parse::<usize>() {
+                            Ok(offset) => first.encoding.offset = Some(offset),
+                            Err(_) => {
+                                return Err(Fault::invalid(
+                                    node,
+                                    "field @offset",
+                                    format!("'{offset_str}' is not a valid non-negative integer"),
+                                ));
+                            }
+                        }
                     }
                     first.encoding.presence = presence;
                     first.encoding.epoch = epoch;
@@ -273,9 +280,19 @@ pub(crate) fn parse_message_child(
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
-            let group_block_length = node
-                .attribute("blockLength")
-                .and_then(|s| s.parse::<usize>().ok());
+            let group_block_length = match node.attribute("blockLength") {
+                Some(s) => match s.parse::<usize>() {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        return Err(Fault::invalid(
+                            node,
+                            "group @blockLength",
+                            format!("'{s}' is not a valid non-negative integer"),
+                        ));
+                    }
+                },
+                None => None,
+            };
 
             tokens.push(Token {
                 id: Some(id),

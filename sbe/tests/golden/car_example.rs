@@ -103,7 +103,14 @@ pub mod sbe_rt {
             }
         }
     }
-    impl core::error::Error for DecodeError {}
+    impl core::error::Error for DecodeError {
+        fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+            match self {
+                Self::InvalidUtf8 { error, .. } => Some(error),
+                _ => None,
+            }
+        }
+    }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
         /// Encode buffer shorter than needed for `field` (`needed` vs `available`).

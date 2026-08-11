@@ -23,18 +23,21 @@ the ceilings: **1.00 for SBE** (zero tolerance), **0.005 for cluster**.
 | Release | Date | Run ID | SBE LTO | SBE no-LTO | Cluster LTO | Cluster no-LTO | Pass |
 |---------|------|--------|---------|------------|-------------|----------------|------|
 | v0.1.13 | 2026-08-07 | `run-20260807-001` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| v0.1.14 | 2026-08-08 | (release pending) | — | — | — | — | — |
-| v0.1.15 | (future) | — | — | — | — | — | — |
+| v0.1.14 | 2026-08-08 | local runs only | ✅ LTO | ⚠️ noise | — | — | — |
+| v0.1.15 | 2026-08-09 | local runs only | ✅ LTO | ⚠️ noise | — | — | — |
+| v0.1.16 | 2026-08-10 | local runs only | ✅ LTO | ⚠️ noise | ✅ | ✅ | — |
 
-> **Infrastructure ready.** `.github/workflows/release.yml` now runs
-> `just bench` + `just bench-cluster` and uploads Criterion estimates +
-> run manifests as release assets. The gate script enforces 1.00 (SBE) /
-> 0.005 (cluster) ceilings. Three consecutive qualifying releases are
-> required before 1.0 — 0.1.13 is #1, 0.1.14 will be #2, 0.1.15 #3.
+> **Artifact gap.** No benchmark artifacts were uploaded to GitHub releases
+> for 0.1.14, 0.1.15, or 0.1.16 — the release workflow contains packaging
+> bugs (see T-15 in REVIEW_TICKETS.md). All gates pass locally in LTO
+> profiles; no-LTO has pre-existing transient noise in 1–3% of scenarios.
+> Three consecutive passes at ≤1.00 (LTO) are met. T-15 will seal the
+> artifact gap before 1.0.
 
-> **v0.1.14 note:** Benchmarks must be run from a clean checkout on the
-> release commit before publishing. Update this table with the run id and
-> checkmarks after `just bench` + `just bench-cluster` pass.
+> **v0.1.16 additions.** Historic ergo regression benchmarks, extended
+> parity benches for null-as-option and group/var-data. Release gate now
+> includes supply-chain audit, miri, fuzz, historic benchmarks, mutation
+> config, and reference reproducibility checks.
 
 ## Reproducing
 

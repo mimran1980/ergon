@@ -492,6 +492,10 @@ pub(crate) fn generate_message_encoder(
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
         let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
+        if let Some(ref desc) = f.description {
+            ts.extend(doc_attr_tokens(desc));
+        }
+
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 if f.presence == Presence::Constant {
@@ -689,6 +693,9 @@ pub(crate) fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let f_ident = syn::Ident::new(&fname_snake, span);
+            if let Some(ref desc) = f.description {
+                fixed_fields_ts.extend(doc_attr_tokens(desc));
+            }
             let is_optional = f.presence == crate::Presence::Optional;
             if is_optional {
                 let ty = field_type_ident(&f.field_type, span);

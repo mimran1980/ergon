@@ -62,9 +62,9 @@ Cluster may remain `0.x` after sbe 1.0.
 | Criterion | Status |
 |-----------|--------|
 | 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC |
-| 2. Parity gate at ≤1.00 | Done (0.1.13 ✅, 0.1.14 ✅, need 0.1.15 for three-in-a-row) |
+| 2. Parity gate at ≤1.00 | Three-in-a-row met (0.1.14 ✅, 0.1.15 ✅, 0.1.16 ✅). Historic regression gate added in 0.1.16. Extended parity benchmarks for null-as-option, group/var-data in 0.1.17-dev. |
 | 3. Wire compatibility | Done (FIX SBE conformance, sbe-tool parity tests) |
 | 4. Warning-free consumers | Done (0.1.14) |
-| 5. Book + migration docs | Done (CHANGELOG.md + book + feature-integrations page) |
+| 5. Book + migration docs | Done (CHANGELOG.md + book + error-diagnostics, multi-message/framing, miette error page) |
 | 6. External signal | Pilot page created; FIX SBE conformance suite passing |
-| Cluster 1.0 criteria | Compatibility page + CI workflow created |
+| Cluster 1.0 criteria | Compatibility page + CI workflow created; bench-cluster gate active |
