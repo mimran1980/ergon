@@ -56,7 +56,14 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
-            impl core::error::Error for DecodeError {}
+            impl core::error::Error for DecodeError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::InvalidUtf8 { error, .. } => Some(error),
+                        _ => None,
+                    }
+                }
+            }
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {

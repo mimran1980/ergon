@@ -24,9 +24,7 @@ fn assert_doc(source: &str, needle: &str, item_prefix: &str) {
         for w in lines.windows(gap + 1) {
             if w[gap].contains(item_prefix) {
                 for i in 0..=gap {
-                    if (w[i].contains("#[doc") || w[i].contains("///"))
-                        && w[i].contains(needle)
-                    {
+                    if (w[i].contains("#[doc") || w[i].contains("///")) && w[i].contains(needle) {
                         return;
                     }
                 }
@@ -55,35 +53,50 @@ fn schema(types: &str, messages: &str) -> String {
 
 #[test]
 fn field_scalar() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema("", r#"<sbe:message name="M" id="1">
+    let s = src(
+        &schema(
+            "",
+            r#"<sbe:message name="M" id="1">
     <field name="price" id="1" type="uint32" description="Price in cents"/>
-  </sbe:message>"#), "t");
+  </sbe:message>"#,
+        ),
+        "t",
+    );
     assert_doc(&s, "Price in cents", "pub fn price(&self)");
     Ok(())
 }
 
 #[test]
 fn field_optional() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema("", r#"<sbe:message name="M" id="1">
+    let s = src(
+        &schema(
+            "",
+            r#"<sbe:message name="M" id="1">
     <field name="opt" id="1" type="uint32" presence="optional" nullValue="0"
            description="Optional value"/>
-  </sbe:message>"#), "t");
+  </sbe:message>"#,
+        ),
+        "t",
+    );
     assert_doc(&s, "Optional value", "pub fn opt(&self)");
     Ok(())
 }
 
 #[test]
 fn composite_and_members() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema(
-        r#"<composite name="Price" description="A price composite">
+    let s = src(
+        &schema(
+            r#"<composite name="Price" description="A price composite">
       <type name="mantissa" primitiveType="int64" description="The mantissa"/>
       <type name="exponent" primitiveType="int8" description="The exponent"/>
     </composite>
 "#,
-        r#"<sbe:message name="M" id="1">
+            r#"<sbe:message name="M" id="1">
     <field name="price" id="1" type="Price"/>
   </sbe:message>"#,
-    ), "t");
+        ),
+        "t",
+    );
     // Composite description on the value struct
     assert_doc(&s, "A price composite", "pub struct Price(");
     // Member descriptions on decoder getters
@@ -94,16 +107,19 @@ fn composite_and_members() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn enum_and_valid_values() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema(
-        r#"<enum name="Side" encodingType="uint8" description="Buy or sell">
+    let s = src(
+        &schema(
+            r#"<enum name="Side" encodingType="uint8" description="Buy or sell">
       <validValue name="Buy" description="Buy order">1</validValue>
       <validValue name="Sell" description="Sell order">2</validValue>
     </enum>
 "#,
-        r#"<sbe:message name="M" id="1">
+            r#"<sbe:message name="M" id="1">
     <field name="side" id="1" type="Side"/>
   </sbe:message>"#,
-    ), "t");
+        ),
+        "t",
+    );
     assert_doc(&s, "Buy or sell", "pub enum Side");
     assert_doc(&s, "Buy order", "Buy = 1");
     assert_doc(&s, "Sell order", "Sell = 2");
@@ -112,20 +128,23 @@ fn enum_and_valid_values() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn group_and_entry() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema(
-        r#"<composite name="groupSizeEncoding">
+    let s = src(
+        &schema(
+            r#"<composite name="groupSizeEncoding">
       <type name="blockLength" primitiveType="uint16"/>
       <type name="numInGroup" primitiveType="uint16"/>
     </composite>
 "#,
-        r#"<sbe:message name="Book" id="1">
+            r#"<sbe:message name="Book" id="1">
     <group name="levels" id="1" dimensionType="groupSizeEncoding"
            description="Price levels">
       <field name="px" id="2" type="uint32" description="Price"/>
       <field name="sz" id="3" type="uint32" description="Size"/>
     </group>
   </sbe:message>"#,
-    ), "t");
+        ),
+        "t",
+    );
     assert_doc(&s, "Price levels", "pub struct LevelsDecoder");
     assert_doc(&s, "Price", "pub fn px(&self)");
     assert_doc(&s, "Size", "pub fn sz(&self)");
@@ -134,53 +153,71 @@ fn group_and_entry() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn var_data_field() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema(
-        r#"<composite name="varStringEncoding">
+    let s = src(
+        &schema(
+            r#"<composite name="varStringEncoding">
       <type name="length" primitiveType="uint32" maxValue="1073741824"/>
       <type name="varData" primitiveType="uint8" length="0" characterEncoding="ASCII"/>
     </composite>
 "#,
-        r#"<sbe:message name="M" id="1">
+            r#"<sbe:message name="M" id="1">
     <field name="tag" id="1" type="uint32"/>
     <data name="symbol" id="2" type="varStringEncoding" description="Ticker"/>
   </sbe:message>"#,
-    ), "t");
+        ),
+        "t",
+    );
     assert_doc(&s, "Ticker", "pub fn symbol");
     Ok(())
 }
 
 #[test]
 fn set_field() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema(
-        r#"<set name="Flags" encodingType="uint8" description="Event flags">
+    let s = src(
+        &schema(
+            r#"<set name="Flags" encodingType="uint8" description="Event flags">
       <choice name="Trade">0</choice>
       <choice name="Quote">1</choice>
     </set>
 "#,
-        r#"<sbe:message name="M" id="1">
+            r#"<sbe:message name="M" id="1">
     <field name="flags" id="1" type="Flags"/>
   </sbe:message>"#,
-    ), "t");
+        ),
+        "t",
+    );
     assert_doc(&s, "Event flags", "pub struct Flags");
     Ok(())
 }
 
 #[test]
 fn message_level() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema("", r#"<sbe:message name="M" id="1" description="A test message">
+    let s = src(
+        &schema(
+            "",
+            r#"<sbe:message name="M" id="1" description="A test message">
     <field name="val" id="1" type="uint32"/>
-  </sbe:message>"#), "t");
+  </sbe:message>"#,
+        ),
+        "t",
+    );
     assert_doc(&s, "A test message", "pub struct MDecoder");
     Ok(())
 }
 
 #[test]
 fn multi_line() -> Result<(), Box<dyn std::error::Error>> {
-    let s = src(&schema("", r#"<sbe:message name="M" id="1"
+    let s = src(
+        &schema(
+            "",
+            r#"<sbe:message name="M" id="1"
       description="Line one.&#10;Line two.">
     <field name="val" id="1" type="uint32"
         description="First.&#10;Second."/>
-  </sbe:message>"#), "t");
+  </sbe:message>"#,
+        ),
+        "t",
+    );
     assert!(s.contains("Line one"));
     assert!(s.contains("Line two"));
     assert!(s.contains("First"));

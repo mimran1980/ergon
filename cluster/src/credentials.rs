@@ -40,9 +40,20 @@ impl CredentialsSupplier for NullCredentialsSupplier {
 /// answerable without a custom supplier. Prefer a bespoke
 /// [`CredentialsSupplier`] implementation when the challenge must be derived
 /// from the encoded challenge bytes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct StaticCredentials {
     credentials: Vec<u8>,
+}
+
+impl core::fmt::Debug for StaticCredentials {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StaticCredentials")
+            .field(
+                "credentials",
+                &format_args!("<redacted {} bytes>", self.credentials.len()),
+            )
+            .finish()
+    }
 }
 
 impl StaticCredentials {

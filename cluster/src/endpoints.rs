@@ -41,6 +41,15 @@ pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, Cluste
         return Err(ClusterError::connect("ingress_endpoints is empty"));
     }
     out.sort_by_key(|e| e.member_id);
+    // Detect duplicate member IDs after sorting.
+    for w in out.windows(2) {
+        if w[0].member_id == w[1].member_id {
+            return Err(ClusterError::connect(format!(
+                "ingress_endpoints duplicate member id {} (endpoints {} and {})",
+                w[0].member_id, w[0].endpoint, w[1].endpoint,
+            )));
+        }
+    }
     Ok(out)
 }
 

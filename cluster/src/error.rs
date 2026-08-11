@@ -121,6 +121,7 @@ impl std::fmt::Display for PublicationFailure {
 ///
 /// This is the sole error type for the public `ergo-aeron-cluster` API.
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum ClusterError {
     /// Connection failed for a non-protocol reason (e.g. context, subscription).
     #[error("connect failed: {reason}")]

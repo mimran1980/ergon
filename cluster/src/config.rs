@@ -65,6 +65,14 @@ pub struct SessionBuilder {
     pub(crate) idle: Option<Arc<Mutex<dyn IdleStrategy + Send + Sync>>>,
 }
 
+/// Reject zero, sub-millisecond, and overflow durations before they reach
+/// the protocol poll state machine.
+fn checked_timeout_ms(d: Duration, field: &str) -> u64 {
+    let millis = u128::from(d.as_millis());
+    assert!(millis > 0, "{field}: timeout must be >= 1ms, got {d:?}");
+    u64::try_from(millis).unwrap_or_else(|_| panic!("{field}: {d:?} exceeds u64 millisecond range"))
+}
+
 impl Default for SessionBuilder {
     fn default() -> Self {
         Self {
@@ -133,9 +141,10 @@ impl SessionBuilder {
     }
 
     /// Deadline for the connect sequence, keep-alives, and re-offers.
-    /// Default: 5 seconds.
+    /// Default: 5 seconds. Rejects zero, sub-millisecond, or overflow
+    /// (panics — these are programmer errors at configuration time).
     pub fn message_timeout(mut self, timeout: Duration) -> Self {
-        self.message_timeout_ms = timeout.as_millis() as u64;
+        self.message_timeout_ms = checked_timeout_ms(timeout, "message_timeout");
         self
     }
 
@@ -143,8 +152,9 @@ impl SessionBuilder {
     /// lost (mirrors Java `Context.newLeaderTimeoutNs`; default 5s). When it
     /// elapses, [`crate::AeronCluster::poll_state_changes`] transitions the
     /// session to [`crate::ClusterError::Disconnected`].
+    /// Rejects zero, sub-millisecond, or overflow (panics).
     pub fn new_leader_timeout(mut self, timeout: Duration) -> Self {
-        self.new_leader_timeout_ms = timeout.as_millis() as u64;
+        self.new_leader_timeout_ms = checked_timeout_ms(timeout, "new_leader_timeout");
         self
     }
 
