@@ -127,11 +127,15 @@ pub(crate) fn resolve_type_to_tokens(
     registry: &TypeRegistry,
     since_version: u16,
     span: Option<std::ops::Range<usize>>,
+    description: Option<String>,
 ) -> Option<Vec<Token>> {
     if let Some(encoding) = registry.encodings.get(type_name) {
         let mut field_enc = encoding.clone();
         if since_version > 0 {
             field_enc.since_version = since_version;
+        }
+        if description.is_some() {
+            field_enc.description = description;
         }
         Some(vec![
             Token {
@@ -157,6 +161,7 @@ pub(crate) fn resolve_type_to_tokens(
             signal: Signal::BeginField,
             encoding: Encoding {
                 since_version,
+                description,
                 ..Encoding::default()
             },
             span: span.clone(),

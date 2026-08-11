@@ -375,7 +375,7 @@ fn resolve_type_with_since_version() -> Result<(), Box<dyn std::error::Error>> {
             ..Encoding::default()
         },
     );
-    let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5, None);
+    let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5, None, None);
     assert!(result.is_some());
     assert_eq!(result.unwrap()[0].encoding.since_version, 5);
 

@@ -285,6 +285,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -303,6 +304,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -344,6 +346,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 // Apply explicit member offset onto the BeginField wrapper.
                 if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
@@ -399,6 +402,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -496,6 +500,7 @@ pub(crate) fn parse_composite(
                     registry,
                     since_val,
                     Some(child.range()),
+                    None,
                 ) {
                     composite_tokens.extend(resolved);
                 } else {

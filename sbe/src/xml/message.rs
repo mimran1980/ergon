@@ -230,6 +230,7 @@ pub(crate) fn parse_message_child(
                 None
             };
 
+            let field_description = collect_description(node);
             if let Some(resolved) = resolve_type_to_tokens(
                 &field_name,
                 &type_name,
@@ -237,6 +238,7 @@ pub(crate) fn parse_message_child(
                 registry,
                 since_version,
                 Some(node.range()),
+                field_description,
             ) {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
