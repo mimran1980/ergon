@@ -606,6 +606,45 @@ impl Generator {
         let mut shared_types: HashSet<String> = HashSet::new();
         let empty_set: HashSet<String> = HashSet::new();
 
+        // Validate per-schema module names before emitting any file.
+        {
+            let mut seen = HashSet::new();
+            for (i, (_, module_name)) in schemas.iter().enumerate() {
+                if !crate::config::is_valid_module_ident(module_name) {
+                    return Err(GenerateError::InvalidConfiguration {
+                        option: format!("schemas[{i}].module_name").into(),
+                        value: module_name.to_string(),
+                        reason:
+                            "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
+                                .into(),
+                    });
+                }
+                if !seen.insert(module_name.to_string()) {
+                    return Err(GenerateError::InvalidConfiguration {
+                        option: format!("schemas[{i}].module_name").into(),
+                        value: module_name.to_string(),
+                        reason:
+                            "duplicate module name — each schema must have a unique module name"
+                                .into(),
+                    });
+                }
+            }
+            // If a shared module is configured, the first schema owns it and
+            // its module name must match.
+            if schemas.len() > 1
+                && self.config.shared_module.is_some()
+                && self.config.module_name() != schemas[0].1
+            {
+                return Err(GenerateError::InvalidConfiguration {
+                    option: "shared_module / module_name mismatch".into(),
+                    value: format!("shared={} first_schema={}", self.config.module_name(), schemas[0].1),
+                    reason:
+                        "shared module name must match the first schema's module name (the shared-type owner)"
+                            .into(),
+                });
+            }
+        }
+
         // Validate conversions against the union of all schemas' types, not
         // each schema individually. A NamedType selector may only exist in
         // one schema's type declarations (valid), and the union covers all.
