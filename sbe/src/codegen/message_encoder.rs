@@ -88,7 +88,7 @@ pub(crate) fn generate_message_encoder(
     let span = proc_macro2::Span::call_site();
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
-    let fixed_encoder_ident = syn::Ident::new(&format!("{}FixedEncoder", name), span);
+    let unfixed_encoder_ident = syn::Ident::new(&format!("{}UnfixedEncoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
     // Pre-compute the exact schema-declared header wire image. Composite
@@ -1316,6 +1316,17 @@ pub(crate) fn generate_message_encoder(
                 const SCHEMA_ID: u16 = #schema_id_lit;
                 const SCHEMA_VERSION: u16 = #schema_version_lit;
             }
+        });
+    }
+
+    // For tailed messages, emit a type alias so constructors can return
+    // `UnfixedEncoder` and `fixed()` returns `Encoder` — typestate naming
+    // without API breakage. Both are the same underlying struct.
+    if total_tail > 0 {
+        ts.extend(quote::quote! {
+            /// Root encoder stage — call [`Self::fixed`] to transition to
+            /// [`#name_encoder_ident`] which has tail methods.
+            pub type #unfixed_encoder_ident<'a, H> = #name_encoder_ident<'a, H>;
         });
     }
 
