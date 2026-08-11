@@ -7014,6 +7014,11 @@ impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const SCHEMA_VERSION: u16 = 0;
 }
 #[doc = concat!(
+    "Root encoder stage for `", stringify!(CarEncoder),
+    "` — set individual fields, then call [`Self::fixed`] to transition."
+)]
+pub type CarUnfixedEncoder<'a, H> = CarEncoder<'a, H>;
+#[doc = concat!(
     "Encoder for the `", stringify!(FuelFiguresEncoder),
     "` group — call `add()` to write entries."
 )]
