@@ -1312,16 +1312,16 @@ pub(crate) fn generate_message_decoder(
                 proc_macro2::Span::call_site(),
             );
             impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without UTF-8
-                /// validation.
+                /// View this text var-data field as `&str` without character
+                /// encoding validation. Structural bounds are still checked.
                 ///
                 /// # Safety
                 ///
                 /// The wire bytes must be valid UTF-8.
                 #[inline]
-                pub unsafe fn #str_unchecked(&self) -> &'a str {
-                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
-                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
                 }
             });
         } else if vd.character_encoding.as_deref() == Some("ASCII") {
@@ -1389,26 +1389,34 @@ pub(crate) fn generate_message_decoder(
         proc_macro2::Span::call_site(),
     );
     impl_body.extend(quote::quote! {
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
             Ok(end - self.byte_offset())
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
             let len = self.encoded_length()?;
             Ok(len + #hdr_size_lit)
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
             let start = self.byte_offset();
             Ok(&self.buf[start..end])
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
             let start = self.byte_offset().saturating_sub(Self::HEADER_LENGTH);
@@ -1582,73 +1590,81 @@ pub(crate) fn generate_message_decoder(
     // mistaken for a publishable full frame.
     let meta_bytes = if msg.is_fixed() {
         quote::quote! {
-            /// Message body bytes (header exclusive). Fixed-only message —
-            /// this is the complete body.
-            #[inline]
-            pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.byte_offset();
-                let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "body",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Message body bytes (header exclusive). Fixed-only message —
+                /// this is the complete body.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.decoder.byte_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "body",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
-            }
-            /// Header-inclusive frame bytes (fixed-only message — complete).
-            #[inline]
-            pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.message_offset();
-                let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "frame",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Header-inclusive frame bytes (fixed-only message — complete).
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.message_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
             }
-        }
     } else {
         quote::quote! {
-            /// Fixed-block body only (groups/var-data not included).
-            /// For a complete frame walk tails then use the complete stage's
-            /// `as_bytes_with_header`, or the decoder's inherent
-            /// `as_bytes_with_header` which rescans tails without consuming
-            /// the stage.
-            #[inline]
-            pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.byte_offset();
-                let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "body",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Fixed-block body only (groups/var-data not included).
+                /// For a complete frame walk tails then use the complete stage's
+                /// `as_bytes_with_header`, or the decoder's inherent
+                /// `as_bytes_with_header` which rescans tails without consuming
+                /// the stage.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.decoder.byte_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "body",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
-            }
-            /// Header + fixed block only — **not** a complete SBE message when
-            /// groups or var-data remain. Prefer the complete stage's
-            /// `as_bytes_with_header` after finishing the walk.
-            #[inline]
-            pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.message_offset();
-                let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "frame",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Header + fixed block only — **not** a complete SBE message when
+                /// groups or var-data remain. Prefer the complete stage's
+                /// `as_bytes_with_header` after finishing the walk.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.message_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
             }
-        }
     };
     ts.extend(quote::quote! {
         /// Buffer-placement and wire-frame metadata. Holds a reference to the
@@ -1665,14 +1681,16 @@ pub(crate) fn generate_message_decoder(
         impl<'m, 'a> #metadata_ident<'m, 'a> {
             /// Absolute offset of this message's frame start (first header byte)
             /// within the underlying buffer.
-            #[inline]
+            #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
             pub fn message_offset(&self) -> usize {
                 self.decoder.byte_offset().saturating_sub(#decoder_ident::HEADER_LENGTH)
             }
             /// End of the **acting fixed block** (body start + acting block length).
             /// Not the full message end when groups/var-data follow — use a complete
             /// stage or inherent `encoded_length_with_header` after walking tails.
-            #[inline]
+            #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
             pub fn limit(&self) -> usize {
                 self.decoder.byte_offset() + self.decoder.acting_block_length
             }

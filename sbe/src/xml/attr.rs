@@ -198,6 +198,17 @@ pub(crate) fn opt_usize_attr(
         .transpose()
 }
 
+/// Parse the `deprecated` attribute as a non-negative schema version.
+/// Returns `Ok(true)` when the attribute holds a valid non-negative u16;
+/// `Ok(false)` when absent; and `Err` for non-numeric, negative, or
+/// overflowing values.
+pub(crate) fn parse_deprecated_attr(node: Node<'_, '_>) -> Result<bool, Fault> {
+    match opt_u16_attr(node, "deprecated", "deprecated")? {
+        Some(_version) => Ok(true),
+        None => Ok(false),
+    }
+}
+
 pub(crate) fn parse_byte_order(s: &str) -> Result<ByteOrder, Fault> {
     match s {
         "littleEndian" => Ok(ByteOrder::LittleEndian),

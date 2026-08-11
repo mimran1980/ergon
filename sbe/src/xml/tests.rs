@@ -2154,7 +2154,7 @@ fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<type name="OldType" primitiveType="uint32" deprecated="true"/>
+<type name="OldType" primitiveType="uint32" deprecated="1"/>
   </types>
   <message name="M" id="1">
 <field name="f" id="1" type="OldType"/>
@@ -2184,7 +2184,7 @@ fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
   <type name="version" primitiveType="uint16"/>
 </composite>
   </types>
-  <message name="M" id="1" deprecated="true">
+  <message name="M" id="1" deprecated="1">
 <field name="f" id="1" type="uint8"/>
   </message>
 </messageSchema>"#;
@@ -2212,7 +2212,7 @@ fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<field name="f" id="1" type="uint8" deprecated="true"/>
+<field name="f" id="1" type="uint8" deprecated="1"/>
   </message>
 </messageSchema>"#;
     let ir = parse(schema).unwrap();
@@ -2244,7 +2244,7 @@ fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<group name="g" id="2" dimensionType="groupSizeEncoding" deprecated="true">
+<group name="g" id="2" dimensionType="groupSizeEncoding" deprecated="1">
   <field name="f" id="3" type="uint32"/>
 </group>
   </message>
@@ -2277,7 +2277,7 @@ fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<data name="d" id="2" type="varDataEncoding" deprecated="true"/>
+<data name="d" id="2" type="varDataEncoding" deprecated="1"/>
   </message>
 </messageSchema>"#;
     let ir = parse(schema).unwrap();
@@ -2302,7 +2302,7 @@ fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<composite name="OldComposite" deprecated="true">
+<composite name="OldComposite" deprecated="1">
   <type name="val" primitiveType="uint32"/>
 </composite>
   </types>
@@ -2332,7 +2332,7 @@ fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<enum name="OldEnum" encodingType="uint8" deprecated="true">
+<enum name="OldEnum" encodingType="uint8" deprecated="1">
   <validValue name="A">1</validValue>
 </enum>
   </types>
@@ -2362,7 +2362,7 @@ fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<set name="OldSet" encodingType="uint8" deprecated="true">
+<set name="OldSet" encodingType="uint8" deprecated="1">
   <choice name="X">0</choice>
 </set>
   </types>

@@ -8,8 +8,8 @@ use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
     collect_description, element_children, is_primitive_name, opt_u16_attr, opt_usize_attr,
-    parse_presence, parse_primitive_type, preceding_xml_comments, string_attr, structural,
-    u16_attr, validate_sbe_name,
+    parse_deprecated_attr, parse_presence, parse_primitive_type, preceding_xml_comments,
+    string_attr, structural, u16_attr, validate_sbe_name,
 };
 use super::error::Fault;
 use super::registry::{TypeRegistry, parse_u64_val, resolve_type_to_tokens};
@@ -27,7 +27,7 @@ pub(crate) fn parse_message(
     let id = u16_attr(node, "id", "message @id")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
     let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
-    let message_deprecated = node.attribute("deprecated").is_some();
+    let message_deprecated = parse_deprecated_attr(node)?;
 
     validate_message_member_order(node)?;
 
@@ -165,9 +165,8 @@ pub(crate) fn parse_message_child(
             let time_unit = explicit_time_unit
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
-            let explicit_deprecated = node.attribute("deprecated");
             let deprecated =
-                explicit_deprecated.is_some() || type_encoding.is_some_and(|e| e.deprecated);
+                parse_deprecated_attr(node)? || type_encoding.is_some_and(|e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
@@ -276,7 +275,7 @@ pub(crate) fn parse_message_child(
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let group_deprecated = node.attribute("deprecated").is_some();
+            let group_deprecated = parse_deprecated_attr(node)?;
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
@@ -342,7 +341,7 @@ pub(crate) fn parse_message_child(
             let data_name = string_attr(node, "name", "data @name")?;
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let data_deprecated = node.attribute("deprecated").is_some();
+            let data_deprecated = parse_deprecated_attr(node)?;
             let type_name = node.attribute("type").unwrap_or("varDataEncoding");
             let data_presence = node
                 .attribute("presence")

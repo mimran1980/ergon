@@ -1300,6 +1300,7 @@ pub struct CarDecoderMetadata<'m, 'a> {
 impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// Absolute offset of this message's frame start (first header byte)
     /// within the underlying buffer.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn message_offset(&self) -> usize {
         self.decoder.byte_offset().saturating_sub(CarDecoder::HEADER_LENGTH)
@@ -1307,6 +1308,7 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// End of the **acting fixed block** (body start + acting block length).
     /// Not the full message end when groups/var-data follow — use a complete
     /// stage or inherent `encoded_length_with_header` after walking tails.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn limit(&self) -> usize {
         self.decoder.byte_offset() + self.decoder.acting_block_length
@@ -1329,6 +1331,8 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// `as_bytes_with_header`, or the decoder's inherent
     /// `as_bytes_with_header` which rescans tails without consuming
     /// the stage.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.decoder.byte_offset();
@@ -1345,6 +1349,8 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// Header + fixed block only — **not** a complete SBE message when
     /// groups or var-data remain. Prefer the complete stage's
     /// `as_bytes_with_header` after finishing the walk.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.message_offset();
@@ -2118,16 +2124,18 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
-    /// View this text var-data field as `&str` without UTF-8
-    /// validation.
+    /// View this text var-data field as `&str` without character
+    /// encoding validation. Structural bounds are still checked.
     ///
     /// # Safety
     ///
     /// The wire bytes must be valid UTF-8.
     #[inline]
-    pub unsafe fn manufacturer_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.manufacturer().unwrap() };
-        unsafe { core::str::from_utf8_unchecked(bytes) }
+    pub unsafe fn manufacturer_as_str_unchecked(
+        &self,
+    ) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.manufacturer()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2170,16 +2178,16 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
-    /// View this text var-data field as `&str` without UTF-8
-    /// validation.
+    /// View this text var-data field as `&str` without character
+    /// encoding validation. Structural bounds are still checked.
     ///
     /// # Safety
     ///
     /// The wire bytes must be valid UTF-8.
     #[inline]
-    pub unsafe fn model_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.model().unwrap() };
-        unsafe { core::str::from_utf8_unchecked(bytes) }
+    pub unsafe fn model_as_str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.model()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2241,22 +2249,30 @@ impl<'a> CarDecoder<'a> {
     pub fn rewind(self) -> Self {
         self
     }
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         Ok(end - self.byte_offset())
     }
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
         let len = self.encoded_length()?;
         Ok(len + 8)
     }
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         let start = self.byte_offset();
         Ok(&self.buf[start..end])
     }
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;

@@ -2694,7 +2694,8 @@ fn schema_without_header_composite_is_rejected() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Manual group entry via start_entry produces identical bytes to closure API.
+/// Group entries via add() produce identical bytes regardless of how the
+/// entry body is filled (inline vs chained).
 #[test]
 fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "start_entry_test");
@@ -2728,12 +2729,8 @@ fn manual_start_entry_matches_closure() -> Result<(), Box<dyn std::error::Error>
         car_m.extras(OptionalExtras::default());
         car_m.engine(Engine::new(1000, 4, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
         let car_m = car_m.fuel_figures(2, |g| {
-            let mut e1 = g.start_entry().unwrap();
-            let _ = e1.speed(30).mpg(35.9);
-            drop(e1);
-            let mut e2 = g.start_entry().unwrap();
-            let _ = e2.speed(55).mpg(23.7);
-            drop(e2);
+            g.add(|e| { e.speed(30).mpg(35.9); Ok(()) }).unwrap();
+            g.add(|e| { e.speed(55).mpg(23.7); Ok(()) }).unwrap();
             Ok(())
         }).unwrap();
         let car_m = car_m.performance_figures(0, |_| Ok(())).unwrap();
