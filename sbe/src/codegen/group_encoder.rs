@@ -170,38 +170,11 @@ pub(crate) fn generate_group_encoder(
         Ok(())
     });
 
-    let mut ts = proc_macro2::TokenStream::new();
-    ts.extend(quote::quote! {
-        #[doc = concat!("Encoder for the `", stringify!(#group_enc_ident), "` group — call `add()` to write entries.")]
-        #[must_use = "group encoder must call add() to write entries"]
-        pub struct #group_enc_ident<'a> {
-            buf: &'a mut [u8],
-            offset: usize,
-            count: #count_ty,
-            written: #count_ty,
-        }
-
-        impl<'a> #group_enc_ident<'a> {
-            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
-            pub const GROUP_DIM_TEMPLATE: [u8; #dim_size_lit] = [#(#dim_bytes),*];
-            const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
-
-            #[inline]
-            pub fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
-                Self { buf, offset, count, written: 0 }
-            }
-
-            /// Write one group entry. The closure may return `()` or
-            /// `Result<(), sbe_rt::EncodeError>` (both satisfy
-            /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
-            #[inline]
-            #[must_use]
-            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
-            where
-                F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
-            {
-                #add_body
-            }
+    // fixed_stride_methods: add_checked + start_entry exist only for
+    // fixed-stride groups (no var-data or nested-group tails). Dynamic
+    // groups use add() exclusively until T-19 supplies entry typestate.
+    let fixed_stride_methods: proc_macro2::TokenStream = if g.has_fixed_stride() {
+        quote::quote! {
             #[doc = #add_checked_doc]
             #[inline]
             pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
@@ -235,8 +208,6 @@ pub(crate) fn generate_group_encoder(
             /// Manual entry creation: returns a borrowed entry encoder.
             /// The entry writes fixed fields directly into the group buffer.
             /// Drop the entry or let it go out of scope to commit it.
-            /// The group position is pre-advanced, so fields are written
-            /// to the correct offset.
             #[must_use]
             #[inline]
             pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
@@ -262,16 +233,47 @@ pub(crate) fn generate_group_encoder(
                 let entry_offset = self.offset;
                 self.offset += block_len;
                 self.written += 1;
-                // SAFETY: capacity check above proved entry_offset..entry_offset+block_len
-                // is in-bounds; entry wrap only writes fixed fields in that region.
-                Ok(unsafe { #entry_enc_ident::wrap(&mut self.buf[entry_offset..self.offset], 0) })
+                let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                Ok(unsafe { #entry_enc_ident::wrap(__buf, entry_offset) })
             }
         }
-    });
+    } else {
+        quote::quote! {}
+    };
 
-    // written() accessor — used by _unknown_size to back-patch the count.
+    let mut ts = proc_macro2::TokenStream::new();
     ts.extend(quote::quote! {
+        #[doc = concat!("Encoder for the `", stringify!(#group_enc_ident), "` group — call `add()` to write entries.")]
+        #[must_use = "group encoder must call add() to write entries"]
+        pub struct #group_enc_ident<'a> {
+            buf: &'a mut [u8],
+            offset: usize,
+            count: #count_ty,
+            written: #count_ty,
+        }
+
         impl<'a> #group_enc_ident<'a> {
+            pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+            pub const GROUP_DIM_TEMPLATE: [u8; #dim_size_lit] = [#(#dim_bytes),*];
+            const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
+
+            #[inline]
+            pub fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
+                Self { buf, offset, count, written: 0 }
+            }
+
+            /// Write one group entry. The closure may return `()` or
+            /// `Result<(), sbe_rt::EncodeError>` (both satisfy
+            /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
+            #[inline]
+            #[must_use]
+            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
+            {
+                #add_body
+            }
+            #fixed_stride_methods
             /// Number of entries written so far (for `_unknown_size` back-patch).
             #[inline]
             pub fn written(&self) -> #count_ty {
@@ -455,13 +457,17 @@ pub(crate) fn generate_group_encoder(
     // Entry encoder struct + all methods in a single impl block
     let mut entry_methods = proc_macro2::TokenStream::new();
 
-    entry_methods.extend(quote::quote! {
-        #[doc = #complete_doc]
-        #[inline]
-        pub fn complete(self) -> #entry_complete_ident<'a> {
-            #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, offset: self.offset }
-        }
+    if g.has_fixed_stride() {
+        entry_methods.extend(quote::quote! {
+            #[doc = #complete_doc]
+            #[inline]
+            pub fn complete(self) -> #entry_complete_ident<'a> {
+                #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, offset: self.offset }
+            }
+        });
+    }
 
+    entry_methods.extend(quote::quote! {
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
         /// Private entry wrap after the group encoder proved the fixed block
@@ -725,17 +731,24 @@ pub(crate) fn generate_group_encoder(
         });
     }
 
+    if g.has_fixed_stride() {
+        ts.extend(quote::quote! {
+            #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
+            pub struct #entry_complete_ident<'a> {
+                buf: &'a mut [u8], entry_start: usize, offset: usize,
+            }
+            impl<'a> #entry_complete_ident<'a> {
+                pub(crate) fn into_cursor(self) -> usize { self.offset }
+            }
+        });
+    }
+    let entry_complete_note: &str = if g.has_fixed_stride() {
+        " — set fields then call `complete()`"
+    } else {
+        ""
+    };
     ts.extend(quote::quote! {
-        #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
-        pub struct #entry_complete_ident<'a> {
-            buf: &'a mut [u8], entry_start: usize, offset: usize,
-        }
-        impl<'a> #entry_complete_ident<'a> {
-            pub(crate) fn into_cursor(self) -> usize { self.offset }
-        }
-    });
-    ts.extend(quote::quote! {
-        #[doc = concat!("Entry encoder for the `", stringify!(#entry_enc_ident), "` group — set fields then call `complete()`.")]
+        #[doc = concat!("Entry encoder for the `", stringify!(#entry_enc_ident), "` group", #entry_complete_note, ".")]
         #[must_use = "entry encoder fields must be set before the next entry"]
         pub struct #entry_enc_ident<'a> {
             buf: &'a mut [u8],

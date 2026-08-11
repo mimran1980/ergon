@@ -7061,79 +7061,6 @@ impl<'a> FuelFiguresEncoder<'a> {
         self.written += 1;
         Ok(())
     }
-    /**Write one group entry, proving completeness in the type system.
-
-The closure takes the entry encoder **by value** and must return `FuelFiguresEntryComplete` — reachable only by writing every required tail in wire order. An entry that skips, reorders, or repeats a tail cannot produce that type, so it fails to compile rather than producing a short entry at run time.
-
-[`Self::add`] stays available for entries whose tails are already checked elsewhere.*/
-    #[inline]
-    pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
-    where
-        F: FnOnce(
-            FuelFiguresEntryEncoder<'b>,
-        ) -> Result<FuelFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
-    {
-        if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "group entry",
-                needed: block_len,
-                available: self.buf.len().saturating_sub(self.offset),
-            });
-        }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let __entry = unsafe { FuelFiguresEntryEncoder::wrap(__buf, self.offset) };
-            let __complete = f(__entry)?;
-            self.offset = __complete.into_cursor();
-        }
-        self.written += 1;
-        Ok(())
-    }
-    /// Manual entry creation: returns a borrowed entry encoder.
-    /// The entry writes fixed fields directly into the group buffer.
-    /// Drop the entry or let it go out of scope to commit it.
-    /// The group position is pre-advanced, so fields are written
-    /// to the correct offset.
-    #[must_use]
-    #[inline]
-    pub fn start_entry(
-        &mut self,
-    ) -> Result<FuelFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
-        if self.written as u32 >= self.count as u32 {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: (self.written as u32) + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self
-            .offset
-            .checked_add(block_len)
-            .map(|end| end > self.buf.len())
-            .unwrap_or(true)
-        {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "group entry",
-                needed: block_len,
-                available: self.buf.len().saturating_sub(self.offset),
-            });
-        }
-        let entry_offset = self.offset;
-        self.offset += block_len;
-        self.written += 1;
-        Ok(unsafe {
-            FuelFiguresEntryEncoder::wrap(&mut self.buf[entry_offset..self.offset], 0)
-        })
-    }
-}
-impl<'a> FuelFiguresEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[inline]
     pub fn written(&self) -> u16 {
@@ -7141,21 +7068,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     }
 }
 #[doc = concat!(
-    "Proven-complete entry for the `", stringify!(FuelFiguresEntryComplete), "` group."
-)]
-pub struct FuelFiguresEntryComplete<'a> {
-    buf: &'a mut [u8],
-    entry_start: usize,
-    offset: usize,
-}
-impl<'a> FuelFiguresEntryComplete<'a> {
-    pub(crate) fn into_cursor(self) -> usize {
-        self.offset
-    }
-}
-#[doc = concat!(
-    "Entry encoder for the `", stringify!(FuelFiguresEntryEncoder),
-    "` group — set fields then call `complete()`."
+    "Entry encoder for the `", stringify!(FuelFiguresEntryEncoder), "` group", "", "."
 )]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct FuelFiguresEntryEncoder<'a> {
@@ -7164,17 +7077,6 @@ pub struct FuelFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> FuelFiguresEntryEncoder<'a> {
-    /**Finish a flat entry, producing the `FuelFiguresEntryComplete` that [`FuelFiguresEncoder::add_checked`] requires.
-
-Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.*/
-    #[inline]
-    pub fn complete(self) -> FuelFiguresEntryComplete<'a> {
-        FuelFiguresEntryComplete {
-            buf: self.buf,
-            entry_start: self.entry_start,
-            offset: self.offset,
-        }
-    }
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -7303,84 +7205,6 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         self.written += 1;
         Ok(())
     }
-    /**Write one group entry, proving completeness in the type system.
-
-The closure takes the entry encoder **by value** and must return `PerformanceFiguresEntryComplete` — reachable only by writing every required tail in wire order. An entry that skips, reorders, or repeats a tail cannot produce that type, so it fails to compile rather than producing a short entry at run time.
-
-[`Self::add`] stays available for entries whose tails are already checked elsewhere.*/
-    #[inline]
-    pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
-    where
-        F: FnOnce(
-            PerformanceFiguresEntryEncoder<'b>,
-        ) -> Result<PerformanceFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
-    {
-        if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "group entry",
-                needed: block_len,
-                available: self.buf.len().saturating_sub(self.offset),
-            });
-        }
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let __entry = unsafe {
-                PerformanceFiguresEntryEncoder::wrap(__buf, self.offset)
-            };
-            let __complete = f(__entry)?;
-            self.offset = __complete.into_cursor();
-        }
-        self.written += 1;
-        Ok(())
-    }
-    /// Manual entry creation: returns a borrowed entry encoder.
-    /// The entry writes fixed fields directly into the group buffer.
-    /// Drop the entry or let it go out of scope to commit it.
-    /// The group position is pre-advanced, so fields are written
-    /// to the correct offset.
-    #[must_use]
-    #[inline]
-    pub fn start_entry(
-        &mut self,
-    ) -> Result<PerformanceFiguresEntryEncoder<'_>, sbe_rt::EncodeError> {
-        if self.written as u32 >= self.count as u32 {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: (self.written as u32) + 1,
-            });
-        }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self
-            .offset
-            .checked_add(block_len)
-            .map(|end| end > self.buf.len())
-            .unwrap_or(true)
-        {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "group entry",
-                needed: block_len,
-                available: self.buf.len().saturating_sub(self.offset),
-            });
-        }
-        let entry_offset = self.offset;
-        self.offset += block_len;
-        self.written += 1;
-        Ok(unsafe {
-            PerformanceFiguresEntryEncoder::wrap(
-                &mut self.buf[entry_offset..self.offset],
-                0,
-            )
-        })
-    }
-}
-impl<'a> PerformanceFiguresEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[inline]
     pub fn written(&self) -> u16 {
@@ -7388,22 +7212,8 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     }
 }
 #[doc = concat!(
-    "Proven-complete entry for the `", stringify!(PerformanceFiguresEntryComplete),
-    "` group."
-)]
-pub struct PerformanceFiguresEntryComplete<'a> {
-    buf: &'a mut [u8],
-    entry_start: usize,
-    offset: usize,
-}
-impl<'a> PerformanceFiguresEntryComplete<'a> {
-    pub(crate) fn into_cursor(self) -> usize {
-        self.offset
-    }
-}
-#[doc = concat!(
-    "Entry encoder for the `", stringify!(PerformanceFiguresEntryEncoder),
-    "` group — set fields then call `complete()`."
+    "Entry encoder for the `", stringify!(PerformanceFiguresEntryEncoder), "` group", "",
+    "."
 )]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresEntryEncoder<'a> {
@@ -7412,17 +7222,6 @@ pub struct PerformanceFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresEntryEncoder<'a> {
-    /**Finish a flat entry, producing the `PerformanceFiguresEntryComplete` that [`PerformanceFiguresEncoder::add_checked`] requires.
-
-Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.*/
-    #[inline]
-    pub fn complete(self) -> PerformanceFiguresEntryComplete<'a> {
-        PerformanceFiguresEntryComplete {
-            buf: self.buf,
-            entry_start: self.entry_start,
-            offset: self.offset,
-        }
-    }
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -7639,8 +7438,6 @@ The closure takes the entry encoder **by value** and must return `PerformanceFig
     /// Manual entry creation: returns a borrowed entry encoder.
     /// The entry writes fixed fields directly into the group buffer.
     /// Drop the entry or let it go out of scope to commit it.
-    /// The group position is pre-advanced, so fields are written
-    /// to the correct offset.
     #[must_use]
     #[inline]
     pub fn start_entry(
@@ -7668,15 +7465,11 @@ The closure takes the entry encoder **by value** and must return `PerformanceFig
         let entry_offset = self.offset;
         self.offset += block_len;
         self.written += 1;
+        let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
         Ok(unsafe {
-            PerformanceFiguresAccelerationEntryEncoder::wrap(
-                &mut self.buf[entry_offset..self.offset],
-                0,
-            )
+            PerformanceFiguresAccelerationEntryEncoder::wrap(__buf, entry_offset)
         })
     }
-}
-impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[inline]
     pub fn written(&self) -> u16 {
@@ -7803,7 +7596,7 @@ impl<'a> PerformanceFiguresAccelerationEntryComplete<'a> {
 }
 #[doc = concat!(
     "Entry encoder for the `", stringify!(PerformanceFiguresAccelerationEntryEncoder),
-    "` group — set fields then call `complete()`."
+    "` group", " — set fields then call `complete()`", "."
 )]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
