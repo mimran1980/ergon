@@ -746,13 +746,31 @@ pub(crate) fn generate_message_encoder(
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
-                // Optional fields: write when Some, skip when None.
-                // Callers who need null sentinels can call apply_nulls() explicitly.
-                write_stmts.extend(quote::quote! {
-                    if let Some(ref v) = fixed.#field_ident {
-                        self.#setter_ident(*v);
-                    }
-                });
+                // Write the value when Some. When None, write the schema null
+                // sentinel for primitive fields so stale bytes never leak.
+                // Enums and composites keep the existing apply_nulls() path
+                // until T-102 provides full null-image generation.
+                #[allow(clippy::collapsible_else_if)]
+                if let (Some(null_val), true) = (
+                    f.null_value,
+                    matches!(f.field_type, FieldType::Primitive(..)),
+                ) {
+                    let null_lit =
+                        syn::LitInt::new(&null_val.to_string(), proc_macro2::Span::call_site());
+                    write_stmts.extend(quote::quote! {
+                        if let Some(ref v) = fixed.#field_ident {
+                            self.#setter_ident(*v);
+                        } else {
+                            self.#setter_ident(#null_lit);
+                        }
+                    });
+                } else {
+                    write_stmts.extend(quote::quote! {
+                        if let Some(ref v) = fixed.#field_ident {
+                            self.#setter_ident(*v);
+                        }
+                    });
+                }
             } else {
                 write_stmts.extend(quote::quote! {
                     self.#setter_ident(fixed.#field_ident);
@@ -764,8 +782,9 @@ pub(crate) fn generate_message_encoder(
         // reach the generated docs verbatim.
         let fixed_doc = format!(
             "Set all fixed fields at once from a [`{fixed_name}`] value.\n\n\
-             Required fields are always written; optional fields are written \
-             when `Some`. Returns the encoder for tail methods."
+             Required fields are always written; optional primitive fields \
+             write the schema null sentinel when `None`. Returns the encoder \
+             for tail methods."
         );
         impl_contents.extend(quote::quote! {
             #[doc = #fixed_doc]

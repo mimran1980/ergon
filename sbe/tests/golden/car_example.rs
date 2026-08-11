@@ -6269,7 +6269,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     /**Set all fixed fields at once from a [`CarFixedFields`] value.
 
-Required fields are always written; optional fields are written when `Some`. Returns the encoder for tail methods.*/
+Required fields are always written; optional primitive fields write the schema null sentinel when `None`. Returns the encoder for tail methods.*/
     #[inline]
     #[must_use]
     pub fn fixed(mut self, fixed: &CarFixedFields) -> Self {
