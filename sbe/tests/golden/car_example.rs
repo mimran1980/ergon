@@ -7013,9 +7013,6 @@ impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
-/// Root encoder stage — call [`Self::fixed`] to transition to
-/// [`#name_encoder_ident`] which has tail methods.
-pub type CarUnfixedEncoder<'a, H> = CarEncoder<'a, H>;
 #[doc = concat!(
     "Encoder for the `", stringify!(FuelFiguresEncoder),
     "` group — call `add()` to write entries."
