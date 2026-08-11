@@ -774,9 +774,19 @@ impl core::str::FromStr for OptionalExtras {
     }
 }
 ///Message identifiers and length of message root.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct MessageHeader(pub [u8; 8]);
+impl core::fmt::Debug for MessageHeader {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(MessageHeader))
+            .field("blockLength", &self.block_length())
+            .field("templateId", &self.template_id())
+            .field("schemaId", &self.schema_id())
+            .field("version", &self.version())
+            .finish()
+    }
+}
 impl MessageHeader {
     #[inline]
     pub fn block_length(&self) -> u16 {
@@ -902,9 +912,17 @@ impl<'a> MessageHeaderDecoder<'a> {
     }
 }
 ///Repeating group dimensions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct GroupSizeEncoding(pub [u8; 4]);
+impl core::fmt::Debug for GroupSizeEncoding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(GroupSizeEncoding))
+            .field("blockLength", &self.block_length())
+            .field("numInGroup", &self.num_in_group())
+            .finish()
+    }
+}
 impl GroupSizeEncoding {
     #[inline]
     pub fn block_length(&self) -> u16 {
@@ -947,9 +965,17 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
     }
 }
 ///Variable length UTF-8 String.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarStringEncoding(pub [u8; 4]);
+impl core::fmt::Debug for VarStringEncoding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(VarStringEncoding))
+            .field("length", &self.length())
+            .field("varData", &self.var_data())
+            .finish()
+    }
+}
 impl VarStringEncoding {
     #[inline]
     pub fn length(&self) -> u32 {
@@ -988,9 +1014,17 @@ impl<'a> VarStringEncodingDecoder<'a> {
     }
 }
 ///Variable length ASCII String.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarAsciiEncoding(pub [u8; 4]);
+impl core::fmt::Debug for VarAsciiEncoding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(VarAsciiEncoding))
+            .field("length", &self.length())
+            .field("varData", &self.var_data())
+            .finish()
+    }
+}
 impl VarAsciiEncoding {
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1029,9 +1063,17 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
     }
 }
 ///Variable length binary blob.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct VarDataEncoding(pub [u8; 4]);
+impl core::fmt::Debug for VarDataEncoding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(VarDataEncoding))
+            .field("length", &self.length())
+            .field("varData", &self.var_data())
+            .finish()
+    }
+}
 impl VarDataEncoding {
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1070,9 +1112,17 @@ impl<'a> VarDataEncodingDecoder<'a> {
     }
 }
 /// SBE composite `Booster` — 2 byte wire image.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Booster(pub [u8; 2]);
+impl core::fmt::Debug for Booster {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(Booster))
+            .field("BoostType", &self.boost_type())
+            .field("horsePower", &self.horse_power())
+            .finish()
+    }
+}
 impl Booster {
     #[inline]
     pub fn boost_type(&self) -> BoostType {
@@ -1122,9 +1172,23 @@ impl<'a> BoosterDecoder<'a> {
     }
 }
 /// SBE composite `Engine` — 10 byte wire image.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Engine(pub [u8; 10]);
+impl core::fmt::Debug for Engine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!(Engine))
+            .field("capacity", &self.capacity())
+            .field("numCylinders", &self.num_cylinders())
+            .field("maxRpm", &self.max_rpm())
+            .field("manufacturerCode", &self.manufacturer_code())
+            .field("fuel", &self.fuel())
+            .field("efficiency", &self.efficiency())
+            .field("boosterEnabled", &self.booster_enabled())
+            .field("booster", &self.booster())
+            .finish()
+    }
+}
 impl Engine {
     #[inline]
     pub fn capacity(&self) -> u16 {
@@ -7014,8 +7078,9 @@ impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const SCHEMA_VERSION: u16 = 0;
 }
 #[doc = concat!(
-    "Root encoder stage for `", stringify!(CarEncoder),
-    "` — set individual fields, then call [`Self::fixed`] to transition."
+    "Root encoder stage — set fields, then call [`Self::fixed`] \
+                to transition to [`",
+    stringify!(CarEncoder), "`]."
 )]
 pub type CarUnfixedEncoder<'a, H> = CarEncoder<'a, H>;
 #[doc = concat!(

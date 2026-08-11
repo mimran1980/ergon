@@ -1304,9 +1304,9 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
     let derives = if has_float {
-        quote::quote! { Clone, Copy, Debug, PartialEq, PartialOrd }
+        quote::quote! { Clone, Copy, PartialEq, PartialOrd }
     } else {
-        quote::quote! { Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash }
+        quote::quote! { Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash }
     };
 
     let order_suffix = match byte_order {
@@ -1533,10 +1533,33 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         src.push_str(" byte wire image.\n");
     }
 
+    let debug_impl = {
+        let s = proc_macro2::Span::call_site();
+        let mut fields_fmt = proc_macro2::TokenStream::new();
+        for m in &members {
+            let fn_name = syn::Ident::new(&to_snake_case(&m.name), s);
+            let name_str = m.name.as_str();
+            fields_fmt.extend(quote::quote! {
+                .field(#name_str, &self.#fn_name())
+            });
+        }
+        quote::quote! {
+            impl core::fmt::Debug for #name_ident {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    f.debug_struct(stringify!(#name_ident))
+                        #fields_fmt
+                        .finish()
+                }
+            }
+        }
+    };
+
     let ts = quote::quote! {
         #[derive(#derives)]
         #[repr(transparent)]
         pub struct #name_ident(pub [u8; #size_lit]);
+
+        #debug_impl
 
         impl #name_ident {
             #getters

@@ -1320,12 +1320,11 @@ pub(crate) fn generate_message_encoder(
     }
 
     // ── T-14: UnfixedEncoder type alias ─────────────────────────────
-    // For tailed messages, this semantic type signals that callers should
-    // transition through fixed(&FixedFields) before accessing tail methods.
+    // ── T-14: UnfixedEncoder type alias ─────────────────────────────
     if total_tail > 0 {
         ts.extend(quote::quote! {
-            #[doc = concat!("Root encoder stage for `", stringify!(#name_encoder_ident),
-                "` — set individual fields, then call [`Self::fixed`] to transition.")]
+            #[doc = concat!("Root encoder stage — set fields, then call [`Self::fixed`] \
+                to transition to [`", stringify!(#name_encoder_ident), "`].")]
             pub type #unfixed_encoder_ident<'a, H> = #name_encoder_ident<'a, H>;
         });
     }
