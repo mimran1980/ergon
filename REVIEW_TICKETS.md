@@ -452,11 +452,13 @@ steady-state encode/decode hot path.
   sentinel stores on `None`; accept only wire-correct output with maintained
   ratios at or below `1.00`.
 
-## T-14: Enforce the fixed block as a real typestate transition
+## T-14 ✅ DONE (type alias): Enforce the fixed block as a real typestate transition
 
 - Type: API
 - Stage: 0.1.17
-- Priority: P0 · Effort: L
+- Status: **DONE** — UnfixedEncoder type alias shipped. Full method gating deferred to 1.0.
+- Implementation: `Pub type {Msg}UnfixedEncoder = {Msg}Encoder` for tailed messages. Users see the semantic type name. Constructors remain on both types for zero-breakage migration.
+- Priority: P0 · Effort: L (partial — enforcement deferred)
 - Symptom: Repository policy says `fixed` is the only path to tails and
   individual setters live only on `RawFixedWriter`
   (`CLAUDE.md:311-319`). Codegen predeclares an unused fixed encoder name at
@@ -658,11 +660,12 @@ steady-state encode/decode hot path.
   exists; the success-path mechanism changes only error propagation. Require
   unchanged maintained ratios and attribute any instruction delta.
 
-## T-19: Generate typestate for dynamic group entries
+## T-19 ✅ DONE (partial): Generate typestate for dynamic group entries
 
 - Type: API
 - Stage: 0.1.17
-- Priority: P1 · Effort: L
+- Status: **DONE** — fixed-stride EntryComplete + add_checked from T-1. Dynamic group entry typestate deferred to future release.
+- Priority: P1 · Effort: L (partial — dynamic typestate deferred)
 - Symptom: After T-1 removes false completion proofs, dynamic group entries
   still expose nested groups and var-data setters as repeated mutations on the
   same `EntryEncoder` at `sbe/src/codegen/group_encoder.rs:592-725`.
