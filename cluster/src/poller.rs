@@ -3,10 +3,7 @@
 //! `NewLeaderEvent` so the caller can react.
 
 use crate::ClusterError;
-use crate::codecs::session::{
-    ChallengeDecoder, EventCode, MessageHeader, NewLeaderEventDecoder, SessionEventDecoder, SessionMessageHeaderEncoder,
-};
-use crate::codecs::session::{ChallengeEncoder, NewLeaderEventEncoder, SessionEventEncoder};
+use crate::codecs::session::{EventCode, MessageHeader};
 
 /// One captured egress event from a poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,76 +50,63 @@ pub enum EgressEvent {
     },
 }
 
-/// Parse a single egress fragment into an `EgressEvent`.
+/// Parse a single egress fragment via the canonical [`Fragment::decode`] path.
 ///
 /// Text fields (`detail`, `ingress_endpoints`) are validated as UTF-8 via
 /// the generated `_as_str()` accessors. Invalid text returns
 /// [`ClusterError::InvalidUtf8`] rather than a lossy sentinel.
 pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
-    let Some(tid) = MessageHeader::peek_for_schema(data, SessionMessageHeaderEncoder::SCHEMA_ID) else {
-        return Ok(None);
+    let fragment = match crate::fragment::Fragment::decode(data)? {
+        Some(f) => f,
+        None => {
+            // Not an error — may be an unknown template. Report the template
+            // id if we can peek it.
+            let tid = MessageHeader::peek_template_id(data);
+            return Ok(Some(EgressEvent::Other {
+                template_id: tid.unwrap_or(0),
+            }));
+        }
     };
 
-    match tid {
-        SessionEventEncoder::TEMPLATE_ID => {
-            let decoder = SessionEventDecoder::decode(data, 0).map_err(|_| ClusterError::ProtocolError {
-                reason: "short SessionEvent".into(),
-            })?;
-            let cid = decoder.correlation_id();
-            let csid = decoder.cluster_session_id();
-            let ltid = decoder.leadership_term_id();
-            let lmid = decoder.leader_member_id();
-            let code = decoder.code();
-            let (detail_str, _) = decoder
-                .into_detail_as_str()
-                .map_err(|_| ClusterError::InvalidUtf8 { field: "detail" })?;
-            Ok(Some(EgressEvent::SessionEvent {
-                correlation_id: cid,
-                cluster_session_id: csid,
-                leadership_term_id: ltid,
-                leader_member_id: lmid,
-                code,
-                detail: detail_str.to_string(),
-            }))
-        }
-        ChallengeEncoder::TEMPLATE_ID => {
-            let decoder = ChallengeDecoder::decode(data, 0).map_err(|_| ClusterError::ProtocolError {
-                reason: "short Challenge".into(),
-            })?;
-            let cid = decoder.correlation_id();
-            let csid = decoder.cluster_session_id();
-            let (chal, _) = decoder
-                .into_encoded_challenge()
-                .map_err(|_| ClusterError::ProtocolError {
-                    reason: "short challenge payload".into(),
-                })?;
-            Ok(Some(EgressEvent::Challenge {
-                correlation_id: cid,
-                cluster_session_id: csid,
-                encoded_challenge: chal.to_vec(),
-            }))
-        }
-        NewLeaderEventEncoder::TEMPLATE_ID => {
-            let decoder = NewLeaderEventDecoder::decode(data, 0).map_err(|_| ClusterError::ProtocolError {
-                reason: "short NewLeaderEvent".into(),
-            })?;
-            let csid = decoder.cluster_session_id();
-            let ltid = decoder.leadership_term_id();
-            let lmid = decoder.leader_member_id();
-            let (eps_str, _) = decoder
-                .into_ingress_endpoints_as_str()
-                .map_err(|_| ClusterError::InvalidUtf8 {
-                    field: "ingress_endpoints",
-                })?;
-            Ok(Some(EgressEvent::NewLeader {
-                cluster_session_id: csid,
-                leadership_term_id: ltid,
-                leader_member_id: lmid,
-                ingress_endpoints: eps_str.to_string(),
-            }))
-        }
-        other => Ok(Some(EgressEvent::Other { template_id: other })),
-    }
+    use crate::fragment::Fragment;
+    Ok(Some(match fragment {
+        Fragment::SessionEvent {
+            correlation_id,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            code,
+            detail,
+        } => EgressEvent::SessionEvent {
+            correlation_id,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            code,
+            detail: detail.to_string(),
+        },
+        Fragment::Challenge {
+            correlation_id,
+            cluster_session_id,
+            encoded_challenge,
+        } => EgressEvent::Challenge {
+            correlation_id,
+            cluster_session_id,
+            encoded_challenge: encoded_challenge.to_vec(),
+        },
+        Fragment::NewLeader {
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints,
+        } => EgressEvent::NewLeader {
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints: ingress_endpoints.to_string(),
+        },
+        _ => EgressEvent::Other { template_id: 0 },
+    }))
 }
 
 /// Resolve a single member's endpoint from a Java endpoints map.
