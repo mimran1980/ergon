@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
 
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y libclang-dev libbsd-dev
