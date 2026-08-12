@@ -25,6 +25,14 @@ use super::runtime::{
 };
 use super::tail_stages::generate_decoder_consuming_stages;
 
+/// Pure flyweight observers (getters, predicates, lengths) — discarding the
+/// return value does no decode work and is almost always a caller mistake.
+fn must_use_observer() -> proc_macro2::TokenStream {
+    quote::quote! {
+        #[must_use = "discarding this value is almost always a mistake"]
+    }
+}
+
 pub(crate) fn generate_message_decoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -533,10 +541,12 @@ pub(crate) fn generate_message_decoder(
         });
     }
 
+    let mu = must_use_observer();
     impl_body.extend(quote::quote! {
         /// Schema version from the message header (or wrap args), not the
         /// compiled schema constant. Fields with `sinceVersion` and optional
         /// presence depend on this value.
+        #mu
         #[inline]
         pub const fn acting_version(&self) -> u16 {
             self.acting_version
@@ -544,12 +554,12 @@ pub(crate) fn generate_message_decoder(
 
         /// Block length from the wire header / wrap args. Tail offsets use
         /// this acting length, not only the compiled `BLOCK_LENGTH`.
+        #mu
         #[inline]
         pub const fn acting_block_length(&self) -> usize {
             self.acting_block_length
         }
     });
-
     for f in &msg.fields {
         let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
@@ -580,6 +590,7 @@ pub(crate) fn generate_message_decoder(
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             impl_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #fname_ident(&self) -> &'static str {
                                     #val_lit
@@ -592,6 +603,7 @@ pub(crate) fn generate_message_decoder(
                                 impl_body.extend(doc_attr_tokens(desc));
                             }
                             impl_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #fname_ident(&self) -> #r_type_ty {
                                     #expr_parsed
@@ -663,6 +675,7 @@ pub(crate) fn generate_message_decoder(
                         }
                     };
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             #version_guard
@@ -677,6 +690,7 @@ pub(crate) fn generate_message_decoder(
                             proc_macro2::Span::call_site(),
                         );
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #copy_ident(&self, dst: &mut [u8]) -> usize {
                                 let src = self.#fn_snake_ident();
@@ -693,10 +707,12 @@ pub(crate) fn generate_message_decoder(
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check_expr = if *prim == PrimitiveType::Float {
-                            format!("val.to_bits() == {null_val} as u32")
-                        } else if *prim == PrimitiveType::Double {
-                            format!("val.to_bits() == {null_val}")
+                        let null_check_expr = if *prim == PrimitiveType::Float
+                            || *prim == PrimitiveType::Double
+                        {
+                            // Any IEEE NaN is null (matches sbe-tool is_nan()).
+                            let _ = null_val;
+                            "val.is_nan()".to_string()
                         } else {
                             format!("val == {null_val}_u64 as {r_type}")
                         };
@@ -725,7 +741,8 @@ pub(crate) fn generate_message_decoder(
                             )
                         };
                         let accessor = format!(
-                            "#[inline]\n\
+                            "#[must_use = \"discarding this value is almost always a mistake\"]\n\
+                             #[inline]\n\
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
                                  {version_guard}\
                                  let val = {rt}::{order}(unsafe {{ read_bytes_unchecked::<{ps}>(self.buf, self.offset + {offset}) }});\n\
@@ -758,6 +775,7 @@ pub(crate) fn generate_message_decoder(
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#r_type_ty> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -771,8 +789,11 @@ pub(crate) fn generate_message_decoder(
                             impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
+                        // Required scalar primitives are the decode_scalar hot path;
+                        // `always` keeps LTO/no-LTO parity with sbe-tool's inlined getters.
                         impl_body.extend(quote::quote! {
-                            #[inline]
+                            #mu
+                            #[inline(always)]
                             pub fn #fname_ident(&self) -> #r_type_ty {
                                 #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
                             }
@@ -803,6 +824,7 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_decoder_name<'_>> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -813,6 +835,7 @@ pub(crate) fn generate_message_decoder(
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
                             #target_decoder_name { buf: self.buf, offset: self.offset + #offset_lit }
@@ -831,6 +854,7 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -841,6 +865,7 @@ pub(crate) fn generate_message_decoder(
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
                             #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) })
@@ -872,6 +897,7 @@ pub(crate) fn generate_message_decoder(
                         let variant_ident =
                             syn::Ident::new(&pascal_variant, proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub const fn #fname_ident(&self) -> #target_ident {
                                 #target_ident::#variant_ident
@@ -889,6 +915,7 @@ pub(crate) fn generate_message_decoder(
                         impl_body.extend(quote::quote! {
                             /// Returns [`None`] when the field is absent at this version
                             /// OR the wire discriminant equals [`#target_ident::NullVal`].
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#target_ident> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -898,6 +925,7 @@ pub(crate) fn generate_message_decoder(
                             }
                             /// Raw wire discriminant — bypasses enum mapping.
                             /// Returns `None` when the field is not present in the acting version.
+                            #mu
                             #[inline]
                             pub fn #raw_ident(&self) -> Option<#r_type_ty> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -908,6 +936,7 @@ pub(crate) fn generate_message_decoder(
                         });
                     } else {
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#target_ident> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -917,6 +946,7 @@ pub(crate) fn generate_message_decoder(
                             }
                             /// Raw wire discriminant — bypasses enum mapping.
                             /// Returns `None` when the field is not present in the acting version.
+                            #mu
                             #[inline]
                             pub fn #raw_ident(&self) -> Option<#r_type_ty> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -951,6 +981,7 @@ pub(crate) fn generate_message_decoder(
                     let raw_body = quote::quote! {
                         /// Raw wire discriminant — bypasses enum mapping.
                         /// Use to inspect unknown/forward enum values without losing the original byte.
+                        #mu
                         #[inline]
                         pub fn #raw_ident(&self) -> #r_type_ty {
                             #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
@@ -960,6 +991,7 @@ pub(crate) fn generate_message_decoder(
                         impl_body.extend(quote::quote! {
                             /// Returns [`None`] when the wire discriminant equals
                             /// [`#target_ident::NullVal`]; [`Some`] otherwise.
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#target_ident> {
                                 let raw = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) });
@@ -969,6 +1001,7 @@ pub(crate) fn generate_message_decoder(
                         impl_body.extend(raw_body);
                     } else {
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> #target_ident {
                                 #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
@@ -1017,7 +1050,8 @@ pub(crate) fn generate_message_decoder(
                             syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
                         impl_body.extend(
                             syn::parse_str::<proc_macro2::TokenStream>(&format!(
-                                "#[inline] pub const fn {fn_name}(&self) -> {t} {{ {t}({bits}) }}",
+                                "#[must_use = \"discarding this value is almost always a mistake\"]\n\
+                                 #[inline] pub const fn {fn_name}(&self) -> {t} {{ {t}({bits}) }}",
                                 fn_name = fname_ident,
                                 t = target_ident,
                                 bits = bits_lit,
@@ -1032,6 +1066,7 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
@@ -1042,6 +1077,7 @@ pub(crate) fn generate_message_decoder(
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
                             #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
@@ -1350,16 +1386,16 @@ pub(crate) fn generate_message_decoder(
             );
             impl_body.extend(quote::quote! {
                 /// View this text var-data field as `&str` without ASCII
-                /// validation.
+                /// validation. Structural bounds remain fallible.
                 ///
                 /// # Safety
                 ///
                 /// The wire bytes must be 7-bit ASCII. For ASCII-declared
                 /// fields from a trusted source this is always true.
                 #[inline]
-                pub unsafe fn #str_unchecked(&self) -> &'a str {
-                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
-                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
                 }
             });
         }
@@ -1390,7 +1426,6 @@ pub(crate) fn generate_message_decoder(
     );
     impl_body.extend(quote::quote! {
         #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
@@ -1398,7 +1433,6 @@ pub(crate) fn generate_message_decoder(
         }
 
         #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
             let len = self.encoded_length()?;
@@ -1406,7 +1440,6 @@ pub(crate) fn generate_message_decoder(
         }
 
         #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
@@ -1415,7 +1448,6 @@ pub(crate) fn generate_message_decoder(
         }
 
         #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
@@ -1593,7 +1625,6 @@ pub(crate) fn generate_message_decoder(
                 /// Message body bytes (header exclusive). Fixed-only message —
                 /// this is the complete body.
                 #[must_use = "discarding this value is almost always a mistake"]
-        #[must_use = "discarding this value is almost always a mistake"]
         #[inline]
                 pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let start = self.decoder.byte_offset();
@@ -1609,7 +1640,6 @@ pub(crate) fn generate_message_decoder(
                 }
                 /// Header-inclusive frame bytes (fixed-only message — complete).
                 #[must_use = "discarding this value is almost always a mistake"]
-        #[must_use = "discarding this value is almost always a mistake"]
         #[inline]
                 pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let start = self.message_offset();
@@ -1632,7 +1662,6 @@ pub(crate) fn generate_message_decoder(
                 /// `as_bytes_with_header` which rescans tails without consuming
                 /// the stage.
                 #[must_use = "discarding this value is almost always a mistake"]
-        #[must_use = "discarding this value is almost always a mistake"]
         #[inline]
                 pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let start = self.decoder.byte_offset();
@@ -1650,7 +1679,6 @@ pub(crate) fn generate_message_decoder(
                 /// groups or var-data remain. Prefer the complete stage's
                 /// `as_bytes_with_header` after finishing the walk.
                 #[must_use = "discarding this value is almost always a mistake"]
-        #[must_use = "discarding this value is almost always a mistake"]
         #[inline]
                 pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let start = self.message_offset();
@@ -1695,12 +1723,14 @@ pub(crate) fn generate_message_decoder(
                 self.decoder.byte_offset() + self.decoder.acting_block_length
             }
             /// The full underlying buffer slice this decoder was wrapped on.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn buffer(&self) -> &'a [u8] {
                 self.decoder.buf
             }
             /// Bytes after the acting fixed block end. May still contain unread
             /// groups/var-data of **this** message until the consuming walk finishes.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn remaining(&self) -> &'a [u8] {
                 let end = (self.decoder.byte_offset() + self.decoder.acting_block_length).min(self.decoder.buf.len());
@@ -1710,9 +1740,11 @@ pub(crate) fn generate_message_decoder(
             /// Schema version from the message header (or wrap args), not the
             /// compiled schema constant. Fields with `sinceVersion` and optional
             /// presence depend on this value.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
             /// Block length from the wire header / wrap args. Tail offsets use
             /// this acting length, not only the compiled `BLOCK_LENGTH`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
     });
@@ -1723,6 +1755,7 @@ pub(crate) fn generate_message_decoder(
             /// version/block-length state. Returns a zero-copy reference to
             /// the parent decoder — no fields are copied. All utility methods
             /// are scoped here so no schema field name can collide with them.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
                 #metadata_ident { decoder: self }

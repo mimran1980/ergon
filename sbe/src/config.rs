@@ -863,12 +863,67 @@ impl Default for GenerationConfig {
 /// validation (`syn::parse_str::<syn::Ident>`) happens at generation time;
 /// this fast check catches the most common escape attempts early.
 pub(crate) fn is_valid_module_ident(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name != "."
-        && name != ".."
-        && !name.starts_with(|c: char| c.is_ascii_digit())
+    // Single Rust identifier: no path separators, no punctuation, not a keyword.
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('.')
+        || name == ".."
+        || name.starts_with(|c: char| c.is_ascii_digit())
+    {
+        return false;
+    }
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    if !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    // Reject Rust keywords so generated `mod type;` etc. cannot be emitted.
+    !matches!(
+        name,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+    )
 }
 
 #[cfg(test)]

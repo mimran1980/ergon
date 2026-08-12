@@ -109,4 +109,28 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn debug_redacts_credential_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let secret = b"leaked-credential-material-abc";
+        let supplier = StaticCredentials::new(secret.to_vec());
+        let dbg = format!("{supplier:?}");
+        assert!(
+            !dbg.contains("leaked-credential"),
+            "Debug must not include credential text: {dbg}"
+        );
+        assert!(
+            !dbg.as_bytes().windows(secret.len()).any(|w| w == secret),
+            "Debug must not include credential bytes"
+        );
+        assert!(
+            dbg.contains("redacted"),
+            "Debug should say redacted: {dbg}"
+        );
+        assert!(
+            dbg.contains(&format!("{} bytes", secret.len())),
+            "Debug may show length: {dbg}"
+        );
+        Ok(())
+    }
 }

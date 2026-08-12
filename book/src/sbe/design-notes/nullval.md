@@ -51,9 +51,14 @@ For an `Optional` field (schema `presence="optional"`), the generated accessor
 returns `Option<EventCode>` — but the null check compares against the `NullVal`
 discriminant on the wire, never allocates, and is transparent to the caller.
 
-On **encode**, wrap does not auto-nullify optionals. Call `apply_nulls()` after
-`wrap_and_apply_header` when any optional may be left unset — otherwise stale
-buffer bytes ship as if they were intentional values. See
+On **encode**, `fixed(&FixedFields)` always writes every fixed field: `Some(v)`
+writes the value and `None` writes the exact schema null wire image (including
+nested optional composite members). Dirty buffer reuse is therefore safe when
+you go through `fixed`. Prefer that path for whole-message encodes.
+
+`apply_nulls()` remains as a raw/per-field convenience after
+`wrap_and_apply_header` when you set individual optional fields piecemeal
+instead of using `FixedFields`. See
 [Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
 
 ## Opting into `Option<T>` with `with_null_as_option`

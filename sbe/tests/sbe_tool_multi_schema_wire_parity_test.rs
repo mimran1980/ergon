@@ -1790,8 +1790,7 @@ fn issue895_optional_floats() {
             },
         };
 
-        // Present floats only — null sentinels differ between generators when
-        // one side uses apply_nulls and the other leaves buffer zeros.
+        // Present floats.
         for (f, d) in [(1.0f32, 2.0f64), (3.14, -2.5), (-0.0, 0.0)] {
             let mut ebuf = [0u8; 64];
             let mut e = Issue895Encoder::wrap_and_apply_header(&mut ebuf, 0);
@@ -1817,6 +1816,28 @@ fn issue895_optional_floats() {
             let tool_from_ergo = ToolDec::default().header(tool_header, 0);
             assert_eq!(tool_from_ergo.optional_float(), Some(f));
             assert_eq!(tool_from_ergo.optional_double(), Some(d));
+        }
+        // None / null sentinels on a dirty buffer — FixedFields writes the
+        // schema null image so ergo matches sbe-tool nullify.
+        {
+            let mut ebuf = [0xABu8; 64];
+            let _ = Issue895Encoder::wrap_and_apply_header(&mut ebuf, 0).fixed(
+                &Issue895FixedFields {
+                    optional_float: None,
+                    optional_double: None,
+                },
+            );
+            let el = Issue895Encoder::ENCODED_LENGTH;
+            let mut tbuf = [0xABu8; 64];
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.nullify_optional_fields();
+            let tl = t.get_limit();
+            assert_frames_eq("issue895 nulls", &ebuf[..el], &tbuf[..tl]);
+            let dec = Issue895Decoder::try_from(&ebuf[..el])?;
+            assert_eq!(dec.optional_float(), None);
+            assert_eq!(dec.optional_double(), None);
         }
         println!("PASS: issue895_optional_floats");
         "###,

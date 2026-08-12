@@ -303,3 +303,61 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
+// ── T-18: unchecked text accessors keep structural bounds fallible ─────
+
+#[test]
+fn as_str_unchecked_returns_result_and_rejects_truncated() -> Result<(), Box<dyn Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+        package="t18" id="18" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+          <type name="length" primitiveType="uint32"/>
+          <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+      </types>
+      <sbe:message name="Msg" id="1" blockLength="0">
+        <data name="payload" id="1" type="varStringEncoding"/>
+      </sbe:message>
+    </sbe:messageSchema>"#;
+    let schema = Schema::from_ir(parse(schema_xml)?);
+    let modules = Generator::new(GenerationConfig::new("t18")).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    compile_and_run(
+        "t18_str_unchecked",
+        src,
+        r#"
+        // Encode valid UTF-8 var-data (empty fixed block → fixed(&MsgFixedFields {})).
+        let mut buf = [0u8; 64];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields {})
+            .payload(b"hello")?
+            .encoded_length_with_header();
+        // Valid path: unchecked text returns Result and Ok when extents hold.
+        {
+            let dec = MsgDecoder::try_from(&buf[..len])?;
+            let (s, _done) = unsafe { dec.into_payload_as_str_unchecked()? };
+            assert_eq!(s, "hello");
+        }
+        // Truncated: length prefix claims more bytes than remain — Result::Err, no panic.
+        {
+            let mut short = [0u8; 12]; // header(8) + length(4) only, no payload
+            short[..8].copy_from_slice(&buf[..8]);
+            // length = 100 (way more than available)
+            short[8..12].copy_from_slice(&100u32.to_le_bytes());
+            let dec = MsgDecoder::try_from(&short[..]).expect("header ok");
+            let res = unsafe { dec.into_payload_as_str_unchecked() };
+            assert!(res.is_err(), "overflowing length must be fallible");
+        }
+        "#,
+    );
+    Ok(())
+}

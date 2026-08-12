@@ -166,6 +166,18 @@ pub enum GenerateError {
         /// Why it was rejected.
         reason: String,
     },
+    /// Multi-schema generation found the same type name with incompatible
+    /// wire layouts across schemas.
+    IncompatibleSharedType {
+        /// Shared type name (enum, set, or composite).
+        name: String,
+        /// Module that first defined the type.
+        owner_module: String,
+        /// Module that reuses the name with a different layout.
+        consumer_module: String,
+        /// First differing property / fingerprint mismatch summary.
+        difference: String,
+    },
 }
 
 impl core::fmt::Display for GenerateError {
@@ -209,6 +221,18 @@ impl core::fmt::Display for GenerateError {
                 write!(
                     f,
                     "invalid configuration option '{option}': value '{value}' — {reason}"
+                )
+            }
+            Self::IncompatibleSharedType {
+                name,
+                owner_module,
+                consumer_module,
+                difference,
+            } => {
+                write!(
+                    f,
+                    "shared type '{name}' is wire-incompatible between modules \
+                     '{owner_module}' (owner) and '{consumer_module}': {difference}"
                 )
             }
         }
@@ -612,7 +636,7 @@ impl Generator {
             for (i, (_, module_name)) in schemas.iter().enumerate() {
                 if !crate::config::is_valid_module_ident(module_name) {
                     return Err(GenerateError::InvalidConfiguration {
-                        option: format!("schemas[{i}].module_name").into(),
+                        option: format!("schemas[{i}].module_name"),
                         value: module_name.to_string(),
                         reason:
                             "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
@@ -621,7 +645,7 @@ impl Generator {
                 }
                 if !seen.insert(module_name.to_string()) {
                     return Err(GenerateError::InvalidConfiguration {
-                        option: format!("schemas[{i}].module_name").into(),
+                        option: format!("schemas[{i}].module_name"),
                         value: module_name.to_string(),
                         reason:
                             "duplicate module name — each schema must have a unique module name"
@@ -635,9 +659,24 @@ impl Generator {
         // collide. A type name is not wire identity — same-name types with
         // different layouts silently produce corrupted codecs.
         if schemas.len() > 1 && self.config.shared_module.is_some() {
+            let owner_module = schemas[0].1.to_string();
             let first_elements = partition_tokens(&schemas[0].0.ir.tokens);
-            for (i, (schema, _)) in schemas.iter().enumerate().skip(1) {
+            for (i, (schema, consumer_module)) in schemas.iter().enumerate().skip(1) {
                 let elements = partition_tokens(&schema.ir.tokens);
+                let check = |kind: &str, name: String, a: String, b: String| {
+                    if a != b {
+                        Err(GenerateError::IncompatibleSharedType {
+                            name: name.clone(),
+                            owner_module: owner_module.clone(),
+                            consumer_module: consumer_module.to_string(),
+                            difference: format!(
+                                "{kind} fingerprint mismatch (owner={a}, consumer={b})"
+                            ),
+                        })
+                    } else {
+                        Ok(())
+                    }
+                };
                 // Compare enums
                 for et in &elements.enums {
                     let name = to_pascal_case(&et[0].name);
@@ -646,17 +685,12 @@ impl Generator {
                         .iter()
                         .find(|e| to_pascal_case(&e[0].name) == name)
                     {
-                        let a = canonical_token_fingerprint(ref_et);
-                        let b = canonical_token_fingerprint(et);
-                        if a != b {
-                            return Err(GenerateError::InvalidConfiguration {
-                                option: format!("shared enum {name} in schema[{i}]").into(),
-                                value: name.clone(),
-                                reason: format!(
-                                    "shared type '{name}' has different wire layout than the first schema's definition"
-                                ),
-                            });
-                        }
+                        check(
+                            "enum",
+                            name,
+                            canonical_token_fingerprint(ref_et),
+                            canonical_token_fingerprint(et),
+                        )?;
                     }
                 }
                 // Compare sets
@@ -667,17 +701,12 @@ impl Generator {
                         .iter()
                         .find(|s| to_pascal_case(&s[0].name) == name)
                     {
-                        let a = canonical_token_fingerprint(ref_st);
-                        let b = canonical_token_fingerprint(st);
-                        if a != b {
-                            return Err(GenerateError::InvalidConfiguration {
-                                option: format!("shared set {name} in schema[{i}]").into(),
-                                value: name.clone(),
-                                reason: format!(
-                                    "shared type '{name}' has different wire layout than the first schema's definition"
-                                ),
-                            });
-                        }
+                        check(
+                            "set",
+                            name,
+                            canonical_token_fingerprint(ref_st),
+                            canonical_token_fingerprint(st),
+                        )?;
                     }
                 }
                 // Compare composites
@@ -688,19 +717,15 @@ impl Generator {
                         .iter()
                         .find(|c| to_pascal_case(&c[0].name) == name)
                     {
-                        let a = canonical_token_fingerprint(ref_ct);
-                        let b = canonical_token_fingerprint(ct);
-                        if a != b {
-                            return Err(GenerateError::InvalidConfiguration {
-                                option: format!("shared composite {name} in schema[{i}]").into(),
-                                value: name.clone(),
-                                reason: format!(
-                                    "shared type '{name}' has different wire layout than the first schema's definition"
-                                ),
-                            });
-                        }
+                        check(
+                            "composite",
+                            name,
+                            canonical_token_fingerprint(ref_ct),
+                            canonical_token_fingerprint(ct),
+                        )?;
                     }
                 }
+                let _ = i; // used in diagnostics via consumer_module
             }
         }
 
@@ -1281,7 +1306,7 @@ impl Generator {
             /// # Safety
             /// Caller guarantees `offset + N` does not overflow and
             /// `offset + N <= buf.len()`.
-            #[inline]
+            #[inline(always)]
             #[allow(dead_code)] // used from generated accessors in this module
             unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 // SAFETY: caller guarantees offset + N <= buf.len().

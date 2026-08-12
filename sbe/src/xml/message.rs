@@ -87,29 +87,39 @@ pub(crate) fn parse_message(
                 }
             }
             if let Some(id_str) = child.attribute("id") {
-                if let Ok(child_id) = id_str.parse::<u16>() {
-                    if !seen_ids.insert(child_id) {
-                        return Err(Fault::invalid(
-                            child,
-                            "duplicate field/group/data id in message",
-                            id_str.to_string(),
-                        ));
-                    }
+                let child_id: u16 = id_str.parse().map_err(|_| {
+                    Fault::invalid(
+                        child,
+                        "field/group/data @id",
+                        format!("'{id_str}' is not a valid u16"),
+                    )
+                })?;
+                if !seen_ids.insert(child_id) {
+                    return Err(Fault::invalid(
+                        child,
+                        "duplicate field/group/data id in message",
+                        id_str.to_string(),
+                    ));
                 }
             }
             if let Some(offset_str) = child.attribute("offset") {
-                if let Ok(offset) = offset_str.parse::<usize>() {
-                    if let Some(prev) = prev_offset {
-                        if offset < prev {
-                            return Err(Fault::invalid(
-                                child,
-                                "field offset out of order",
-                                format!("offset {offset} after {prev}"),
-                            ));
-                        }
+                let offset: usize = offset_str.parse().map_err(|_| {
+                    Fault::invalid(
+                        child,
+                        "field @offset",
+                        format!("'{offset_str}' is not a valid non-negative integer"),
+                    )
+                })?;
+                if let Some(prev) = prev_offset {
+                    if offset < prev {
+                        return Err(Fault::invalid(
+                            child,
+                            "field offset out of order",
+                            format!("offset {offset} after {prev}"),
+                        ));
                     }
-                    prev_offset = Some(offset);
                 }
+                prev_offset = Some(offset);
             }
         }
     }

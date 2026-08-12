@@ -17,7 +17,7 @@ use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;
 use super::message_header_template::message_header_template;
-use super::nullification::generate_nullification;
+use super::nullification::{generate_nullification, null_image_stmts_for_field};
 use super::runtime::{doc_attr_tokens, emit_field_consts, to_pascal_case, to_snake_case};
 
 pub(crate) fn generate_message_encoder(
@@ -455,6 +455,7 @@ pub(crate) fn generate_message_encoder(
             &offset_base,
             "self.buf",
             byte_order,
+            elements,
         );
         if !null_buf.is_empty() {
             let null_ts: proc_macro2::TokenStream = null_buf
@@ -711,8 +712,9 @@ pub(crate) fn generate_message_encoder(
         }
         ts.extend(quote::quote! {
             /// Complete set of latest-version fixed fields for this message.
-            /// Required fields are concrete values; optional/versioned fields
-            /// are `Option<T>`. Constants are excluded.
+            /// Required fields (including `sinceVersion` fields) are concrete
+            /// values; only presence-optional fields are `Option<T>`. Constants
+            /// are excluded.
             ///
             /// This struct is **intentionally exhaustive** (not
             /// `#[non_exhaustive]`): when the schema adds a fixed field, every
@@ -730,6 +732,7 @@ pub(crate) fn generate_message_encoder(
         // Build the write block: for each non-constant field, write from the struct.
         // Use _wire suffixed setters for converter-enabled composite fields.
         let mut write_stmts = proc_macro2::TokenStream::new();
+        let buf_expr: syn::Expr = syn::parse_quote!(self.buf);
         for f in &msg.fields {
             if f.presence == crate::Presence::Constant {
                 continue;
@@ -746,31 +749,32 @@ pub(crate) fn generate_message_encoder(
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
-                // Write the value when Some. When None, write the schema null
-                // sentinel for primitive fields so stale bytes never leak.
-                // Enums and composites keep the existing apply_nulls() path
-                // until T-102 provides full null-image generation.
-                #[allow(clippy::collapsible_else_if)]
-                if let (Some(null_val), true) = (
-                    f.null_value,
-                    matches!(f.field_type, FieldType::Primitive(..)),
-                ) {
-                    let null_lit =
-                        syn::LitInt::new(&null_val.to_string(), proc_macro2::Span::call_site());
-                    write_stmts.extend(quote::quote! {
-                        if let Some(ref v) = fixed.#field_ident {
-                            self.#setter_ident(*v);
-                        } else {
-                            self.#setter_ident(#null_lit);
-                        }
-                    });
-                } else {
-                    write_stmts.extend(quote::quote! {
-                        if let Some(ref v) = fixed.#field_ident {
-                            self.#setter_ident(*v);
-                        }
-                    });
-                }
+                // Some → write value; None → write exact schema null image so
+                // dirty buffers cannot leak prior optional values.
+                let body_off = header_size + f.offset;
+                let body_off_lit = syn::LitInt::new(&body_off.to_string(), span);
+                let abs_off = quote::quote! { self.msg_offset + #body_off_lit };
+                let null_write = null_image_stmts_for_field(
+                    f,
+                    abs_off,
+                    &buf_expr,
+                    byte_order,
+                    elements,
+                )
+                .unwrap_or_else(|reason| {
+                    panic!(
+                        "codegen: cannot derive null image for optional field '{}' on message '{}': {reason}",
+                        f.name, msg.name
+                    )
+                })
+                .expect("optional field must produce a null image");
+                write_stmts.extend(quote::quote! {
+                    if let Some(ref v) = fixed.#field_ident {
+                        self.#setter_ident(*v);
+                    } else {
+                        #null_write
+                    }
+                });
             } else {
                 write_stmts.extend(quote::quote! {
                     self.#setter_ident(fixed.#field_ident);
@@ -782,9 +786,9 @@ pub(crate) fn generate_message_encoder(
         // reach the generated docs verbatim.
         let fixed_doc = format!(
             "Set all fixed fields at once from a [`{fixed_name}`] value.\n\n\
-             Required fields are always written; optional primitive fields \
-             write the schema null sentinel when `None`. Returns the encoder \
-             for tail methods."
+             Required fields are always written; optional fields write the \
+             schema null wire image when `None` (including nested optional \
+             composite members). Returns the encoder for tail methods."
         );
         impl_contents.extend(quote::quote! {
             #[doc = #fixed_doc]

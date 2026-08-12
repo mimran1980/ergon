@@ -493,3 +493,152 @@ fn without_shared_module_each_schema_is_standalone() -> Result<(), Box<dyn std::
 
     Ok(())
 }
+
+// ── T-3: validate multi-schema module plan before emission ─────────────
+
+fn mini_schema(package: &str, id: u16, extra_types: &str) -> Schema {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="{package}" id="{id}" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            {extra_types}
+          </types>
+          <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+        </sbe:messageSchema>"#
+    );
+    Schema::from_ir(ergo_sbe::parse(&xml).expect("parse mini schema"))
+}
+
+#[test]
+fn multi_schema_rejects_empty_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "")])
+        .expect_err("empty module name");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_path_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "../evil")])
+        .expect_err("path module");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_duplicate_module_names() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("shared");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "shared"), (&b, "shared")])
+        .expect_err("duplicate modules");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("duplicate") || msg.contains("shared"), "{msg}");
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_keyword_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "type")])
+        .expect_err("keyword module");
+    // Keywords may be rejected as invalid idents or accepted depending on
+    // is_valid_module_ident — either InvalidConfiguration is fine if rejected.
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. })
+            || err.to_string().contains("type"),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+// ── T-12: incompatible shared type fingerprints ────────────────────────
+
+#[test]
+fn multi_schema_rejects_incompatible_shared_enum() -> Result<(), Box<dyn std::error::Error>> {
+    let enum_a = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    // Same name, different discriminant for Sell.
+    let enum_b = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">9</validValue>
+      </enum>"#;
+    let a = mini_schema("a", 1, enum_a);
+    let b = mini_schema("b", 2, enum_b);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "common"), (&b, "other")])
+        .expect_err("incompatible enum");
+    match err {
+        ergo_sbe::GenerateError::IncompatibleSharedType {
+            name,
+            owner_module,
+            consumer_module,
+            difference,
+        } => {
+            assert!(name.contains("Side"), "{name}");
+            assert_eq!(owner_module, "common");
+            assert_eq!(consumer_module, "other");
+            assert!(!difference.is_empty(), "{difference}");
+        }
+        other => panic!("expected IncompatibleSharedType, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn multi_schema_accepts_identical_shared_enum() -> Result<(), Box<dyn std::error::Error>> {
+    let enum_xml = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    let a = mini_schema("a", 1, enum_xml);
+    let b = mini_schema("b", 2, enum_xml);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let modules = g.generate_multi(&[(&a, "common"), (&b, "other")])?;
+    assert_eq!(modules.modules().len(), 2);
+    Ok(())
+}

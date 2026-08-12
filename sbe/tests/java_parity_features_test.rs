@@ -458,7 +458,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <message name="M" id="1" blockLength="2">
             <field name="current" id="1" type="u8" offset="0"/>
-            <field name="legacy" id="2" type="u8" offset="1" deprecated="true"/>
+            <field name="legacy" id="2" type="u8" offset="1" deprecated="1"/>
           </message>
         </messageSchema>"#;
     let ir = parse(xml)?;

@@ -312,14 +312,25 @@ impl AeronCluster {
         let idle_clone = builder.idle.clone();
         let mut captured: Option<crate::poller::EgressEvent> = None;
         while Instant::now() < deadline {
-            let _ = self.egress.poll_fn(
-                |data, _hdr| {
-                    if captured.is_none() {
-                        captured = crate::poller::parse_event(data).ok().flatten();
-                    }
-                },
-                1,
-            );
+            // Fail-closed: propagate Aeron poll and decode errors rather than
+            // masking them as a later connect timeout.
+            let mut decode_err: Option<ClusterError> = None;
+            self.egress
+                .poll_fn(
+                    |data, _hdr| {
+                        if captured.is_none() && decode_err.is_none() {
+                            match crate::poller::parse_event(data) {
+                                Ok(e) => captured = e,
+                                Err(e) => decode_err = Some(e),
+                            }
+                        }
+                    },
+                    1,
+                )
+                .map_err(|e| ClusterError::aeron("connect_poll", e))?;
+            if let Some(e) = decode_err {
+                return Err(e);
+            }
 
             match captured.take() {
                 Some(crate::poller::EgressEvent::SessionEvent {
@@ -347,12 +358,15 @@ impl AeronCluster {
                             // detail lists all members in id order, so a
                             // position-based parse would redirect back to the
                             // follower we just asked (an infinite loop).
-                            if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
-                                self.reconnect_ingress(builder, &ep)?;
-                                self.send_connect_request(builder, &creds)?;
-                                last_offer = Instant::now();
-                            }
-                            // keep polling
+                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                .ok_or_else(|| ClusterError::ReconnectFailed {
+                                    reason: format!(
+                                        "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
+                                    ),
+                                })?;
+                            self.reconnect_ingress(builder, &ep)?;
+                            self.send_connect_request(builder, &creds)?;
+                            last_offer = Instant::now();
                         }
                         _ => { /* keep polling */ }
                     }
@@ -1237,26 +1251,30 @@ impl AsyncClusterConnect {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
-                                    if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
-                                        let c = uri::udp_endpoint_cstr(&ep)?;
-                                        let aeron =
-                                            self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
-                                                reason: "no aeron client for redirect".into(),
-                                            })?;
-                                        let p = aeron
-                                            .add_exclusive_publication(
-                                                &c,
-                                                self.builder.ingress_stream_id,
-                                                Duration::from_secs(5),
-                                            )
-                                            .map_err(|e| {
-                                                ClusterError::reconnect(format!("redirect publication: {e}"))
-                                            })?;
-                                        self.ingress = Some(p);
-                                        self.leader_member_id = leader_member_id;
-                                        self.connect_sent = false;
-                                        self.encode_and_send_connect()?;
-                                    }
+                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                        .ok_or_else(|| ClusterError::ReconnectFailed {
+                                            reason: format!(
+                                                "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
+                                            ),
+                                        })?;
+                                    let c = uri::udp_endpoint_cstr(&ep)?;
+                                    let aeron =
+                                        self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
+                                            reason: "no aeron client for redirect".into(),
+                                        })?;
+                                    let p = aeron
+                                        .add_exclusive_publication(
+                                            &c,
+                                            self.builder.ingress_stream_id,
+                                            Duration::from_secs(5),
+                                        )
+                                        .map_err(|e| {
+                                            ClusterError::reconnect(format!("redirect publication: {e}"))
+                                        })?;
+                                    self.ingress = Some(p);
+                                    self.leader_member_id = leader_member_id;
+                                    self.connect_sent = false;
+                                    self.encode_and_send_connect()?;
                                 }
                                 _ => {}
                             }
@@ -1380,17 +1398,19 @@ impl AsyncClusterConnect {
         let mut ev: Option<crate::poller::EgressEvent> = None;
         let mut err: Option<ClusterError> = None;
         if let Some(egress) = &self.egress {
-            let _ = egress.poll_fn(
-                |data, _hdr| {
-                    if ev.is_none() && err.is_none() {
-                        match crate::poller::parse_event(data) {
-                            Ok(e) => ev = e,
-                            Err(e) => err = Some(e),
+            egress
+                .poll_fn(
+                    |data, _hdr| {
+                        if ev.is_none() && err.is_none() {
+                            match crate::poller::parse_event(data) {
+                                Ok(e) => ev = e,
+                                Err(e) => err = Some(e),
+                            }
                         }
-                    }
-                },
-                1,
-            );
+                    },
+                    1,
+                )
+                .map_err(|e| ClusterError::aeron("async_connect_poll", e))?;
         }
         if let Some(e) = err {
             return Err(e);

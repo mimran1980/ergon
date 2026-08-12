@@ -65,4 +65,50 @@ mod tests {
         assert_eq!(v[1].member_id, 1);
         Ok(())
     }
+
+    #[test]
+    fn rejects_duplicate_member_ids_before_sort() -> Result<(), Box<dyn std::error::Error>> {
+        let err = parse_ingress_endpoints("0=a:1,1=b:2,0=c:3").expect_err("duplicate id 0");
+        let s = err.to_string();
+        assert!(s.contains("duplicate member id 0"), "{s}");
+        assert!(s.contains("a:1") || s.contains("c:3"), "{s}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_member_ids_after_sort_order() -> Result<(), Box<dyn std::error::Error>> {
+        // Already sorted input with a later duplicate.
+        let err = parse_ingress_endpoints("0=host:1,1=host:2,1=host:3").expect_err("dup 1");
+        let s = err.to_string();
+        assert!(s.contains("duplicate member id 1"), "{s}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_identical_endpoints() -> Result<(), Box<dyn std::error::Error>> {
+        let err = parse_ingress_endpoints("2=x:9,2=x:9").expect_err("identical dup");
+        assert!(
+            err.to_string().contains("duplicate member id 2"),
+            "{err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_with_whitespace() -> Result<(), Box<dyn std::error::Error>> {
+        let err = parse_ingress_endpoints(" 0 = a:1 , 0 = b:2 ").expect_err("ws dup");
+        assert!(
+            err.to_string().contains("duplicate member id 0"),
+            "{err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_non_duplicate_control() -> Result<(), Box<dyn std::error::Error>> {
+        let v = parse_ingress_endpoints("0=a:1,1=b:2,2=c:3")?;
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[2].member_id, 2);
+        Ok(())
+    }
 }

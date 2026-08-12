@@ -132,16 +132,19 @@ release: _check-release-notes
     @echo "=== 7/8 reference reproducibility ==="
     just check-sbe-references
     just check-bench-reference
-    @echo "=== 8/8 release check + publish ==="
+    @echo "=== 8/9 release check ==="
     just release-check
+    @echo "=== 9/9 package benchmark evidence (fail-closed) ==="
+    mkdir -p release-assets
+    bash scripts/package-bench-artifacts.sh release-assets
     @echo "=== publish ergo-sbe ==="
     cargo publish -p ergo-sbe
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
     @echo "=== tag ==="
     just _tag
-    @echo "=== GitHub release ==="
-    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md
+    @echo "=== GitHub release (with bench archives) ==="
+    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md release-assets/*.tar.gz
     @echo "=== release v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') complete ==="
 
 _tag:
@@ -324,13 +327,30 @@ check-bench-reference:
     ./scripts/regenerate-sbe-benchmark-reference.sh --check
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
+# Criterion results must be separated by profile: CARGO_TARGET_DIR only moves
+# the binary tree. Relative CARGO_TARGET_DIR / CRITERION_HOME can resolve under
+# the package dir (cluster/) rather than the workspace root, so both must be
+# absolute workspace paths. package-bench-artifacts expects:
+#   LTO    → <repo>/target/criterion
+#   no-LTO → <repo>/target/bench-no-lto/criterion
 bench-cluster:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{justfile_directory()}}"
+    lto_crit="$root/target/criterion"
+    no_lto_crit="$root/target/bench-no-lto/criterion"
+    no_lto_target="$root/target/bench-no-lto"
+    mkdir -p "$lto_crit" "$no_lto_crit"
     # LTO-on (release profile: lto=true, codegen-units=1)
-    cargo bench -p ergo-aeron-cluster
+    CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
     # LTO-off — publish both profiles per the benchmark fairness matrix
-    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-aeron-cluster
-    @echo ""
-    @echo "=== Gate (LTO) ==="
-    ./scripts/check-bench-gate.sh target/criterion 0.005 cluster
-    @echo "=== Gate (no-LTO) ==="
-    ./scripts/check-bench-gate.sh target/bench-no-lto/criterion 0.005 cluster
+    CARGO_TARGET_DIR="$no_lto_target" \
+      CARGO_PROFILE_BENCH_LTO=false \
+      CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
+      CRITERION_HOME="$no_lto_crit" \
+      cargo bench -p ergo-aeron-cluster
+    echo ""
+    echo "=== Gate (LTO) ==="
+    ./scripts/check-bench-gate.sh "$lto_crit" 0.005 cluster
+    echo "=== Gate (no-LTO) ==="
+    ./scripts/check-bench-gate.sh "$no_lto_crit" 0.005 cluster

@@ -230,23 +230,27 @@ fn bench_decode_scalar(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
+            // Opaque once per Criterion iteration so the micro-batch measures
+            // field loads, not black_box overhead on a large decoder ref.
+            let car = black_box(&car);
+            let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = black_box(&car);
-                let sn = car.serial_number();
-                let my = car.model_year();
-                black_box((sn, my));
+                acc = acc.wrapping_add(car.serial_number());
+                acc = acc.wrapping_add(u64::from(car.model_year()));
             }
+            black_box(acc);
         });
     });
 
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
+            let sbe_tool_car = black_box(&sbe_tool_car);
+            let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
-                let sbe_tool_car = black_box(&sbe_tool_car);
-                let sn = sbe_tool_car.serial_number();
-                let my = sbe_tool_car.model_year();
-                black_box((sn, my));
+                acc = acc.wrapping_add(sbe_tool_car.serial_number());
+                acc = acc.wrapping_add(u64::from(sbe_tool_car.model_year()));
             }
+            black_box(acc);
         });
     });
 

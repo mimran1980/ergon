@@ -5,8 +5,8 @@
 //! field (panics on group optionals) or take the first `N` LE bytes of a BE
 //! encoding (wrong high-order bytes).
 
-use crate::ir::{ByteOrder, Presence};
-use crate::structured_ir::{FieldType, MessageField};
+use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal};
+use crate::structured_ir::{FieldType, MessageField, SchemaElements};
 use quote::quote;
 
 /// Encode a schema null/constant integer as exactly `size` wire bytes.
@@ -44,6 +44,25 @@ fn null_bytes_expr(null_val: u64, size: usize, byte_order: ByteOrder) -> proc_ma
     quote! { [#(#lits),*] as [u8; #size_lit] }
 }
 
+/// Emit a single copy of `size` null bytes at `offset_expr` into `buf_expr`.
+fn write_null_at(
+    buf_expr: &syn::Expr,
+    offset_expr: proc_macro2::TokenStream,
+    null_val: u64,
+    size: usize,
+    byte_order: ByteOrder,
+) -> proc_macro2::TokenStream {
+    let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+    let null_arr = null_bytes_expr(null_val, size, byte_order);
+    quote! {
+        {
+            let null_bytes: [u8; #size_lit] = #null_arr;
+            let offset = #offset_expr;
+            #buf_expr[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+        }
+    }
+}
+
 fn optional_null_size(field: &MessageField) -> Option<usize> {
     match &field.field_type {
         FieldType::Primitive(prim, length) => {
@@ -62,6 +81,137 @@ fn optional_null_size(field: &MessageField) -> Option<usize> {
     }
 }
 
+/// Null-image statements for one optional message field at `field_abs_offset`.
+///
+/// Used by both `apply_nulls` and `fixed(&FixedFields)` when a field is `None`.
+/// Returns `None` only for constant / non-optional fields (caller should skip).
+/// Returns `Err` when an optional field has no derivable null image.
+pub(crate) fn null_image_stmts_for_field(
+    f: &MessageField,
+    field_abs_offset: proc_macro2::TokenStream,
+    buf_expr: &syn::Expr,
+    byte_order: ByteOrder,
+    elements: &SchemaElements,
+) -> Result<Option<proc_macro2::TokenStream>, String> {
+    if f.presence != Presence::Optional {
+        return Ok(None);
+    }
+    match &f.field_type {
+        FieldType::Primitive(prim, length) => {
+            let n = length.unwrap_or(1);
+            let elem_size = prim.size();
+            if elem_size == 0 || elem_size > 8 {
+                return Err(format!(
+                    "optional field '{}': unsupported primitive width {elem_size}",
+                    f.name
+                ));
+            }
+            // Prefer schema nullValue; default element null is 0 for arrays
+            // (ASCII/char padding) and the IR null for scalar optionals.
+            let null_val = f.null_value.unwrap_or(0);
+            if n == 1 {
+                return Ok(Some(write_null_at(
+                    buf_expr,
+                    field_abs_offset,
+                    null_val,
+                    elem_size,
+                    byte_order,
+                )));
+            }
+            // Fixed array: write the element null image into every slot.
+            let mut stmts = proc_macro2::TokenStream::new();
+            for i in 0..n {
+                let off = i * elem_size;
+                let off_lit =
+                    syn::LitInt::new(&off.to_string(), proc_macro2::Span::call_site());
+                stmts.extend(write_null_at(
+                    buf_expr,
+                    quote! { #field_abs_offset + #off_lit },
+                    null_val,
+                    elem_size,
+                    byte_order,
+                ));
+            }
+            Ok(Some(stmts))
+        }
+        FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+            let size = encoding_type.size();
+            // Prefer schema nullValue; enums default to encoding-type max (from resolve).
+            let null_val = f.null_value.unwrap_or(match encoding_type {
+                PrimitiveType::UInt8 => 255,
+                PrimitiveType::UInt16 => 65535,
+                PrimitiveType::UInt32 => 4294967295,
+                PrimitiveType::UInt64 => u64::MAX,
+                PrimitiveType::Int8 => -128i8 as u64,
+                PrimitiveType::Int16 => -32768i16 as u64,
+                PrimitiveType::Int32 => i32::MIN as u64,
+                PrimitiveType::Int64 => i64::MIN as u64,
+                _ => 0,
+            });
+            Ok(Some(write_null_at(
+                buf_expr,
+                field_abs_offset,
+                null_val,
+                size,
+                byte_order,
+            )))
+        }
+        FieldType::Composite { name, size } => {
+            // Optional composite: zero the whole span, then write nested
+            // optional member null sentinels (sbe-tool nullify_optional_fields).
+            let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+            let mut stmts = quote! {
+                {
+                    let offset = #field_abs_offset;
+                    #buf_expr[offset..offset + #size_lit].fill(0);
+                }
+            };
+            let Some(comp_tokens) = elements
+                .composites
+                .iter()
+                .find(|c| c[0].name == *name)
+            else {
+                return Err(format!(
+                    "optional composite field '{}': type '{name}' not found in schema",
+                    f.name
+                ));
+            };
+            // Walk BeginField tokens; optional primitives with nullValue get written.
+            let mut i = 1usize;
+            while i < comp_tokens.len() {
+                if comp_tokens[i].signal != Signal::BeginField {
+                    i += 1;
+                    continue;
+                }
+                let field_tok = &comp_tokens[i];
+                if field_tok.encoding.presence == Presence::Optional
+                    && let Some(null_val) = field_tok.encoding.null_value
+                {
+                    let prim = field_tok
+                        .encoding
+                        .primitive_type
+                        .unwrap_or(PrimitiveType::UInt8);
+                    let mem_size = prim.size();
+                    let mem_off = field_tok.encoding.offset.unwrap_or(0);
+                    if (1..=8).contains(&mem_size) {
+                        let mem_off_lit =
+                            syn::LitInt::new(&mem_off.to_string(), proc_macro2::Span::call_site());
+                        stmts.extend(write_null_at(
+                            buf_expr,
+                            quote! { #field_abs_offset + #mem_off_lit },
+                            null_val,
+                            mem_size,
+                            byte_order,
+                        ));
+                    }
+                }
+                i += 1;
+            }
+            Ok(Some(stmts))
+        }
+    }
+}
+
 /// Generate null-sentinel write statements for optional fields.
 pub(crate) fn generate_nullification(
     src: &mut String,
@@ -69,34 +219,35 @@ pub(crate) fn generate_nullification(
     offset_base: &str,
     buf_expr: &str,
     byte_order: ByteOrder,
+    elements: &SchemaElements,
 ) {
     let mut stmts = proc_macro2::TokenStream::new();
+    let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
+    let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
     for f in fields {
         if f.presence != Presence::Optional {
             continue;
         }
-        let Some(null_val) = f.null_value else {
-            continue;
-        };
-        let Some(size) = optional_null_size(f) else {
-            continue;
-        };
-        if size == 0 || size > 8 {
-            continue;
-        }
-        let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
-        let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
         let f_offset = syn::Index::from(f.offset);
-        let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
-        let null_arr = null_bytes_expr(null_val, size, byte_order);
-
-        stmts.extend(quote! {
-            {
-                let null_bytes: [u8; #size_lit] = #null_arr;
-                let offset = #offset_base_expr + #f_offset;
-                #buf_expr_ts[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+        let abs = quote! { #offset_base_expr + #f_offset };
+        match null_image_stmts_for_field(f, abs, &buf_expr_ts, byte_order, elements) {
+            Ok(Some(s)) => stmts.extend(s),
+            Ok(None) => {}
+            // Keep apply_nulls best-effort for legacy callers; fixed() rejects.
+            Err(_) => {
+                if let (Some(null_val), Some(size)) = (f.null_value, optional_null_size(f)) {
+                    if size > 0 && size <= 8 {
+                        stmts.extend(write_null_at(
+                            &buf_expr_ts,
+                            quote! { #offset_base_expr + #f_offset },
+                            null_val,
+                            size,
+                            byte_order,
+                        ));
+                    }
+                }
             }
-        });
+        }
     }
     if !stmts.is_empty() {
         src.push_str(&stmts.to_string());

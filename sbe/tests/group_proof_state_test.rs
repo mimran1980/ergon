@@ -372,3 +372,57 @@ fn ineligible_bulk_group_still_iterates_with_version_awareness()
     );
     Ok(())
 }
+
+// ── T-1: dynamic groups must not expose fixed-stride proof APIs ─────────
+
+#[test]
+fn dynamic_group_has_no_start_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_no_start_entry");
+    compile_fails_with_diagnostics(
+        "gp_no_start_entry",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        // FuelFigures has var-data (usage_description) — dynamic, no start_entry.
+        let mut g = FuelFiguresEncoder::wrap(&mut buf, 0, 1);
+        let _ = g.start_entry();
+        "#,
+        &["start_entry"],
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_group_has_no_complete_or_add_checked() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_no_complete");
+    compile_fails_with_diagnostics(
+        "gp_no_complete",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        let mut g = FuelFiguresEncoder::wrap(&mut buf, 0, 1);
+        let _ = g.add_checked(|e| e.complete());
+        "#,
+        &["add_checked"],
+    );
+    Ok(())
+}
+
+#[test]
+fn fixed_stride_group_keeps_add_checked() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_fixed_ok");
+    compile_and_run(
+        "gp_fixed_ok",
+        &src,
+        r#"
+        let mut buf = [0u8; 64];
+        let mut g = PerformanceFiguresAccelerationEncoder::wrap(&mut buf, 0, 1);
+        g.add_checked(|mut e| {
+            e.mph(60).seconds(3.5);
+            Ok(e.complete())
+        }).expect("fixed-stride add_checked");
+        assert_eq!(g.written(), 1);
+        "#,
+    );
+    Ok(())
+}

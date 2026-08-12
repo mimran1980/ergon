@@ -127,15 +127,11 @@ fn bench_group_with_data_scalar(c: &mut Criterion) {
     // ergon — wrap_unchecked matches sbe-tool's zero-validation path
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
+            let buf = black_box(&big_buf);
             let mut total: u32 = 0;
             for i in 0..AMP {
                 let dec = unsafe {
-                    TestMessage1Decoder::wrap_unchecked(
-                        black_box(&big_buf),
-                        black_box(i * len),
-                        bl,
-                        version,
-                    )
+                    TestMessage1Decoder::wrap_unchecked(buf, i * len, bl, version)
                 };
                 total = total.wrapping_add(dec.tag1());
             }
@@ -149,11 +145,12 @@ fn bench_group_with_data_scalar(c: &mut Criterion) {
             use sbe_tool_group_with_data::{
                 ReadBuf, test_message_1_codec::decoder::TestMessage1Decoder as StDecoder,
             };
+            let buf = black_box(&big_buf);
             let mut total: u32 = 0;
             for i in 0..AMP {
                 let dec = StDecoder::default().wrap(
-                    ReadBuf::new(black_box(&big_buf)),
-                    black_box(8 + i * len),
+                    ReadBuf::new(buf),
+                    8 + i * len,
                     bl as u16,
                     version,
                 );

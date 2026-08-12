@@ -1066,6 +1066,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         impl #name_ident {
             /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
             /// regression when forced.
+            #[must_use = "discarding this value is almost always a mistake"]
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
@@ -1162,6 +1163,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         choice_setters.push(set_bit_name.clone());
         choice_name_strs.push(syn::LitStr::new(&t.name, proc_macro2::Span::call_site()));
         bits.push(quote::quote! {
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn #is_bit_name(self) -> bool {
                 (self.0 & (1 << #bit_lit)) != 0
@@ -1196,6 +1198,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         pub struct #name_ident(pub #r_type_ty);
 
         impl #name_ident {
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn raw(self) -> #r_type_ty {
                 self.0
@@ -1353,6 +1356,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> &'static str {
                                     #val_lit
@@ -1362,6 +1366,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                             let expr_str = constant_value_expr(*prim, val);
                             let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
                             getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> #r_type_ty {
                                     #expr
@@ -1381,6 +1386,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 
                     if *len > 0 {
                         getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
                                 let mut res = [0 as #r_type_ty; #len_lit];
@@ -1409,6 +1415,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         let zero_ty: syn::Type =
                             syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
                         getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> #zero_ty {
                                 []
@@ -1419,6 +1426,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     ctor_params.push(quote::quote! { #field_ident: #r_type_ty });
 
                     getters.extend(quote::quote! {
+                        #[must_use = "discarding this value is almost always a mistake"]
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
@@ -1443,6 +1451,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(read_bytes::<#comp_size_lit>(&self.0, #offset_lit))
@@ -1472,6 +1481,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident::from_raw(#r_type_ty::#from_method(
@@ -1479,6 +1489,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         ))
                     }
                     /// Raw wire discriminant — bypasses enum mapping.
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #raw_ident(&self) -> #r_type_ty {
                         #r_type_ty::#from_method(
@@ -1507,6 +1518,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(#r_type_ty::#from_method(
@@ -1669,6 +1681,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             decoder_getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> &'static str {
                                     #val_lit
@@ -1678,6 +1691,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                             let expr_str = constant_value_expr(*prim, val);
                             let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
                             decoder_getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> #r_type_ty {
                                     #expr
@@ -1693,6 +1707,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
                     if *len > 0 {
                         decoder_getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
                                 let mut res = [0 as #r_type_ty; #len_lit];
@@ -1710,6 +1725,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         let zero_ty: syn::Type =
                             syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
                         decoder_getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> #zero_ty {
                                 []
@@ -1718,6 +1734,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     }
                 } else {
                     decoder_getters.extend(quote::quote! {
+                        #[must_use = "discarding this value is almost always a mistake"]
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
@@ -1735,6 +1752,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) })
@@ -1754,6 +1772,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
@@ -1773,6 +1792,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))

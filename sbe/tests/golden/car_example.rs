@@ -440,6 +440,7 @@ pub enum BooleanType {
 impl BooleanType {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
     /// regression when forced.
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -529,6 +530,7 @@ pub enum Model {
 impl Model {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
     /// regression when forced.
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -596,6 +598,7 @@ pub enum BoostType {
 impl BoostType {
     /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
     /// regression when forced.
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn raw(self) -> u8 {
         self as u8
     }
@@ -657,6 +660,7 @@ impl core::str::FromStr for BoostType {
 #[repr(transparent)]
 pub struct OptionalExtras(pub u8);
 impl OptionalExtras {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn raw(self) -> u8 {
         self.0
@@ -665,6 +669,7 @@ impl OptionalExtras {
     pub const fn default() -> Self {
         Self(0)
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_sun_roof(self) -> bool {
         (self.0 & (1 << 0)) != 0
@@ -678,6 +683,7 @@ impl OptionalExtras {
         }
         self
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_sports_pack(self) -> bool {
         (self.0 & (1 << 1)) != 0
@@ -691,6 +697,7 @@ impl OptionalExtras {
         }
         self
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_cruise_control(self) -> bool {
         (self.0 & (1 << 2)) != 0
@@ -788,18 +795,22 @@ impl core::fmt::Debug for MessageHeader {
     }
 }
 impl MessageHeader {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn template_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn schema_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 4))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn version(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
@@ -886,24 +897,28 @@ pub struct MessageHeaderDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> MessageHeaderDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn template_id(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 2)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn schema_id(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 4)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn version(&self) -> u16 {
         u16::from_le_bytes(unsafe {
@@ -924,10 +939,12 @@ impl core::fmt::Debug for GroupSizeEncoding {
     }
 }
 impl GroupSizeEncoding {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
@@ -951,12 +968,14 @@ pub struct GroupSizeEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> GroupSizeEncodingDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(unsafe {
@@ -977,10 +996,12 @@ impl core::fmt::Debug for VarStringEncoding {
     }
 }
 impl VarStringEncoding {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1002,12 +1023,14 @@ pub struct VarStringEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarStringEncodingDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(unsafe {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1026,10 +1049,12 @@ impl core::fmt::Debug for VarAsciiEncoding {
     }
 }
 impl VarAsciiEncoding {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1051,12 +1076,14 @@ pub struct VarAsciiEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarAsciiEncodingDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(unsafe {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1075,10 +1102,12 @@ impl core::fmt::Debug for VarDataEncoding {
     }
 }
 impl VarDataEncoding {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1100,12 +1129,14 @@ pub struct VarDataEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarDataEncodingDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(unsafe {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
@@ -1124,15 +1155,18 @@ impl core::fmt::Debug for Booster {
     }
 }
 impl Booster {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn boost_type(&self) -> BoostType {
         BoostType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 0)))
     }
     /// Raw wire discriminant — bypasses enum mapping.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn raw_boost_type(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
@@ -1156,6 +1190,7 @@ pub struct BoosterDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> BoosterDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn boost_type(&self) -> BoostType {
         BoostType::from_raw(
@@ -1164,6 +1199,7 @@ impl<'a> BoosterDecoder<'a> {
             }),
         )
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(unsafe {
@@ -1190,18 +1226,22 @@ impl core::fmt::Debug for Engine {
     }
 }
 impl Engine {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn capacity(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 2))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
         9000
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn manufacturer_code(&self) -> [u8; 3] {
         let mut res = [0 as u8; 3];
@@ -1213,23 +1253,28 @@ impl Engine {
         }
         res
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn efficiency(&self) -> i8 {
         i8::from_le_bytes(read_bytes::<1>(&self.0, 6))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
         BooleanType::from_raw(u8::from_le_bytes(read_bytes::<1>(&self.0, 7)))
     }
     /// Raw wire discriminant — bypasses enum mapping.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn raw_booster_enabled(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 7))
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster(&self) -> Booster {
         Booster(read_bytes::<2>(&self.0, 8))
@@ -1271,22 +1316,26 @@ pub struct EngineDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> EngineDecoder<'a> {
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn capacity(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
         u8::from_le_bytes(unsafe {
             read_bytes_unchecked::<1>(self.buf, self.offset + 2)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
         9000
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn manufacturer_code(&self) -> [u8; 3] {
         let mut res = [0 as u8; 3];
@@ -1299,16 +1348,19 @@ impl<'a> EngineDecoder<'a> {
         }
         res
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn efficiency(&self) -> i8 {
         i8::from_le_bytes(unsafe {
             read_bytes_unchecked::<1>(self.buf, self.offset + 6)
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
         BooleanType::from_raw(
@@ -1317,6 +1369,7 @@ impl<'a> EngineDecoder<'a> {
             }),
         )
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster(&self) -> Booster {
         Booster(unsafe { read_bytes_unchecked::<2>(self.buf, self.offset + 8) })
@@ -1378,12 +1431,14 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
         self.decoder.byte_offset() + self.decoder.acting_block_length
     }
     /// The full underlying buffer slice this decoder was wrapped on.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn buffer(&self) -> &'a [u8] {
         self.decoder.buf
     }
     /// Bytes after the acting fixed block end. May still contain unread
     /// groups/var-data of **this** message until the consuming walk finishes.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         let end = (self.decoder.byte_offset() + self.decoder.acting_block_length)
@@ -1395,7 +1450,6 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// `as_bytes_with_header`, or the decoder's inherent
     /// `as_bytes_with_header` which rescans tails without consuming
     /// the stage.
-    #[must_use = "discarding this value is almost always a mistake"]
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1414,7 +1468,6 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// groups or var-data remain. Prefer the complete stage's
     /// `as_bytes_with_header` after finishing the walk.
     #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let start = self.message_offset();
@@ -1431,12 +1484,14 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// Schema version from the message header (or wrap args), not the
     /// compiled schema constant. Fields with `sinceVersion` and optional
     /// presence depend on this value.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn acting_version(&self) -> u16 {
         self.decoder.acting_version
     }
     /// Block length from the wire header / wrap args. Tail offsets use
     /// this acting length, not only the compiled `BLOCK_LENGTH`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn acting_block_length(&self) -> usize {
         self.decoder.acting_block_length
@@ -1447,6 +1502,7 @@ impl<'a> CarDecoder<'a> {
     /// version/block-length state. Returns a zero-copy reference to
     /// the parent decoder — no fields are copied. All utility methods
     /// are scoped here so no schema field name can collide with them.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
         CarDecoderMetadata {
@@ -1724,17 +1780,20 @@ impl<'a> CarDecoder<'a> {
     /// Schema version from the message header (or wrap args), not the
     /// compiled schema constant. Fields with `sinceVersion` and optional
     /// presence depend on this value.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
     /// Block length from the wire header / wrap args. Tail offsets use
     /// this acting length, not only the compiled `BLOCK_LENGTH`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
-    #[inline]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline(always)]
     pub fn serial_number(&self) -> u64 {
         u64::from_le_bytes(unsafe {
             read_bytes_unchecked::<8>(self.buf, self.offset + 0)
@@ -1758,7 +1817,8 @@ impl<'a> CarDecoder<'a> {
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
-    #[inline]
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline(always)]
     pub fn model_year(&self) -> u16 {
         u16::from_le_bytes(unsafe {
             read_bytes_unchecked::<2>(self.buf, self.offset + 8)
@@ -1782,6 +1842,7 @@ impl<'a> CarDecoder<'a> {
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn available(&self) -> BooleanType {
         BooleanType::from_raw(
@@ -1792,6 +1853,7 @@ impl<'a> CarDecoder<'a> {
     }
     /// Raw wire discriminant — bypasses enum mapping.
     /// Use to inspect unknown/forward enum values without losing the original byte.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn raw_available(&self) -> u8 {
         u8::from_le_bytes(unsafe {
@@ -1826,6 +1888,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn code(&self) -> Model {
         Model::from_raw(
@@ -1836,6 +1899,7 @@ impl<'a> CarDecoder<'a> {
     }
     /// Raw wire discriminant — bypasses enum mapping.
     /// Use to inspect unknown/forward enum values without losing the original byte.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn raw_code(&self) -> u8 {
         u8::from_le_bytes(unsafe {
@@ -1858,6 +1922,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     pub const CODE_NULL: Model = Model::NullVal;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn some_numbers(&self) -> [u32; 4] {
         if 28 > self.acting_block_length {
@@ -1891,6 +1956,7 @@ impl<'a> CarDecoder<'a> {
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn vehicle_code(&self) -> [u8; 6] {
         if 34 > self.acting_block_length {
@@ -1908,6 +1974,7 @@ impl<'a> CarDecoder<'a> {
             u8::from_le_bytes([all[5usize]]),
         ]
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn copy_vehicle_code(&self, dst: &mut [u8]) -> usize {
         let src = self.vehicle_code();
@@ -1937,6 +2004,7 @@ impl<'a> CarDecoder<'a> {
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn extras(&self) -> OptionalExtras {
         OptionalExtras(
@@ -1960,6 +2028,7 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn discounted_model(&self) -> Model {
         Model::C
@@ -1980,6 +2049,7 @@ impl<'a> CarDecoder<'a> {
         }
     }
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn engine(&self) -> EngineDecoder<'_> {
         EngineDecoder {
@@ -1987,6 +2057,7 @@ impl<'a> CarDecoder<'a> {
             offset: self.offset + 35,
         }
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn engine_value(&self) -> Engine {
         Engine(unsafe { read_bytes_unchecked::<10>(self.buf, self.offset + 35) })
@@ -2296,16 +2367,18 @@ impl<'a> CarDecoder<'a> {
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
     /// View this text var-data field as `&str` without ASCII
-    /// validation.
+    /// validation. Structural bounds remain fallible.
     ///
     /// # Safety
     ///
     /// The wire bytes must be 7-bit ASCII. For ASCII-declared
     /// fields from a trusted source this is always true.
     #[inline]
-    pub unsafe fn activation_code_as_str_unchecked(&self) -> &'a str {
-        let bytes = unsafe { self.activation_code().unwrap() };
-        unsafe { core::str::from_utf8_unchecked(bytes) }
+    pub unsafe fn activation_code_as_str_unchecked(
+        &self,
+    ) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.activation_code()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
     /// Consume this stage and return a fresh decoder at the initial
     /// message position. The consumed stage cannot be reused.
@@ -2314,13 +2387,11 @@ impl<'a> CarDecoder<'a> {
         self
     }
     #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         Ok(end - self.byte_offset())
     }
-    #[must_use = "discarding this value is almost always a mistake"]
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -2328,14 +2399,12 @@ impl<'a> CarDecoder<'a> {
         Ok(len + 8)
     }
     #[must_use = "discarding this value is almost always a mistake"]
-    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         let start = self.byte_offset();
         Ok(&self.buf[start..end])
     }
-    #[must_use = "discarding this value is almost always a mistake"]
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2683,6 +2752,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
@@ -2744,6 +2814,7 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -2990,6 +3061,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             tail_end: core::cell::Cell::new(None),
         }
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn speed(&self) -> u16 {
         let offset = self.offset + 0;
@@ -3013,6 +3085,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub const SPEED_NULL: u16 = 65535_u16;
     pub const SPEED_MIN: u16 = 0_u16;
     pub const SPEED_MAX: u16 = 65534_u16;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn mpg(&self) -> f32 {
         let offset = self.offset + 2;
@@ -3033,7 +3106,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    pub const MPG_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const MPG_NULL: f32 = f32::from_bits(2143289344u32);
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
     pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
@@ -3268,16 +3341,19 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     /// Consume this stage, read the next text var-data field as
     /// a `&str` without encoding validation, and advance.
     ///
+    /// Structural bounds (truncated payload, overflowing length)
+    /// remain fallible — only character validation is skipped.
+    ///
     /// # Safety
     /// The wire bytes must be valid for the schema-declared
     /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_usage_description_as_str_unchecked(
         self,
-    ) -> (&'a str, FuelFiguresEntryDecoderComplete<'a>) {
-        let (bytes, next) = unsafe { self.into_usage_description().unwrap() };
+    ) -> Result<(&'a str, FuelFiguresEntryDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_usage_description()?;
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-        (s, next)
+        Ok((s, next))
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -3446,6 +3522,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
@@ -3507,6 +3584,7 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -3765,6 +3843,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             tail_end: core::cell::Cell::new(None),
         }
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn octane_rating(&self) -> u8 {
         let offset = self.offset + 0;
@@ -4002,6 +4081,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
@@ -4064,6 +4144,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
         self.count
@@ -4293,6 +4374,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             acting_block_length,
         }
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn mph(&self) -> u16 {
         let offset = self.offset + 0;
@@ -4316,6 +4398,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     pub const MPH_NULL: u16 = 65535_u16;
     pub const MPH_MIN: u16 = 0_u16;
     pub const MPH_MAX: u16 = 65534_u16;
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn seconds(&self) -> f32 {
         let offset = self.offset + 2;
@@ -4336,7 +4419,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    pub const SECONDS_NULL: f32 = f32::from_bits(2139095041u32);
+    pub const SECONDS_NULL: f32 = f32::from_bits(2143289344u32);
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
     pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
@@ -4350,6 +4433,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         }
         Ok(self.offset + self.acting_block_length)
     }
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.acting_block_length
@@ -4775,16 +4859,19 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     /// Consume this stage, read the next text var-data field as
     /// a `&str` without encoding validation, and advance.
     ///
+    /// Structural bounds (truncated payload, overflowing length)
+    /// remain fallible — only character validation is skipped.
+    ///
     /// # Safety
     /// The wire bytes must be valid for the schema-declared
     /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_manufacturer_as_str_unchecked(
         self,
-    ) -> (&'a str, CarDecoderAfterManufacturer<'a>) {
-        let (bytes, next) = unsafe { self.into_manufacturer().unwrap() };
+    ) -> Result<(&'a str, CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_manufacturer()?;
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-        (s, next)
+        Ok((s, next))
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
@@ -4933,16 +5020,19 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Consume this stage, read the next text var-data field as
     /// a `&str` without encoding validation, and advance.
     ///
+    /// Structural bounds (truncated payload, overflowing length)
+    /// remain fallible — only character validation is skipped.
+    ///
     /// # Safety
     /// The wire bytes must be valid for the schema-declared
     /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_model_as_str_unchecked(
         self,
-    ) -> (&'a str, CarDecoderAfterModel<'a>) {
-        let (bytes, next) = unsafe { self.into_model().unwrap() };
+    ) -> Result<(&'a str, CarDecoderAfterModel<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_model()?;
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-        (s, next)
+        Ok((s, next))
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
@@ -5081,16 +5171,19 @@ impl<'a> CarDecoderAfterModel<'a> {
     /// Consume this stage, read the next text var-data field as
     /// a `&str` without encoding validation, and advance.
     ///
+    /// Structural bounds (truncated payload, overflowing length)
+    /// remain fallible — only character validation is skipped.
+    ///
     /// # Safety
     /// The wire bytes must be valid for the schema-declared
     /// character encoding (UTF-8 or ASCII).
     #[inline]
     pub unsafe fn into_activation_code_as_str_unchecked(
         self,
-    ) -> (&'a str, CarDecoderComplete<'a>) {
-        let (bytes, next) = unsafe { self.into_activation_code().unwrap() };
+    ) -> Result<(&'a str, CarDecoderComplete<'a>), sbe_rt::DecodeError> {
+        let (bytes, next) = self.into_activation_code()?;
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-        (s, next)
+        Ok((s, next))
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
@@ -5922,8 +6015,9 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarComplete<'a, H> {
     }
 }
 /// Complete set of latest-version fixed fields for this message.
-/// Required fields are concrete values; optional/versioned fields
-/// are `Option<T>`. Constants are excluded.
+/// Required fields (including `sinceVersion` fields) are concrete
+/// values; only presence-optional fields are `Option<T>`. Constants
+/// are excluded.
 ///
 /// This struct is **intentionally exhaustive** (not
 /// `#[non_exhaustive]`): when the schema adds a fixed field, every
@@ -6333,7 +6427,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     /**Set all fixed fields at once from a [`CarFixedFields`] value.
 
-Required fields are always written; optional primitive fields write the schema null sentinel when `None`. Returns the encoder for tail methods.*/
+Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder for tail methods.*/
     #[inline]
     #[must_use]
     pub fn fixed(mut self, fixed: &CarFixedFields) -> Self {
@@ -8618,11 +8712,11 @@ impl RaggedEntryBuilder {
 pub const SEMANTIC_VERSION: &str = "5.2";
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
 pub const SCHEMA_SHA256: [u8; 32] = [
-    0x24, 0x95, 0xbf, 0xf8, 0x72, 0x90, 0x99, 0x27, 0x2f, 0xbd, 0x82, 0xb5, 0xc1, 0xba,
-    0x60, 0xc6, 0xfe, 0x51, 0xb2, 0x0f, 0x36, 0xe5, 0x5a, 0x02, 0x0a, 0x42, 0xf4, 0xd4,
-    0xa4, 0x88, 0x36, 0x80,
+    0x78, 0x48, 0x97, 0x0c, 0x36, 0x8e, 0x7a, 0xf4, 0x8e, 0xdd, 0xc0, 0x8e, 0x75, 0xef,
+    0x6d, 0x66, 0xa4, 0xf5, 0xc3, 0x03, 0x4d, 0xc7, 0x4d, 0x37, 0xed, 0x93, 0x11, 0xb0,
+    0xf9, 0x87, 0xa2, 0x51,
 ];
-pub const SCHEMA_SHA256_HEX: &str = "2495bff8729099272fbd82b5c1ba60c6fe51b20f36e55a020a42f4d4a4883680";
+pub const SCHEMA_SHA256_HEX: &str = "7848970c368e7af48eddc08e75ef6d66a4f5c3034dc74d37ed9311b0f987a251";
 pub const SCHEMA_ID: u16 = 1;
 pub const SCHEMA_VERSION: u16 = 0;
 pub mod prelude {
@@ -8655,7 +8749,7 @@ pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N
 /// # Safety
 /// Caller guarantees `offset + N` does not overflow and
 /// `offset + N <= buf.len()`.
-#[inline]
+#[inline(always)]
 #[allow(dead_code)]
 unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     unsafe { core::ptr::read_unaligned(buf.as_ptr().add(offset) as *const [u8; N]) }

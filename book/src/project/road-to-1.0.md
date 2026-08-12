@@ -57,12 +57,21 @@ Cluster may remain `0.x` after sbe 1.0.
 - Performance ledger: [Performance Release Ledger](performance-release-ledger.md) —
   artifacts uploaded to each GitHub release by `.github/workflows/release.yml`.
 
-### Status (2026-08)
+### Status (2026-08-11)
+
+Published tags/releases (not the same as performance proof):
+
+| Version | GitHub release | Benchmark assets |
+|---------|----------------|------------------|
+| 0.1.14 | **none** | n/a |
+| 0.1.15 | published | **zero assets** |
+| 0.1.16 | published | **zero assets** |
+| 0.1.17 | not cut | packaging fixed in-tree (T-15); attach on release |
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC |
-| 2. Parity gate at ≤1.00 | Three-in-a-row met (0.1.14 ✅, 0.1.15 ✅, 0.1.16 ✅). Historic regression gate added in 0.1.16. Extended parity benchmarks for null-as-option, group/var-data in 0.1.17-dev. |
+| 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC (T-100) |
+| 2. Parity gate at ≤1.00 | Local LTO gates green across 0.1.14–0.1.16 development; **GitHub release assets are missing**, so three-in-a-row with downloadable proof is **not yet sealed** (see [Performance Release Ledger](performance-release-ledger.md)). Historic regression gate added in 0.1.16. Fail-closed packaging lands with 0.1.17. |
 | 3. Wire compatibility | Done (FIX SBE conformance, sbe-tool parity tests) |
 | 4. Warning-free consumers | Done (0.1.14) |
 | 5. Book + migration docs | Done (CHANGELOG.md + book + error-diagnostics, multi-message/framing, miette error page) |

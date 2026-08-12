@@ -158,9 +158,11 @@ pub(crate) fn parse_type_element(
     let time_unit = node.attribute("timeUnit").map(str::to_string);
     let deprecated = parse_deprecated_attr(node)?;
 
-    let null_value = node
-        .attribute("nullValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
+    let null_value = match node.attribute("nullValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "nullValue", e))?,
+        None => None,
+    };
     if null_value.is_some() && presence != Presence::Optional {
         let type_name = node.attribute("name").unwrap_or("<unnamed>");
         warn_once(
@@ -172,12 +174,16 @@ pub(crate) fn parse_type_element(
             warn_state,
         );
     }
-    let min_value = node
-        .attribute("minValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
-    let max_value = node
-        .attribute("maxValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
+    let min_value = match node.attribute("minValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "minValue", e))?,
+        None => None,
+    };
+    let max_value = match node.attribute("maxValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "maxValue", e))?,
+        None => None,
+    };
 
     // Constant `<type>`: body text, or `valueRef` (e.g. TimeUnit.nanosecond) as in
     // value-ref-schema.xml — same options sbe-tool accepts for constant fields.
@@ -604,9 +610,11 @@ pub(crate) fn parse_enum(
             deprecated: parse_deprecated_attr(node)?,
             description: collect_description(node),
             semantic_type,
-            null_value: node
-                .attribute("nullValue")
-                .and_then(|s| parse_u64_val(s, Some(encoding_type))),
+            null_value: match node.attribute("nullValue") {
+                Some(s) => super::registry::try_parse_u64_val(s, Some(encoding_type))
+                    .map_err(|e| Fault::invalid(node, "enum @nullValue", e))?,
+                None => None,
+            },
             ..Encoding::default()
         },
         span: None,
