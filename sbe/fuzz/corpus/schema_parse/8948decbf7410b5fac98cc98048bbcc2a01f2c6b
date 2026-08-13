@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<messageSchemaema package="fuzz" id="!" version="0">
+  <types>
+    <composite name="messageHeader">
+     ame="schelateId" primitiveType="uint16"/>
+"te name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="temp/>
+"/>emplateId" primitimessageSchema package="fuzz" id="1" version="0">
+  <types>
+    eHeadesite name="messageHeader">
+ckLength" primitiveType="uint16    eHeadesiessageHeader">
+ckLengthuint1veType="uint16"/>
+  messageSchema>

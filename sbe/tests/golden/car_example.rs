@@ -6570,7 +6570,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     ///Set all fixed fields at once from a [`CarFixedFields`] value.
     ///
     ///Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder ready for ordered tail methods.
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn fixed(
         mut self,

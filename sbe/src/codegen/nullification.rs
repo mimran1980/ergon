@@ -47,6 +47,14 @@ fn null_bytes_expr(null_val: u64, size: usize, byte_order: ByteOrder) -> proc_ma
 }
 
 /// Emit a single copy of `size` null bytes at `offset_expr` into `buf_expr`.
+///
+/// Uses `get_unchecked_mut`, matching the generated field setters. A checked
+/// slice here would put a panic path inside `fixed()` — and because the
+/// `None` arm sits next to the hot `Some` arm, that panic path measurably
+/// pessimises the *taken* branch even when no field is ever `None`
+/// (`ergo_historic/null_option/encode_fixed` regressed 1.84x with the checked
+/// form). Safety is identical to the setters': the constructor already proved
+/// the buffer covers the fixed block, and this writes the same field extent.
 fn write_null_at(
     buf_expr: &syn::Expr,
     offset_expr: proc_macro2::TokenStream,
@@ -60,7 +68,13 @@ fn write_null_at(
         {
             let null_bytes: [u8; #size_lit] = #null_arr;
             let offset = #offset_expr;
-            #buf_expr[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+            // SAFETY: the encoder constructor proved the buffer covers the
+            // fixed block; this is the same extent the field setter writes.
+            unsafe {
+                #buf_expr
+                    .get_unchecked_mut(offset..offset + #size_lit)
+                    .copy_from_slice(&null_bytes);
+            }
         }
     }
 }

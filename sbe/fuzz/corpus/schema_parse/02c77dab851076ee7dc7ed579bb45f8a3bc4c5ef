@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<messageSchema packaersion="0">
+  <types>ype name="blockLength" primitipe="uint16"/>
+   
+    <composite namersion="0">
+  <types>on="0">
+  <types>ype name="blockLength" primitipe="uinversion="1.0"?>
+<messgeSchema packaersion="0">
+  <types>ype name="blockLength" primitipe="uint16"/>
+   
+    <composite name="messageHeader">
+      <type name="blofuzz" id="1" version="0">
+  <types>on="0">
+  <types>ype name="blockLengt
+h" primitipe="uint16"/>
+   
+    <composite name="messageHea"blockLength" primitiveType="uint16"/>
+     uint64"/>
+  </message>
+</messageSt16"/>
+   

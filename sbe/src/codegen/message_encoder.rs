@@ -985,7 +985,13 @@ pub(crate) fn generate_message_encoder(
         if root_has_fields {
             impl_contents.extend(quote::quote! {
                 #fixed_doc_tokens
-                #[inline]
+                // `inline(always)`, not `inline`: T-13 added a null-image `else`
+                // arm per optional field, which pushed this body past LLVM's
+                // inline threshold and got the hint declined. Measured on
+                // `ergo_historic/null_option/encode_fixed`: 2.33ns baseline →
+                // 4.28ns (hint declined) → 1.92ns (forced). Re-verify with
+                // `just bench-historic` before weakening this.
+                #[inline(always)]
                 #[must_use]
                 pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
                     #write_stmts
@@ -1001,7 +1007,7 @@ pub(crate) fn generate_message_encoder(
         } else {
             impl_contents.extend(quote::quote! {
                 #fixed_doc_tokens
-                #[inline]
+                #[inline(always)]
                 #[must_use]
                 pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
                     #write_stmts

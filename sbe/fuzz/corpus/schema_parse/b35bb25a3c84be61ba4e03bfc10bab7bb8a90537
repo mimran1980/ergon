@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" ve2rsin="0">
+  <types>
+    <composite name="omessageHeader">
+      <tppe name="blockLength" primitiveType="uint16"/>
+      ,type name="templateId" primitiveType="uint16"/>
+     <type name="version "pema>

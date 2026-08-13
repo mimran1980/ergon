@@ -1,0 +1,10 @@
+<?xmlW version="1.0"?>
+<messageSchema paekgac="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHer">pe="uint29"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+ *<me name="value" id="1" type="uint64"/>
+qisage>
+</messageSchema>

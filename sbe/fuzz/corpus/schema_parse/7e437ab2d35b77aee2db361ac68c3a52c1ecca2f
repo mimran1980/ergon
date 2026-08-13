@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<mess>
+    <composite name="messageHeader">
+      <type na-e="blockLength" priMitivveType="uint16"/>
+ <types>
+    <cna-e="briMitssageSchema>

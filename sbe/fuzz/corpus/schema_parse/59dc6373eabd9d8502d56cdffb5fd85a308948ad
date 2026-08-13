@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+     chema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint17"/>
+      <

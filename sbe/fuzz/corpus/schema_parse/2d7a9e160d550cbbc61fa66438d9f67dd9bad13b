@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  name="mitiveType="uin>
+    omposite name="messageHeader">
+  LengthLength" primitiveType="uint16"/>
+   >
+    omposite name="meId" primix>ml
+ v

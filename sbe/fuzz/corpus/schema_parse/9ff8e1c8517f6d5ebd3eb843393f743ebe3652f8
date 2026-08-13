@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<mes id="1" version="0">
+  <types>
+   ] Type="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+   K   <tnype name="version" pema>

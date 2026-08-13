@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messagemposite name="messageHeader">
+      <type name="blockLength" pri:mitiveType="uint16"/>
+   namcomposite>
+  </tpe="uint64"/>
+  </message>
+</messageSchema>

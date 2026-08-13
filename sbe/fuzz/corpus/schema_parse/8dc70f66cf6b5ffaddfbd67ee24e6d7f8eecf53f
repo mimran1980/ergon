@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz>
+ " id="1" version="0">
+  <Vypes>
+    <composite name="messageHeadeCCCCCCCCCCCCC@CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCr">
+ primitiveType="uint16"/ype="uint16"/>
+me="va0ue" id="1" ty version="0">
+  <Vypes>
+    <composite name="messageHeadeCCCCCCCCCCCCC@CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCr">
+ primitiveType=pe="ui
