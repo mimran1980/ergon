@@ -824,21 +824,20 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
                     ),
                 })
                 .fuel_figures(2, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.speed(30).mpg(35.9);
-                        Ok(())
+                        e.usage_description(b"")
                     })?;
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.speed(55).mpg(40.0);
-                        Ok(())
-                    })?;
-                    Ok(())
+                        e.usage_description(b"")
+                    })
                 })
                 .unwrap()
                 .performance_figures(1, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.octane_rating(95);
-                        Ok(())
+                        e.acceleration(0, |_| Ok(()))
                     })?;
                     Ok(())
                 })
@@ -890,9 +889,9 @@ fn assert_full_message_encode_wire_parity() {
             ),
         })
         .fuel_figures(1, |g| {
-            g.add(|ent| {
-                ent.speed(40).mpg(33.3).usage_description(b"city")?;
-                Ok(())
+            g.add(|mut ent| {
+                ent.speed(40).mpg(33.3);
+                ent.usage_description(b"city")
             })?;
             Ok(())
         })
@@ -931,7 +930,8 @@ fn assert_full_message_encode_wire_parity() {
     let mut fuel = ToolFuel::default();
     fuel = t.fuel_figures_encoder(1, fuel);
     fuel.advance().unwrap();
-    fuel.speed(40).mpg(33.3).usage_description(b"city");
+    fuel.speed(40).mpg(33.3);
+    fuel.usage_description(b"city");
     t = fuel.parent().unwrap();
     let mut perf = ToolPerf::default();
     perf = t.performance_figures_encoder(0, perf);
@@ -984,9 +984,9 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
                         ),
                     })
                     .fuel_figures(1, |g| {
-                        g.add(|ent| {
-                            ent.speed(40).mpg(33.3).usage_description(b"city")?;
-                            Ok(())
+                        g.add(|mut ent| {
+                            ent.speed(40).mpg(33.3);
+                            ent.usage_description(b"city")
                         })?;
                         Ok(())
                     })
@@ -1033,7 +1033,8 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
                 let mut fuel = ToolFuel::default();
                 fuel = t.fuel_figures_encoder(1, fuel);
                 fuel.advance().unwrap();
-                fuel.speed(40).mpg(33.3).usage_description(b"city");
+                fuel.speed(40).mpg(33.3);
+                fuel.usage_description(b"city");
                 t = fuel.parent().unwrap();
                 let mut perf = ToolPerf::default();
                 perf = t.performance_figures_encoder(0, perf);

@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use exchange_example::decimal::parse_decimal_exact;
 use exchange_example::normalized_app::{
-    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, Source, TryFromSbe, TryToSbe, sbe_rt,
+    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, L2BookFixedFields, Source, TryFromSbe, TryToSbe, sbe_rt,
 };
 
 #[test]
@@ -52,23 +52,24 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let mut buf_storage = [0u8; 8192];
         assert!(inner_len <= buf_storage.len(), "len exceeds stack pad");
         let buf = &mut buf_storage[..inner_len];
-        let mut enc = L2BookEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-        let _ = enc
-            .source(Source::Bitget)
-            .exchange_timestamp(1)
-            .receive_timestamp(2)
-            .sequence(3);
-        let after = enc
+        let complete = L2BookEncoder::try_wrap_and_apply_header(buf, 0)
+            .unwrap()
+            .fixed(&L2BookFixedFields {
+                source: Source::Bitget,
+                exchange_timestamp: 1,
+                receive_timestamp: 2,
+                sequence: 3,
+            })
             .bids(1, |g| {
-                g.add(|e| {
+                g.add(|mut e| {
                     e.price_from(&d).unwrap();
                     let _ = e.size_wire(Decimal::new(1, 0));
                     Ok(())
                 })?;
                 Ok(())
-            })
-            .unwrap();
-        let complete = after.asks(0, |_| Ok(())).unwrap().symbol(b"X").unwrap();
+            })?
+            .asks(0, |_| Ok(()))?
+            .symbol(b"X")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
         // Generic decode returns the exact same rust_decimal value.
@@ -86,24 +87,25 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
         let mut buf2_storage = [0u8; 8192];
         assert!(inner_len <= buf2_storage.len(), "len exceeds stack pad");
         let buf2 = &mut buf2_storage[..inner_len];
-        let mut enc = L2BookEncoder::try_wrap_and_apply_header(buf2, 0).unwrap();
-        let _ = enc
-            .source(Source::Bitget)
-            .exchange_timestamp(1)
-            .receive_timestamp(2)
-            .sequence(3);
-        let after = enc
+        let complete = L2BookEncoder::try_wrap_and_apply_header(buf2, 0)
+            .unwrap()
+            .fixed(&L2BookFixedFields {
+                source: Source::Bitget,
+                exchange_timestamp: 1,
+                receive_timestamp: 2,
+                sequence: 3,
+            })
             .bids(1, |g| {
-                g.add(|entry| {
+                g.add(|mut entry| {
                     entry
                         .price_wire(Decimal::new(m, e))
                         .size_wire(Decimal::new(1, 0));
                     Ok(())
                 })?;
                 Ok(())
-            })
-            .unwrap();
-        let complete = after.asks(0, |_| Ok(())).unwrap().symbol(b"X").unwrap();
+            })?
+            .asks(0, |_| Ok(()))?
+            .symbol(b"X")?;
         assert_eq!(
             complete.as_bytes_with_header(),
             &bytes[..],

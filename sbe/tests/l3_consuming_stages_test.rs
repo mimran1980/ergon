@@ -25,38 +25,33 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.timestamp(99);
-        e.sequence(7);
-        let c = e.bids(2, |g| {
-            g.add(|lvl| {
+        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 99, sequence: 7 })
+        .bids(2, |g| {
+            g.add(|mut lvl| {
                 lvl.price(100);
                 lvl.qty(10);
                 lvl.orders(2, |o| {
-                    o.add(|ord| { ord.order_qty(4); ord.order_id(b"ord-1").unwrap(); Ok(()) }).unwrap();
-                    o.add(|ord| { ord.order_qty(6); ord.order_id(b"ord-2").unwrap(); Ok(()) }).unwrap();
-                    Ok(())
-                }).unwrap();
-                Ok(())
+                    o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") }).unwrap();
+                    o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
+                })
             }).unwrap();
-            g.add(|lvl| {
+            g.add(|mut lvl| {
                 lvl.price(101);
                 lvl.qty(5);
-                lvl.orders(0, |_| Ok(())).unwrap();
-                Ok(())
-            }).unwrap();
-            Ok(())
+                lvl.orders(0, |_| Ok(()))
+            })
         }).unwrap().asks(1, |g| {
-            g.add(|lvl| {
+            g.add(|mut lvl| {
                 lvl.price(200);
                 lvl.qty(20);
                 lvl.orders(1, |o| {
-                    o.add(|ord| { ord.order_qty(8); ord.order_id(b"ask-1").unwrap(); Ok(()) }).unwrap();
-                    Ok(())
-                }).unwrap();
-                Ok(())
-            }).unwrap();
-            Ok(())
+                    o.add(|mut ord| {
+                        ord.order_qty(8);
+                        ord.order_id(b"ask-1")
+                    })
+                })
+            })
         }).unwrap();
         let encoded = c.as_bytes_with_header();
         // as_bytes_with_header() is the explicit header-inclusive view.
@@ -119,10 +114,9 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.timestamp(1);
-        e.sequence(1);
-        let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
+        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 1, sequence: 1 })
+        .bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let _ = dec.into_asks(); // ILLEGAL: no `into_asks` on the initial decoder
     "#,
@@ -142,10 +136,9 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.timestamp(1);
-        e.sequence(1);
-        let c = e.bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
+        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 1, sequence: 1 })
+        .bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();
         let _after = bids.finish().unwrap(); // bids moved here
@@ -169,27 +162,22 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.timestamp(5);
-        e.sequence(3);
-        let c = e.bids(2, |g| {
-            g.add(|lvl| {
+        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 5, sequence: 3 })
+        .bids(2, |g| {
+            g.add(|mut lvl| {
                 lvl.price(100);
                 lvl.qty(10);
                 lvl.orders(2, |o| {
-                    o.add(|ord| { ord.order_qty(4); ord.order_id(b"ord-1").unwrap(); Ok(()) }).unwrap();
-                    o.add(|ord| { ord.order_qty(6); ord.order_id(b"ord-2").unwrap(); Ok(()) }).unwrap();
-                    Ok(())
-                }).unwrap();
-                Ok(())
+                    o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") }).unwrap();
+                    o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
+                })
             }).unwrap();
-            g.add(|lvl| {
+            g.add(|mut lvl| {
                 lvl.price(101);
                 lvl.qty(5);
-                lvl.orders(0, |_| Ok(())).unwrap();
-                Ok(())
-            }).unwrap();
-            Ok(())
+                lvl.orders(0, |_| Ok(()))
+            })
         }).unwrap().asks(0, |_| Ok(())).unwrap();
         let encoded = c.as_bytes_with_header();
         assert_eq!(c.as_bytes_with_header(), encoded);
@@ -241,12 +229,10 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut e = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        e.timestamp(1);
-        e.sequence(1);
-        let c = e.bids(1, |g| {
-            g.add(|lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())).unwrap(); Ok(()) }).unwrap();
-            Ok(())
+        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 1, sequence: 1 })
+        .bids(1, |g| {
+            g.add(|mut lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())) })
         }).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
         let mut bids = dec.into_bids().unwrap();

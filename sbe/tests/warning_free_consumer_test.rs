@@ -61,18 +61,19 @@ use {label}::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-    enc.serial_number(1)
-        .model_year(2020)
-        .available(BooleanType::T)
-        .code(Model::A)
-        .some_numbers([0; 4])
-        .vehicle_code([b'A'; 6])
-        .extras(OptionalExtras::default())
-        .engine(Engine::new(
-            1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-        ));
-    let done = enc
+    let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&CarFixedFields {{
+            serial_number: 1,
+            model_year: 2020,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [0; 4],
+            vehicle_code: [b'A'; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(
+                1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+            ),
+        }})
         .fuel_figures(0, |_| Ok(()))?
         .performance_figures(0, |_| Ok(()))?
         .manufacturer(b"x")?

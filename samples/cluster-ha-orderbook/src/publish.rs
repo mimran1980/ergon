@@ -10,7 +10,10 @@ use ergo_aeron_cluster::cluster_codec_types::{
 use ergo_aeron_cluster::{AeronCluster, ClusterError};
 
 use crate::market::Level;
-use crate::normalized_app::{AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt};
+use crate::normalized_app::{
+    AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source,
+    sbe_rt,
+};
 
 const APP_NAME: &str = "cluster-ha-orderbook";
 /// Header-inclusive SessionMessageHeader length (prefer generated const).
@@ -157,21 +160,24 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
             inner_len,
         );
         self.ingress.try_claim_app(outer_len, |app_buf| {
-            let mut app = AppMessageEncoder::try_wrap_and_apply_header(app_buf, 0)?;
-            let _ = app.sent_ts(receive_ts_ns);
-            let after = app.app_name(APP_NAME.as_bytes())?;
+            let after = AppMessageEncoder::try_wrap_and_apply_header(app_buf, 0)?
+                .fixed(&AppMessageFixedFields {
+                    sent_ts: receive_ts_ns,
+                })
+                .app_name(APP_NAME.as_bytes())?;
             // Nested SBE: exact inner header-inclusive length + encode into var-data.
             let _ =
                 after.payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                    let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0)?;
-                    let _ = enc
-                        .source(Source::Bitget)
-                        .exchange_timestamp(exchange_ts_ns)
-                        .receive_timestamp(receive_ts_ns)
-                        .sequence(sequence);
-                    let after = enc.bids(bids.len() as u16, |g| {
+                    let after = L2BookEncoder::try_wrap_and_apply_header(payload, 0)?
+                        .fixed(&L2BookFixedFields {
+                            source: Source::Bitget,
+                            exchange_timestamp: exchange_ts_ns,
+                            receive_timestamp: receive_ts_ns,
+                            sequence,
+                        })
+                        .bids(bids.len() as u16, |g| {
                         for l in bids {
-                            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
+                            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
                                 let _ = e
                                     .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
                                     .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
@@ -182,7 +188,7 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
                     })?;
                     let after = after.asks(asks.len() as u16, |g| {
                         for l in asks {
-                            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
+                            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
                                 let _ = e
                                     .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
                                     .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));

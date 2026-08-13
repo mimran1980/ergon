@@ -401,6 +401,18 @@ pub mod sbe_rt {
     pub struct HeaderAbsent;
     impl private::Sealed for HeaderAbsent {}
     impl HeaderState for HeaderAbsent {}
+    /// Typestate for whether fixed fields have been committed via
+    /// `fixed(&FixedFields)`. Tail (group/var-data) methods are only
+    /// available on [`FieldsFixed`].
+    pub trait FieldsState: private::Sealed {}
+    /// Initial encoder stage — fixed fields / `fixed()` / `raw_fixed()` only.
+    pub struct FieldsUnfixed;
+    impl private::Sealed for FieldsUnfixed {}
+    impl FieldsState for FieldsUnfixed {}
+    /// After `fixed(&FixedFields)` — ordered group/var-data tails only.
+    pub struct FieldsFixed;
+    impl private::Sealed for FieldsFixed {}
+    impl FieldsState for FieldsFixed {}
     /// Return type for group closures (`add`, `bids`, …).
     /// Closures return `Result<(), EncodeError>`; `?` just works.
     pub type GroupResult = Result<(), EncodeError>;
@@ -5372,11 +5384,14 @@ impl CarFuelFiguresEntryDomain {
     }
 }
 impl CarFuelFiguresEntryDomain {
+    /// Encode this domain entry into a by-value entry encoder,
+    /// returning the completeness proof required by dynamic
+    /// group [`add`](crate).
     #[inline]
     pub fn encode_into<'a>(
         &self,
-        enc: &mut FuelFiguresEntryEncoder<'a>,
-    ) -> Result<(), sbe_rt::EncodeError> {
+        mut enc: FuelFiguresEntryEncoder<'a>,
+    ) -> Result<FuelFiguresEntryComplete<'a>, sbe_rt::EncodeError> {
         {
             let __v = self.speed as i128;
             if __v < 0 || __v > 65534 {
@@ -5391,7 +5406,7 @@ impl CarFuelFiguresEntryDomain {
         enc.speed(self.speed);
         enc.mpg(self.mpg);
         let enc = enc.usage_description(&self.usage_description)?;
-        Ok(())
+        Ok(enc)
     }
     /// Compute this entry's contribution to the total encoded length
     /// (entry block + nested groups + entry var-data).
@@ -5543,11 +5558,14 @@ impl CarPerformanceFiguresEntryDomain {
     }
 }
 impl CarPerformanceFiguresEntryDomain {
+    /// Encode this domain entry into a by-value entry encoder,
+    /// returning the completeness proof required by dynamic
+    /// group [`add`](crate).
     #[inline]
     pub fn encode_into<'a>(
         &self,
-        enc: &mut PerformanceFiguresEntryEncoder<'a>,
-    ) -> Result<(), sbe_rt::EncodeError> {
+        mut enc: PerformanceFiguresEntryEncoder<'a>,
+    ) -> Result<PerformanceFiguresEntryComplete<'a>, sbe_rt::EncodeError> {
         {
             let __v = self.octane_rating as i128;
             if __v < 90 || __v > 110 {
@@ -5570,7 +5588,7 @@ impl CarPerformanceFiguresEntryDomain {
                 }
             })?;
         let enc = enc.acceleration(count, |g| g.bulk_add_domain(&self.acceleration))?;
-        Ok(())
+        Ok(enc)
     }
     /// Compute this entry's contribution to the total encoded length
     /// (entry block + nested groups + entry var-data).
@@ -5710,6 +5728,13 @@ impl CarDomain {
         enc.vehicle_code(self.vehicle_code);
         enc.extras(self.extras);
         enc.engine(self.engine);
+        let enc = CarEncoder {
+            buf: enc.buf,
+            msg_offset: enc.msg_offset,
+            offset: enc.offset,
+            _header: core::marker::PhantomData::<sbe_rt::HeaderPresent>,
+            _fields: core::marker::PhantomData::<sbe_rt::FieldsFixed>,
+        };
         let count = <u16>::try_from(self.fuel_figures.len())
             .map_err(|_| {
                 sbe_rt::EncodeError::ValueOutOfRange {
@@ -5724,9 +5749,7 @@ impl CarDomain {
                 count,
                 |g| -> Result<(), sbe_rt::EncodeError> {
                     for e in &self.fuel_figures {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+                        g.add(|entry| e.encode_into(entry))?;
                     }
                     Ok(())
                 },
@@ -5745,9 +5768,7 @@ impl CarDomain {
                 count,
                 |g| -> Result<(), sbe_rt::EncodeError> {
                     for e in &self.performance_figures {
-                        g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                            e.encode_into(entry)
-                        })?;
+                        g.add(|entry| e.encode_into(entry))?;
                     }
                     Ok(())
                 },
@@ -5818,16 +5839,22 @@ impl CarDomain {
 }
 ///Description of a basic Car
 #[doc = concat!(
-    "Encoder stage `", "CarEncoder", "` — write tail elements in wire order."
+    "Encoder stage `", "CarEncoder", "` — call `fixed(&FixedFields)` before tails."
 )]
 #[must_use = "encoder must be consumed to write the message"]
-pub struct CarEncoder<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+pub struct CarEncoder<
+    'a,
+    H: sbe_rt::HeaderState = sbe_rt::HeaderPresent,
+    F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed,
+> {
     buf: &'a mut [u8],
     msg_offset: usize,
     offset: usize,
     _header: core::marker::PhantomData<H>,
+    _fields: core::marker::PhantomData<F>,
 }
-impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for CarEncoder<'a, H> {
+impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> core::fmt::Display
+for CarEncoder<'a, H, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match CarDecoder::decode(self.buf, self.msg_offset) {
             Ok(dec) => core::fmt::Display::fmt(&dec, f),
@@ -5835,7 +5862,8 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for CarEncoder<'a, H> {
         }
     }
 }
-impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarEncoder<'a, H> {
+impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> core::fmt::Debug
+for CarEncoder<'a, H, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match CarDecoder::decode(self.buf, self.msg_offset) {
             Ok(dec) => core::fmt::Debug::fmt(&dec, f),
@@ -6041,6 +6069,118 @@ pub struct CarRawFixedWriter<'a> {
     msg_offset: usize,
     offset: usize,
 }
+impl<'a> CarRawFixedWriter<'a> {
+    #[inline]
+    pub fn serial_number(&mut self, val: u64) -> &mut Self {
+        let offset = self.msg_offset + 0;
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 8)
+                .copy_from_slice(&val.to_le_bytes());
+        }
+        self
+    }
+    #[inline]
+    pub fn model_year(&mut self, val: u16) -> &mut Self {
+        let offset = self.msg_offset + 8;
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 2)
+                .copy_from_slice(&val.to_le_bytes());
+        }
+        self
+    }
+    #[inline]
+    pub fn available(&mut self, val: BooleanType) -> &mut Self {
+        let offset = self.msg_offset + 10;
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+        self.buf[self.msg_offset + 10] = val as u8;
+        self
+    }
+    #[inline]
+    pub fn code(&mut self, val: Model) -> &mut Self {
+        let offset = self.msg_offset + 11;
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
+        let offset = self.msg_offset + 12;
+        let mut idx = 0usize;
+        while idx < 4 {
+            unsafe {
+                self.buf
+                    .get_unchecked_mut(offset + idx * 4..offset + (idx + 1) * 4)
+                    .copy_from_slice(&val[idx].to_le_bytes());
+            }
+            idx += 1;
+        }
+        self
+    }
+    #[inline]
+    pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
+        self.some_numbers([v0, v1, v2, v3])
+    }
+    #[inline]
+    pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
+        let offset = self.msg_offset + 28;
+        unsafe {
+            let dst = self.buf.get_unchecked_mut(offset..offset + 6);
+            let src = core::slice::from_raw_parts(val.as_ptr() as *const u8, 6);
+            dst.copy_from_slice(src);
+        }
+        self
+    }
+    #[inline]
+    pub fn vehicle_code_str(
+        &mut self,
+        src: &str,
+    ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if src.len() > 6 {
+            return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                field: "vehicleCode",
+                max_length: 6,
+                actual: src.len(),
+            });
+        }
+        let mut tmp = [0 as u8; 6];
+        let bytes = src.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            tmp[i] = bytes[i] as u8;
+            i += 1;
+        }
+        Ok(self.vehicle_code(tmp))
+    }
+    #[inline]
+    pub fn put_vehicle_code(
+        &mut self,
+        v0: u8,
+        v1: u8,
+        v2: u8,
+        v3: u8,
+        v4: u8,
+        v5: u8,
+    ) -> &mut Self {
+        self.vehicle_code([v0, v1, v2, v3, v4, v5])
+    }
+    #[inline]
+    pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
+        let offset = self.msg_offset + 34;
+        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn engine(&mut self, val: Engine) -> &mut Self {
+        let offset = self.msg_offset + 35;
+        self.buf[offset..offset + 10].copy_from_slice(&val.0);
+        self
+    }
+}
 impl<'a> CarEncoder<'a> {
     pub const SCHEMA_ID: u16 = 1;
     pub const SCHEMA_VERSION: u16 = 0;
@@ -6119,6 +6259,7 @@ impl<'a> CarEncoder<'a> {
             msg_offset,
             offset: body_offset + 45,
             _header: core::marker::PhantomData,
+            _fields: core::marker::PhantomData,
         }
     }
     /// Wrap a mutable buffer, write the header, with one bounds/overflow check.
@@ -6177,6 +6318,7 @@ impl<'a> CarEncoder<'a> {
             msg_offset: offset,
             offset: body_offset + 45,
             _header: core::marker::PhantomData,
+            _fields: core::marker::PhantomData,
         }
     }
     pub const SERIAL_NUMBER_ID: u16 = 1;
@@ -6314,7 +6456,7 @@ impl<'a> CarEncoder<'a> {
         }
     }
 }
-impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.msg_offset + 8;
@@ -6427,10 +6569,13 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
     }
     /**Set all fixed fields at once from a [`CarFixedFields`] value.
 
-Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder for tail methods.*/
+Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder ready for ordered tail methods.*/
     #[inline]
     #[must_use]
-    pub fn fixed(mut self, fixed: &CarFixedFields) -> Self {
+    pub fn fixed(
+        mut self,
+        fixed: &CarFixedFields,
+    ) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         self.serial_number(fixed.serial_number);
         self.model_year(fixed.model_year);
         self.available(fixed.available);
@@ -6439,7 +6584,13 @@ Required fields are always written; optional fields write the schema null wire i
         self.vehicle_code(fixed.vehicle_code);
         self.extras(fixed.extras);
         self.engine(fixed.engine);
-        self
+        CarEncoder {
+            buf: self.buf,
+            msg_offset: self.msg_offset,
+            offset: self.offset,
+            _header: core::marker::PhantomData,
+            _fields: core::marker::PhantomData,
+        }
     }
     ///Return a dedicated raw fixed-field writer. All individual field setters are available on the writer. To advance to tail stages, collect the values into a [`CarFixedFields`] and call `fixed()`.
     #[inline]
@@ -6457,54 +6608,56 @@ Required fields are always written; optional fields write the schema null wire i
 /// — zero-copy. Utility methods live here so no schema field can
 /// collide with them.
 #[derive(Clone, Copy)]
-pub struct CarEncoderMetadata<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
-    encoder: &'m CarEncoder<'a, H>,
+pub struct CarEncoderMetadata<'m, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+    encoder_msg_offset: usize,
+    encoder_offset: usize,
+    encoder_buf: &'m [u8],
+    _h: core::marker::PhantomData<H>,
 }
-impl<'m, 'a, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, 'a, H> {
+impl<'m, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, H> {
     /// Fixed-block body bytes only (groups/var-data not yet written).
     /// For a complete frame use the terminal stage's
     /// `as_bytes_with_header`.
     #[inline]
     pub fn as_fixed_body_bytes(&self) -> &[u8] {
-        &self.encoder.buf[self.encoder.msg_offset + 8..self.encoder.offset]
+        &self.encoder_buf[self.encoder_msg_offset + 8..self.encoder_offset]
     }
     /// Header + fixed block only — **not** a complete SBE message when
     /// groups or var-data remain. Prefer the complete stage's
     /// `as_bytes_with_header`.
     #[inline]
     pub fn as_fixed_region_with_header(&self) -> &[u8] {
-        &self.encoder.buf[self.encoder.msg_offset..self.encoder.offset]
+        &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
     }
     /// Absolute offset of this message within the original buffer
     /// (the `msg_offset` argument passed to `wrap`).
     #[inline]
     pub const fn message_offset(&self) -> usize {
-        self.encoder.msg_offset
+        self.encoder_msg_offset
     }
     /// Absolute current write cursor within the original buffer.
     #[inline]
     pub const fn limit(&self) -> usize {
-        self.encoder.offset
+        self.encoder_offset
     }
     /// The complete original buffer this encoder wraps.
     #[inline]
     pub const fn buffer(&self) -> &[u8] {
-        self.encoder.buf
+        self.encoder_buf
     }
 }
-impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
-    /// Metadata accessor: buffer positions, wire-frame boundaries.
-    /// Returns a zero-copy reference to the parent encoder.
-    /// All utility methods are scoped here so no schema field name
-    /// can collide with them.
+impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> CarEncoder<'a, H, F> {
     #[inline]
-    pub fn get_metadata(&self) -> CarEncoderMetadata<'_, 'a, H> {
+    pub fn get_metadata(&self) -> CarEncoderMetadata<'_, H> {
         CarEncoderMetadata {
-            encoder: self,
+            encoder_msg_offset: self.msg_offset,
+            encoder_offset: self.offset,
+            encoder_buf: self.buf,
+            _h: core::marker::PhantomData,
         }
     }
 }
-impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H> {
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     /// Encode this group with a known count up front.
     /// Closures return [`sbe_rt::GroupResult`]
     /// (`Result<(), EncodeError>`); `?` works — there is no
@@ -7171,12 +7324,15 @@ impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
     const SCHEMA_ID: u16 = 1;
     const SCHEMA_VERSION: u16 = 0;
 }
-#[doc = concat!(
-    "Root encoder stage — set fields, then call [`Self::fixed`] \
-                to transition to [`",
-    stringify!(CarEncoder), "`]."
-)]
-pub type CarUnfixedEncoder<'a, H> = CarEncoder<'a, H>;
+/// Pre-`fixed()` root encoder stage. Individual fixed-field setters
+/// and [`fixed`](Self::fixed) live here; group/var-data tails are
+/// only available on the [`sbe_rt::FieldsFixed`] phase after
+/// `fixed(&FixedFields)`.
+pub type CarUnfixedEncoder<'a, H = sbe_rt::HeaderPresent> = CarEncoder<
+    'a,
+    H,
+    sbe_rt::FieldsUnfixed,
+>;
 #[doc = concat!(
     "Encoder for the `", stringify!(FuelFiguresEncoder),
     "` group — call `add()` to write entries."
@@ -7201,14 +7357,18 @@ impl<'a> FuelFiguresEncoder<'a> {
             written: 0,
         }
     }
-    /// Write one group entry. The closure may return `()` or
-    /// `Result<(), sbe_rt::EncodeError>` (both satisfy
-    /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
+    /// Write one group entry, proving required tails are complete.
+    ///
+    /// The closure takes the entry encoder **by value** and must return
+    /// the entry-complete proof — reachable only by writing every
+    /// required nested group and var-data field in wire order.
     #[inline]
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut FuelFiguresEntryEncoder<'b>) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            FuelFiguresEntryEncoder<'b>,
+        ) -> Result<FuelFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
     {
         if self.written >= self.count {
             return Err(
@@ -7232,11 +7392,9 @@ impl<'a> FuelFiguresEncoder<'a> {
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = unsafe {
-                FuelFiguresEntryEncoder::wrap(__buf, self.offset)
-            };
-            f(&mut __entry)?;
-            self.offset = __entry.offset;
+            let __entry = unsafe { FuelFiguresEntryEncoder::wrap(__buf, self.offset) };
+            let __complete = f(__entry)?;
+            self.offset = __complete.into_cursor();
         }
         self.written += 1;
         Ok(())
@@ -7248,7 +7406,21 @@ impl<'a> FuelFiguresEncoder<'a> {
     }
 }
 #[doc = concat!(
-    "Entry encoder for the `", stringify!(FuelFiguresEntryEncoder), "` group", "", "."
+    "Proven-complete entry for the `", stringify!(FuelFiguresEntryComplete), "` group."
+)]
+pub struct FuelFiguresEntryComplete<'a> {
+    buf: &'a mut [u8],
+    entry_start: usize,
+    offset: usize,
+}
+impl<'a> FuelFiguresEntryComplete<'a> {
+    pub(crate) fn into_cursor(self) -> usize {
+        self.offset
+    }
+}
+#[doc = concat!(
+    "Entry encoder for the `", stringify!(FuelFiguresEntryEncoder), "` group",
+    " — write required tails in wire order to reach EntryComplete", "."
 )]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct FuelFiguresEntryEncoder<'a> {
@@ -7287,9 +7459,9 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     #[inline]
     #[must_use]
     pub fn usage_description(
-        &mut self,
+        mut self,
         data: &[u8],
-    ) -> Result<&mut Self, sbe_rt::EncodeError> {
+    ) -> Result<FuelFiguresEntryComplete<'a>, sbe_rt::EncodeError> {
         if data.len() > 1073741824 {
             return Err(sbe_rt::EncodeError::VarDataTooLong {
                 field: "usageDescription",
@@ -7318,7 +7490,11 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
         let start = self.offset + 4;
         self.buf[start..start + data.len()].copy_from_slice(data);
         self.offset = start + data.len();
-        Ok(self)
+        Ok(FuelFiguresEntryComplete {
+            buf: self.buf,
+            entry_start: self.entry_start,
+            offset: self.offset,
+        })
     }
 }
 #[doc = concat!(
@@ -7345,14 +7521,18 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             written: 0,
         }
     }
-    /// Write one group entry. The closure may return `()` or
-    /// `Result<(), sbe_rt::EncodeError>` (both satisfy
-    /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
+    /// Write one group entry, proving required tails are complete.
+    ///
+    /// The closure takes the entry encoder **by value** and must return
+    /// the entry-complete proof — reachable only by writing every
+    /// required nested group and var-data field in wire order.
     #[inline]
     #[must_use]
     pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresEntryEncoder<'b>) -> sbe_rt::GroupResult,
+        F: FnOnce(
+            PerformanceFiguresEntryEncoder<'b>,
+        ) -> Result<PerformanceFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
     {
         if self.written >= self.count {
             return Err(
@@ -7376,11 +7556,11 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut __entry = unsafe {
+            let __entry = unsafe {
                 PerformanceFiguresEntryEncoder::wrap(__buf, self.offset)
             };
-            f(&mut __entry)?;
-            self.offset = __entry.offset;
+            let __complete = f(__entry)?;
+            self.offset = __complete.into_cursor();
         }
         self.written += 1;
         Ok(())
@@ -7392,8 +7572,22 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     }
 }
 #[doc = concat!(
-    "Entry encoder for the `", stringify!(PerformanceFiguresEntryEncoder), "` group", "",
-    "."
+    "Proven-complete entry for the `", stringify!(PerformanceFiguresEntryComplete),
+    "` group."
+)]
+pub struct PerformanceFiguresEntryComplete<'a> {
+    buf: &'a mut [u8],
+    entry_start: usize,
+    offset: usize,
+}
+impl<'a> PerformanceFiguresEntryComplete<'a> {
+    pub(crate) fn into_cursor(self) -> usize {
+        self.offset
+    }
+}
+#[doc = concat!(
+    "Entry encoder for the `", stringify!(PerformanceFiguresEntryEncoder), "` group",
+    " — write required tails in wire order to reach EntryComplete", "."
 )]
 #[must_use = "entry encoder fields must be set before the next entry"]
 pub struct PerformanceFiguresEntryEncoder<'a> {
@@ -7425,10 +7619,10 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     #[inline]
     #[must_use]
     pub fn acceleration<F>(
-        &mut self,
+        mut self,
         count: u16,
         f: F,
-    ) -> Result<&mut Self, sbe_rt::EncodeError>
+    ) -> Result<PerformanceFiguresEntryComplete<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
     {
@@ -7464,15 +7658,18 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             }
             __offset = group.offset;
         }
-        self.offset = __offset;
-        Ok(self)
+        Ok(PerformanceFiguresEntryComplete {
+            buf: self.buf,
+            entry_start: self.entry_start,
+            offset: __offset,
+        })
     }
     /// Nested-group `_unknown_size` variant — back-patches count.
     #[inline]
     pub fn acceleration_unknown_size<F>(
-        &mut self,
+        mut self,
         f: F,
-    ) -> Result<&mut Self, sbe_rt::EncodeError>
+    ) -> Result<PerformanceFiguresEntryComplete<'a>, sbe_rt::EncodeError>
     where
         F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
     {
@@ -7505,8 +7702,11 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
                 .buf[count_offset..count_offset + 2]
                 .copy_from_slice(&actual.to_le_bytes());
         }
-        self.offset = __offset;
-        Ok(self)
+        Ok(PerformanceFiguresEntryComplete {
+            buf: self.buf,
+            entry_start: self.entry_start,
+            offset: __offset,
+        })
     }
 }
 #[doc = concat!(
@@ -7591,18 +7791,24 @@ The closure takes the entry encoder **by value** and must return `PerformanceFig
             >,
     {
         if self.written >= self.count {
-            return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
-            });
+            return Err(
+                sbe_rt::EncodeError::GroupFull {
+                    declared: self.count as u32,
+                    attempted: self.written as u32 + 1,
+                }
+                    .into(),
+            );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.offset + block_len > self.buf.len() {
-            return Err(sbe_rt::EncodeError::BufferTooShort {
-                field: "group entry",
-                needed: block_len,
-                available: self.buf.len().saturating_sub(self.offset),
-            });
+            return Err(
+                sbe_rt::EncodeError::BufferTooShort {
+                    field: "group entry",
+                    needed: block_len,
+                    available: self.buf.len().saturating_sub(self.offset),
+                }
+                    .into(),
+            );
         }
         {
             let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
@@ -7785,17 +7991,6 @@ pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
-    /**Finish a flat entry, producing the `PerformanceFiguresAccelerationEntryComplete` that [`PerformanceFiguresAccelerationEncoder::add_checked`] requires.
-
-Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.*/
-    #[inline]
-    pub fn complete(self) -> PerformanceFiguresAccelerationEntryComplete<'a> {
-        PerformanceFiguresAccelerationEntryComplete {
-            buf: self.buf,
-            entry_start: self.entry_start,
-            offset: self.offset,
-        }
-    }
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -7809,6 +8004,17 @@ Only for entries with no required tails — an entry that has them reaches this 
             buf,
             entry_start: offset,
             offset: offset + Self::ENTRY_BLOCK_LENGTH,
+        }
+    }
+    /**Finish a flat entry, producing the `PerformanceFiguresAccelerationEntryComplete` that [`PerformanceFiguresAccelerationEncoder::add_checked`] requires.
+
+Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.*/
+    #[inline]
+    pub fn complete(self) -> PerformanceFiguresAccelerationEntryComplete<'a> {
+        PerformanceFiguresAccelerationEntryComplete {
+            buf: self.buf,
+            entry_start: self.entry_start,
+            offset: self.offset,
         }
     }
     #[inline]

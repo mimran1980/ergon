@@ -707,15 +707,14 @@ pub(crate) fn generate_message_decoder(
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check_expr = if *prim == PrimitiveType::Float
-                            || *prim == PrimitiveType::Double
-                        {
-                            // Any IEEE NaN is null (matches sbe-tool is_nan()).
-                            let _ = null_val;
-                            "val.is_nan()".to_string()
-                        } else {
-                            format!("val == {null_val}_u64 as {r_type}")
-                        };
+                        let null_check_expr =
+                            if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
+                                // Any IEEE NaN is null (matches sbe-tool is_nan()).
+                                let _ = null_val;
+                                "val.is_nan()".to_string()
+                            } else {
+                                format!("val == {null_val}_u64 as {r_type}")
+                            };
                         let _since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
@@ -789,8 +788,10 @@ pub(crate) fn generate_message_decoder(
                             impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
-                        // Required scalar primitives are the decode_scalar hot path;
-                        // `always` keeps LTO/no-LTO parity with sbe-tool's inlined getters.
+                        // Required scalar primitives are the decode_scalar hot path.
+                        // `always` is required for no-LTO parity with sbe-tool
+                        // (2026-08-13: plain `#[inline]` regressed decode_scalar
+                        // no-LTO to 1.47×; with always, LTO+no-LTO stay ≤1.00).
                         impl_body.extend(quote::quote! {
                             #mu
                             #[inline(always)]

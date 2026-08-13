@@ -34,18 +34,20 @@ fn cf_header_absent_no_as_bytes_with_header() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::try_wrap(&mut buf, 0).unwrap();
-        enc.serial_number(1)
-            .model_year(2020)
-            .available(BooleanType::T)
-            .code(Model::A)
-            .some_numbers([0; 4])
-            .vehicle_code([b'x'; 6])
-            .extras(OptionalExtras::default())
-            .engine(Engine::new(
-                1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-            ));
-        let done = enc
+        let done = CarEncoder::try_wrap(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2020,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0; 4],
+                vehicle_code: [b'x'; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(
+                    1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+                ),
+            })
             .fuel_figures(0, |_| Ok(()))
             .unwrap()
             .performance_figures(0, |_| Ok(()))
@@ -72,17 +74,20 @@ fn cf_consumed_encoder_stage_reuse() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        enc.serial_number(1)
-            .model_year(2020)
-            .available(BooleanType::T)
-            .code(Model::A)
-            .some_numbers([0; 4])
-            .vehicle_code([b'x'; 6])
-            .extras(OptionalExtras::default())
-            .engine(Engine::new(
-                1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-            ));
+        let enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2020,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0; 4],
+                vehicle_code: [b'x'; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(
+                    1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+                ),
+            });
         let after = enc.fuel_figures(0, |_| Ok(())).unwrap();
         let _again = enc.fuel_figures(0, |_| Ok(())); // ILLEGAL: enc moved
         let _ = after;

@@ -78,11 +78,16 @@ for profile in lto no-lto; do
         "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/run-manifest.json" \
         "$RUN_ID" "$profile" "$COMMIT"
 done
-# Cluster fixtures
-for dir in "$FAKE_ROOT/target/criterion/cluster_fake/new" \
-           "$FAKE_ROOT/target/bench-no-lto/criterion/cluster_fake/new"; do
-    mkdir -p "$dir"
-    echo '{"mean":{"point_estimate":2.0}}' >"$dir/estimates.json"
+# Cluster fixtures — must carry run_id + HEAD commit (no invent-on-package).
+CL_RUN="cluster-fixture-001"
+for pair in \
+    "$FAKE_ROOT/target/criterion:lto" \
+    "$FAKE_ROOT/target/bench-no-lto/criterion:no-lto"; do
+    dir="${pair%%:*}"
+    prof="${pair##*:}"
+    mkdir -p "$dir/cluster_fake/new"
+    echo '{"mean":{"point_estimate":2.0}}' >"$dir/cluster_fake/new/estimates.json"
+    write_manifest "$dir/run-manifest.json" "$CL_RUN" "$prof" "$COMMIT"
 done
 
 OUT2="$SCRATCH/out-ok"
@@ -127,12 +132,15 @@ for profile in lto no-lto; do
         "$FAKE_ROOT/target/bench-runs/$STALE_RUN/$profile/run-manifest.json" \
         "$STALE_RUN" "$profile" "$STALE_COMMIT"
 done
-# Ensure cluster fixtures still present so a packaging success would not be
-# blocked by REQUIRE_CLUSTER (we assert SBE stale path fails first).
-for dir in "$FAKE_ROOT/target/criterion/cluster_fake/new" \
-           "$FAKE_ROOT/target/bench-no-lto/criterion/cluster_fake/new"; do
-    mkdir -p "$dir"
-    echo '{"mean":{"point_estimate":2.0}}' >"$dir/estimates.json"
+# Cluster fixtures stamped for HEAD so SBE stale is the first failure.
+for pair in \
+    "$FAKE_ROOT/target/criterion:lto" \
+    "$FAKE_ROOT/target/bench-no-lto/criterion:no-lto"; do
+    dir="${pair%%:*}"
+    prof="${pair##*:}"
+    mkdir -p "$dir/cluster_fake/new"
+    echo '{"mean":{"point_estimate":2.0}}' >"$dir/cluster_fake/new/estimates.json"
+    write_manifest "$dir/run-manifest.json" "$CL_RUN" "$prof" "$COMMIT"
 done
 OUT_STALE="$SCRATCH/out-stale"
 mkdir -p "$OUT_STALE"
@@ -166,8 +174,8 @@ STALE_ON_DISK=$(python3 -c "import json; print(json.load(open('$FAKE_ROOT/target
 check "stale on-disk manifest not rewritten to HEAD" \
     test "$STALE_ON_DISK" = "$STALE_COMMIT"
 
-# ── 5. Missing cluster fails when REQUIRE_CLUSTER=1 ─────────────────────
-# restore SBE with matching HEAD manifests
+# ── 5. Cluster unstamped / stale provenance fails closed ────────────────
+# Restore HEAD-matching SBE; cluster trees exist but lack run_id/commit stamp.
 rm -rf "$FAKE_ROOT/target/bench-runs"
 for profile in lto no-lto; do
     d="$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/criterion/fake_bench/new"
@@ -177,6 +185,31 @@ for profile in lto no-lto; do
         "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/run-manifest.json" \
         "$RUN_ID" "$profile" "$COMMIT"
 done
+rm -rf "$FAKE_ROOT/target/criterion" "$FAKE_ROOT/target/bench-no-lto"
+for dir in "$FAKE_ROOT/target/criterion" "$FAKE_ROOT/target/bench-no-lto/criterion"; do
+    mkdir -p "$dir/cluster_fake/new"
+    echo '{"mean":{"point_estimate":2.0}}' >"$dir/cluster_fake/new/estimates.json"
+    # deliberately NO run-manifest.json
+done
+OUT_CL_UNSTAMPED="$SCRATCH/out-cluster-unstamped"
+mkdir -p "$OUT_CL_UNSTAMPED"
+check "cluster unstamped fails closed" \
+    bash -c "! REQUIRE_CLUSTER=1 '$FAKE_ROOT/scripts/package-bench-artifacts.sh' '$OUT_CL_UNSTAMPED' 2>/dev/null"
+
+# Stale cluster commit with run_id still fails.
+for pair in \
+    "$FAKE_ROOT/target/criterion:lto" \
+    "$FAKE_ROOT/target/bench-no-lto/criterion:no-lto"; do
+    dir="${pair%%:*}"
+    prof="${pair##*:}"
+    write_manifest "$dir/run-manifest.json" "stale-cl" "$prof" "$STALE_COMMIT"
+done
+OUT_CL_STALE="$SCRATCH/out-cluster-stale"
+mkdir -p "$OUT_CL_STALE"
+check "cluster stale commit fails closed" \
+    bash -c "! REQUIRE_CLUSTER=1 '$FAKE_ROOT/scripts/package-bench-artifacts.sh' '$OUT_CL_STALE' 2>/dev/null"
+
+# ── 6. Missing cluster fails when REQUIRE_CLUSTER=1 ─────────────────────
 rm -rf "$FAKE_ROOT/target/criterion" "$FAKE_ROOT/target/bench-no-lto"
 OUT4="$SCRATCH/out-no-cluster"
 mkdir -p "$OUT4"

@@ -308,6 +308,19 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             impl private::Sealed for HeaderAbsent {}
             impl HeaderState for HeaderAbsent {}
 
+            /// Typestate for whether fixed fields have been committed via
+            /// `fixed(&FixedFields)`. Tail (group/var-data) methods are only
+            /// available on [`FieldsFixed`].
+            pub trait FieldsState: private::Sealed {}
+            /// Initial encoder stage — fixed fields / `fixed()` / `raw_fixed()` only.
+            pub struct FieldsUnfixed;
+            impl private::Sealed for FieldsUnfixed {}
+            impl FieldsState for FieldsUnfixed {}
+            /// After `fixed(&FixedFields)` — ordered group/var-data tails only.
+            pub struct FieldsFixed;
+            impl private::Sealed for FieldsFixed {}
+            impl FieldsState for FieldsFixed {}
+
             /// Return type for group closures (`add`, `bids`, …).
             /// Closures return `Result<(), EncodeError>`; `?` just works.
             pub type GroupResult = Result<(), EncodeError>;
@@ -2557,17 +2570,21 @@ pub(crate) fn generate_any_message(
     out
 }
 
-/// Make schema XML descriptions safe for rustdoc doctests.
-///
-/// Multi-line descriptions often carry indented ASCII protocol diagrams or
 /// Compute a canonical wire fingerprint for a token slice representing an
-/// enum, set, or composite.  Compares encoding, offsets, lengths, presence,
-/// constants, null/min/max, discriminants, and byte order.  Returns a
-/// deterministic string suitable for equality comparison only (not a hash).
-pub(crate) fn canonical_token_fingerprint(tokens: &[crate::ir::Token]) -> String {
-    use crate::ir::Signal;
+/// enum, set, or composite.
+///
+/// Includes schema [`ByteOrder`] so little-endian and big-endian declarations
+/// of the same type name cannot be treated as interchangeable shared types.
+/// Also compares offsets, lengths, presence, constants, null/min/max,
+/// discriminants, and related encoding fields. Returns a deterministic string
+/// suitable for equality comparison only (not a cryptographic hash).
+pub(crate) fn canonical_token_fingerprint(
+    tokens: &[crate::ir::Token],
+    byte_order: crate::ir::ByteOrder,
+) -> String {
     use std::fmt::Write;
     let mut fp = String::new();
+    let _ = write!(fp, "bo{:?}:", byte_order);
     for t in tokens {
         let _ = write!(fp, "{}:{:?}:", t.name, t.signal);
         let e = &t.encoding;

@@ -858,71 +858,48 @@ impl Default for GenerationConfig {
     }
 }
 
-/// Reject module names that contain path separators, `.`, `..`, are empty,
-/// or start with a digit (not a legal Rust identifier). Full identifier
-/// validation (`syn::parse_str::<syn::Ident>`) happens at generation time;
-/// this fast check catches the most common escape attempts early.
+/// Reject module names that are not valid for `mod name;` in generated Rust.
+///
+/// `syn::parse_str::<syn::Ident>` alone accepts keywords (they parse as idents
+/// in isolation). We additionally reject strict keywords and reserved words
+/// that require a raw identifier (`r#gen`) under current/edition-reserved
+/// Rust editions — including 2024's `gen`.
 pub(crate) fn is_valid_module_ident(name: &str) -> bool {
-    // Single Rust identifier: no path separators, no punctuation, not a keyword.
     if name.is_empty()
         || name.contains('/')
         || name.contains('\\')
         || name.contains('.')
         || name == ".."
-        || name.starts_with(|c: char| c.is_ascii_digit())
     {
         return false;
     }
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
+    if is_rust_keyword_or_reserved(name) {
         return false;
     }
-    if !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-        return false;
-    }
-    // Reject Rust keywords so generated `mod type;` etc. cannot be emitted.
-    !matches!(
+    syn::parse_str::<syn::Ident>(name).is_ok()
+}
+
+/// Strict keywords + reserved identifiers that cannot appear as a plain
+/// `mod name;` without `r#` escaping.
+fn is_rust_keyword_or_reserved(name: &str) -> bool {
+    // Keep in sync with the Rust reference keyword tables (strict + reserved
+    // + edition-reserved). Weak keywords (`union`, `macro_rules`, …) remain
+    // allowed as module names.
+    matches!(
         name,
-        "as" | "async"
-            | "await"
-            | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "dyn"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "Self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
+        // Strict
+        "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern"
+            | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match"
+            | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
+            | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe"
+            | "use" | "where" | "while"
+            // 2018+
+            | "async" | "await" | "dyn"
+            // Reserved
+            | "abstract" | "become" | "box" | "do" | "final" | "macro" | "override"
+            | "priv" | "typeof" | "unsized" | "virtual" | "yield"
+            // Reserved / edition-reserved
+            | "try" | "gen"
     )
 }
 
@@ -1027,6 +1004,20 @@ mod tests {
     fn with_external_sbe_rt_sets_path() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("m").with_external_sbe_rt("crate::rt::sbe_rt");
         assert_eq!(config.external_sbe_rt_path(), Some("crate::rt::sbe_rt"));
+        Ok(())
+    }
+
+    #[test]
+    fn module_ident_rejects_keywords_and_reserved() -> Result<(), Box<dyn std::error::Error>> {
+        use super::is_valid_module_ident;
+        assert!(is_valid_module_ident("messages"));
+        assert!(is_valid_module_ident("common_types"));
+        assert!(!is_valid_module_ident("gen")); // Rust 2024 reserved
+        assert!(!is_valid_module_ident("mod"));
+        assert!(!is_valid_module_ident("async"));
+        assert!(!is_valid_module_ident("try"));
+        assert!(!is_valid_module_ident(""));
+        assert!(!is_valid_module_ident("a.b"));
         Ok(())
     }
 

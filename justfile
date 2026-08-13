@@ -341,14 +341,21 @@ bench-cluster:
     no_lto_crit="$root/target/bench-no-lto/criterion"
     no_lto_target="$root/target/bench-no-lto"
     mkdir -p "$lto_crit" "$no_lto_crit"
+    commit="$(git -C "$root" rev-parse HEAD)"
+    rustc_v="$(rustc --version)"
+    target="$(rustc -vV | sed -n 's/^host: //p')"
+    run_id="cluster-$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$root" rev-parse --short HEAD)"
+    stamp="$root/scripts/stamp-cluster-bench-manifest.sh"
     # LTO-on (release profile: lto=true, codegen-units=1)
     CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
+    "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
     # LTO-off — publish both profiles per the benchmark fairness matrix
     CARGO_TARGET_DIR="$no_lto_target" \
       CARGO_PROFILE_BENCH_LTO=false \
       CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
       CRITERION_HOME="$no_lto_crit" \
       cargo bench -p ergo-aeron-cluster
+    "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
     echo ""
     echo "=== Gate (LTO) ==="
     ./scripts/check-bench-gate.sh "$lto_crit" 0.005 cluster

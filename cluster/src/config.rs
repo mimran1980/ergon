@@ -50,8 +50,12 @@ pub struct SessionBuilder {
     /// Deadline (ms) for awaiting a NewLeaderEvent before the session is
     /// deemed dead. Mirrors Java `Context.newLeaderTimeoutNs` (default 5s).
     pub(crate) new_leader_timeout_ms: u64,
-    /// Deferred timeout validation error (surfaced at `validate`/connect).
-    timeout_err: Option<ClusterError>,
+    /// Deferred error for [`Self::message_timeout`] (surfaced at validate/connect).
+    message_timeout_err: Option<ClusterError>,
+    /// Deferred error for [`Self::new_leader_timeout`] (surfaced at validate/connect).
+    /// Independent of `message_timeout_err` so fixing one phase cannot clear
+    /// a still-invalid sibling.
+    new_leader_timeout_err: Option<ClusterError>,
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
@@ -94,7 +98,8 @@ impl Default for SessionBuilder {
             egress_stream_id: 102,
             message_timeout_ms: 5_000,
             new_leader_timeout_ms: 5_000,
-            timeout_err: None,
+            message_timeout_err: None,
+            new_leader_timeout_err: None,
             credentials: None,
             ingress_endpoints: None,
             is_ingress_exclusive: true,
@@ -200,24 +205,16 @@ impl SessionBuilder {
     /// Deadline for the connect sequence, keep-alives, and re-offers.
     /// Default: 5 seconds. Rejects zero, sub-millisecond, or overflow —
     /// the error is deferred and surfaced by [`Self::validate`] / connect.
+    ///
+    /// Invalid timeouts for each phase are tracked independently: fixing one
+    /// does not clear a still-invalid sibling phase.
     pub fn message_timeout(mut self, timeout: Duration) -> Self {
         match checked_timeout_ms(timeout, "message_timeout") {
             Ok(ms) => {
                 self.message_timeout_ms = ms;
-                // Clear only if the other timeout field is still valid.
-                if self.timeout_err.as_ref().is_some_and(|e| {
-                    matches!(
-                        e,
-                        ClusterError::InvalidTimeout {
-                            phase: "message_timeout",
-                            ..
-                        }
-                    )
-                }) {
-                    self.timeout_err = None;
-                }
+                self.message_timeout_err = None;
             }
-            Err(e) => self.timeout_err = Some(e),
+            Err(e) => self.message_timeout_err = Some(e),
         }
         self
     }
@@ -227,23 +224,16 @@ impl SessionBuilder {
     /// elapses, [`crate::AeronCluster::poll_state_changes`] transitions the
     /// session to [`crate::ClusterError::Disconnected`].
     /// Rejects zero, sub-millisecond, or overflow — deferred to validate/connect.
+    ///
+    /// Invalid timeouts for each phase are tracked independently: fixing one
+    /// does not clear a still-invalid sibling phase.
     pub fn new_leader_timeout(mut self, timeout: Duration) -> Self {
         match checked_timeout_ms(timeout, "new_leader_timeout") {
             Ok(ms) => {
                 self.new_leader_timeout_ms = ms;
-                if self.timeout_err.as_ref().is_some_and(|e| {
-                    matches!(
-                        e,
-                        ClusterError::InvalidTimeout {
-                            phase: "new_leader_timeout",
-                            ..
-                        }
-                    )
-                }) {
-                    self.timeout_err = None;
-                }
+                self.new_leader_timeout_err = None;
             }
-            Err(e) => self.timeout_err = Some(e),
+            Err(e) => self.new_leader_timeout_err = Some(e),
         }
         self
     }
@@ -316,7 +306,11 @@ impl SessionBuilder {
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
         // Surface deferred timeout errors first (programmer config mistakes).
-        if let Some(ref err) = self.timeout_err {
+        // Per-phase slots: both may be invalid; report message_timeout first.
+        if let Some(ref err) = self.message_timeout_err {
+            return Err(err.clone());
+        }
+        if let Some(ref err) = self.new_leader_timeout_err {
             return Err(err.clone());
         }
         // Surface channel parse errors — they are the real cause.
@@ -480,11 +474,7 @@ mod tests {
 
     #[test]
     fn timeout_rejects_zero_and_sub_millisecond() -> Result<(), Box<dyn std::error::Error>> {
-        for d in [
-            Duration::ZERO,
-            Duration::from_nanos(1),
-            Duration::from_nanos(999_999),
-        ] {
+        for d in [Duration::ZERO, Duration::from_nanos(1), Duration::from_nanos(999_999)] {
             let b = SessionBuilder::default()
                 .ingress_channel("aeron:udp?endpoint=localhost:9010")
                 .egress_channel("aeron:udp?endpoint=localhost:19002")
@@ -538,6 +528,30 @@ mod tests {
     }
 
     #[test]
+    fn timeout_phases_tracked_independently() -> Result<(), Box<dyn std::error::Error>> {
+        // Invalid message_timeout, then invalid new_leader, then repair only
+        // new_leader — message_timeout must still fail validate().
+        let b = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")
+            .egress_channel("aeron:udp?endpoint=localhost:19002")
+            .message_timeout(Duration::ZERO)
+            .new_leader_timeout(Duration::from_nanos(1))
+            .new_leader_timeout(Duration::from_secs(5));
+        let err = b.validate().expect_err("message_timeout still invalid");
+        assert!(
+            matches!(
+                err,
+                ClusterError::InvalidTimeout {
+                    phase: "message_timeout",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn new_leader_timeout_same_validation() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
             .ingress_channel("aeron:udp?endpoint=localhost:9010")
@@ -563,9 +577,7 @@ mod tests {
         let b = SessionBuilder::default()
             .ingress_channel("aeron:udp?endpoint=localhost:9010")
             .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .credentials(std::sync::Arc::new(crate::StaticCredentials::new(
-                secret.to_vec(),
-            )));
+            .credentials(std::sync::Arc::new(crate::StaticCredentials::new(secret.to_vec())));
         let dbg = format!("{b:?}");
         assert!(
             !dbg.contains("super-secret"),
@@ -579,10 +591,7 @@ mod tests {
             dbg.contains("<configured>"),
             "credentials should show as configured: {dbg}"
         );
-        assert!(
-            dbg.contains("ingress_channel"),
-            "safe fields remain: {dbg}"
-        );
+        assert!(dbg.contains("ingress_channel"), "safe fields remain: {dbg}");
         assert!(
             dbg.contains("localhost:9010"),
             "channel URI should remain visible: {dbg}"

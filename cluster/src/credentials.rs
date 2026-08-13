@@ -123,10 +123,7 @@ mod tests {
             !dbg.as_bytes().windows(secret.len()).any(|w| w == secret),
             "Debug must not include credential bytes"
         );
-        assert!(
-            dbg.contains("redacted"),
-            "Debug should say redacted: {dbg}"
-        );
+        assert!(dbg.contains("redacted"), "Debug should say redacted: {dbg}");
         assert!(
             dbg.contains(&format!("{} bytes", secret.len())),
             "Debug may show length: {dbg}"

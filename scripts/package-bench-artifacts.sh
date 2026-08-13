@@ -137,17 +137,46 @@ package_cluster() {
         fi
     fi
 
+    # Fail closed: require a pre-stamped run-manifest that matches HEAD with a
+    # real run_id. Never invent a commit stamp over unstamped Criterion trees
+    # (that would launder stale measurements as current).
     MANIFEST="$dir/run-manifest.json"
+    if [ ! -f "$MANIFEST" ]; then
+        if [ "$REQUIRE_CLUSTER" = "1" ]; then
+            fail "cluster $label missing run-manifest.json under $dir — re-run 'just bench-cluster'"
+        else
+            echo "WARN: cluster $label missing run-manifest — skipping (REQUIRE_CLUSTER=0)"
+            return 0
+        fi
+    fi
+    if ! python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = d.get('commit') == sys.argv[2] and bool(d.get('run_id'))
+sys.exit(0 if ok else 1)
+" "$MANIFEST" "$COMMIT" 2>/dev/null; then
+        if [ "$REQUIRE_CLUSTER" = "1" ]; then
+            fail "cluster $label run-manifest commit/run_id does not match HEAD ($COMMIT) — re-run 'just bench-cluster'"
+        else
+            echo "WARN: cluster $label stale/missing run provenance — skipping (REQUIRE_CLUSTER=0)"
+            return 0
+        fi
+    fi
+    # Refresh estimate count only; preserve run_id + commit from the stamped run.
     python3 -c "
 import json
-with open('$MANIFEST', 'w') as f:
-    json.dump({
-        'profile': '$label',
-        'commit': '$COMMIT',
-        'rustc': '$RUSTC',
-        'target': '$TARGET',
-        'estimates': $estimate_count,
-    }, f, indent=2)
+path = '$MANIFEST'
+with open(path) as f:
+    d = json.load(f)
+if d.get('commit') != '$COMMIT' or not d.get('run_id'):
+    raise SystemExit('stale cluster manifest')
+d['profile'] = '$label'
+d['commit'] = '$COMMIT'
+d['rustc'] = '$RUSTC'
+d['target'] = '$TARGET'
+d['estimates'] = $estimate_count
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
 "
     # Package criterion tree + manifest. Parent of criterion is the profile root.
     parent="$(cd "$(dirname "$dir")" && pwd)"

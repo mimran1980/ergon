@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use exchange_example::config::CHANNEL;
 use exchange_example::normalized_app::{
-    AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+    AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
 };
 use rusteron_client::cformat;
 
@@ -59,22 +59,23 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
     let mut claim = pubn.try_claim_owned(outer_len).expect("claim");
     {
         let buf = claim.data();
-        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-        let _ = outer.sent_ts(1);
-        let _ = outer
+        let _ = AppMessageEncoder::try_wrap_and_apply_header(buf, 0)
+            .unwrap()
+            .fixed(&AppMessageFixedFields { sent_ts: 1 })
             .app_name(app_name)
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
-                let _ = book
-                    .source(Source::Bitget)
-                    .exchange_timestamp(1)
-                    .receive_timestamp(2)
-                    .sequence(seq);
-                let book = book
+                let inner = L2BookEncoder::try_wrap_and_apply_header(payload, 0)
+                    .unwrap()
+                    .fixed(&L2BookFixedFields {
+                        source: Source::Bitget,
+                        exchange_timestamp: 1,
+                        receive_timestamp: 2,
+                        sequence: seq,
+                    })
                     .bids(bids, |g| {
                         for i in 0..bids {
-                            g.add(|e| {
+                            g.add(|mut e| {
                                 let _ = e
                                     .price_wire(Decimal::new((50000 - i as i64) * 100, -2))
                                     .size_wire(Decimal::new((1 + i as i64) * 50, -2));
@@ -82,12 +83,10 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                             })?;
                         }
                         Ok(())
-                    })
-                    .expect("bids");
-                let book = book
+                    })?
                     .asks(asks, |g| {
                         for i in 0..asks {
-                            g.add(|e| {
+                            g.add(|mut e| {
                                 let _ = e
                                     .price_wire(Decimal::new((50100 + i as i64) * 100, -2))
                                     .size_wire(Decimal::new((1 + i as i64) * 25, -2));
@@ -95,9 +94,8 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                             })?;
                         }
                         Ok(())
-                    })
-                    .expect("asks");
-                let inner = book.symbol(symbol).expect("symbol");
+                    })?
+                    .symbol(symbol)?;
                 assert_eq!(inner.as_bytes_with_header().len(), inner_len);
                 Ok(())
             })

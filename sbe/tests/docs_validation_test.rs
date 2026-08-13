@@ -472,7 +472,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             qty: 10,
         })
         .legs(1, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.value(99);
                 Ok(())
             })?;

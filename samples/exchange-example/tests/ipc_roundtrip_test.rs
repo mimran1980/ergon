@@ -43,7 +43,7 @@ fn embedded_driver_launches_and_pub_sub_created() -> Result<(), Box<dyn std::err
 #[test]
 fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     // ── Aeron setup ──────────────────────────────────────────────────
@@ -96,29 +96,30 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
     {
         let buf = claim.data();
         assert_eq!(buf.len(), outer_len);
-        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-        outer.sent_ts(epoch_ns);
-        let complete = outer
+        let complete = AppMessageEncoder::try_wrap_and_apply_header(buf, 0)
+            .unwrap()
+            .fixed(&AppMessageFixedFields { sent_ts: epoch_ns })
             .app_name(app_name)
             .expect("app_name")
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
-                book.source(Source::Bitget);
-                book.exchange_timestamp(epoch_ns + 1);
-                book.receive_timestamp(epoch_ns + 2);
-                book.sequence(1);
-                let book = book
+                let inner_complete = L2BookEncoder::try_wrap_and_apply_header(payload, 0)
+                    .unwrap()
+                    .fixed(&L2BookFixedFields {
+                        source: Source::Bitget,
+                        exchange_timestamp: epoch_ns + 1,
+                        receive_timestamp: epoch_ns + 2,
+                        sequence: 1,
+                    })
                     .bids(bids, |g| {
-                        g.add(|e| {
+                        g.add(|mut e| {
                             e.price_wire(Decimal::new(50000_00, -2));
                             e.size_wire(Decimal::new(1_50, -2));
                             Ok(())
-                        });
+                        })?;
                         Ok(())
-                    })
-                    .expect("bids");
-                let book = book.asks(asks, |_| Ok(())).expect("asks");
-                let inner_complete = book.symbol(symbol).expect("symbol");
+                    })?
+                    .asks(asks, |_| Ok(()))?
+                    .symbol(symbol)?;
                 assert_eq!(inner_complete.as_bytes_with_header().len(), inner_len);
                 Ok(())
             })

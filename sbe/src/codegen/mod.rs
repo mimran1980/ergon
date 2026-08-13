@@ -657,12 +657,14 @@ impl Generator {
 
         // Validate shared types have identical wire fingerprints when names
         // collide. A type name is not wire identity — same-name types with
-        // different layouts silently produce corrupted codecs.
+        // different layouts or byte order silently produce corrupted codecs.
         if schemas.len() > 1 && self.config.shared_module.is_some() {
             let owner_module = schemas[0].1.to_string();
+            let owner_byte_order = schemas[0].0.ir.byte_order;
             let first_elements = partition_tokens(&schemas[0].0.ir.tokens);
-            for (i, (schema, consumer_module)) in schemas.iter().enumerate().skip(1) {
+            for (schema, consumer_module) in schemas.iter().skip(1) {
                 let elements = partition_tokens(&schema.ir.tokens);
+                let consumer_byte_order = schema.ir.byte_order;
                 let check = |kind: &str, name: String, a: String, b: String| {
                     if a != b {
                         Err(GenerateError::IncompatibleSharedType {
@@ -688,8 +690,8 @@ impl Generator {
                         check(
                             "enum",
                             name,
-                            canonical_token_fingerprint(ref_et),
-                            canonical_token_fingerprint(et),
+                            canonical_token_fingerprint(ref_et, owner_byte_order),
+                            canonical_token_fingerprint(et, consumer_byte_order),
                         )?;
                     }
                 }
@@ -704,8 +706,8 @@ impl Generator {
                         check(
                             "set",
                             name,
-                            canonical_token_fingerprint(ref_st),
-                            canonical_token_fingerprint(st),
+                            canonical_token_fingerprint(ref_st, owner_byte_order),
+                            canonical_token_fingerprint(st, consumer_byte_order),
                         )?;
                     }
                 }
@@ -720,12 +722,28 @@ impl Generator {
                         check(
                             "composite",
                             name,
-                            canonical_token_fingerprint(ref_ct),
-                            canonical_token_fingerprint(ct),
+                            canonical_token_fingerprint(ref_ct, owner_byte_order),
+                            canonical_token_fingerprint(ct, consumer_byte_order),
                         )?;
                     }
                 }
-                let _ = i; // used in diagnostics via consumer_module
+            }
+        }
+
+        // Shared module name must identify the first-schema (owner) module so
+        // consumers' `pub use super::<shared>::*` resolves to the owner crate
+        // path rather than a free-floating alias.
+        if let Some(ref shared) = self.config.shared_module {
+            let owner = schemas[0].1;
+            if shared != owner {
+                return Err(GenerateError::InvalidConfiguration {
+                    option: "shared_module".into(),
+                    value: shared.clone(),
+                    reason: format!(
+                        "must equal the first schema module name (owner '{owner}'); \
+                         consumers import `super::{shared}::*` from that module"
+                    ),
+                });
             }
         }
 
@@ -1306,6 +1324,8 @@ impl Generator {
             /// # Safety
             /// Caller guarantees `offset + N` does not overflow and
             /// `offset + N <= buf.len()`.
+            // `always`: pairs with scalar getter `#[inline(always)]` for no-LTO
+            // decode_scalar parity (plain `#[inline]` lost the maintained gate).
             #[inline(always)]
             #[allow(dead_code)] // used from generated accessors in this module
             unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {

@@ -54,21 +54,23 @@ pub enum EgressEvent {
 ///
 /// Text fields (`detail`, `ingress_endpoints`) are validated as UTF-8 via
 /// the generated `_as_str()` accessors. Invalid text returns
-/// [`ClusterError::InvalidUtf8`] rather than a lossy sentinel.
+/// [`ClusterError::ProtocolError`] (with a UTF-8/detail reason in the message)
+/// rather than a lossy sentinel — the wire trust seam fails closed.
 pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
-    let fragment = match crate::fragment::Fragment::decode(data)? {
+    use crate::fragment::Fragment;
+
+    // Peeked once and reused: both the unknown-template path and the
+    // not-projected path below must report the real template id.
+    let template_id = MessageHeader::peek_template_id(data).unwrap_or(0);
+
+    let fragment = match Fragment::decode(data)? {
         Some(f) => f,
         None => {
-            // Not an error — may be an unknown template. Report the template
-            // id if we can peek it.
-            let tid = MessageHeader::peek_template_id(data);
-            return Ok(Some(EgressEvent::Other {
-                template_id: tid.unwrap_or(0),
-            }));
+            // Not an error — the cluster may send templates outside our schema.
+            return Ok(Some(EgressEvent::Other { template_id }));
         }
     };
 
-    use crate::fragment::Fragment;
     Ok(Some(match fragment {
         Fragment::SessionEvent {
             correlation_id,
@@ -105,7 +107,10 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
             leader_member_id,
             ingress_endpoints: ingress_endpoints.to_string(),
         },
-        _ => EgressEvent::Other { template_id: 0 },
+        // Decoded, but the connection state machine has no projection for
+        // them. Listed explicitly, not `_`: a new `Fragment` variant must
+        // fail to compile here rather than silently decay to `Other`.
+        Fragment::Message { .. } | Fragment::AdminResponse { .. } => EgressEvent::Other { template_id },
     }))
 }
 
@@ -114,40 +119,41 @@ pub fn parse_event(data: &[u8]) -> Result<Option<EgressEvent>, ClusterError> {
 /// `NewLeaderEvent.ingress_endpoints` lists ALL members in id order
 /// (`"0=host:port,1=host:port,2=host:port"`); the new leader is identified
 /// by `leader_member_id`, NOT by position. Picking the first entry (as a
-/// redirect-style parse would) reconnects to the dead leader. This returns
-/// the endpoint whose id matches `leader_member_id`.
+/// redirect-style parse would) reconnects to the dead leader.
+///
+/// Parses through the fail-closed [`crate::endpoints::parse_ingress_endpoints`]
+/// path: malformed entries, empty maps, and duplicate member IDs return
+/// [`None`] (callers map that to [`ClusterError::ReconnectFailed`]).
 pub fn parse_leader_endpoint(endpoints: &str, leader_member_id: i32) -> Option<String> {
-    for entry in endpoints.split(',') {
-        let Some((id_str, ep)) = entry.split_once('=') else {
-            continue;
-        };
-        if let Ok(id) = id_str.trim().parse::<i32>()
-            && id == leader_member_id
-        {
-            return Some(ep.trim().to_string());
-        }
-    }
-    None
+    let parsed = crate::endpoints::parse_ingress_endpoints(endpoints).ok()?;
+    parsed
+        .into_iter()
+        .find(|e| e.member_id == leader_member_id)
+        .map(|e| e.endpoint)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::codecs::session::{
-        EventCode, NewLeaderEventEncoder, SessionEventEncoder, SessionMessageHeaderEncoder,
+        EventCode, NewLeaderEventEncoder, NewLeaderEventFixedFields, SessionEventEncoder, SessionEventFixedFields,
+        SessionMessageHeaderEncoder,
     };
 
     fn encode_session_event(detail: &[u8], code: EventCode) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let len = SessionEventEncoder::compute_encoded_length_with_message_header(detail.len());
         let mut buf = vec![0u8; len];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.cluster_session_id(7)
-            .correlation_id(42)
-            .leadership_term_id(3)
-            .leader_member_id(1)
-            .code(code)
-            .version(1);
-        let complete = enc.detail(detail)?;
+        let complete = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionEventFixedFields {
+                cluster_session_id: 7,
+                correlation_id: 42,
+                leadership_term_id: 3,
+                leader_member_id: 1,
+                code,
+                version: Some(1),
+                leader_heartbeat_timeout_ns: None,
+            })
+            .detail(detail)?;
         Ok(complete.as_bytes_with_header().to_vec())
     }
 
@@ -156,15 +162,9 @@ mod tests {
         // Fail-closed: frames shorter than the 8-byte SBE header are protocol errors,
         // not silent "no event" — matches Fragment::decode.
         let err = parse_event(&[0u8; 4]).expect_err("short header");
-        assert!(
-            matches!(err, ClusterError::ProtocolError { .. }),
-            "got {err:?}"
-        );
+        assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
         let msg = err.to_string();
-        assert!(
-            msg.contains("too short") || msg.contains("header"),
-            "{msg}"
-        );
+        assert!(msg.contains("too short") || msg.contains("header"), "{msg}");
         Ok(())
     }
 
@@ -186,10 +186,7 @@ mod tests {
             truncated
         };
         let err = parse_event(truncated).expect_err("truncated body");
-        assert!(
-            matches!(err, ClusterError::ProtocolError { .. }),
-            "got {err:?}"
-        );
+        assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
         Ok(())
     }
 
@@ -197,10 +194,7 @@ mod tests {
     fn test_parse_event_invalid_utf8_detail_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let bad = encode_session_event(&[0xff, 0xfe, 0xfd], EventCode::OK)?;
         let err = parse_event(&bad).expect_err("invalid utf8 detail");
-        assert!(
-            matches!(err, ClusterError::ProtocolError { .. }),
-            "got {err:?}"
-        );
+        assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
         let msg = err.to_string().to_lowercase();
         assert!(
             msg.contains("utf") || msg.contains("detail") || msg.contains("invalid"),
@@ -262,11 +256,13 @@ mod tests {
         let eps = b"0=localhost:9012,1=localhost:9112";
         let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
         let mut buf = vec![0u8; len];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(9)
-            .cluster_session_id(3)
-            .leader_member_id(1);
-        let complete = enc.ingress_endpoints(eps)?;
+        let complete = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&NewLeaderEventFixedFields {
+                leadership_term_id: 9,
+                cluster_session_id: 3,
+                leader_member_id: 1,
+            })
+            .ingress_endpoints(eps)?;
         let bytes = complete.as_bytes_with_header();
         match parse_event(bytes)? {
             Some(EgressEvent::NewLeader {
@@ -299,10 +295,31 @@ mod tests {
             return Ok(()); // encoder length edge — header path still covered elsewhere
         }
         let err = parse_event(short).expect_err("short session message");
-        assert!(
-            matches!(err, ClusterError::ProtocolError { .. }),
-            "got {err:?}"
-        );
+        assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_event_known_unprojected_template_keeps_template_id() -> Result<(), Box<dyn std::error::Error>> {
+        // A well-formed application message decodes to `Fragment::Message`,
+        // which the connection state machine has no projection for. It must
+        // still report its real template id — regression: the arm previously
+        // hardcoded 0, so callers could not tell which frame arrived.
+        let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
+        SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .leadership_term_id(1)
+            .cluster_session_id(2)
+            .timestamp(3);
+        match parse_event(&buf)? {
+            Some(EgressEvent::Other { template_id }) => {
+                assert_eq!(
+                    template_id,
+                    SessionMessageHeaderEncoder::TEMPLATE_ID,
+                    "unprojected fragment must keep its template id, not 0"
+                );
+            }
+            other => panic!("expected Other for unprojected template, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -323,15 +340,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_leader_endpoint_malformed_entries_skipped() -> Result<(), Box<dyn std::error::Error>> {
-        // Missing '=', non-numeric ids, and whitespace — only the valid id wins.
+    fn test_parse_leader_endpoint_malformed_map_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+        // Fail-closed: any malformed entry rejects the whole map (validated
+        // ingress parser), even when a well-formed leader entry is present.
         let eps = "garbage,1=localhost:9112,not-an-id=x,2";
+        assert!(
+            parse_leader_endpoint(eps, 1).is_none(),
+            "malformed map must not yield a leader"
+        );
+        assert!(parse_leader_endpoint("1", 1).is_none());
+        assert!(parse_leader_endpoint("=,=foo", 0).is_none());
+        // Clean map still resolves by id.
         assert_eq!(
-            parse_leader_endpoint(eps, 1).ok_or("ep")?,
+            parse_leader_endpoint("0=a:1,1=localhost:9112", 1).ok_or("ep")?,
             "localhost:9112"
         );
-        assert!(parse_leader_endpoint(eps, 2).is_none());
-        assert!(parse_leader_endpoint("1", 1).is_none());
         Ok(())
     }
 
@@ -343,15 +366,10 @@ mod tests {
         let leader_member_id = 1; // absent
         let err = parse_leader_endpoint(detail, leader_member_id)
             .ok_or_else(|| ClusterError::ReconnectFailed {
-                reason: format!(
-                    "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
-                ),
+                reason: format!("connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"),
             })
             .expect_err("missing leader");
-        assert!(
-            matches!(err, ClusterError::ReconnectFailed { .. }),
-            "got {err:?}"
-        );
+        assert!(matches!(err, ClusterError::ReconnectFailed { .. }), "got {err:?}");
         let msg = err.to_string();
         assert!(msg.contains("leader member 1"), "{msg}");
         assert!(msg.contains(detail), "{msg}");

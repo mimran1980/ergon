@@ -36,7 +36,7 @@ impl Paths {
         panic!("Cannot find workspace root from {cwd:?}");
     }
 
-    fn sbe_dir() -> PathBuf {
+    pub fn sbe_dir() -> PathBuf {
         Self::workspace_root().join("sbe")
     }
 
@@ -423,6 +423,10 @@ Ok(())
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
+    // The generated ergo module references `ergo_sbe::…` for the optional
+    // string/byte types, so the dependency must be present regardless of which
+    // features the outer test run enables.
+    let sbe_path_toml = Paths::sbe_dir().display().to_string().replace('\\', "\\\\");
     let cargo = format!(
         r#"[package]
 name = "{test_name}_dual"
@@ -433,6 +437,7 @@ edition = "2024"
 
 [dependencies]
 tool = {{ path = "{tool_path_toml}", package = "{package}" }}
+ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#
     );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();

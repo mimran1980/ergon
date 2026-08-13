@@ -106,9 +106,79 @@ fn car_schema_fixed_path_still_compiles() -> Result<(), Box<dyn std::error::Erro
     let (_, src) = generate(&Paths::example_schema(), "fixed_null_car_smoke");
     // Smoke: FixedFields path exists and compiles for the car fixture.
     assert!(src.contains("fn fixed"), "car encoder must expose fixed()");
+    assert!(src.contains("CarFixedFields"), "car must emit FixedFields");
+    Ok(())
+}
+
+#[test]
+fn nested_optional_composite_null_uses_parent_member_offset()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Outer optional composite at message offset 0 contains Inner at member
+    // offset 16 with an optional uint32 at Inner offset 0. Null image for the
+    // nested optional must land at body base + 16, not body base + 0.
+    let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+        package="nestednull" id="42" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <type name="u32null" primitiveType="uint32" presence="optional" nullValue="4294967295"/>
+        <composite name="Inner" description="nested">
+          <type name="qty" primitiveType="uint32" presence="optional" nullValue="4294967295"/>
+        </composite>
+        <composite name="Outer">
+          <type name="pad" primitiveType="uint8" length="16"/>
+          <ref name="inner" type="Inner"/>
+        </composite>
+      </types>
+      <sbe:message name="Msg" id="1" blockLength="20">
+        <field name="body" id="1" type="Outer" presence="optional"/>
+      </sbe:message>
+    </sbe:messageSchema>"#;
+    let schema = Schema::from_ir(parse(schema_xml)?);
+    let config = GenerationConfig::new("nestednull");
+    let g = Generator::new(config);
+    let modules = g.generate(&schema)?;
+    let src = &modules
+        .modules()
+        .next()
+        .ok_or("expected generated module")?
+        .source;
+    // Generated null path for nested qty must offset past the 16-byte pad.
     assert!(
-        src.contains("CarFixedFields"),
-        "car must emit FixedFields"
+        src.contains("+ 16") || src.contains("+16"),
+        "nested null image must include parent member offset 16; source snippet missing"
+    );
+    compile_and_run(
+        "nested_null_image",
+        src,
+        r#"
+        let mut buf = [0xABu8; 64];
+        let _ = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { body: None });
+        // Header 8 bytes; Outer at body offset 0; Inner.qty at Outer+16.
+        assert_eq!(&buf[8 + 16..8 + 20], &0xFFFF_FFFFu32.to_le_bytes());
+        // Pad region was zeroed (not left dirty 0xAB).
+        assert_eq!(&buf[8..8 + 16], &[0u8; 16]);
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn tails_require_fields_fixed_phase() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "fields_phase_car");
+    assert!(
+        src.contains("FieldsUnfixed") && src.contains("FieldsFixed"),
+        "messages with tails must emit FieldsState phases"
+    );
+    assert!(
+        src.contains("CarUnfixedEncoder") || src.contains("FieldsUnfixed"),
+        "UnfixedEncoder alias / FieldsUnfixed stage required"
     );
     Ok(())
 }

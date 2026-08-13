@@ -19,7 +19,6 @@ use super::runtime::{
     constant_value_expr, doc_attr_tokens, emit_field_consts, to_pascal_case, to_snake_case,
 };
 
-
 /// Pure flyweight observers — discarding the return is almost always a mistake.
 fn must_use_observer() -> proc_macro2::TokenStream {
     quote::quote! {
@@ -915,14 +914,13 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else if f.presence == Presence::Optional {
                     let null_val = f.null_value.unwrap_or(0);
-                    let null_check = if *prim == PrimitiveType::Float
-                        || *prim == PrimitiveType::Double
-                    {
-                        let _ = null_val;
-                        "val.is_nan()".to_string()
-                    } else {
-                        format!("val == {}_u64 as {}", null_val, r_type)
-                    };
+                    let null_check =
+                        if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
+                            let _ = null_val;
+                            "val.is_nan()".to_string()
+                        } else {
+                            format!("val == {}_u64 as {}", null_val, r_type)
+                        };
                     let null_check_expr: syn::Expr = syn::parse_str(&null_check).unwrap();
                     let offset_end_lit = syn::LitInt::new(
                         &(f.offset + prim_size).to_string(),

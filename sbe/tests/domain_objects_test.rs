@@ -71,6 +71,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
 
         let mut domain_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
         let domain_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut domain_bulk_buf, 0).unwrap()
+            .fixed(&BookSnapshotFixedFields {})
             .levels(levels.len() as u16, |group| group.bulk_add_domain(&levels))?
             .encoded_length_with_header();
         assert_eq!(domain_bulk_len, expected_len);
@@ -89,6 +90,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         ];
         let mut wire_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(2)];
         let wire_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut wire_bulk_buf, 0).unwrap()
+            .fixed(&BookSnapshotFixedFields {})
             .levels(wire_levels.len() as u16, |group| group.bulk_add(&wire_levels))?
             .encoded_length_with_header();
         assert_eq!(wire_bulk_len, expected_len);
@@ -112,6 +114,7 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         }];
         let mut invalid_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
         let err = BookSnapshotEncoder::try_wrap_and_apply_header(&mut invalid_buf, 0).unwrap()
+            .fixed(&BookSnapshotFixedFields {})
             .levels(1, |group| group.bulk_add_domain(&invalid_levels))
             .unwrap_err();
         assert!(matches!(
@@ -182,15 +185,19 @@ fn big_endian_nested_domain_bulk_matches_wire_bulk_and_automatic_dto_encode()
             &mut domain_storage[..expected_len],
             0,
         )?
+        .fixed(&CarFixedFields {
+            serial_number: 0, model_year: 0, available: BooleanType::F, code: Model::A,
+            some_numbers: [0; 5], vehicle_code: [0; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
         .fuel_figures(0, |_| Ok(()))?
         .performance_figures(1, |performance| {
-            performance.add(|entry| {
-                entry
-                    .octane_rating(95)
-                    .acceleration(2, |acceleration| {
-                        acceleration.bulk_add_domain(&domain_acceleration)
-                    })?;
-                Ok(())
+            performance.add(|mut entry| {
+                entry.octane_rating(95);
+                entry.acceleration(2, |acceleration| {
+                    acceleration.bulk_add_domain(&domain_acceleration)
+                })
             })
         })?
         .manufacturer(b"")?
@@ -204,15 +211,19 @@ fn big_endian_nested_domain_bulk_matches_wire_bulk_and_automatic_dto_encode()
             &mut wire_storage[..expected_len],
             0,
         )?
+        .fixed(&CarFixedFields {
+            serial_number: 0, model_year: 0, available: BooleanType::F, code: Model::A,
+            some_numbers: [0; 5], vehicle_code: [0; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
         .fuel_figures(0, |_| Ok(()))?
         .performance_figures(1, |performance| {
-            performance.add(|entry| {
-                entry
-                    .octane_rating(95)
-                    .acceleration(2, |acceleration| {
-                        acceleration.bulk_add(&wire_acceleration)
-                    })?;
-                Ok(())
+            performance.add(|mut entry| {
+                entry.octane_rating(95);
+                entry.acceleration(2, |acceleration| {
+                    acceleration.bulk_add(&wire_acceleration)
+                })
             })
         })?
         .manufacturer(b"")?
@@ -246,29 +257,32 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 2048];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234).model_year(2013).available(BooleanType::T).code(Model::A);
-        car.some_numbers([10u32, 20, 30, 40]);
-        car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         extras.sports_pack(true);
-        car.extras(extras);
-        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let encoded = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
-            g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
-            g.add(|e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) })?;
+        let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [10u32, 20, 30, 40],
+            vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
+            extras,
+            engine: Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban") })?;
+            g.add(|mut e| { e.speed(60).mpg(25.0); e.usage_description(b"Highway") })?;
             Ok(())
         })?
         .performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
-            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
                 e.octane_rating(95);
                 e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
                     a.add(|x| { x.mph(30).seconds(4.0); Ok(()) })?;
-                    a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
+                    a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })
+                })
             })?;
             Ok(())
         })?
@@ -321,12 +335,14 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(42).model_year(2021).available(BooleanType::F).code(Model::B);
-        car.some_numbers([5; 4]).vehicle_code([b'Z'; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(300, 6, [1; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let c = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+        let c = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 42, model_year: 2021, available: BooleanType::F, code: Model::B,
+            some_numbers: [5; 4], vehicle_code: [b'Z'; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(300, 6, [1; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
             .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
             .manufacturer(b"X")?
             .model(b"Y")?
@@ -354,12 +370,14 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 1024];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1).model_year(2000).available(BooleanType::T).code(Model::A);
-        car.some_numbers([0; 4]).vehicle_code([0; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let c = car.fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+        let c = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1, model_year: 2000, available: BooleanType::T, code: Model::A,
+            some_numbers: [0; 4], vehicle_code: [0; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(0, 0, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
             .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
             .manufacturer(b"")?
             .model(b"")?
@@ -386,39 +404,31 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 8192];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(111).sequence(222);
-        let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
-            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 111, sequence: 222 })
+        .bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|mut level| -> Result<_, sbe_rt::EncodeError> {
                 level.price(100).qty(50);
                 level.orders(3, |orders| -> Result<(), sbe_rt::EncodeError> {
-                    orders.add(|o| { o.order_qty(10); o.order_id(b"A1")?; Ok(()) })?;
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"A2")?; Ok(()) })?;
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"A3")?; Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
+                    orders.add(|mut o| { o.order_qty(10); o.order_id(b"A1") })?;
+                    orders.add(|mut o| { o.order_qty(20); o.order_id(b"A2") })?;
+                    orders.add(|mut o| { o.order_qty(20); o.order_id(b"A3") })
+                })
             })?;
-            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|mut level| -> Result<_, sbe_rt::EncodeError> {
                 level.price(99).qty(30);
                 level.orders(1, |orders| -> Result<(), sbe_rt::EncodeError> {
-                    orders.add(|o| { o.order_qty(30); o.order_id(b"B1")?; Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
+                    orders.add(|mut o| { o.order_qty(30); o.order_id(b"B1") })
+                })
+            })
         }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
-            asks.add(|level| -> Result<(), sbe_rt::EncodeError> {
+            asks.add(|mut level| -> Result<_, sbe_rt::EncodeError> {
                 level.price(101).qty(40);
                 level.orders(2, |orders| -> Result<(), sbe_rt::EncodeError> {
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"S1")?; Ok(()) })?;
-                    orders.add(|o| { o.order_qty(20); o.order_id(b"S2")?; Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
+                    orders.add(|mut o| { o.order_qty(20); o.order_id(b"S1") })?;
+                    orders.add(|mut o| { o.order_qty(20); o.order_id(b"S2") })
+                })
+            })
         }).unwrap();
         let encoded = complete.as_bytes_with_header();
         let d: L3BookDomain = L3BookDomain::try_from_decoder(L3BookDecoder::try_from(&encoded[..])?)?;
@@ -462,21 +472,19 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 32768];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(333).sequence(444);
-        let complete = book.bids(1, |bids| -> Result<(), sbe_rt::EncodeError> {
-            bids.add(|level| -> Result<(), sbe_rt::EncodeError> {
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 333, sequence: 444 })
+        .bids(1, |bids| -> Result<(), sbe_rt::EncodeError> {
+            bids.add(|mut level| -> Result<_, sbe_rt::EncodeError> {
                 level.price(50000).qty(120);
                 level.orders(12, |orders| -> Result<(), sbe_rt::EncodeError> {
                     for i in 0..12u64 {
                         let id = format!("ORD-{:03}", i);
-                        orders.add(|o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes())?; Ok(()) })?;
+                        orders.add(|mut o| { o.order_qty((i+1) as i64); o.order_id(id.as_bytes()) })?;
                     }
                     Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
+                })
+            })
         }).unwrap().asks(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) }).unwrap();
         let encoded = complete.as_bytes_with_header();
         let d: L3BookDomain = L3BookDomain::try_from_decoder(L3BookDecoder::try_from(&encoded[..])?)?;
@@ -504,15 +512,13 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(0).sequence(0);
-        let complete = book.bids(2, |bids| {
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
-            Ok(())
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&L3BookFixedFields { timestamp: 0, sequence: 0 })
+        .bids(2, |bids| {
+            bids.add(|mut l| { l.price(0).qty(0); l.orders(0, |_| Ok(())) }).unwrap();
+            bids.add(|mut l| { l.price(0).qty(0); l.orders(0, |_| Ok(())) })
         }).unwrap().asks(1, |asks| {
-            asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) }).unwrap();
-            Ok(())
+            asks.add(|mut l| { l.price(0).qty(0); l.orders(0, |_| Ok(())) })
         }).unwrap();
         assert!(complete.encoded_length() > 0);
         println!("l3_compute_encoded_length_matches: PASSED");
@@ -530,12 +536,13 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut d = DepthResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        d.last_update_id(123456).price_exponent(-8).qty_exponent(-8);
-        let complete = d.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+        let complete = DepthResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&DepthResponseFixedFields {
+            last_update_id: 123456, price_exponent: -8, qty_exponent: -8,
+        })
+        .bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
             bids.add(|l| { l.price(50001).qty(150); Ok(()) })?;
-            bids.add(|l| { l.price(50000).qty(200); Ok(()) })?;
-            Ok(())
+            bids.add(|l| { l.price(50000).qty(200); Ok(()) })
         }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
             asks.add(|l| { l.price(50100).qty(300); Ok(()) })?;
             Ok(())
@@ -613,29 +620,29 @@ fn car_domain_encode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf = [0u8; 2048];
 
         // Flyweight encode
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234).model_year(2013).available_bool(true).code(Model::A);
-        car.some_numbers([10u32, 20, 30, 40]);
-        car.vehicle_code([b'A', b'B', b'C', b'D', b'E', b'F']);
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         extras.sports_pack(true);
-        car.extras(extras);
-        car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let flyweight_bytes = car.fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
-            g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(30).mpg(35.9); e.usage_description(b"Urban")?; Ok(()) })?;
-            g.add(|e| -> Result<(), sbe_rt::EncodeError> { e.speed(60).mpg(25.0); e.usage_description(b"Highway")?; Ok(()) })?;
+        let flyweight_bytes = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1234, model_year: 2013, available: BooleanType::T, code: Model::A,
+            some_numbers: [10u32, 20, 30, 40],
+            vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
+            extras,
+            engine: Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(2, |g| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> { e.speed(30).mpg(35.9); e.usage_description(b"Urban") })?;
+            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> { e.speed(60).mpg(25.0); e.usage_description(b"Highway") })?;
             Ok(())
         })?
         .performance_figures(1, |g| -> Result<(), sbe_rt::EncodeError> {
-            g.add(|e| -> Result<(), sbe_rt::EncodeError> {
+            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
                 e.octane_rating(95);
                 e.acceleration(2, |a| -> Result<(), sbe_rt::EncodeError> {
                     a.add(|x| -> Result<(), sbe_rt::EncodeError> { x.mph(30).seconds(4.0); Ok(()) })?;
-                    a.add(|x| -> Result<(), sbe_rt::EncodeError> { x.mph(60).seconds(7.5); Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
+                    a.add(|x| -> Result<(), sbe_rt::EncodeError> { x.mph(60).seconds(7.5); Ok(()) })
+                })
             })?;
             Ok(())
         })?
@@ -747,12 +754,13 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
         &src,
         r#"
         let mut buf = [0u8; 2048];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1).model_year(2020).available(BooleanType::T).code(Model::A);
-        car.some_numbers([0; 4]).vehicle_code([b'A'; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1000, 4, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
-        let complete = car
+        let complete = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1, model_year: 2020, available: BooleanType::T, code: Model::A,
+                some_numbers: [0; 4], vehicle_code: [b'A'; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1000, 4, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            })
             .fuel_figures(0, |_| Ok(()))?
             .performance_figures(0, |_| Ok(()))?
             .manufacturer(b"Honda")?

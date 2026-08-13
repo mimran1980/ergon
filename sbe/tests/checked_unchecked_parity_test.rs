@@ -92,19 +92,22 @@ pub mod soundness_probe {
         {
             let mut frame = [0u8; 512];
             let n = {
-                let mut enc = CarEncoder::try_wrap_and_apply_header(&mut frame, 0).unwrap();
-                enc.serial_number(1)
-                    .model_year(2001)
-                    .available(BooleanType::T)
-                    .code(Model::A)
-                    .some_numbers([0; 4])
-                    .vehicle_code([0; 6])
-                    .extras(OptionalExtras::default())
-                    .engine(Engine::new(
-                        1, 1, [0; 3], 0i8, BooleanType::F,
-                        Booster::new(BoostType::TURBO, 0),
-                    ));
-                enc.fuel_figures(0, |_| Ok(()))
+                CarEncoder::try_wrap_and_apply_header(&mut frame, 0)
+                    .unwrap()
+                    .fixed(&CarFixedFields {
+                        serial_number: 1,
+                        model_year: 2001,
+                        available: BooleanType::T,
+                        code: Model::A,
+                        some_numbers: [0; 4],
+                        vehicle_code: [0; 6],
+                        extras: OptionalExtras::default(),
+                        engine: Engine::new(
+                            1, 1, [0; 3], 0i8, BooleanType::F,
+                            Booster::new(BoostType::TURBO, 0),
+                        ),
+                    })
+                    .fuel_figures(0, |_| Ok(()))
                     .unwrap()
                     .performance_figures(0, |_| Ok(()))
                     .unwrap()
@@ -196,19 +199,21 @@ fn checked_encode_byte_identity() -> Result<(), Box<dyn Error>> {
         "cu_id",
         &src,
         r#"
-        fn finish(mut enc: CarEncoder<'_>) -> usize {
-            enc.serial_number(99)
-                .model_year(2015)
-                .available(BooleanType::T)
-                .code(Model::B)
-                .some_numbers([9, 8, 7, 6])
-                .vehicle_code([b'Z'; 6])
-                .extras(OptionalExtras::default())
-                .engine(Engine::new(
-                    1600, 4, [b'E', b'N', b'G'], 0i8, BooleanType::F,
-                    Booster::new(BoostType::SUPERCHARGER, 1),
-                ));
-            enc.fuel_figures(0, |_| Ok(()))
+        fn finish(enc: CarUnfixedEncoder<'_>) -> usize {
+            enc.fixed(&CarFixedFields {
+                    serial_number: 99,
+                    model_year: 2015,
+                    available: BooleanType::T,
+                    code: Model::B,
+                    some_numbers: [9, 8, 7, 6],
+                    vehicle_code: [b'Z'; 6],
+                    extras: OptionalExtras::default(),
+                    engine: Engine::new(
+                        1600, 4, [b'E', b'N', b'G'], 0i8, BooleanType::F,
+                        Booster::new(BoostType::SUPERCHARGER, 1),
+                    ),
+                })
+                .fuel_figures(0, |_| Ok(()))
                 .unwrap()
                 .performance_figures(0, |_| Ok(()))
                 .unwrap()
@@ -269,18 +274,21 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         fn encode(buf: &mut [u8]) -> usize {
-            let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-            enc.serial_number(1)
-                .model_year(2001)
-                .available(BooleanType::F)
-                .code(Model::A)
-                .some_numbers([0; 4])
-                .vehicle_code([0; 6])
-                .extras(OptionalExtras::default())
-                .engine(Engine::new(
-                    1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-                ));
-            enc.fuel_figures(0, |_| Ok(()))
+            CarEncoder::try_wrap_and_apply_header(buf, 0)
+                .unwrap()
+                .fixed(&CarFixedFields {
+                    serial_number: 1,
+                    model_year: 2001,
+                    available: BooleanType::F,
+                    code: Model::A,
+                    some_numbers: [0; 4],
+                    vehicle_code: [0; 6],
+                    extras: OptionalExtras::default(),
+                    engine: Engine::new(
+                        1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+                    ),
+                })
+                .fuel_figures(0, |_| Ok(()))
                 .unwrap()
                 .performance_figures(0, |_| Ok(()))
                 .unwrap()

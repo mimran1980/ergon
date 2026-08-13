@@ -56,7 +56,10 @@ fn assert_method_lacks_must_use(src: &str, method: &str) {
         // Attribute window: only back to the previous `fn ` so a neighbour's
         // must_use cannot poison this method.
         let before = &src[..pos];
-        let window_start = before.rfind("fn ").map(|i| i + 3).unwrap_or(pos.saturating_sub(120));
+        let window_start = before
+            .rfind("fn ")
+            .map(|i| i + 3)
+            .unwrap_or(pos.saturating_sub(120));
         let window = &src[window_start..pos];
         let after = &src[pos..pos.saturating_add(160).min(src.len())];
         if (after.contains("&mut Self") || after.contains("-> &mut")) && window.contains("must_use")

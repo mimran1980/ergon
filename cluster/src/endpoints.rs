@@ -87,20 +87,14 @@ mod tests {
     #[test]
     fn rejects_duplicate_identical_endpoints() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse_ingress_endpoints("2=x:9,2=x:9").expect_err("identical dup");
-        assert!(
-            err.to_string().contains("duplicate member id 2"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("duplicate member id 2"), "{err}");
         Ok(())
     }
 
     #[test]
     fn rejects_duplicate_with_whitespace() -> Result<(), Box<dyn std::error::Error>> {
         let err = parse_ingress_endpoints(" 0 = a:1 , 0 = b:2 ").expect_err("ws dup");
-        assert!(
-            err.to_string().contains("duplicate member id 0"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("duplicate member id 0"), "{err}");
         Ok(())
     }
 

@@ -22,10 +22,12 @@ const GOLDEN_SESSION_CLOSE_REQUEST: [u8; 24] = [
     0x10, 0x00, 0x04, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+// leader_heartbeat_timeout_ns is optional; fixed(None) writes the schema null
+// image (i64::MIN = 0x8000_0000_0000_0000 LE), not a zero-filled buffer.
 const GOLDEN_SESSION_EVENT: [u8; 67] = [
     0x2c, 0x00, 0x02, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x73,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x0b, 0x00, 0x00, 0x00, 0x73,
     0x6f, 0x6d, 0x65, 0x2d, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c,
 ];
 const GOLDEN_SESSION_CONNECT_REQUEST: [u8; 78] = [
@@ -62,10 +64,15 @@ const GOLDEN_ADMIN_RESPONSE: [u8; 42] = [
 
 use ergo_aeron_cluster::cluster_codec_types::{
     AdminRequestType as ErgoAdminRequestType, AdminResponseCode as ErgoAdminResponseCode,
-    AdminResponseEncoder as ErgoAdminResponseEncoder, ChallengeEncoder as ErgoChallengeEncoder,
-    ChallengeResponseEncoder as ErgoChallengeResponseEncoder, EventCode as ErgoEventCode,
-    NewLeaderEventEncoder as ErgoNewLeaderEventEncoder, SessionCloseRequestEncoder as EsmSessionCloseRequestEncoder,
-    SessionConnectRequestEncoder as ErgoSessionConnectRequestEncoder, SessionEventEncoder as ErgoSessionEventEncoder,
+    AdminResponseEncoder as ErgoAdminResponseEncoder, AdminResponseFixedFields as ErgoAdminResponseFixedFields,
+    ChallengeEncoder as ErgoChallengeEncoder, ChallengeFixedFields as ErgoChallengeFixedFields,
+    ChallengeResponseEncoder as ErgoChallengeResponseEncoder,
+    ChallengeResponseFixedFields as ErgoChallengeResponseFixedFields, EventCode as ErgoEventCode,
+    NewLeaderEventEncoder as ErgoNewLeaderEventEncoder, NewLeaderEventFixedFields as ErgoNewLeaderEventFixedFields,
+    SessionCloseRequestEncoder as EsmSessionCloseRequestEncoder,
+    SessionConnectRequestEncoder as ErgoSessionConnectRequestEncoder,
+    SessionConnectRequestFixedFields as ErgoSessionConnectRequestFixedFields,
+    SessionEventEncoder as ErgoSessionEventEncoder, SessionEventFixedFields as ErgoSessionEventFixedFields,
     SessionKeepAliveEncoder as EsmSessionKeepAliveEncoder,
     SessionMessageHeaderEncoder as EsmSessionMessageHeaderEncoder,
 };
@@ -108,14 +115,17 @@ fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>>
 fn parity_ergo_session_event() -> Result<(), Box<dyn std::error::Error>> {
     let detail: &[u8] = b"some-detail";
     let mut b = [0u8; 128];
-    let mut e = ErgoSessionEventEncoder::wrap_and_apply_header(&mut b, 0);
-    e.cluster_session_id(1);
-    e.correlation_id(100);
-    e.leadership_term_id(5);
-    e.leader_member_id(0);
-    e.code(ErgoEventCode::OK);
-    e.version(1);
-    let complete = e.detail(detail)?;
+    let complete = ErgoSessionEventEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoSessionEventFixedFields {
+            cluster_session_id: 1,
+            correlation_id: 100,
+            leadership_term_id: 5,
+            leader_member_id: 0,
+            code: ErgoEventCode::OK,
+            version: Some(1),
+            leader_heartbeat_timeout_ns: None,
+        })
+        .detail(detail)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_EVENT[..]);
 
     Ok(())
@@ -126,13 +136,15 @@ fn parity_ergo_session_connect_request() -> Result<(), Box<dyn std::error::Error
     let channel = "aeron:udp?endpoint=localhost:9999";
     let creds = b"user:pass";
     let mut b = [0u8; 256];
-    let mut e = ErgoSessionConnectRequestEncoder::wrap_and_apply_header(&mut b, 0);
-    e.correlation_id(42);
-    e.response_stream_id(102);
-    e.version(1);
-    let after_ch = e.response_channel(channel.as_bytes())?;
-    let after_cred = after_ch.encoded_credentials(creds)?;
-    let complete = after_cred.client_info(b"")?;
+    let complete = ErgoSessionConnectRequestEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoSessionConnectRequestFixedFields {
+            correlation_id: 42,
+            response_stream_id: 102,
+            version: Some(1),
+        })
+        .response_channel(channel.as_bytes())?
+        .encoded_credentials(creds)?
+        .client_info(b"")?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_SESSION_CONNECT_REQUEST[..]);
 
     Ok(())
@@ -142,10 +154,12 @@ fn parity_ergo_session_connect_request() -> Result<(), Box<dyn std::error::Error
 fn parity_ergo_challenge() -> Result<(), Box<dyn std::error::Error>> {
     let tok = b"challenge-token-12345";
     let mut b = [0u8; 128];
-    let mut e = ErgoChallengeEncoder::wrap_and_apply_header(&mut b, 0);
-    e.correlation_id(200);
-    e.cluster_session_id(5);
-    let complete = e.encoded_challenge(tok)?;
+    let complete = ErgoChallengeEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoChallengeFixedFields {
+            correlation_id: 200,
+            cluster_session_id: 5,
+        })
+        .encoded_challenge(tok)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE[..]);
 
     Ok(())
@@ -155,10 +169,12 @@ fn parity_ergo_challenge() -> Result<(), Box<dyn std::error::Error>> {
 fn parity_ergo_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
     let rcreds = b"response-creds";
     let mut b = [0u8; 128];
-    let mut e = ErgoChallengeResponseEncoder::wrap_and_apply_header(&mut b, 0);
-    e.correlation_id(300);
-    e.cluster_session_id(8);
-    let complete = e.encoded_credentials(rcreds)?;
+    let complete = ErgoChallengeResponseEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoChallengeResponseFixedFields {
+            correlation_id: 300,
+            cluster_session_id: 8,
+        })
+        .encoded_credentials(rcreds)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_CHALLENGE_RESPONSE[..]);
 
     Ok(())
@@ -168,11 +184,13 @@ fn parity_ergo_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
 fn parity_ergo_new_leader_event() -> Result<(), Box<dyn std::error::Error>> {
     let endpoints = "0=localhost:9010,1=localhost:9011,2=localhost:9012";
     let mut b = [0u8; 256];
-    let mut e = ErgoNewLeaderEventEncoder::wrap_and_apply_header(&mut b, 0);
-    e.leadership_term_id(10);
-    e.cluster_session_id(99);
-    e.leader_member_id(1);
-    let complete = e.ingress_endpoints(endpoints.as_bytes())?;
+    let complete = ErgoNewLeaderEventEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoNewLeaderEventFixedFields {
+            leadership_term_id: 10,
+            cluster_session_id: 99,
+            leader_member_id: 1,
+        })
+        .ingress_endpoints(endpoints.as_bytes())?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_NEW_LEADER_EVENT[..]);
 
     Ok(())
@@ -183,13 +201,15 @@ fn parity_ergo_admin_response() -> Result<(), Box<dyn std::error::Error>> {
     let msg = b"ok";
     let payload: &[u8] = b"";
     let mut b = [0u8; 128];
-    let mut e = ErgoAdminResponseEncoder::wrap_and_apply_header(&mut b, 0);
-    e.cluster_session_id(1);
-    e.correlation_id(2);
-    e.request_type(ErgoAdminRequestType::SNAPSHOT);
-    e.response_code(ErgoAdminResponseCode::OK);
-    let after_msg = e.message(msg)?;
-    let complete = after_msg.payload(payload)?;
+    let complete = ErgoAdminResponseEncoder::wrap_and_apply_header(&mut b, 0)
+        .fixed(&ErgoAdminResponseFixedFields {
+            cluster_session_id: 1,
+            correlation_id: 2,
+            request_type: ErgoAdminRequestType::SNAPSHOT,
+            response_code: ErgoAdminResponseCode::OK,
+        })
+        .message(msg)?
+        .payload(payload)?;
     assert_eq!(complete.as_bytes_with_header(), &GOLDEN_ADMIN_RESPONSE[..]);
 
     Ok(())

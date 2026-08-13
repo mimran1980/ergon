@@ -260,10 +260,8 @@ fn attached_group_reached_through_a_message_tail_can_finish()
             .fuel_figures(1, |g| {
                 g.add(|mut e| {
                     e.speed(30).mpg(35.9);
-                    e.usage_description(b"city").unwrap();
-                    Ok(())
-                })?;
-                Ok(())
+                    e.usage_description(b"city")
+                })
             })?
             .performance_figures(0, |_| Ok(()))?
             .manufacturer(b"H")?
@@ -393,17 +391,44 @@ fn dynamic_group_has_no_start_entry() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
-fn dynamic_group_has_no_complete_or_add_checked() -> Result<(), Box<dyn std::error::Error>> {
-    let (_, src) = generate(&Paths::example_schema(), "gp_no_complete");
+fn dynamic_group_incomplete_entry_fails_to_compile() -> Result<(), Box<dyn std::error::Error>> {
+    // T-19: dynamic add requires EntryComplete; skipping required var-data tails
+    // cannot produce that type.
+    let (_, src) = generate(&Paths::example_schema(), "gp_dyn_incomplete");
     compile_fails_with_diagnostics(
-        "gp_no_complete",
+        "gp_dyn_incomplete",
         &src,
         r#"
         let mut buf = [0u8; 256];
         let mut g = FuelFiguresEncoder::wrap(&mut buf, 0, 1);
-        let _ = g.add_checked(|e| e.complete());
+        // Incomplete: fixed fields only — never writes usage_description.
+        let _ = g.add(|mut e| {
+            e.speed(30).mpg(35.9);
+            Ok(e) // EntryEncoder is not EntryComplete
+        });
         "#,
-        &["add_checked"],
+        &["FuelFiguresEntryComplete", "mismatched types", "expected"],
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_group_complete_entry_encodes() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_dyn_complete");
+    compile_and_run(
+        "gp_dyn_complete",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        let mut g = FuelFiguresEncoder::wrap(&mut buf, 0, 1);
+        g.add(|mut e| {
+            e.speed(30).mpg(35.9);
+            e.usage_description(b"city")
+        }).expect("dynamic complete entry");
+        assert_eq!(g.written(), 1);
+        // body: speed LE u16=30 at 0, mpg f32, then len-prefix usage
+        assert_eq!(&buf[0..2], &30u16.to_le_bytes());
+        "#,
     );
     Ok(())
 }

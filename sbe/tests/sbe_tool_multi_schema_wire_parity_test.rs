@@ -335,8 +335,8 @@ fn basic_schema_fixed_scalar_matrix() {
 
         for tag in [0u32, 1, 42, 0xFFFF_FFFE] {
             let mut ebuf = [0u8; 64];
-            let mut e = TestMessage50001Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag40001(tag);
+            let e = TestMessage50001Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage50001FixedFields { tag40001: tag });
             let el = TestMessage50001Encoder::ENCODED_LENGTH;
 
             let mut tbuf = [0u8; 64];
@@ -453,8 +453,8 @@ fn dual_decode_basic_schema_scalar_roundtrip() {
         // Encode with ergon, decode with ergon + sbe-tool — compare field values.
         for tag in [0u32, 1, 42, 0xFFFF_FFFE] {
             let mut ebuf = [0u8; 64];
-            let mut e = TestMessage50001Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag40001(tag);
+            let e = TestMessage50001Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage50001FixedFields { tag40001: tag });
             let ergo_bytes = &ebuf[..TestMessage50001Encoder::ENCODED_LENGTH];
 
             // Decode ergon-produced bytes with ergon's own decoder (sanity check)
@@ -496,10 +496,16 @@ fn basic_types_message1() {
             for sv_bits in [0u32, 1u32 << 26] {
                 let sv = ToolSet::new(sv_bits);
                 let mut ebuf = [0u8; 256];
-                let mut e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-                e.int64_field(-42);
-                e.enumfield(ev);
-                e.setfield(SET(sv_bits));
+                let e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                    .fixed(&Message1FixedFields {
+                        // header/edtfield were never set pre-`fixed()`; keep the
+                        // zero wire image so the parity bytes are unchanged.
+                        header: MessageHeader::new(0, 0, 0, 0),
+                        edtfield: [0u8; 20],
+                        int64_field: -42,
+                        enumfield: ev,
+                        setfield: SET(sv_bits),
+                    });
                 let el = Message1Encoder::ENCODED_LENGTH;
 
                 let mut tbuf = [0u8; 256];
@@ -550,11 +556,11 @@ fn basic_group_counts_and_symbols() {
 
         for (tag1, entries) in cases {
             let mut ebuf = [0u8; 512];
-            let mut e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(*tag1);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields { tag1: *tag1 });
             let e = e.entries(entries.len() as u8, |g| {
                 for (sym, v) in *entries {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         let mut arr = [0u8; 20];
                         let b = sym.as_bytes();
                         let n = b.len().min(20);
@@ -626,31 +632,31 @@ fn nested_group_depth_matrix() {
 
         for (a, nx, ny, nz) in shapes {
             let mut ebuf = [0u8; 1024];
-            let mut e = TopEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.a(a);
+            let e = TopEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TopFixedFields { a: a });
             let e = e.x(nx as u8, |xg| {
                 for xi in 0..nx {
-                    xg.add(|x| {
+                    // Each entry completes with its nested group, so the closure
+                    // returns that group's result rather than `Ok(())`.
+                    xg.add(|mut x| {
                         x.b(xi as u8);
                         x.y(ny as u8, |yg| {
                             for yi in 0..ny {
-                                yg.add(|y| {
+                                yg.add(|mut y| {
                                     y.c(yi as u8);
                                     y.z(nz as u8, |zg| {
                                         for zi in 0..nz {
-                                            zg.add(|z| {
+                                            zg.add(|mut z| {
                                                 z.d(zi as u8);
                                                 Ok(())
                                             })?;
                                         }
                                         Ok(())
-                                    })?;
-                                    Ok(())
+                                    })
                                 })?;
                             }
                             Ok(())
-                        })?;
-                        Ok(())
+                        })
                     })?;
                 }
                 Ok(())
@@ -844,11 +850,11 @@ fn issue984_group_fixed_strings() {
 
         for (id, rows) in cases {
             let mut ebuf = [0u8; 512];
-            let mut e = SimpleMessageEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.id(*id);
+            let e = SimpleMessageEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&SimpleMessageFixedFields { id: *id });
             let e = e.my_group(rows.len() as u8, |g| {
                 for (f1, f2, f3) in *rows {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         let mut a = [b' '; 4];
                         let mut b = [b' '; 5];
                         let mut c = [b' '; 6];
@@ -913,10 +919,8 @@ fn baseline_car_empty_and_minimal() {
         // Empty tails
         {
             let mut ebuf = [0u8; 256];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(1).model_year(2000).available(false.into()).code(Model::B);
-            e.some_numbers([0; 4]).vehicle_code([0; 6]).extras(OptionalExtras::default());
-            e.engine(Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 1, model_year: 2000, available: false.into(), code: Model::B, some_numbers: [0; 4], vehicle_code: [0; 6], extras: OptionalExtras::default(), engine: Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)) });
             let e = e.fuel_figures(0, |_| Ok(()))?;
             let e = e.performance_figures(0, |_| Ok(()))?;
             let e = e.manufacturer(b"")?;
@@ -959,15 +963,12 @@ fn baseline_car_empty_and_minimal() {
         // One fuel entry, empty perf, short var-data
         {
             let mut ebuf = [0u8; 512];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(99).model_year(2020).available(true.into()).code(Model::C);
-            e.some_numbers([9, 8, 7, 6]).vehicle_code(*b"XYZXYZ").extras(OptionalExtras::default());
-            e.engine(Engine::new(1600, 4, *b"ABC", 10, false.into(), Booster::new(BoostType::SUPERCHARGER, 50)));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 99, model_year: 2020, available: true.into(), code: Model::C, some_numbers: [9, 8, 7, 6], vehicle_code: *b"XYZXYZ", extras: OptionalExtras::default(), engine: Engine::new(1600, 4, *b"ABC", 10, false.into(), Booster::new(BoostType::SUPERCHARGER, 50)) });
             let e = e.fuel_figures(1, |g| {
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.speed(40).mpg(33.3);
-                    ent.usage_description(b"city")?;
-                    Ok(())
+                    ent.usage_description(b"city")
                 })?;
                 Ok(())
             })?;
@@ -1039,13 +1040,17 @@ fn bigendian_car_empty() {
 
         // BE schema someNumbers length may be 5 — detect from encoder constants / API.
         let mut ebuf = [0u8; 256];
-        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.serial_number(1).model_year(2000).available(false.into()).code(Model::B);
-        // Probe array size via meta / try both? Use length from type.
-        // Read generated: some_numbers takes [u32; N]
-        e.some_numbers([0; 5]);
-        e.vehicle_code([0; 6]).extras(OptionalExtras::default());
-        e.engine(Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)));
+        let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: false.into(),
+                code: Model::B,
+                some_numbers: [0; 5],
+                vehicle_code: [0; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)),
+            });
         let e = e.fuel_figures(0, |_| Ok(()))?;
         let e = e.performance_figures(0, |_| Ok(()))?;
         let e = e.manufacturer(b"")?;
@@ -1102,16 +1107,12 @@ fn bigendian_car_empty() {
         // Non-trivial: one fuel entry with non-zero data, short var-data
         {
             let mut ebuf = [0u8; 512];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(99).model_year(2020).available(true.into()).code(Model::C);
-            e.some_numbers([9, 8, 7, 6, 5]);
-            e.vehicle_code(*b"XYZXYZ").extras(OptionalExtras::default());
-            e.engine(Engine::new(1600, 4, *b"ABC", 10, false.into(), Booster::new(BoostType::SUPERCHARGER, 50)));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 99, model_year: 2020, available: true.into(), code: Model::C, some_numbers: [9, 8, 7, 6, 5], vehicle_code: *b"XYZXYZ", extras: OptionalExtras::default(), engine: Engine::new(1600, 4, *b"ABC", 10, false.into(), Booster::new(BoostType::SUPERCHARGER, 50)) });
             let e = e.fuel_figures(1, |g| {
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.speed(40).mpg(33.3);
-                    ent.usage_description(b"city")?;
-                    Ok(())
+                    ent.usage_description(b"city")
                 })?;
                 Ok(())
             })?;
@@ -1170,7 +1171,8 @@ fn basic_var_length_passwords() {
         for len in [0usize, 1, 10, 50, 254] {
             let password: Vec<u8> = std::iter::repeat(b'x').take(len).collect();
             let mut ebuf = vec![0u8; 2048];
-            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields {});
             let e = e.encrypted_new_password(&password)?;
             let el = e.encoded_length_with_header();
 
@@ -1188,8 +1190,8 @@ fn basic_var_length_passwords() {
         // uint8 wire prefix.
         let overflow = vec![b'x'; 256];
         let mut overflow_buf = vec![0u8; 512];
-        let overflow_enc =
-            TestMessage1Encoder::wrap_and_apply_header(&mut overflow_buf, 0);
+        let overflow_enc = TestMessage1Encoder::wrap_and_apply_header(&mut overflow_buf, 0)
+            .fixed(&TestMessage1FixedFields {});
         assert!(matches!(
             overflow_enc.encrypted_new_password(&overflow),
             Err(sbe_rt::EncodeError::VarDataTooLong {
@@ -1224,8 +1226,8 @@ fn group_with_data_message1() {
         // empty group
         {
             let mut ebuf = [0u8; 128];
-            let mut e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(0);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields { tag1: 0 });
             let e = e.entries(0, |_| Ok(()))?;
             let el = e.encoded_length_with_header();
             let mut tbuf = [0u8; 128];
@@ -1242,20 +1244,18 @@ fn group_with_data_message1() {
         // two entries with var-data
         {
             let mut ebuf = [0u8; 512];
-            let mut e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(7);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields { tag1: 7 });
             let e = e.entries(2, |g| {
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.tag_group1(*b"SYM1     ");
                     ent.tag_group2(100);
-                    ent.var_data_field(b"hello")?;
-                    Ok(())
+                    ent.var_data_field(b"hello")
                 })?;
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.tag_group1(*b"SYM2     ");
                     ent.tag_group2(-5);
-                    ent.var_data_field(b"")?;
-                    Ok(())
+                    ent.var_data_field(b"")
                 })?;
                 Ok(())
             })?;
@@ -1280,20 +1280,17 @@ fn group_with_data_message1() {
         {
             let n: u8 = 250;
             let mut ebuf = vec![0u8; 32768];
-            let mut e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(255);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields { tag1: 255 });
             let e = e.entries(n, |g| {
                 for i in 0..n {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         let mut arr = [0u8; 9];
                         arr[0] = b'A';
                         arr[1] = (i % 10) + b'0';
                         ent.tag_group1(arr);
                         ent.tag_group2(i as i64);
-                        if i % 3 == 0 {
-                            ent.var_data_field(b"x")?;
-                        }
-                        Ok(())
+                        ent.var_data_field(if i % 3 == 0 { &b"x"[..] } else { &b""[..] })
                     })?;
                 }
                 Ok(())
@@ -1313,9 +1310,7 @@ fn group_with_data_message1() {
                 arr[0] = b'A';
                 arr[1] = (i % 10) + b'0';
                 ge.tag_group_1(&arr).tag_group_2(i as i64);
-                if i % 3 == 0 {
-                    ge.var_data_field("x");
-                }
+                ge.var_data_field(if i % 3 == 0 { "x" } else { "" });
             }
             t = ge.parent().unwrap();
             let tl = t.get_limit();
@@ -1358,16 +1353,14 @@ fn group_with_data_multi_var_data_message2() {
         ];
         for (tag, entries) in cases {
             let mut ebuf = [0u8; 1024];
-            let mut e = TestMessage2Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(*tag);
+            let e = TestMessage2Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage2FixedFields { tag1: *tag });
             let e = e.entries(entries.len() as u8, |g| {
                 for (sym, v, vd1, vd2) in *entries {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.tag_group1(**sym);
                         ent.tag_group2(*v);
-                        ent.var_data_field1(*vd1)?;
-                        ent.var_data_field2(*vd2)?;
-                        Ok(())
+                        ent.var_data_field1(*vd1)?.var_data_field2(*vd2)
                     })?;
                 }
                 Ok(())
@@ -1426,24 +1419,24 @@ fn group_with_data_nested_group_message3() {
         ];
         for (tag, n_ent, nested_data, outer_vd) in shapes {
             let mut ebuf = [0u8; 2048];
-            let mut e = TestMessage3Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(*tag);
+            let e = TestMessage3Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage3FixedFields { tag1: *tag });
             let e = e.entries(*n_ent, |g| {
                 for (n_nested, nested_vd) in *nested_data {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.tag_group1(*b"SYM\0\0\0\0\0\0");
+                        // `nested_entries` consumes the entry and returns the
+                        // next stage, so the outer var-data must chain off it.
                         ent.nested_entries(*n_nested, |ng| {
                             for _ in 0..*n_nested {
-                                ng.add(|nent| {
+                                ng.add(|mut nent| {
                                     nent.tag_group2(42);
-                                    nent.var_data_field_nested(*nested_vd)?;
-                                    Ok(())
+                                    nent.var_data_field_nested(*nested_vd)
                                 })?;
                             }
                             Ok(())
-                        })?;
-                        ent.var_data_field(*outer_vd)?;
-                        Ok(())
+                        })?
+                        .var_data_field(*outer_vd)
                     })?;
                 }
                 Ok(())
@@ -1513,14 +1506,12 @@ fn group_with_data_var_data_only_message4() {
         ];
         for (tag, entries) in cases {
             let mut ebuf = [0u8; 1024];
-            let mut e = TestMessage4Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(*tag);
+            let e = TestMessage4Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage4FixedFields { tag1: *tag });
             let e = e.entries(entries.len() as u8, |g| {
                 for (vd1, vd2) in *entries {
-                    g.add(|ent| {
-                        ent.var_data_field1(*vd1)?;
-                        ent.var_data_field2(*vd2)?;
-                        Ok(())
+                    g.add(|mut ent| {
+                        ent.var_data_field1(*vd1)?.var_data_field2(*vd2)
                     })?;
                 }
                 Ok(())
@@ -1567,6 +1558,29 @@ fn fixed_array_u8_and_i8_patterns() {
             message_header_codec,
         };
 
+        /// All-zero `DemoFixedFields` — the wire image the pre-`fixed()` form
+        /// left for unset fields. `FixedFields` has no `Default` by design, so
+        /// spell the base once and override with struct-update syntax.
+        fn demo_zero() -> DemoFixedFields {
+            DemoFixedFields {
+                fixed16_char: [0u8; 16], fixed16_char_end: 0,
+                fixed16_ascii_char: [0u8; 16], fixed16_ascii_char_end: 0,
+                fixed16_gb18030_char: [0u8; 16], fixed16_gb18030_char_end: 0,
+                fixed16_utf8_char: [0u8; 16], fixed16_utf8_char_end: 0,
+                fixed16_u8: [0u8; 16], fixed16_u8_end: 0,
+                fixed16_ascii_u8: [0u8; 16], fixed16_ascii_u8_end: 0,
+                fixed16_gb18030_u8: [0u8; 16], fixed16_gb18030_u8_end: 0,
+                fixed16_utf8_u8: [0u8; 16], fixed16_utf8_u8_end: 0,
+                fixed16i8: [0i8; 16], fixed16i8_end: 0,
+                fixed16i16: [0i16; 16], fixed16i16_end: 0,
+                fixed16i32: [0i32; 16], fixed16i32_end: 0,
+                fixed16i64: [0i64; 16], fixed16i64_end: 0,
+                fixed16u16: [0u16; 16], fixed16u16_end: 0,
+                fixed16u32: [0u32; 16], fixed16u32_end: 0,
+                fixed16u64: [0u64; 16], fixed16u64_end: 0,
+            }
+        }
+
         let patterns: &[[u8; 16]] = &[
             [0u8; 16],
             *b"0123456789ABCDEF",
@@ -1578,11 +1592,8 @@ fn fixed_array_u8_and_i8_patterns() {
         ];
         for a16 in patterns {
             let mut ebuf = [0u8; 1024];
-            let mut e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.fixed16_u8(*a16);
-            e.fixed16_char(*a16);
-            e.fixed16_ascii_u8(*a16);
-            e.fixed16_utf8_u8(*a16);
+            let mut e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&DemoFixedFields { fixed16_u8: *a16, fixed16_char: *a16, fixed16_ascii_u8: *a16, fixed16_utf8_u8: *a16, ..demo_zero() });
             let i8v: [i8; 16] = core::array::from_fn(|i| a16[i] as i8);
             e.fixed16i8(i8v);
             let el = DemoEncoder::ENCODED_LENGTH;
@@ -1630,14 +1641,31 @@ fn fixed_array_multibyte_types() {
         let i64v: [i64; 16] = core::array::from_fn(|i| patterns[i] as i64 * 1_000_000);
         let u64v: [u64; 16] = core::array::from_fn(|i| (i as u64 + 1) * 1_000_000_000);
 
+
+        /// spell the base once and override with struct-update syntax.
+        fn demo_zero() -> DemoFixedFields {
+            DemoFixedFields {
+                fixed16_char: [0u8; 16], fixed16_char_end: 0,
+                fixed16_ascii_char: [0u8; 16], fixed16_ascii_char_end: 0,
+                fixed16_gb18030_char: [0u8; 16], fixed16_gb18030_char_end: 0,
+                fixed16_utf8_char: [0u8; 16], fixed16_utf8_char_end: 0,
+                fixed16_u8: [0u8; 16], fixed16_u8_end: 0,
+                fixed16_ascii_u8: [0u8; 16], fixed16_ascii_u8_end: 0,
+                fixed16_gb18030_u8: [0u8; 16], fixed16_gb18030_u8_end: 0,
+                fixed16_utf8_u8: [0u8; 16], fixed16_utf8_u8_end: 0,
+                fixed16i8: [0i8; 16], fixed16i8_end: 0,
+                fixed16i16: [0i16; 16], fixed16i16_end: 0,
+                fixed16i32: [0i32; 16], fixed16i32_end: 0,
+                fixed16i64: [0i64; 16], fixed16i64_end: 0,
+                fixed16u16: [0u16; 16], fixed16u16_end: 0,
+                fixed16u32: [0u32; 16], fixed16u32_end: 0,
+                fixed16u64: [0u64; 16], fixed16u64_end: 0,
+            }
+        }
+
         let mut ebuf = [0u8; 2048];
-        let mut e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.fixed16i16(i16v);
-        e.fixed16u16(u16v);
-        e.fixed16i32(i32v);
-        e.fixed16u32(u32v);
-        e.fixed16i64(i64v);
-        e.fixed16u64(u64v);
+        let mut e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&DemoFixedFields { fixed16i16: i16v, fixed16u16: u16v, fixed16i32: i32v, fixed16u32: u32v, fixed16i64: i64v, fixed16u64: u64v, ..demo_zero() });
         let el = DemoEncoder::ENCODED_LENGTH;
 
         let mut tbuf = [0u8; 2048];
@@ -1713,9 +1741,8 @@ fn issue987_composite_field() {
 
         for (old, f1, f2) in [(0u16, 0u16, 0u32), (1, 2, 3), (100, 200, 300)] {
             let mut ebuf = [0u8; 64];
-            let mut e = Issue987Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.old_field(old);
-            e.new_field(NewComposite::new(f1, f2));
+            let e = Issue987Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue987FixedFields { old_field: old, new_field: NewComposite::new(f1, f2) });
             let el = Issue987Encoder::ENCODED_LENGTH;
 
             let mut tbuf = [0u8; 64];
@@ -1752,9 +1779,8 @@ fn issue972_optional_composite() {
         // present
         {
             let mut ebuf = [0u8; 64];
-            let mut e = Issue972Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.old_field(9);
-            e.new_field(NewComposite::new(1, 2));
+            let e = Issue972Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue972FixedFields { old_field: 9, new_field: Some(NewComposite::new(1, 2)) });
             let el = Issue972Encoder::ENCODED_LENGTH;
             let mut tbuf = [0u8; 64];
             let mut t = ToolEnc::default()
@@ -1793,9 +1819,8 @@ fn issue895_optional_floats() {
         // Present floats.
         for (f, d) in [(1.0f32, 2.0f64), (3.14, -2.5), (-0.0, 0.0)] {
             let mut ebuf = [0u8; 64];
-            let mut e = Issue895Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.optional_float(f);
-            e.optional_double(d);
+            let e = Issue895Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue895FixedFields { optional_float: Some(f), optional_double: Some(d) });
             let el = Issue895Encoder::ENCODED_LENGTH;
 
             let mut tbuf = [0u8; 64];
@@ -1857,13 +1882,18 @@ fn optional_enum_nullify_values() {
             Encoder, WriteBuf,
             enum_type::EnumType as ToolEnum,
             message_header_codec,
+            optional_encoding_enum_type,
             optional_enum_nullify_codec::OptionalEnumNullifyEncoder as ToolEnc,
         };
 
         {
             let mut ebuf = [0u8; 128];
-            let mut e = OptionalEnumNullifyEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.optional_enum(EnumType::NullVal);
+            let e = OptionalEnumNullifyEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&OptionalEnumNullifyFixedFields {
+                    optional_enum: None,
+                    required_enum_from_optional_type: OptionalEncodingEnumType::NullVal,
+                    optional_composite: OptionalComposite::new(0),
+                });
             // optional composite: leave zero / tool nullify
             let el = OptionalEnumNullifyEncoder::ENCODED_LENGTH;
             let mut tbuf = [0u8; 128];
@@ -1871,6 +1901,13 @@ fn optional_enum_nullify_values() {
                 .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
             t = t.header(0).parent().unwrap();
             t.nullify_optional_fields();
+            // `requiredEnumFromOptionalType` is a REQUIRED field, so
+            // nullify_optional_fields() leaves it untouched while ergon's
+            // FixedFields must write it. Both arms write the same value so the
+            // comparison covers identical logical work.
+            t.required_enum_from_optional_type(
+                optional_encoding_enum_type::OptionalEncodingEnumType::NullVal,
+            );
             let tl = t.get_limit();
             assert_frames_eq("opt_enum null", &ebuf[..el], &tbuf[..tl]);
         }
@@ -1898,13 +1935,20 @@ fn new_order_single_payload() {
 
         // Zero buffers + set only required fixed fields (no optional price).
         let mut ebuf = [0u8; 256];
-        let mut e = NewOrderSingleEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.cl_ord_id(*b"CLORD001");
-        e.account(*b"ACCT0001");
-        e.symbol(*b"EURUSD  ");
-        e.side(SideEnum::Buy);
-        e.ord_type(OrdTypeEnum::Limit);
-        e.order_qty(QtyEncoding::new(100));
+        let e = NewOrderSingleEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&NewOrderSingleFixedFields {
+                cl_ord_id: *b"CLORD001",
+                account: *b"ACCT0001",
+                symbol: *b"EURUSD  ",
+                side: SideEnum::Buy,
+                ord_type: OrdTypeEnum::Limit,
+                order_qty: QtyEncoding::new(100),
+                // unset pre-`fixed()`; keep the zero wire image so the parity
+                // bytes are unchanged (zero mantissa, not the null image).
+                price: OptionalDecimalEncoding::new(0),
+                stop_px: OptionalDecimalEncoding::new(0),
+                transact_time: 0,
+            });
         let el = NewOrderSingleEncoder::ENCODED_LENGTH;
 
         let mut tbuf = [0u8; 256];
@@ -1950,10 +1994,8 @@ fn extension_car_empty() {
         };
 
         let mut ebuf = [0u8; 256];
-        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.serial_number(1).model_year(2000).available(false.into()).code(Model::B);
-        e.some_numbers([0; 4]).vehicle_code([0; 6]).extras(OptionalExtras::default());
-        e.engine(Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)));
+        let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&CarFixedFields { serial_number: 1, model_year: 2000, available: false.into(), code: Model::B, some_numbers: [0; 4], vehicle_code: [0; 6], extras: OptionalExtras::default(), engine: Engine::new(0, 0, [0; 3], 0, false.into(), Booster::new(BoostType::TURBO, 0)), cup_holder_count: Some(0), uuid: Some([0i64; 2]) });
         let e = e.fuel_figures(0, |_| Ok(()))?;
         let e = e.performance_figures(0, |_| Ok(()))?;
         let e = e.manufacturer(b"")?;
@@ -1991,16 +2033,12 @@ fn extension_car_empty() {
         // Non-trivial: one fuel entry with non-zero data
         {
             let mut ebuf = [0u8; 512];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(42).model_year(2021).available(true.into()).code(Model::A);
-            e.some_numbers([1, 2, 3, 4]);
-            e.vehicle_code(*b"EXT123").extras(OptionalExtras::default());
-            e.engine(Engine::new(2000, 6, *b"XYZ", 20, true.into(), Booster::new(BoostType::NITROUS, 200)));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 42, model_year: 2021, available: true.into(), code: Model::A, some_numbers: [1, 2, 3, 4], vehicle_code: *b"EXT123", extras: OptionalExtras::default(), engine: Engine::new(2000, 6, *b"XYZ", 20, true.into(), Booster::new(BoostType::NITROUS, 200)), cup_holder_count: Some(0), uuid: Some([0i64; 2]) });
             let e = e.fuel_figures(1, |g| {
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.speed(60).mpg(25.5);
-                    ent.usage_description(b"ext-hwy")?;
-                    Ok(())
+                    ent.usage_description(b"ext-hwy")
                 })?;
                 Ok(())
             })?;
@@ -2059,10 +2097,8 @@ fn bench_car_empty() {
 
         // car.xml: someNumbers=[i32;5], no activationCode; manufacturer/model are last var-data.
         let mut ebuf = [0u8; 256];
-        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.serial_number(1).model_year(2000).available(false.into()).code(Model::B);
-        e.some_numbers([0; 5]).vehicle_code([0; 6]).extras(OptionalExtras::default());
-        e.engine(Engine::new(0, 0, [0; 3]));
+        let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&CarFixedFields { serial_number: 1, model_year: 2000, available: false.into(), code: Model::B, some_numbers: [0; 5], vehicle_code: [0; 6], extras: OptionalExtras::default(), engine: Engine::new(0, 0, [0; 3]) });
         let e = e.fuel_figures(0, |_| Ok(()))?;
         let e = e.performance_figures(0, |_| Ok(()))?;
         let e = e.manufacturer(b"")?;
@@ -2096,12 +2132,10 @@ fn bench_car_empty() {
         // Non-trivial: one fuel entry with non-zero data
         {
             let mut ebuf = [0u8; 512];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(7).model_year(2022).available(true.into()).code(Model::A);
-            e.some_numbers([1, 2, 3, 4, 5]).vehicle_code(*b"BNCHMK").extras(OptionalExtras::default());
-            e.engine(Engine::new(3000, 8, *b"BMW"));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 7, model_year: 2022, available: true.into(), code: Model::A, some_numbers: [1, 2, 3, 4, 5], vehicle_code: *b"BNCHMK", extras: OptionalExtras::default(), engine: Engine::new(3000, 8, *b"BMW") });
             let e = e.fuel_figures(1, |g| {
-                g.add(|ent| {
+                g.add(|mut ent| {
                     ent.speed(80).mpg(18.5);
                     Ok(())
                 })?;
@@ -2142,13 +2176,11 @@ fn bench_car_empty() {
 
             // Ergon encode
             let mut ebuf = vec![0u8; 65536];
-            let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.serial_number(1).model_year(2000).available(false.into()).code(Model::A);
-            e.some_numbers([0; 5]).vehicle_code([0; 6]).extras(OptionalExtras::default());
-            e.engine(Engine::new(0, 0, [0; 3]));
+            let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&CarFixedFields { serial_number: 1, model_year: 2000, available: false.into(), code: Model::A, some_numbers: [0; 5], vehicle_code: [0; 6], extras: OptionalExtras::default(), engine: Engine::new(0, 0, [0; 3]) });
             let e = e.fuel_figures(n, |g| {
                 for i in 0..n {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.speed(i).mpg((i as f32) * 0.5);
                         Ok(())
                     })?;
@@ -2222,33 +2254,35 @@ fn encoding_types_message1() {
         ];
         for (i, (ec, e8, b0, b6, b15, b16, b26)) in cases.iter().enumerate() {
             let mut ebuf = [0u8; 128];
-            let mut e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.header(MessageHeader::new(
-                Message1Encoder::BLOCK_LENGTH as u16,
-                Message1Encoder::TEMPLATE_ID,
-                Message1Encoder::SCHEMA_ID,
-                Message1Encoder::SCHEMA_VERSION,
-            ));
-            e.ec(*ec);
-            e.e8(*e8);
             let mut s8 = SUInt8::default();
             s8.bit0(*b0);
             s8.bit6(*b6);
-            e.s8(s8);
             let mut s16 = SUInt16::default();
             s16.bit0(*b0);
             s16.bit15(*b15);
-            e.s16(s16);
             let mut s32 = SUInt32::default();
             s32.bit0(*b0);
             s32.bit16(*b16);
             s32.bit26(*b26);
-            e.s32(s32);
             let mut s64 = SUInt64::default();
             s64.bit0(*b0);
             s64.bit16(*b16);
             s64.bit26(*b26);
-            e.s64(s64);
+            let _e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message1FixedFields {
+                    header: MessageHeader::new(
+                        Message1Encoder::BLOCK_LENGTH as u16,
+                        Message1Encoder::TEMPLATE_ID,
+                        Message1Encoder::SCHEMA_ID,
+                        Message1Encoder::SCHEMA_VERSION,
+                    ),
+                    ec: *ec,
+                    e8: *e8,
+                    s8,
+                    s16,
+                    s32,
+                    s64,
+                });
             let el = Message1Encoder::BLOCK_LENGTH + Message1Encoder::HEADER_LENGTH;
 
             let mut tbuf = [0u8; 128];
@@ -2312,13 +2346,15 @@ fn block_length_message4_var_data() {
         for (i, pw) in [b"" as &[u8], b"secret", long_pw].iter().enumerate() {
             let pw: &[u8] = pw;
             let mut ebuf = [0u8; 512];
-            let mut e = Message4Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.header(MessageHeader::new(
+            let e = Message4Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message4FixedFields {
+                    header: MessageHeader::new(
                 Message4Encoder::BLOCK_LENGTH as u16,
                 Message4Encoder::TEMPLATE_ID,
                 Message4Encoder::SCHEMA_ID,
                 Message4Encoder::SCHEMA_VERSION,
-            ));
+                    ),
+                });
             let e = e.encrypted_new_password(pw)?;
             let el = e.encoded_length_with_header();
 
@@ -2363,16 +2399,18 @@ fn block_length_no_block_length_message1() {
         // Header is a composite field, group with F1+F2.
         for n in [0u8, 1, 3] {
             let mut ebuf = [0u8; 512];
-            let mut e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.header(MessageHeader::new(
+            let e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message1FixedFields {
+                    header: MessageHeader::new(
                 Message1Encoder::BLOCK_LENGTH as u16,
                 Message1Encoder::TEMPLATE_ID,
                 Message1Encoder::SCHEMA_ID,
                 Message1Encoder::SCHEMA_VERSION,
-            ));
+                    ),
+                });
             let e = e.group(n, |g| {
                 for i in 0..n as u32 {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.f1(i);
                         ent.f2(i as u64 * 100);
                         Ok(())
@@ -2428,16 +2466,18 @@ fn block_length_on_message2() {
         // Message2: blockLength=64 on message, no blockLength on group.
         for n in [0u8, 1, 2] {
             let mut ebuf = [0u8; 512];
-            let mut e = Message2Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.header(MessageHeader::new(
+            let e = Message2Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message2FixedFields {
+                    header: MessageHeader::new(
                 Message2Encoder::BLOCK_LENGTH as u16,
                 Message2Encoder::TEMPLATE_ID,
                 Message2Encoder::SCHEMA_ID,
                 Message2Encoder::SCHEMA_VERSION,
-            ));
+                    ),
+                });
             let e = e.group(n, |g| {
                 for i in 0..n as u32 {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.f1(i);
                         ent.f2(i as u64 * 200);
                         Ok(())
@@ -2493,16 +2533,18 @@ fn block_length_on_group_message3() {
         // Message3: blockLength=64 on message, blockLength=16 on group.
         for n in [0u8, 1, 4] {
             let mut ebuf = [0u8; 512];
-            let mut e = Message3Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.header(MessageHeader::new(
+            let e = Message3Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message3FixedFields {
+                    header: MessageHeader::new(
                 Message3Encoder::BLOCK_LENGTH as u16,
                 Message3Encoder::TEMPLATE_ID,
                 Message3Encoder::SCHEMA_ID,
                 Message3Encoder::SCHEMA_VERSION,
-            ));
+                    ),
+                });
             let e = e.group(n, |g| {
                 for i in 0..n as u32 {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.f1(i + 100);
                         ent.f2(i as u64 * 300 + 1);
                         Ok(())
@@ -2559,8 +2601,8 @@ fn embedded_length_message2() {
             (0xDEAD_BEEF, b"embedded-length-password"),
         ] {
             let mut ebuf = [0u8; 256];
-            let mut e = Message2Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(tag);
+            let e = Message2Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message2FixedFields { tag1: tag });
             let e = e.encrypted_password(pw)?;
             let el = e.encoded_length_with_header();
 
@@ -2601,8 +2643,8 @@ fn embedded_length_group_with_dimension_message1() {
         // Message1: group with embedded-length dimension (uint8-based).
         for n in [0u8, 1, 3] {
             let mut ebuf = [0u8; 512];
-            let mut e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(42);
+            let e = Message1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Message1FixedFields { tag1: 42 });
             let e = e.list_ord_grp(n, |g| {
                 for i in 0..n {
                     let mut arr = [0u8; 14];
@@ -2610,7 +2652,7 @@ fn embedded_length_group_with_dimension_message1() {
                     let b = s.as_bytes();
                     let m = b.len().min(14);
                     arr[..m].copy_from_slice(&b[..m]);
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         ent.cl_ord_id(arr);
                         Ok(())
                     })?;
@@ -2662,8 +2704,8 @@ fn value_ref_constant_messages() {
         // MsgOne: composite timestamp with constant unit field (fixed-only).
         {
             let mut ebuf = [0u8; 256];
-            let mut e = MsgOneEncoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.timestamp_composite(UTCTimestampNanos::new(12345u64));
+            let e = MsgOneEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&MsgOneFixedFields { timestamp_composite: UTCTimestampNanos::new(12345u64) });
             let el = MsgOneEncoder::ENCODED_LENGTH;
             let ergo_bytes = e.as_bytes_with_header();
 
@@ -2762,8 +2804,8 @@ fn issue435_set_ref_in_header() {
         // issue435: big-endian, 9-byte header (set ref), composite field.
         for (ev, e_val) in [(EnumRef::One, ToolEnum::One), (EnumRef::Two, ToolEnum::Two)] {
             let mut ebuf = [0u8; 256];
-            let mut e = Issue435Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.example(ExampleRef::new(ev));
+            let e = Issue435Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue435FixedFields { example: ExampleRef::new(ev) });
 
             let mut tbuf = [0u8; 256];
             let mut t = ToolEnc::default()
@@ -2937,11 +2979,11 @@ fn dual_decode_group_cross_roundtrip() {
         for (tag1, entries) in cases {
             // Encode non-trivial payload with ergon
             let mut ebuf = [0u8; 512];
-            let mut e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0);
-            e.tag1(*tag1);
+            let e = TestMessage1Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&TestMessage1FixedFields { tag1: *tag1 });
             let e = e.entries(entries.len() as u8, |g| {
                 for (sym, v) in *entries {
-                    g.add(|ent| {
+                    g.add(|mut ent| {
                         let mut arr = [0u8; 20];
                         let b = sym.as_bytes();
                         arr[..b.len().min(20)].copy_from_slice(&b[..b.len().min(20)]);
@@ -3001,8 +3043,16 @@ fn all_types_le_uint16_var_data_and_scalars() {
         // Write var-data longer than 255 bytes to prove uint16 length prefix.
         let long_data: Vec<u8> = (0..200u8).cycle().take(400).collect(); // 400 bytes > uint8 max
         let mut ebuf = vec![0u8; 8192];
-        let mut e = AllTypesEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.enum_field(TestEnum::A);
+        let e = AllTypesEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&AllTypesFixedFields {
+                // Only enum_field was set pre-`fixed()`; the rest keep the zero
+                // wire image so parity bytes are unchanged.
+                scalar_composite: AllScalars::new(0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0),
+                float_pair: FloatPair::new(0.0, 0.0),
+                enum_field: TestEnum::A,
+                set_field: TestSet::default(),
+                fixed_array: [0u8; 8],
+            });
         let e = e.var_data(&long_data)?;
         let el = e.encoded_length_with_header();
         let ergo_bytes = &ebuf[..el];
@@ -3043,8 +3093,16 @@ fn all_types_be_big_endian() {
         // Big-endian: encode with non-trivial enum + var-data to verify BE wire format.
         let data = b"BE-test-data";
         let mut ebuf = vec![0u8; 2048];
-        let mut e = AllTypesEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.enum_field(TestEnum::A);
+        let e = AllTypesEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&AllTypesFixedFields {
+                // Only enum_field was set pre-`fixed()`; the rest keep the zero
+                // wire image so parity bytes are unchanged.
+                scalar_composite: AllScalars::new(0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0),
+                float_pair: FloatPair::new(0.0, 0.0),
+                enum_field: TestEnum::A,
+                set_field: TestSet::default(),
+                fixed_array: [0u8; 8],
+            });
         let e = e.var_data(data)?;
         let el = e.encoded_length_with_header();
         let ergo_bytes = &ebuf[..el];
@@ -3098,8 +3156,8 @@ fn uint64_var_data_length_is_byte_identical_and_cross_decodable() {
             let sequence = 0x1234_5678;
 
             let mut ergo_buf = vec![0u8; 1024];
-            let mut ergo_enc = WideDataEncoder::wrap_and_apply_header(&mut ergo_buf, 0);
-            ergo_enc.sequence(sequence);
+            let ergo_enc = WideDataEncoder::wrap_and_apply_header(&mut ergo_buf, 0)
+                .fixed(&WideDataFixedFields { sequence: sequence });
             let ergo_complete = ergo_enc.payload(&data)?;
             let ergo_len = ergo_complete.encoded_length_with_header();
 
@@ -3140,9 +3198,8 @@ fn uint64_var_data_length_is_byte_identical_and_cross_decodable() {
         // A malicious 64-bit prefix must return an error, never truncate on a
         // narrower target or overflow offset arithmetic.
         let mut malformed = vec![0u8; 20];
-        let mut malformed_enc =
-            WideDataEncoder::wrap_and_apply_header(&mut malformed, 0);
-        malformed_enc.sequence(1);
+        let malformed_enc = WideDataEncoder::wrap_and_apply_header(&mut malformed, 0)
+            .fixed(&WideDataFixedFields { sequence: 1 });
         let malformed_complete = malformed_enc.payload(&[])?;
         assert_eq!(malformed_complete.encoded_length_with_header(), 20);
         malformed[12..20].copy_from_slice(&(u64::MAX - 1).to_be_bytes());
@@ -3178,14 +3235,10 @@ fn extension_car_versioned_fields() {
         // sportsPack, sunRoof). Setting actingVersion high enough should
         // include them.
         let mut ebuf = [0u8; 1024];
-        let mut e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0);
-        e.serial_number(5).model_year(2023).available(true.into()).code(Model::A);
-        e.some_numbers([1, 2, 3, 4]);
-        e.vehicle_code(*b"EXTVER");
-        e.extras(OptionalExtras::default());
-        e.engine(Engine::new(1800, 4, *b"EXV", 12, false.into(), Booster::new(BoostType::TURBO, 150)));
+        let e = CarEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&CarFixedFields { serial_number: 5, model_year: 2023, available: true.into(), code: Model::A, some_numbers: [1, 2, 3, 4], vehicle_code: *b"EXTVER", extras: OptionalExtras::default(), engine: Engine::new(1800, 4, *b"EXV", 12, false.into(), Booster::new(BoostType::TURBO, 150)), cup_holder_count: Some(0), uuid: Some([0i64; 2]) });
         let e = e.fuel_figures(1, |g| {
-            g.add(|ent| { ent.speed(50).mpg(30.0); ent.usage_description(b"hwy")?; Ok(()) })?;
+            g.add(|mut ent| { ent.speed(50).mpg(30.0); ent.usage_description(b"hwy") })?;
             Ok(())
         }).unwrap();
         let e = e.performance_figures(0, |_| Ok(())).unwrap();

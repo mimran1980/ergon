@@ -578,9 +578,7 @@ pub(crate) fn generate_domain_recursive(
                     count,
                     |g| -> Result<(), sbe_rt::EncodeError> {
                         for e in &self.#g_field_ident {
-                            g.add(|entry| -> Result<(), sbe_rt::EncodeError> {
-                                e.encode_into(entry)
-                            })?;
+                            g.add(|entry| e.encode_into(entry))?;
                         }
                         Ok(())
                     }
@@ -899,14 +897,19 @@ pub(crate) fn generate_domain_recursive(
     }
 
     if is_entry {
-        // Entry domains: encode_into for use inside group closures
+        // Entry domains: encode_into for use inside group closures.
+        // Dynamic entries (var-data / nested groups) return EntryComplete so
+        // group `add` can require a completeness proof (T-19).
         let entry_encoder_ident = syn::Ident::new(&format!("{decoder_name}Encoder"), span);
-        let encode_body = if !vardata_encode_stmts.is_empty() || !group_encode_stmts.is_empty() {
+        let entry_complete_ident = syn::Ident::new(&format!("{decoder_name}Complete"), span);
+        let has_entry_tails = !vardata_encode_stmts.is_empty() || !group_encode_stmts.is_empty();
+        let encode_body = if has_entry_tails {
+            // Fixed fields on &mut EntryEncoder, then consuming tails → Complete.
             quote::quote! {
                 #(#encode_stmts)*
                 #(#group_encode_stmts)*
                 #(#vardata_encode_stmts)*
-                Ok(())
+                Ok(enc)
             }
         } else {
             quote::quote! {
@@ -961,24 +964,48 @@ pub(crate) fn generate_domain_recursive(
         }
         len_stmts.extend(quote::quote! { Ok(len) });
 
-        ts.extend(quote::quote! {
-            impl #domain_ident {
-                #[inline]
-                pub fn encode_into<'a>(
-                    &self,
-                    enc: &mut #entry_encoder_ident<'a>,
-                ) -> Result<(), sbe_rt::EncodeError> {
-                    #encode_body
-                }
+        if has_entry_tails {
+            ts.extend(quote::quote! {
+                impl #domain_ident {
+                    /// Encode this domain entry into a by-value entry encoder,
+                    /// returning the completeness proof required by dynamic
+                    /// group [`add`](crate).
+                    #[inline]
+                    pub fn encode_into<'a>(
+                        &self,
+                        mut enc: #entry_encoder_ident<'a>,
+                    ) -> Result<#entry_complete_ident<'a>, sbe_rt::EncodeError> {
+                        #encode_body
+                    }
 
-                /// Compute this entry's contribution to the total encoded length
-                /// (entry block + nested groups + entry var-data).
-                #[inline]
-                pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
-                    #len_stmts
+                    /// Compute this entry's contribution to the total encoded length
+                    /// (entry block + nested groups + entry var-data).
+                    #[inline]
+                    pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+                        #len_stmts
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            ts.extend(quote::quote! {
+                impl #domain_ident {
+                    #[inline]
+                    pub fn encode_into<'a>(
+                        &self,
+                        enc: &mut #entry_encoder_ident<'a>,
+                    ) -> Result<(), sbe_rt::EncodeError> {
+                        #encode_body
+                    }
+
+                    /// Compute this entry's contribution to the total encoded length
+                    /// (entry block + nested groups + entry var-data).
+                    #[inline]
+                    pub fn length_contribution(&self) -> Result<usize, sbe_rt::EncodeError> {
+                        #len_stmts
+                    }
+                }
+            });
+        }
 
         // Preserve the explicit domain-to-wire conversion helper for callers
         // that build their own wire-entry slices.
@@ -1067,10 +1094,20 @@ pub(crate) fn generate_domain_recursive(
         msg_len_stmts.extend(quote::quote! { Ok(len) });
         let has_tail = !group_encode_stmts.is_empty() || !vardata_encode_stmts.is_empty();
         let encode_body = if has_tail {
+            // Domain encode writes fixed fields via individual setters, then
+            // seals FieldsUnfixed → FieldsFixed so ordered group/var-data tails
+            // unlock (same typestate gate as the public `fixed()` path).
             quote::quote! {
                 let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
+                let enc = #encoder_ident {
+                    buf: enc.buf,
+                    msg_offset: enc.msg_offset,
+                    offset: enc.offset,
+                    _header: core::marker::PhantomData::<sbe_rt::HeaderPresent>,
+                    _fields: core::marker::PhantomData::<sbe_rt::FieldsFixed>,
+                };
                 #(#group_encode_stmts)*
                 #(#vardata_encode_stmts)*
                 Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)

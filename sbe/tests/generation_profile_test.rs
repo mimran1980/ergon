@@ -94,19 +94,21 @@ fn lean_core_consumer_roundtrip() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        enc.serial_number(42)
-            .model_year(2018)
-            .available(BooleanType::T)
-            .code(Model::A)
-            .some_numbers([1, 2, 3, 4])
-            .vehicle_code([b'A'; 6])
-            .extras(OptionalExtras::default())
-            .engine(Engine::new(
-                2000, 4, [b'1', b'2', b'3'], 0i8, BooleanType::F,
-                Booster::new(BoostType::TURBO, 0),
-            ));
-        let done = enc
+        let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 42,
+                model_year: 2018,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [1, 2, 3, 4],
+                vehicle_code: [b'A'; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(
+                    2000, 4, [b'1', b'2', b'3'], 0i8, BooleanType::F,
+                    Booster::new(BoostType::TURBO, 0),
+                ),
+            })
             .fuel_figures(0, |_| Ok(()))
             .unwrap()
             .performance_figures(0, |_| Ok(()))

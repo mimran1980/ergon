@@ -19,7 +19,7 @@
 #[test]
 fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::bitget_spot::{
-        BestBidAskDecoder, BestBidAskEncoder, InstCategory, Padding5,
+        BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5,
     };
 
     let symbol = b"BTCUSDT";
@@ -29,20 +29,21 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .ts(1712345678000u64)
-        .bid1_price(50000123456i64)
-        .bid1_size(123456789i64)
-        .ask1_price(50000987654i64)
-        .ask1_size(987654321i64)
-        .price_exponent(-8i8)
-        .size_exponent(-2i8)
-        .seq(42u64)
-        .sts(99u64)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let complete = encoder
+    let complete = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&BestBidAskFixedFields {
+            ts: 1712345678000u64,
+            bid1_price: 50000123456i64,
+            bid1_size: 123456789i64,
+            ask1_price: 50000987654i64,
+            ask1_size: 987654321i64,
+            price_exponent: -8i8,
+            size_exponent: -2i8,
+            seq: 42u64,
+            sts: 99u64,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .symbol(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
@@ -73,7 +74,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder};
+    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5};
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
@@ -81,20 +82,23 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .ts(1)
-        .bid1_price(2)
-        .bid1_size(3)
-        .ask1_price(4)
-        .ask1_size(5)
-        .price_exponent(-8)
-        .size_exponent(-2)
-        .seq(10)
-        .sts(20)
-        .category(exchange_example::bitget_spot::InstCategory::Spot)
-        .padding(exchange_example::bitget_spot::Padding5([0u8; 5]));
-    let complete = encoder.symbol(symbol).unwrap();
+    let complete = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&BestBidAskFixedFields {
+            ts: 1,
+            bid1_price: 2,
+            bid1_size: 3,
+            ask1_price: 4,
+            ask1_size: 5,
+            price_exponent: -8,
+            size_exponent: -2,
+            seq: 10,
+            sts: 20,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
+        .symbol(symbol)
+        .unwrap();
     let encoded = complete.as_bytes_with_header();
 
     assert!(BestBidAskDecoder::verify(encoded).is_ok());
@@ -106,7 +110,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{Depth50Decoder, Depth50Encoder, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{Depth50Decoder, Depth50Encoder, Depth50FixedFields, InstCategory, Padding5};
 
     let asks_count = 3u16;
     let bids_count = 2u16;
@@ -121,31 +125,32 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = Depth50Encoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .ts(1000u64)
-        .seq(1u64)
-        .price_exponent(-8i8)
-        .size_exponent(-2i8)
-        .sts(0u64)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let after_asks = encoder
+    let after_asks = Depth50Encoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&Depth50FixedFields {
+            ts: 1000u64,
+            seq: 1u64,
+            price_exponent: -8i8,
+            size_exponent: -2i8,
+            sts: 0u64,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .asks(asks_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry.price(100i64).size(10i64);
                     Ok(())
                 })
                 .expect("ask entry 0 should succeed");
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry.price(200i64).size(20i64);
                     Ok(())
                 })
                 .expect("ask entry 1 should succeed");
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry.price(300i64).size(30i64);
                     Ok(())
                 })
@@ -156,13 +161,13 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let after_bids = after_asks
         .bids(bids_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry.price(1000i64).size(100i64);
                     Ok(())
                 })
                 .expect("bid entry 0 should succeed");
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry.price(2000i64).size(200i64);
                     Ok(())
                 })
@@ -244,15 +249,15 @@ fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::ServerTimeResponseDecoder;
-    use exchange_example::binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::binance_spot::{ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
 
     let expected_ts: i64 = 1712345678000123;
 
     // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder.server_time(expected_ts);
+    let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&ServerTimeResponseFixedFields { server_time: expected_ts });
     let encoded = encoder.as_bytes_with_header();
 
     // Decode
@@ -265,12 +270,12 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::ServerTimeResponseDecoder;
-    use exchange_example::binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::binance_spot::{ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder.server_time(42);
+    let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&ServerTimeResponseFixedFields { server_time: 42 });
     let encoded = encoder.as_bytes_with_header();
 
     assert!(ServerTimeResponseDecoder::verify(encoded).is_ok());
@@ -293,7 +298,7 @@ fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Erro
 #[test]
 fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeFixedFields, TradeSide,
     };
 
     let trades_count = 2u16;
@@ -304,17 +309,18 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .price_exponent(-5i8)
-        .size_exponent(-3i8)
-        .sts(42u64)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let after_trades = encoder
+    let after_trades = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&TradeFixedFields {
+            price_exponent: -5i8,
+            size_exponent: -3i8,
+            sts: 42u64,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .trades(trades_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .ts(1000u64)
                         .exec_id(1u64)
@@ -326,7 +332,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .expect("trade entry 0 should succeed");
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .ts(2000u64)
                         .exec_id(2u64)
@@ -389,7 +395,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeFixedFields, TradeSide,
     };
 
     let sts_max = u64::MAX;
@@ -400,17 +406,18 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .price_exponent(-8i8)
-        .size_exponent(-2i8)
-        .sts(sts_max)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let after_trades = encoder
+    let after_trades = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&TradeFixedFields {
+            price_exponent: -8i8,
+            size_exponent: -2i8,
+            sts: sts_max,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .trades(trades_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .ts(1u64)
                         .exec_id(1u64)
@@ -439,7 +446,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::bitget_spot::{
-        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeSide,
+        InstCategory, Padding5, Padding7, TradeDecoder, TradeEncoder, TradeFixedFields, TradeSide,
     };
 
     let trades_count = 1u16;
@@ -449,17 +456,18 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .price_exponent(0i8)
-        .size_exponent(0i8)
-        .sts(0u64)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let after_trades = encoder
+    let after_trades = TradeEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&TradeFixedFields {
+            price_exponent: 0i8,
+            size_exponent: 0i8,
+            sts: 0u64,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .trades(trades_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .ts(0u64)
                         .exec_id(0u64)
@@ -506,7 +514,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::binance_spot::{
-        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
+        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder, WebSocketSessionLogonResponseFixedFields,
     };
 
     let api_key = b"my-test-api-key";
@@ -518,15 +526,15 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder =
-        WebSocketSessionLogonResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .authorized_since(1712345678000000i64)
-        .connected_since(1712345679000000i64)
-        .return_rate_limits(BoolEnum::True)
-        .server_time(1712345680000000i64)
-        .user_data_stream(BoolEnum::False);
-    let complete = encoder
+    let complete = WebSocketSessionLogonResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&WebSocketSessionLogonResponseFixedFields {
+            authorized_since: 1712345678000000i64,
+            connected_since: 1712345679000000i64,
+            return_rate_limits: BoolEnum::True,
+            server_time: 1712345680000000i64,
+            user_data_stream: Some(BoolEnum::False),
+        })
         .logged_on_api_key(api_key)
         .expect("logged_on_api_key encoding should succeed");
     let encoded = complete.as_bytes_with_header();
@@ -572,7 +580,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
 fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::binance_spot::{
         BoolEnum, RateLimitInterval, RateLimitType, WebSocketResponseDecoder,
-        WebSocketResponseEncoder,
+        WebSocketResponseEncoder, WebSocketResponseFixedFields,
     };
 
     let rate_limits_count = 2u16;
@@ -588,14 +596,15 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let mut buf = &mut buf_storage[..buf_len];
 
     // Encode
-    let mut encoder = WebSocketResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .sbe_schema_id_version_deprecated(BoolEnum::False)
-        .status(200u16);
-    let after_rate_limits = encoder
+    let after_rate_limits = WebSocketResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&WebSocketResponseFixedFields {
+            sbe_schema_id_version_deprecated: BoolEnum::False,
+            status: 200u16,
+        })
         .rate_limits(rate_limits_count, |group| {
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .rate_limit_type(RateLimitType::RequestWeight)
                         .interval(RateLimitInterval::Minute)
@@ -606,7 +615,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
                 })
                 .expect("rate limit entry 0 should succeed");
             group
-                .add(|entry| {
+                .add(|mut entry| {
                     entry
                         .rate_limit_type(RateLimitType::Orders)
                         .interval(RateLimitInterval::Second)
@@ -723,7 +732,7 @@ fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std
 #[test]
 fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::binance_spot::WebSocketResponseDecoder;
-    use exchange_example::bitget_spot::{BestBidAskEncoder, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5};
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
@@ -732,20 +741,21 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..buf_len];
 
-    let mut encoder = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder
-        .ts(1u64)
-        .bid1_price(2i64)
-        .bid1_size(3i64)
-        .ask1_price(4i64)
-        .ask1_size(5i64)
-        .price_exponent(-8i8)
-        .size_exponent(-2i8)
-        .seq(10u64)
-        .sts(20u64)
-        .category(InstCategory::Spot)
-        .padding(Padding5([0u8; 5]));
-    let complete = encoder
+    let complete = BestBidAskEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&BestBidAskFixedFields {
+            ts: 1u64,
+            bid1_price: 2i64,
+            bid1_size: 3i64,
+            ask1_price: 4i64,
+            ask1_size: 5i64,
+            price_exponent: -8i8,
+            size_exponent: -2i8,
+            seq: 10u64,
+            sts: 20u64,
+            category: InstCategory::Spot,
+            padding: Padding5([0u8; 5]),
+        })
         .symbol(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
@@ -896,13 +906,14 @@ fn binance_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::ServerTimeResponseEncoder;
+    use exchange_example::binance_spot::{ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
     use exchange_example::bitget_spot::BestBidAskDecoder;
 
     // Encode a valid binance ServerTimeResponse message
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
-    let mut encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    encoder.server_time(42);
+    let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&ServerTimeResponseFixedFields { server_time: 42 });
     let encoded = encoder.as_bytes_with_header();
 
     // Try to decode as bitget BestBidAsk — should fail with WrongSchema
@@ -920,7 +931,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
 #[test]
 fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     let symbol = b"BTCUSDT";
@@ -940,27 +951,29 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_storage = [0u8; 8192];
     assert!(outer_len <= buf_storage.len(), "len exceeds stack pad");
     let mut buf = &mut buf_storage[..outer_len];
-    let mut outer = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    outer.sent_ts(1_700_000_000_000_000_000);
-
-    // Nested encode via payload_with
-    let complete = outer
+    let complete = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&AppMessageFixedFields {
+            sent_ts: 1_700_000_000_000_000_000,
+        })
         .app_name(app_name)
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut book = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
-            book.source(Source::Bitget);
-            book.exchange_timestamp(1_700_000_000_000_000_001);
-            book.receive_timestamp(1_700_000_000_000_000_002);
-            book.sequence(42);
-            let book = book
+            let book = L2BookEncoder::try_wrap_and_apply_header(payload, 0)
+                .unwrap()
+                .fixed(&L2BookFixedFields {
+                    source: Source::Bitget,
+                    exchange_timestamp: 1_700_000_000_000_000_001,
+                    receive_timestamp: 1_700_000_000_000_000_002,
+                    sequence: 42,
+                })
                 .bids(bids_count, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.price_wire(Decimal::new(50000_00, -2));
                         e.size_wire(Decimal::new(1_50, -2));
                         Ok(())
                     });
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.price_wire(Decimal::new(49900_00, -2));
                         e.size_wire(Decimal::new(2_00, -2));
                         Ok(())
@@ -970,7 +983,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
             let book = book
                 .asks(asks_count, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.price_wire(Decimal::new(50100_00, -2));
                         e.size_wire(Decimal::new(0_50, -2));
                         Ok(())

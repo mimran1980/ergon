@@ -137,9 +137,8 @@ fn poisoned_group_completion_returns_the_stored_error() -> Result<(), Box<dyn st
                                     Booster::new(BoostType::TURBO, 0)),
             })
             .fuel_figures(2, |g| {
-                g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"city").unwrap(); Ok(()) })?;
-                g.add(|mut e| { e.speed(60).mpg(28.1); e.usage_description(b"road").unwrap(); Ok(()) })?;
-                Ok(())
+                g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"city") })?;
+                g.add(|mut e| { e.speed(60).mpg(28.1); e.usage_description(b"road") })
             })?
             .performance_figures(0, |_| Ok(()))?
             .manufacturer(b"H")?
@@ -199,9 +198,8 @@ fn rewind_clears_poison_and_retries_from_the_proven_start() -> Result<(), Box<dy
                                     Booster::new(BoostType::TURBO, 0)),
             })
             .fuel_figures(2, |g| {
-                g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"city").unwrap(); Ok(()) })?;
-                g.add(|mut e| { e.speed(60).mpg(28.1); e.usage_description(b"road").unwrap(); Ok(()) })?;
-                Ok(())
+                g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"city") })?;
+                g.add(|mut e| { e.speed(60).mpg(28.1); e.usage_description(b"road") })
             })?
             .performance_figures(0, |_| Ok(()))?
             .manufacturer(b"H")?

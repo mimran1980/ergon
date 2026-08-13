@@ -109,10 +109,7 @@ fn bench_group_with_data_scalar(c: &mut Criterion) {
         let elen = TestMessage1Encoder::wrap_and_apply_header(&mut big_buf[i * len..], 0)
             .fixed(&TestMessage1FixedFields { tag1: 42u32 })
             .entries(1, |g| {
-                g.add(|e| {
-                    e.var_data_field(var_data)?;
-                    Ok(())
-                })?;
+                g.add(|mut e| e.var_data_field(var_data))?;
                 Ok(())
             })
             .unwrap()
@@ -130,9 +127,7 @@ fn bench_group_with_data_scalar(c: &mut Criterion) {
             let buf = black_box(&big_buf);
             let mut total: u32 = 0;
             for i in 0..AMP {
-                let dec = unsafe {
-                    TestMessage1Decoder::wrap_unchecked(buf, i * len, bl, version)
-                };
+                let dec = unsafe { TestMessage1Decoder::wrap_unchecked(buf, i * len, bl, version) };
                 total = total.wrapping_add(dec.tag1());
             }
             black_box(total);
@@ -148,12 +143,8 @@ fn bench_group_with_data_scalar(c: &mut Criterion) {
             let buf = black_box(&big_buf);
             let mut total: u32 = 0;
             for i in 0..AMP {
-                let dec = StDecoder::default().wrap(
-                    ReadBuf::new(buf),
-                    8 + i * len,
-                    bl as u16,
-                    version,
-                );
+                let dec =
+                    StDecoder::default().wrap(ReadBuf::new(buf), 8 + i * len, bl as u16, version);
                 total = total.wrapping_add(dec.tag_1());
             }
             black_box(total);

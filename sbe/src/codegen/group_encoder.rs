@@ -134,7 +134,10 @@ pub(crate) fn generate_group_encoder(
         });
     }
 
-    let mut add_body = quote::quote! {
+    let is_dynamic = !g.has_fixed_stride();
+
+    // Capacity / null-init prelude shared by both add forms.
+    let mut capacity_body = quote::quote! {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
                 declared: self.count as u32,
@@ -145,35 +148,86 @@ pub(crate) fn generate_group_encoder(
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.offset + block_len > self.buf.len() {
             return Err(sbe_rt::EncodeError::BufferTooShort {
-                                field: "group entry",
-                                needed: block_len,
+                field: "group entry",
+                needed: block_len,
                 available: self.buf.len().saturating_sub(self.offset),
             }
             .into());
         }
     };
     if !null_stmts.is_empty() {
-        add_body.extend(null_stmts);
+        capacity_body.extend(null_stmts.clone());
     }
-    add_body.extend(quote::quote! {
-        // SAFETY: same borrow-split pattern as the group encoder method above.
-        // The closure `f` only operates on __entry (which holds __buf), never
-        // on `self`. The block scope drops __buf before `self.offset` is written.
-        {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            // SAFETY: capacity check above proved offset+block_len ≤ buf.len().
-            let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
-            f(&mut __entry)?;
-            self.offset = __entry.offset;
-        }
-        self.written += 1;
-        Ok(())
-    });
 
-    // fixed_stride_methods: add_checked + start_entry exist only for
-    // fixed-stride groups (no var-data or nested-group tails). Dynamic
-    // groups use add() exclusively until T-19 supplies entry typestate.
+    // Dynamic (T-19): add commits only from EntryComplete.
+    // Fixed-stride: add still accepts &mut + GroupResult; add_checked needs Complete.
+    let add_fn: proc_macro2::TokenStream = if is_dynamic {
+        let mut body = capacity_body.clone();
+        body.extend(quote::quote! {
+            // SAFETY: borrow-split — closure only uses __entry, never self.buf.
+            {
+                let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
+                let __complete = f(__entry)?;
+                self.offset = __complete.into_cursor();
+            }
+            self.written += 1;
+            Ok(())
+        });
+        quote::quote! {
+            /// Write one group entry, proving required tails are complete.
+            ///
+            /// The closure takes the entry encoder **by value** and must return
+            /// the entry-complete proof — reachable only by writing every
+            /// required nested group and var-data field in wire order.
+            #[inline]
+            #[must_use]
+            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            where
+                F: FnOnce(#entry_enc_ident<'b>) -> Result<#entry_complete_ident<'b>, sbe_rt::EncodeError>,
+            {
+                #body
+            }
+        }
+    } else {
+        let mut body = capacity_body.clone();
+        body.extend(quote::quote! {
+            {
+                let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
+                f(&mut __entry)?;
+                self.offset = __entry.offset;
+            }
+            self.written += 1;
+            Ok(())
+        });
+        quote::quote! {
+            /// Write one group entry. The closure may return `()` or
+            /// `Result<(), sbe_rt::EncodeError>` (both satisfy
+            /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
+            #[inline]
+            #[must_use]
+            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            where
+                F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
+            {
+                #body
+            }
+        }
+    };
+
     let fixed_stride_methods: proc_macro2::TokenStream = if g.has_fixed_stride() {
+        let mut checked_body = capacity_body.clone();
+        checked_body.extend(quote::quote! {
+            {
+                let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
+                let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
+                let __complete = f(__entry)?;
+                self.offset = __complete.into_cursor();
+            }
+            self.written += 1;
+            Ok(())
+        });
         quote::quote! {
             #[doc = #add_checked_doc]
             #[inline]
@@ -181,28 +235,7 @@ pub(crate) fn generate_group_encoder(
             where
                 F: FnOnce(#entry_enc_ident<'b>) -> Result<#entry_complete_ident<'b>, sbe_rt::EncodeError>,
             {
-                if self.written >= self.count {
-                    return Err(sbe_rt::EncodeError::GroupFull {
-                        declared: self.count as u32,
-                        attempted: self.written as u32 + 1,
-                    });
-                }
-                let block_len = Self::ENTRY_BLOCK_LENGTH;
-                if self.offset + block_len > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort {
-                        field: "group entry",
-                        needed: block_len,
-                        available: self.buf.len().saturating_sub(self.offset),
-                    });
-                }
-                {
-                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
-                    let __complete = f(__entry)?;
-                    self.offset = __complete.into_cursor();
-                }
-                self.written += 1;
-                Ok(())
+                #checked_body
             }
 
             /// Manual entry creation: returns a borrowed entry encoder.
@@ -225,8 +258,8 @@ pub(crate) fn generate_group_encoder(
                     .unwrap_or(true)
                 {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                                field: "group entry",
-                                needed: block_len,
+                        field: "group entry",
+                        needed: block_len,
                         available: self.buf.len().saturating_sub(self.offset),
                     });
                 }
@@ -262,17 +295,7 @@ pub(crate) fn generate_group_encoder(
                 Self { buf, offset, count, written: 0 }
             }
 
-            /// Write one group entry. The closure may return `()` or
-            /// `Result<(), sbe_rt::EncodeError>` (both satisfy
-            /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
-            #[inline]
-            #[must_use]
-            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
-            where
-                F: FnOnce(&mut #entry_enc_ident<'b>) -> sbe_rt::GroupResult,
-            {
-                #add_body
-            }
+            #add_fn
             #fixed_stride_methods
             /// Number of entries written so far (for `_unknown_size` back-patch).
             #[inline]
@@ -282,8 +305,6 @@ pub(crate) fn generate_group_encoder(
         }
     });
 
-    // add_struct: when the entry has no nested groups or var-data, generate
-    // a named value struct so callers can write whole entries in one call.
     if g.has_fixed_stride() {
         let entry_struct_ident = syn::Ident::new(&format!("{}Entry", name), span);
         let mut struct_fields = proc_macro2::TokenStream::new();
@@ -374,8 +395,8 @@ pub(crate) fn generate_group_encoder(
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
                     if self.offset + block_len > self.buf.len() {
                         return Err(sbe_rt::EncodeError::BufferTooShort {
-                                field: "group entry",
-                                needed: block_len,
+                            field: "group entry",
+                            needed: block_len,
                             available: self.buf.len().saturating_sub(self.offset),
                         });
                     }
@@ -454,19 +475,41 @@ pub(crate) fn generate_group_encoder(
         });
     }
 
-    // Entry encoder struct + all methods in a single impl block
-    let mut entry_methods = proc_macro2::TokenStream::new();
-
-    if g.has_fixed_stride() {
-        entry_methods.extend(quote::quote! {
-            #[doc = #complete_doc]
-            #[inline]
-            pub fn complete(self) -> #entry_complete_ident<'a> {
-                #entry_complete_ident { buf: self.buf, entry_start: self.entry_start, offset: self.offset }
-            }
-        });
+    // Tail order: nested groups then var-data (wire order).
+    #[derive(Clone, Copy)]
+    enum TailRef {
+        Nested(usize),
+        Var(usize),
+    }
+    let mut tails: Vec<TailRef> = Vec::new();
+    for i in 0..g.groups.len() {
+        tails.push(TailRef::Nested(i));
+    }
+    for i in 0..g.var_data.len() {
+        tails.push(TailRef::Var(i));
     }
 
+    // stage_idents: [EntryEncoder, AfterT0, ..., EntryComplete] for dynamic
+    let mut stage_idents: Vec<syn::Ident> = vec![entry_enc_ident.clone()];
+    if is_dynamic {
+        for (i, t) in tails.iter().enumerate() {
+            if i + 1 == tails.len() {
+                stage_idents.push(entry_complete_ident.clone());
+            } else {
+                let tail_pascal = match t {
+                    TailRef::Nested(j) => to_pascal_case(&g.groups[*j].name),
+                    TailRef::Var(j) => to_pascal_case(&g.var_data[*j].name),
+                };
+                stage_idents.push(syn::Ident::new(
+                    &format!("{}After{}", name, tail_pascal),
+                    span,
+                ));
+            }
+        }
+    }
+
+    // Fixed-field methods on EntryEncoder.
+    let mut entry_methods = proc_macro2::TokenStream::new();
     entry_methods.extend(quote::quote! {
         pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
 
@@ -486,9 +529,22 @@ pub(crate) fn generate_group_encoder(
         }
     });
 
+    if g.has_fixed_stride() {
+        entry_methods.extend(quote::quote! {
+            #[doc = #complete_doc]
+            #[inline]
+            pub fn complete(self) -> #entry_complete_ident<'a> {
+                #entry_complete_ident {
+                    buf: self.buf,
+                    entry_start: self.entry_start,
+                    offset: self.offset,
+                }
+            }
+        });
+    }
+
     for f in &g.fields {
         let f_snake = to_snake_case(&f.name);
-        // Raw entry setters become *_wire when a conversion is configured.
         let wire_name =
             field_has_conversion_free(f, conversions).then(|| format!("{f_snake}_wire"));
         let setter_name = wire_name.as_deref().unwrap_or(&f_snake);
@@ -510,7 +566,8 @@ pub(crate) fn generate_group_encoder(
                             let offset = self.entry_start + #f_offset;
                             let mut idx = 0;
                             while idx < #len_lit {
-                                self.buf[offset + idx * #sz..][..#sz].copy_from_slice(&val[idx].#to_endian());
+                                self.buf[offset + idx * #sz..][..#sz]
+                                    .copy_from_slice(&val[idx].#to_endian());
                                 idx += 1;
                             }
                             self
@@ -562,7 +619,8 @@ pub(crate) fn generate_group_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        self.buf[offset..offset + #sz].copy_from_slice(&(val as #r_ty).#to_endian());
+                        self.buf[offset..offset + #sz]
+                            .copy_from_slice(&(val as #r_ty).#to_endian());
                         self
                     }
                 });
@@ -587,7 +645,8 @@ pub(crate) fn generate_group_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target) -> &mut Self {
                         let offset = self.entry_start + #f_offset;
-                        self.buf[offset..offset + #sz].copy_from_slice(&val.0.#to_endian());
+                        self.buf[offset..offset + #sz]
+                            .copy_from_slice(&val.0.#to_endian());
                         self
                     }
                 });
@@ -595,8 +654,8 @@ pub(crate) fn generate_group_encoder(
         }
     }
 
-    // Nested group setters — scope under parent group name
-    for ng in &g.groups {
+    // Emit one consuming nested-group method pair for a stage → next_stage.
+    let emit_nested = |ng: &MessageGroup, next_stage: &syn::Ident| -> proc_macro2::TokenStream {
         let ng_pascal_scoped = format!("{}{}", name, to_pascal_case(&ng.name));
         let ng_snake = syn::Ident::new(&to_snake_case(&ng.name), span);
         let ng_snake_unknown =
@@ -608,31 +667,25 @@ pub(crate) fn generate_group_encoder(
         let num_off_idx = syn::Index::from(num_off);
         let num_sz_lit = syn::LitInt::new(&num_sz.to_string(), span);
         let ng_count_ty: syn::Type = syn::parse_str(rust_type(ng_num_prim)).unwrap();
-
-        entry_methods.extend(quote::quote! {
+        quote::quote! {
             #[inline]
             #[must_use]
-            pub fn #ng_snake<F>(&mut self, count: #ng_count_ty, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            pub fn #ng_snake<F>(mut self, count: #ng_count_ty, f: F) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                                field: "group entry",
-                                needed: #ng_dim,
+                        field: "group entry",
+                        needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.offset),
                     }
                     .into());
                 }
-                self.buf[self.offset..self.offset + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
-                self.buf[self.offset + #num_off_idx..self.offset + #num_off_idx + #num_sz_lit].copy_from_slice(&count.#to_endian());
-                // SAFETY: the closure `f` only operates on the group encoder (which
-                // holds __buf), never on `self`. The block scope ensures __buf is
-                // dropped before `self.offset` is written. No aliasing occurs because
-                // `self.buf` is not accessed through `self` while __buf is live.
-                // This is the standard borrow-split pattern (same as split_at_mut
-                // internals) — the raw pointer cast is a borrow-checker workaround,
-                // not an actual aliasing violation.
+                self.buf[self.offset..self.offset + #ng_dim]
+                    .copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                self.buf[self.offset + #num_off_idx..self.offset + #num_off_idx + #num_sz_lit]
+                    .copy_from_slice(&count.#to_endian());
                 let __offset;
                 {
                     let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
@@ -647,24 +700,29 @@ pub(crate) fn generate_group_encoder(
                     }
                     __offset = group.offset;
                 }
-                self.offset = __offset;
-                Ok(self)
+                Ok(#next_stage {
+                    buf: self.buf,
+                    entry_start: self.entry_start,
+                    offset: __offset,
+                })
             }
 
             /// Nested-group `_unknown_size` variant — back-patches count.
             #[inline]
-            pub fn #ng_snake_unknown<F>(&mut self, f: F) -> Result<&mut Self, sbe_rt::EncodeError>
+            pub fn #ng_snake_unknown<F>(mut self, f: F) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
             where
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
                     return Err(sbe_rt::EncodeError::BufferTooShort {
-                                field: "group entry",
-                                needed: #ng_dim,
+                        field: "group entry",
+                        needed: #ng_dim,
                         available: self.buf.len().saturating_sub(self.offset),
-                    }.into());
+                    }
+                    .into());
                 }
-                self.buf[self.offset..self.offset + #ng_dim].copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
+                self.buf[self.offset..self.offset + #ng_dim]
+                    .copy_from_slice(&#ng_enc::GROUP_DIM_TEMPLATE);
                 let count_offset = self.offset + #num_off_idx;
                 self.buf[count_offset..count_offset + #num_sz_lit].fill(0);
                 let __offset;
@@ -677,14 +735,18 @@ pub(crate) fn generate_group_encoder(
                     group.buf[count_offset..count_offset + #num_sz_lit]
                         .copy_from_slice(&actual.#to_endian());
                 }
-                self.offset = __offset;
-                Ok(self)
+                Ok(#next_stage {
+                    buf: self.buf,
+                    entry_start: self.entry_start,
+                    offset: __offset,
+                })
             }
-        });
-    }
+        }
+    };
 
-    // VarData setters
-    for vd in &g.var_data {
+    let emit_var = |vd: &crate::structured_ir::MessageVarData,
+                    next_stage: &syn::Ident|
+     -> proc_macro2::TokenStream {
         let vd_snake = syn::Ident::new(&to_snake_case(&vd.name), span);
         let (_, prefix_sz, _, len_type) = get_vardata_info(elements, &vd.type_name);
         let pfx = syn::LitInt::new(&prefix_sz.to_string(), span);
@@ -704,15 +766,18 @@ pub(crate) fn generate_group_encoder(
         } else {
             quote::quote! {}
         };
-
-        entry_methods.extend(quote::quote! {
+        quote::quote! {
             #[inline]
             #[must_use]
-            pub fn #vd_snake(&mut self, data: &[u8]) -> Result<&mut Self, sbe_rt::EncodeError> {
+            pub fn #vd_snake(mut self, data: &[u8]) -> Result<#next_stage<'a>, sbe_rt::EncodeError> {
                 #schema_max_check
                 let needed = #pfx + data.len();
                 if self.offset + needed > self.buf.len() {
-                    return Err(sbe_rt::EncodeError::BufferTooShort { field: "group entry", needed, available: self.buf.len().saturating_sub(self.offset) });
+                    return Err(sbe_rt::EncodeError::BufferTooShort {
+                        field: "group entry",
+                        needed,
+                        available: self.buf.len().saturating_sub(self.offset),
+                    });
                 }
                 let wire_length = #len_ty::try_from(data.len()).map_err(|_| {
                     sbe_rt::EncodeError::VarDataTooLong {
@@ -726,27 +791,51 @@ pub(crate) fn generate_group_encoder(
                 let start = self.offset + #pfx;
                 self.buf[start..start + data.len()].copy_from_slice(data);
                 self.offset = start + data.len();
-                Ok(self)
+                Ok(#next_stage {
+                    buf: self.buf,
+                    entry_start: self.entry_start,
+                    offset: self.offset,
+                })
             }
-        });
+        }
+    };
+
+    // Attach first tail to EntryEncoder when dynamic.
+    if is_dynamic {
+        if let Some(first) = tails.first() {
+            let next = &stage_idents[1];
+            match *first {
+                TailRef::Nested(j) => {
+                    entry_methods.extend(emit_nested(&g.groups[j], next));
+                }
+                TailRef::Var(j) => {
+                    entry_methods.extend(emit_var(&g.var_data[j], next));
+                }
+            }
+        }
     }
 
-    if g.has_fixed_stride() {
-        ts.extend(quote::quote! {
-            #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
-            pub struct #entry_complete_ident<'a> {
-                buf: &'a mut [u8], entry_start: usize, offset: usize,
+    // EntryComplete always generated (fixed-stride complete() + dynamic tails).
+    ts.extend(quote::quote! {
+        #[doc = concat!("Proven-complete entry for the `", stringify!(#entry_complete_ident), "` group.")]
+        pub struct #entry_complete_ident<'a> {
+            buf: &'a mut [u8],
+            entry_start: usize,
+            offset: usize,
+        }
+        impl<'a> #entry_complete_ident<'a> {
+            pub(crate) fn into_cursor(self) -> usize {
+                self.offset
             }
-            impl<'a> #entry_complete_ident<'a> {
-                pub(crate) fn into_cursor(self) -> usize { self.offset }
-            }
-        });
-    }
-    let entry_complete_note: &str = if g.has_fixed_stride() {
-        " — set fields then call `complete()`"
+        }
+    });
+
+    let entry_complete_note: &str = if is_dynamic {
+        " — write required tails in wire order to reach EntryComplete"
     } else {
-        ""
+        " — set fields then call `complete()`"
     };
+
     ts.extend(quote::quote! {
         #[doc = concat!("Entry encoder for the `", stringify!(#entry_enc_ident), "` group", #entry_complete_note, ".")]
         #[must_use = "entry encoder fields must be set before the next entry"]
@@ -760,6 +849,30 @@ pub(crate) fn generate_group_encoder(
             #entry_methods
         }
     });
+
+    // Intermediate stages: stage_idents[k] for k in 1..tails.len() has method for tails[k].
+    if is_dynamic {
+        for k in 1..tails.len() {
+            let cur = &stage_idents[k];
+            let next = &stage_idents[k + 1];
+            let methods = match tails[k] {
+                TailRef::Nested(j) => emit_nested(&g.groups[j], next),
+                TailRef::Var(j) => emit_var(&g.var_data[j], next),
+            };
+            ts.extend(quote::quote! {
+                /// Intermediate entry stage after a required tail — continue in wire order.
+                #[must_use = "entry stage must continue writing required tails"]
+                pub struct #cur<'a> {
+                    buf: &'a mut [u8],
+                    entry_start: usize,
+                    offset: usize,
+                }
+                impl<'a> #cur<'a> {
+                    #methods
+                }
+            });
+        }
+    }
 
     src.push_str(&ts.to_string());
     src.push('\n');

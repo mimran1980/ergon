@@ -2982,10 +2982,8 @@ fn negative_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn overflowing_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&mini_msg_xml(
-        r#"offset="999999999999999999999999999999""#,
-    ))
-    .expect_err("overflow offset");
+    let err = parse(&mini_msg_xml(r#"offset="999999999999999999999999999999""#))
+        .expect_err("overflow offset");
     let s = format!("{err:?}");
     assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
     Ok(())

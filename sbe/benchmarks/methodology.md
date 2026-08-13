@@ -121,6 +121,11 @@ defect, not an sbe-tool `Option<parent>` penalty.
 
 After adding inline intent and fixing `bulk_add`:
 
+> **Not run-ID evidence.** The tables below are historical point estimates for
+> narrative only — they have no `run_id`, commit, host, or Criterion manifest.
+> Acceptance evidence is only `just bench` archives with stamped
+> `run-manifest.json`. Do not cite these numbers as release gates.
+
 | 1,000 primitive entries | LTO on | LTO off |
 |---|---:|---:|
 | ergon `add_closure` | 414.1 ns | 418.1 ns |

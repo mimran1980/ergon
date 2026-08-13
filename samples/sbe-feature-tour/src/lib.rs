@@ -141,19 +141,18 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
             ),
         })
         .fuel_figures(2, |g| {
-            g.add(|e| {
-                e.speed(30).mpg(35.9).usage_description(b"Urban")?;
-                Ok(())
+            g.add(|mut e| {
+                e.speed(30).mpg(35.9); e.usage_description(b"Urban")
             })?;
-            g.add(|e| {
-                e.speed(60).mpg(25.0).usage_description(b"Highway")?;
-                Ok(())
+            g.add(|mut e| {
+                e.speed(60).mpg(25.0); e.usage_description(b"Highway")
             })?;
             Ok(())
         })?
         .performance_figures(1, |g| {
-            g.add(|e| {
-                e.octane_rating(95).acceleration(2, |a| {
+            g.add(|mut e| {
+                e.octane_rating(95);
+                e.acceleration(2, |a| {
                     a.add(|x| {
                         x.mph(30).seconds(4.0);
                         Ok(())
@@ -161,10 +160,8 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     a.add(|x| {
                         x.mph(60).seconds(7.5);
                         Ok(())
-                    })?;
-                    Ok(())
-                })?;
-                Ok(())
+                    })
+                })
             })?;
             Ok(())
         })?

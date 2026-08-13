@@ -362,11 +362,15 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut sf = shared_types::OrderFlags::default();
             sf.aggressive(true);
             let mut buf = [0u8; 128];
-            let mut enc = shared_types::OrderEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-            enc.price(shared_types::InnerValue::new(10, 20));
-            enc.side(shared_types::OrderSide::Ask);
-            enc.flags(sf);
-            let enc = enc.note(b"hello")?;
+            let enc = shared_types::OrderEncoder::try_wrap_and_apply_header(&mut buf, 0)
+                .unwrap()
+                .fixed(&shared_types::OrderFixedFields {
+                    price: shared_types::InnerValue::new(10, 20),
+                    side: shared_types::OrderSide::Ask,
+                    flags: sf,
+                })
+                .note(b"hello")?;
+            let _ = enc;
             let dec = shared_types::OrderDecoder::try_decode(&buf, 0)?;
             assert_eq!(dec.price().x(), 10);
             assert_eq!(dec.side(), shared_types::OrderSide::Ask);
@@ -377,12 +381,16 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut cf = consumer::OrderFlags::default();
             cf.conditional(true);
             let mut buf2 = [0u8; 128];
-            let mut enc2 = consumer::TradeEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
-            enc2.qty(500);
-            enc2.side(consumer::OrderSide::Bid);
-            enc2.flags(cf);
-            enc2.value(consumer::InnerValue::new(7, 8));
-            let enc2 = enc2.note(b"world")?;
+            let enc2 = consumer::TradeEncoder::try_wrap_and_apply_header(&mut buf2, 0)
+                .unwrap()
+                .fixed(&consumer::TradeFixedFields {
+                    qty: 500,
+                    side: consumer::OrderSide::Bid,
+                    flags: cf,
+                    value: consumer::InnerValue::new(7, 8),
+                })
+                .note(b"world")?;
+            let _ = enc2;
             let dec2 = consumer::TradeDecoder::try_decode(&buf2, 0)?;
             assert_eq!(dec2.qty(), 500);
             assert_eq!(dec2.side(), consumer::OrderSide::Bid);
@@ -640,5 +648,86 @@ fn multi_schema_accepts_identical_shared_enum() -> Result<(), Box<dyn std::error
     let mut g = Generator::new(config);
     let modules = g.generate_multi(&[(&a, "common"), (&b, "other")])?;
     assert_eq!(modules.modules().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_shared_module_not_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    // shared_module name must equal the first schema module (owner).
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "owner"), (&b, "consumer")])
+        .expect_err("mismatched shared owner");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("owner") || msg.contains("common") || msg.contains("first"),
+        "{msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_reserved_ident_gen() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "gen")])
+        .expect_err("gen is reserved");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn std::error::Error>>
+{
+    let enum_xml = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    let le = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="a" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            {enum_xml}
+          </types>
+          <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+        </sbe:messageSchema>"#
+    );
+    let be = le
+        .replace("littleEndian", "bigEndian")
+        .replace("package=\"a\"", "package=\"b\"")
+        .replace("id=\"1\"", "id=\"2\"");
+    let a = Schema::from_ir(ergo_sbe::parse(&le)?);
+    let b = Schema::from_ir(ergo_sbe::parse(&be)?);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "common"), (&b, "other")])
+        .expect_err("byte order mismatch");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::IncompatibleSharedType { .. }),
+        "{err:?}"
+    );
     Ok(())
 }
