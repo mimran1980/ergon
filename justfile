@@ -110,8 +110,13 @@ release-check: test check-coverage check-generated-rustdoc
 release: _check-release-notes
     just clean
     @echo "=== 1/8 supply-chain audit ==="
-    -cargo deny check
-    -cargo audit
+    # No `-` prefix: these must BLOCK the release. They previously ignored their
+    # exit codes, so a live RUSTSEC advisory printed "error: 1 vulnerability
+    # found!" and the release published straight past it. Record unreachable
+    # advisories as documented ignores (deny.toml AND .cargo/audit.toml — the
+    # two tools read different files) rather than re-muting the gate.
+    cargo deny check
+    cargo audit
     @echo "=== 2/8 test suite (clippy + tests + samples + cluster) ==="
     just test
     @echo "=== 3/8 miri UB detection ==="
