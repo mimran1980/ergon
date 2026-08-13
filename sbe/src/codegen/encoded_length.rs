@@ -432,6 +432,8 @@ fn generate_staged(
                  entry.",
                 rust_type(num_prim)
             );
+            let unknown_size_doc_tokens =
+                crate::codegen::runtime::doc_lines_tokens(&unknown_size_doc);
             standalone.extend(quote::quote! {
                 impl #pending_name {
                     /// **Uniform** group — every one of the `count` entries shares
@@ -494,7 +496,7 @@ fn generate_staged(
                         }
                     }
 
-                    #[doc = #unknown_size_doc]
+                    #unknown_size_doc_tokens
                     #[inline]
                     pub fn #g_unknown<F>(
                         mut self, f: F,

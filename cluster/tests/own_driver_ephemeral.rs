@@ -5,7 +5,7 @@
 //! ingress to cluster's 9002, responseChannel=9100 so the cluster
 //! sends SessionEvent back to the client's sub.
 
-use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -46,9 +46,12 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     // SessionConnectRequest with response_channel = client's egress URI
     let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
     let mut buf = [0u8; 512];
-    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-    enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc
+    let complete = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&SessionConnectRequestFixedFields {
+            correlation_id: 1,
+            response_stream_id: 102,
+            version: Some(0),
+        })
         .response_channel(resp.as_bytes())?
         .encoded_credentials(b"")?
         .client_info(b"")?;

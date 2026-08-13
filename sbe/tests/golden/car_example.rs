@@ -3298,9 +3298,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         };
         Ok((data, next))
     }
-    /**Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
-
-Cheaper than [`Self::into_usage_description`] when only the bytes are needed.*/
+    ///Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
+    ///
+    ///Cheaper than [`Self::into_usage_description`] when only the bytes are needed.
     #[inline]
     pub fn usage_description_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.offset + self.acting_block_length;
@@ -4815,9 +4815,9 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
         };
         Ok((data, next))
     }
-    /**Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
-
-Cheaper than [`Self::into_manufacturer`] when only the bytes are needed.*/
+    ///Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
+    ///
+    ///Cheaper than [`Self::into_manufacturer`] when only the bytes are needed.
     #[inline]
     pub fn manufacturer_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
@@ -4976,9 +4976,9 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
         };
         Ok((data, next))
     }
-    /**Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
-
-Cheaper than [`Self::into_model`] when only the bytes are needed.*/
+    ///Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
+    ///
+    ///Cheaper than [`Self::into_model`] when only the bytes are needed.
     #[inline]
     pub fn model_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
@@ -5128,9 +5128,9 @@ impl<'a> CarDecoderAfterModel<'a> {
         };
         Ok((data, next))
     }
-    /**Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
-
-Cheaper than [`Self::into_activation_code`] when only the bytes are needed.*/
+    ///Non-consuming variant: read this var-data field as `&[u8]` without advancing or constructing the next stage.
+    ///
+    ///Cheaper than [`Self::into_activation_code`] when only the bytes are needed.
     #[inline]
     pub fn activation_code_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
@@ -6567,9 +6567,9 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         self.buf[offset..offset + 10].copy_from_slice(&val.0);
         self
     }
-    /**Set all fixed fields at once from a [`CarFixedFields`] value.
-
-Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder ready for ordered tail methods.*/
+    ///Set all fixed fields at once from a [`CarFixedFields`] value.
+    ///
+    ///Required fields are always written; optional fields write the schema null wire image when `None` (including nested optional composite members). Returns the encoder ready for ordered tail methods.
     #[inline]
     #[must_use]
     pub fn fixed(
@@ -6702,11 +6702,11 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
             _header: core::marker::PhantomData,
         })
     }
-    /**Encode this group without knowing the count up front.
-
-The dimension header is written with a zero placeholder; after the closure returns, the actual entry count is back-patched into the header. No `GroupFull` check — overflow is the caller's responsibility.
-
-Prefer [`Self::fuel_figures`] when the count is known at compile time or from a small input.*/
+    ///Encode this group without knowing the count up front.
+    ///
+    ///The dimension header is written with a zero placeholder; after the closure returns, the actual entry count is back-patched into the header. No `GroupFull` check — overflow is the caller's responsibility.
+    ///
+    ///Prefer [`Self::fuel_figures`] when the count is known at compile time or from a small input.
     #[inline]
     #[must_use]
     pub fn fuel_figures_unknown_size<F>(
@@ -6798,11 +6798,11 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
-    /**Encode this group without knowing the count up front.
-
-The dimension header is written with a zero placeholder; after the closure returns, the actual entry count is back-patched into the header. No `GroupFull` check — overflow is the caller's responsibility.
-
-Prefer [`Self::performance_figures`] when the count is known at compile time or from a small input.*/
+    ///Encode this group without knowing the count up front.
+    ///
+    ///The dimension header is written with a zero placeholder; after the closure returns, the actual entry count is back-patched into the header. No `GroupFull` check — overflow is the caller's responsibility.
+    ///
+    ///Prefer [`Self::performance_figures`] when the count is known at compile time or from a small input.
     #[inline]
     #[must_use]
     pub fn performance_figures_unknown_size<F>(
@@ -7775,11 +7775,11 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.written += 1;
         Ok(())
     }
-    /**Write one group entry, proving completeness in the type system.
-
-The closure takes the entry encoder **by value** and must return `PerformanceFiguresAccelerationEntryComplete` — reachable only by writing every required tail in wire order. An entry that skips, reorders, or repeats a tail cannot produce that type, so it fails to compile rather than producing a short entry at run time.
-
-[`Self::add`] stays available for entries whose tails are already checked elsewhere.*/
+    ///Write one group entry, proving completeness in the type system.
+    ///
+    ///The closure takes the entry encoder **by value** and must return `PerformanceFiguresAccelerationEntryComplete` — reachable only by writing every required tail in wire order. An entry that skips, reorders, or repeats a tail cannot produce that type, so it fails to compile rather than producing a short entry at run time.
+    ///
+    ///[`Self::add`] stays available for entries whose tails are already checked elsewhere.
     #[inline]
     pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
@@ -8006,9 +8006,9 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
             offset: offset + Self::ENTRY_BLOCK_LENGTH,
         }
     }
-    /**Finish a flat entry, producing the `PerformanceFiguresAccelerationEntryComplete` that [`PerformanceFiguresAccelerationEncoder::add_checked`] requires.
-
-Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.*/
+    ///Finish a flat entry, producing the `PerformanceFiguresAccelerationEntryComplete` that [`PerformanceFiguresAccelerationEncoder::add_checked`] requires.
+    ///
+    ///Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.
     #[inline]
     pub fn complete(self) -> PerformanceFiguresAccelerationEntryComplete<'a> {
         PerformanceFiguresAccelerationEntryComplete {
@@ -8303,7 +8303,9 @@ impl CarEncodedLength {
             Err(e) => Err(e),
         }
     }
-    #[doc = "**Unknown-size** group — the entry count is discovered from the data (e.g. draining an iterator), not known up front.\n\nLike the ragged path but without a declared `count`: call `builder.add()` (or `builder.entries(n)`) once per entry; the builder counts completed entries and rejects overflow of the wire count type (`u16`). Each `add()` contributes the entry's fixed block, plus any `group()`/`var_data()` recorded for that entry."]
+    ///**Unknown-size** group — the entry count is discovered from the data (e.g. draining an iterator), not known up front.
+    ///
+    ///Like the ragged path but without a declared `count`: call `builder.add()` (or `builder.entries(n)`) once per entry; the builder counts completed entries and rejects overflow of the wire count type (`u16`). Each `add()` contributes the entry's fixed block, plus any `group()`/`var_data()` recorded for that entry.
     #[inline]
     pub fn fuel_figures_unknown_size<F>(
         mut self,
@@ -8453,7 +8455,9 @@ impl CarEncodedLengthAfterFuelFigures {
             Err(e) => Err(e),
         }
     }
-    #[doc = "**Unknown-size** group — the entry count is discovered from the data (e.g. draining an iterator), not known up front.\n\nLike the ragged path but without a declared `count`: call `builder.add()` (or `builder.entries(n)`) once per entry; the builder counts completed entries and rejects overflow of the wire count type (`u16`). Each `add()` contributes the entry's fixed block, plus any `group()`/`var_data()` recorded for that entry."]
+    ///**Unknown-size** group — the entry count is discovered from the data (e.g. draining an iterator), not known up front.
+    ///
+    ///Like the ragged path but without a declared `count`: call `builder.add()` (or `builder.entries(n)`) once per entry; the builder counts completed entries and rejects overflow of the wire count type (`u16`). Each `add()` contributes the entry's fixed block, plus any `group()`/`var_data()` recorded for that entry.
     #[inline]
     pub fn performance_figures_unknown_size<F>(
         mut self,

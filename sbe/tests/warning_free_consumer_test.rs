@@ -87,6 +87,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 "#
             ),
         )?;
+        // The generated module references `ergo_sbe::…` for the optional
+        // string/byte types, so the dependency must be present whichever
+        // features the outer test run enables.
+        let sbe_path = Paths::sbe_dir().display().to_string().replace('\\', "\\\\");
         fs::write(
             dir.join("Cargo.toml"),
             format!(
@@ -94,6 +98,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 name = "{label}_consumer"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#
             ),
         )?;

@@ -50,7 +50,9 @@ pub enum EgressEvent {
     },
 }
 
-/// Parse a single egress fragment via the canonical [`Fragment::decode`] path.
+/// Parse a single egress fragment via the canonical `Fragment::decode` path.
+///
+/// (`Fragment` is crate-private, so it is named here rather than linked.)
 ///
 /// Text fields (`detail`, `ingress_endpoints`) are validated as UTF-8 via
 /// the generated `_as_str()` accessors. Invalid text returns

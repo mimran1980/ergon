@@ -2644,6 +2644,23 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
     quote::quote! { #[doc = #lit] }
 }
 
+/// One `#[doc]` attribute per line of `text`.
+///
+/// A single `#[doc]` holding embedded newlines is rendered by `prettyplease`
+/// as a `/** … */` block whose continuation lines carry the item's
+/// indentation. Markdown reads a 4-space-indented line after a blank line as
+/// an indented **code block**, so rustdoc then tries to compile the prose as a
+/// doctest and fails. Emitting one attribute per line renders as `///`, which
+/// cannot form an indented code block.
+pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
+    let mut out = proc_macro2::TokenStream::new();
+    for line in text.split('\n') {
+        let lit = syn::LitStr::new(line, proc_macro2::Span::call_site());
+        out.extend(quote::quote! { #[doc = #lit] });
+    }
+    out
+}
+
 /// `#[deprecated]` when the item is schema-deprecated AND `with_deprecated_attrs()`
 /// is active. Centralises the flag check so every call site stays ungated.
 pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {

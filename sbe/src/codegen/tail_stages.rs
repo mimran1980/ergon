@@ -157,6 +157,7 @@ pub(crate) fn generate_owner_consuming_stages(
              advancing or constructing the next stage.\n\n\
              Cheaper than [`Self::{into_ident}`] when only the bytes are needed."
         );
+        let slice_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&slice_doc);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
@@ -225,7 +226,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     Ok((data, next))
                 }
 
-                #[doc = #slice_doc]
+                #slice_doc_tokens
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = #se;

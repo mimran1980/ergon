@@ -29,6 +29,49 @@ fn generate_with_domain(xml_path: &std::path::Path, module_name: &str) -> String
         .clone()
 }
 
+/// Generate the golden through the *pinned* feature set.
+///
+/// The generator gates var-data accessors on its own build features
+/// (`#[cfg(feature = "compact_str")]` in `codegen/tail_stages.rs`), so calling
+/// the generator in-process would snapshot whatever features this test binary
+/// happens to be built with — making the result differ between `cargo test` and
+/// `cargo test --all-features`. Shelling out runs the generator under ergo-sbe's
+/// own default features regardless, which keeps the comparison feature-
+/// independent and matches `scripts/regenerate-golden.sh`.
+///
+/// Default features (not `--all-features`) on purpose: the golden is `include!`d
+/// by `allocation_count_test`, so it has to compile under a default build too.
+fn generate_golden_pinned() -> Result<String, Box<dyn std::error::Error>> {
+    let out = tempfile_path("ergo_golden_pinned");
+    let status = Command::new(env!("CARGO"))
+        .args([
+            "run",
+            "--quiet",
+            "-p",
+            "ergo-sbe",
+            "--example",
+            "regenerate_golden",
+            "--",
+        ])
+        .arg(&out)
+        .current_dir(Paths::workspace_root())
+        .status()?;
+    if !status.success() {
+        return Err(format!("regenerate_golden example failed: {status}").into());
+    }
+    let source = fs::read_to_string(&out)?;
+    let _ = fs::remove_file(&out);
+    Ok(source)
+}
+
+fn tempfile_path(prefix: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.rs", std::process::id()))
+}
+
 fn canonical_rust(source: &str) -> Result<String, Box<dyn std::error::Error>> {
     let _ = syn::parse_file(source)?;
     let mut child = Command::new("rustfmt")
@@ -93,7 +136,9 @@ fn canonical_rust_ignores_formatter_only_rewrites() -> Result<(), Box<dyn std::e
 
 #[test]
 fn generated_output_matches_golden() -> Result<(), Box<dyn std::error::Error>> {
-    let output = generate_with_domain(&Paths::example_schema(), "car_example");
+    // Pinned feature set — see `generate_golden_pinned`. Generating in-process
+    // here would make the assertion depend on how this test binary was built.
+    let output = generate_golden_pinned()?;
     let golden_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/car_example.rs");
 
     let golden = fs::read_to_string(golden_path).unwrap_or_else(|e| {

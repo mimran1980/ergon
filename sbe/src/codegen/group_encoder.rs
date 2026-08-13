@@ -89,6 +89,7 @@ pub(crate) fn generate_group_encoder(
          [`Self::add`] stays available for entries whose tails are already \
          checked elsewhere.",
     );
+    let add_checked_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&add_checked_doc);
     // `add_checked` lives on the *group* encoder, so `Self::` would not resolve
     // from the entry encoder this doc is attached to.
     let complete_doc = format!(
@@ -97,6 +98,7 @@ pub(crate) fn generate_group_encoder(
          Only for entries with no required tails — an entry that has them \
          reaches this type through its last tail method instead."
     );
+    let complete_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&complete_doc);
     let block_len_lit = syn::LitInt::new(&group_block_length.to_string(), span);
     let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), span);
     let dim_bytes: Vec<syn::LitInt> = dim_tpl
@@ -229,7 +231,7 @@ pub(crate) fn generate_group_encoder(
             Ok(())
         });
         quote::quote! {
-            #[doc = #add_checked_doc]
+            #add_checked_doc_tokens
             #[inline]
             pub fn add_checked<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
             where
@@ -531,7 +533,7 @@ pub(crate) fn generate_group_encoder(
 
     if g.has_fixed_stride() {
         entry_methods.extend(quote::quote! {
-            #[doc = #complete_doc]
+            #complete_doc_tokens
             #[inline]
             pub fn complete(self) -> #entry_complete_ident<'a> {
                 #entry_complete_ident {

@@ -22,7 +22,7 @@ use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
 pub struct Paths;
 
 impl Paths {
-    fn workspace_root() -> PathBuf {
+    pub fn workspace_root() -> PathBuf {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
             if ancestor.join("Cargo.toml").exists() && (ancestor.join("sbe").exists()) {

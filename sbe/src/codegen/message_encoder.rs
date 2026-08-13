@@ -979,11 +979,12 @@ pub(crate) fn generate_message_encoder(
              schema null wire image when `None` (including nested optional \
              composite members). Returns the encoder ready for ordered tail methods."
         );
+        let fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&fixed_doc);
         // With tails: transition FieldsUnfixed → FieldsFixed so group/var methods unlock.
         // Fixed-only messages: stay on Self (no FieldsState parameter).
         if root_has_fields {
             impl_contents.extend(quote::quote! {
-                #[doc = #fixed_doc]
+                #fixed_doc_tokens
                 #[inline]
                 #[must_use]
                 pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
@@ -999,7 +1000,7 @@ pub(crate) fn generate_message_encoder(
             });
         } else {
             impl_contents.extend(quote::quote! {
-                #[doc = #fixed_doc]
+                #fixed_doc_tokens
                 #[inline]
                 #[must_use]
                 pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
@@ -1018,13 +1019,15 @@ pub(crate) fn generate_message_encoder(
              only on this writer. When done, embed the fields in a \
              [`{fixed_name}`] and call the encoder's `fixed()`."
         );
+        let raw_struct_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&raw_struct_doc);
         let raw_fixed_doc = format!(
             "Return a dedicated raw fixed-field writer. All individual field \
              setters are available on the writer. To advance to tail stages, \
              collect the values into a [`{fixed_name}`] and call `fixed()`."
         );
+        let raw_fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&raw_fixed_doc);
         ts.extend(quote::quote! {
-            #[doc = #raw_struct_doc]
+            #raw_struct_doc_tokens
             #[must_use = "raw fixed writer must be embedded in FixedFields"]
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
@@ -1037,7 +1040,7 @@ pub(crate) fn generate_message_encoder(
             }
         });
         impl_contents.extend(quote::quote! {
-            #[doc = #raw_fixed_doc]
+            #raw_fixed_doc_tokens
             #[inline]
             #[must_use]
             pub fn raw_fixed(self) -> #raw_name<'a> {
@@ -1207,6 +1210,8 @@ pub(crate) fn generate_message_encoder(
                  Prefer [`Self::{g_snake}`] when the count is known at compile \
                  time or from a small input."
             );
+            let unknown_count_doc_tokens =
+                crate::codegen::runtime::doc_lines_tokens(&unknown_count_doc);
 
             // Root stage (first group) only available after fixed(&FixedFields).
             let root_impl_header = if tail_idx == 0 {
@@ -1265,7 +1270,7 @@ pub(crate) fn generate_message_encoder(
                         })
                     }
 
-                    #[doc = #unknown_count_doc]
+                    #unknown_count_doc_tokens
                     #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
