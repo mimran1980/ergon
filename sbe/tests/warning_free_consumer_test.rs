@@ -112,6 +112,12 @@ ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes
             .current_dir(&dir)
             .env("CARGO_TARGET_DIR", &target)
             .env("CARGO_NET_OFFLINE", "true")
+            // The fixture asserts warning-freedom via its own `#![deny(warnings)]`.
+            // Ambient RUSTFLAGS (e.g. `cargo mutants` with cap_lints = true) would
+            // cap those lints to `allow` and turn this into a no-op that always
+            // passes. Let the fixture's attributes decide.
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         let _ = fs::remove_dir_all(&dir);

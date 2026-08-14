@@ -242,6 +242,15 @@ pub fn compile_fails_with_diagnostics(
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("CARGO_NET_OFFLINE", "true")
+        // A compile-fail fixture asserts that a lint or type error FIRES. Ambient
+        // RUSTFLAGS can silence exactly that: `cargo mutants` runs with
+        // `cap_lints = true` (.cargo/mutants.toml), which caps every lint to
+        // `allow`, so a `#[deny(unused_must_use)]` fixture compiled cleanly and
+        // the test reported "expected a compile error, but the crate built
+        // successfully". Clear both spellings so the fixture's own attributes
+        // decide the outcome, not the environment that invoked the suite.
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .output()
         .expect("cargo build failed");
 
