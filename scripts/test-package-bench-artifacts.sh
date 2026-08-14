@@ -75,7 +75,7 @@ for profile in lto no-lto; do
     mkdir -p "$d"
     echo '{"mean":{"point_estimate":1.0}}' >"$d/estimates.json"
     write_manifest \
-        "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/run-manifest.json" \
+        "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/criterion/run-manifest.json" \
         "$RUN_ID" "$profile" "$COMMIT"
 done
 # Cluster fixtures — must carry run_id + HEAD commit (no invent-on-package).
@@ -108,7 +108,7 @@ done
 # Manifest commit matches HEAD
 tmpm=$(mktemp -d)
 tar -xzf "$OUT2/bench-sbe-lto.tar.gz" -C "$tmpm"
-MAN_COMMIT=$(python3 -c "import json; print(json.load(open('$tmpm/run-manifest.json'))['commit'])")
+MAN_COMMIT=$(python3 -c "import json; print(json.load(open('$tmpm/criterion/run-manifest.json'))['commit'])")
 check "manifest commit matches HEAD" test "$MAN_COMMIT" = "$COMMIT"
 rm -rf "$tmpm"
 
@@ -129,7 +129,7 @@ for profile in lto no-lto; do
     mkdir -p "$d"
     echo '{"mean":{"point_estimate":1.0}}' >"$d/estimates.json"
     write_manifest \
-        "$FAKE_ROOT/target/bench-runs/$STALE_RUN/$profile/run-manifest.json" \
+        "$FAKE_ROOT/target/bench-runs/$STALE_RUN/$profile/criterion/run-manifest.json" \
         "$STALE_RUN" "$profile" "$STALE_COMMIT"
 done
 # Cluster fixtures stamped for HEAD so SBE stale is the first failure.
@@ -170,7 +170,7 @@ else
     fail=$((fail + 1))
 fi
 # Manifest on disk must remain the foreign commit (never rewritten to HEAD).
-STALE_ON_DISK=$(python3 -c "import json; print(json.load(open('$FAKE_ROOT/target/bench-runs/$STALE_RUN/lto/run-manifest.json'))['commit'])")
+STALE_ON_DISK=$(python3 -c "import json; print(json.load(open('$FAKE_ROOT/target/bench-runs/$STALE_RUN/lto/criterion/run-manifest.json'))['commit'])")
 check "stale on-disk manifest not rewritten to HEAD" \
     test "$STALE_ON_DISK" = "$STALE_COMMIT"
 
@@ -182,7 +182,7 @@ for profile in lto no-lto; do
     mkdir -p "$d"
     echo '{"mean":{"point_estimate":1.0}}' >"$d/estimates.json"
     write_manifest \
-        "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/run-manifest.json" \
+        "$FAKE_ROOT/target/bench-runs/$RUN_ID/$profile/criterion/run-manifest.json" \
         "$RUN_ID" "$profile" "$COMMIT"
 done
 rm -rf "$FAKE_ROOT/target/criterion" "$FAKE_ROOT/target/bench-no-lto"

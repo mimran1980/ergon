@@ -56,8 +56,8 @@ sys.exit(0 if d.get('commit') == sys.argv[2] else 1)
 
 SBE_RUN_ID=""
 for candidate in $(ls -t "$SBE_RUNS" 2>/dev/null); do
-    m_lto="$SBE_RUNS/$candidate/lto/run-manifest.json"
-    m_nolto="$SBE_RUNS/$candidate/no-lto/run-manifest.json"
+    m_lto="$SBE_RUNS/$candidate/lto/criterion/run-manifest.json"
+    m_nolto="$SBE_RUNS/$candidate/no-lto/criterion/run-manifest.json"
     if manifest_commit_matches "$m_lto" && manifest_commit_matches "$m_nolto"; then
         SBE_RUN_ID="$candidate"
         break
@@ -75,7 +75,7 @@ for profile in no-lto lto; do
     estimate_count=$(find "$CRITERION_DIR" -name "estimates.json" -path "*/new/*" | wc -l | tr -d ' ')
     [ "$estimate_count" -gt 0 ] || fail "no Criterion estimates in $CRITERION_DIR"
 
-    MANIFEST="$SBE_RUN_DIR/$profile/run-manifest.json"
+    MANIFEST="$CRITERION_DIR/run-manifest.json"
     # Re-check immediately before packaging (no rewrite of a mismatched stamp).
     manifest_commit_matches "$MANIFEST" \
         || fail "SBE $profile run-manifest commit is not HEAD ($COMMIT) under $SBE_RUN_ID — stale evidence"
@@ -97,18 +97,18 @@ with open(path, 'w') as f:
     json.dump(d, f, indent=2)
 "
     ARCHIVE="$OUT_DIR/bench-sbe-$profile.tar.gz"
-    tar -czf "$ARCHIVE" -C "$SBE_RUN_DIR/$profile" criterion run-manifest.json
+    tar -czf "$ARCHIVE" -C "$SBE_RUN_DIR/$profile" criterion
     # Validate archive expands and contains estimates + manifest
     tmp=$(mktemp -d)
     tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json' || fail "$ARCHIVE missing run-manifest.json"
     tar -tzf "$ARCHIVE" | grep -q 'estimates.json' || fail "$ARCHIVE missing estimates.json"
     # Archive manifest must still claim HEAD — never a rewritten foreign commit.
-    tar -xzf "$ARCHIVE" -C "$tmp" run-manifest.json
+    tar -xzf "$ARCHIVE" -C "$tmp" criterion/run-manifest.json
     python3 -c "
 import json, sys
 d = json.load(open(sys.argv[1]))
 sys.exit(0 if d.get('commit') == sys.argv[2] else 1)
-" "$tmp/run-manifest.json" "$COMMIT" \
+" "$tmp/criterion/run-manifest.json" "$COMMIT" \
         || fail "$ARCHIVE run-manifest commit is not HEAD"
     rm -rf "$tmp"
     echo "SBE $profile: $estimate_count estimates → bench-sbe-$profile.tar.gz"
