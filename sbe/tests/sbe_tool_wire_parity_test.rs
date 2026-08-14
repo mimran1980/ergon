@@ -356,9 +356,9 @@ impl CarPayload {
 
         let mut extras = ToolExtras::default();
         extras
-            .sun_roof(self.extras_bits & 0b001 != 0)
-            .sports_pack(self.extras_bits & 0b010 != 0)
-            .cruise_control(self.extras_bits & 0b100 != 0);
+            .set_sun_roof(self.extras_bits & 0b001 != 0)
+            .set_sports_pack(self.extras_bits & 0b010 != 0)
+            .set_cruise_control(self.extras_bits & 0b100 != 0);
         car.extras(extras);
 
         let mut engine = car.engine_encoder();
@@ -548,9 +548,9 @@ fn assert_tool_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(car.some_numbers(), p.some_numbers);
     assert_eq!(car.vehicle_code(), p.vehicle_code);
     let extras = car.extras();
-    assert_eq!(extras.is_sun_roof(), p.extras_bits & 0b001 != 0);
-    assert_eq!(extras.is_sports_pack(), p.extras_bits & 0b010 != 0);
-    assert_eq!(extras.is_cruise_control(), p.extras_bits & 0b100 != 0);
+    assert_eq!(extras.get_sun_roof(), p.extras_bits & 0b001 != 0);
+    assert_eq!(extras.get_sports_pack(), p.extras_bits & 0b010 != 0);
+    assert_eq!(extras.get_cruise_control(), p.extras_bits & 0b100 != 0);
 
     let engine = car.engine_decoder();
     assert_eq!(engine.capacity(), p.engine_capacity);
