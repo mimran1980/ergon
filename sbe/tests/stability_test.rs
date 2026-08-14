@@ -55,6 +55,7 @@ fn generate_golden_pinned() -> Result<String, Box<dyn std::error::Error>> {
         ])
         .arg(&out)
         .current_dir(Paths::workspace_root())
+        .env("CARGO_NET_OFFLINE", "true")
         .status()?;
     if !status.success() {
         return Err(format!("regenerate_golden example failed: {status}").into());

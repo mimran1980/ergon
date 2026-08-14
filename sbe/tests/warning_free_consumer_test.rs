@@ -111,6 +111,7 @@ ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes
             .args(["build"])
             .current_dir(&dir)
             .env("CARGO_TARGET_DIR", &target)
+            .env("CARGO_NET_OFFLINE", "true")
             .output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         let _ = fs::remove_dir_all(&dir);

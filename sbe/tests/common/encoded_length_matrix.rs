@@ -93,6 +93,7 @@ path = "src/lib.rs"
     let output = Command::new("cargo")
         .args(["test", "--", "--test-threads=1"])
         .current_dir(&tmp)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .map_err(|e| format!("failed to run cargo test: {e}"))?;
 

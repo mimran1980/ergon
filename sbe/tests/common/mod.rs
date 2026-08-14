@@ -241,6 +241,7 @@ pub fn compile_fails_with_diagnostics(
         .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo build failed");
 
@@ -325,6 +326,7 @@ fn _compile_and_run(
         .args(&args)
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 
@@ -447,6 +449,7 @@ ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "
         .args(["run", "--quiet"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed to start");
 
@@ -564,6 +567,7 @@ pub fn compile_and_run_two_modules(
         .args(["run"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 
