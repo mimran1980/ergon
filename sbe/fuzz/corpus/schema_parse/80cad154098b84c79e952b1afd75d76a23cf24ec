@@ -1,0 +1,13 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" ame="value" id="1" tyame="templateId" jrimitiveType="uint16"/>
+    ? <type name="schemaId" primitiveType="uint16"/>
+      <type oame="version" primitiveType="uint05"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+     name" id="1" tpye="uint64"/>
+  </message>
+</messageSchema>

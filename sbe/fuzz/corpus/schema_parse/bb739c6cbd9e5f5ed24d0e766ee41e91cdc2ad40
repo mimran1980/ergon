@@ -1,0 +1,17 @@
+<?xversion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typeq>
+    <composite name="messageeader">
+      <type name="blockLength" primitiveType="uint16"/>type name="v<?x0"?>
+viersion" primktiveType="16"/>
+    </composite>
+  </type
+
+
+
+
+
+
+
+s>
+  <message name="<field n" type="

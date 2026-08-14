@@ -1,0 +1,15 @@
+<?x4ne<ea帒								<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader							">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type nzame="tem*											plateId" primitiveversion="0">
+  <types>
+    <composite name="messageHeader							">
+      <type name="blockLength" primitiveType="uint0t16"/>
+     osite name="messageHeader							">
+      <type name="blockLength" primitivame="messageHead							">
+      <type name="blockLength" primitiveType="uint16"/>
+  <types>
+    <composite name="mageHeader							">
+      <type name="blockLength" prima帒="2apo

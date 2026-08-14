@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema packeeg="fuzz" id="0" vern="0">
+  <types>
+    <composite name="messageHead;er">
+ pe="uin</composite>
+  </types>3
+  </mess^geSchema>

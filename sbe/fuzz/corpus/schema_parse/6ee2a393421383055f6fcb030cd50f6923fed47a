@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSche>
+  <types>
+    <composite name="messageHeader">
+ e"uint16"/>
+    </composite>
+  ma package="fuzon="omposite></types>
+ essage name="M" idnt28"/>
+  </message

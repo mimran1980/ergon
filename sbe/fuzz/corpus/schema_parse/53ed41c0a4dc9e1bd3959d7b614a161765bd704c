@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="age nam1" version="0">
+  <types>
+    <composite name="messageHeader">
+="templateId" primitiveType="uint32"/>
+      p  </composite>
+  </types>
+  </messageSchema>

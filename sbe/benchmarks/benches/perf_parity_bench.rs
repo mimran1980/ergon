@@ -597,6 +597,27 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
     // no extent check — use wrap_unchecked so the gated pair is equal work
     // (same unfairness class as batch decode; product bare wrap still proves).
+    // Fairness: the first benchmark measured in a group pays a one-off
+    // position penalty (CPU frequency ramp, icache/branch-predictor cold start).
+    // Measured at 1.0-1.6% — the same magnitude as the entire ergo/sbe-tool
+    // margin on this scenario, and it always landed on ergo because ergo was
+    // listed first. This throwaway arm absorbs it so neither implementation is
+    // measured cold. It is not a gated pair (check-bench-gate.sh matches the
+    // `*_body_only` names explicitly).
+    group.bench_function("warmup_body_only", |b| {
+        let mut buf = [0u8; 512];
+        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        b.iter(|| {
+            for _ in 0..MICRO_BATCH_SIZE {
+                // SAFETY: extent asserted directly above.
+                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
+                    .serial_number(black_box(1234))
+                    .model_year(black_box(2013));
+            }
+            black_box(&buf[8..18]);
+        });
+    });
+
     group.bench_function("ergo-sbe_body_only", |b| {
         let mut buf = [0u8; 512];
         // Untimed: prove the buffer holds a complete frame before the timed

@@ -1,0 +1,9 @@
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type na="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name=")" id="1"></message>
+</messageSchema>

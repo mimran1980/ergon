@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+     !<type name="blockLength." primitiveType="/???=??er"/>
+mimitiveType="/??????ersite>e=   <type name="schemaId" primitiveType="uint16		ve~sionitive"/>
+mimitiveType="/rsion=fuion    <composite name="messageHeader">
+     !<type name="blockLength." e="/???=??er"/>
+mimitiveType="/??????ersite>e=   <type name="schemaId" prim"type

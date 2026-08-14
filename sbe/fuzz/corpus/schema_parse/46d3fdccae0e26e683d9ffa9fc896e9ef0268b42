@@ -1,0 +1,8 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+ !  <composite name="messageHeade6"/>
+="messa(     <type name="templateId" primitiveTy="peuint08"/>
+ in
+  </types>
+</messageSchema>

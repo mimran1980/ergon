@@ -1,0 +1,16 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+ !  <composite name="messageHeader">osite
+      <type name="blockLength" pr66666666666666666666666666666666666666666666tiveType="uint16"/>
+="messa(     <type name="templateId" primitiveTy="peuint16"/>
+ in/>
+ int16"/>
+      <type name="version" primiti6eType="uin16"/>
+      <type name="version" primiti6eType="uint10YYYYYt16"/>
+     t10YYYYYt16"/>
+      <type name="version" primiti6eType="uint10YYYYYYYYYYYYYYYYY"/>
+    </composite>
+  </types>
+ essage>
+</messageSchema>

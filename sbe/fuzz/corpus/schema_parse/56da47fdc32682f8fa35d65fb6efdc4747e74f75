@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+  veType="uint16"/>
+      <type name="templateId" primitiveme="schemaId" prim <

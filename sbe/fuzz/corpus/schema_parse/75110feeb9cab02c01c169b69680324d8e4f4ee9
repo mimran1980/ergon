@@ -1,0 +1,8 @@
+<?xion="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeade
+" > r    py<te name="sageHeade
+" > r    p  <composite name="messageHeade
+" > r    pyLemit
+      <type name=ypchema>

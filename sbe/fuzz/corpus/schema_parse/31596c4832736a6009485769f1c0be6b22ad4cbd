@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="2" version="0">
+  <types>
+    <composite naAe="messageHeader">
+      </composite>
+  </types 
+ ><message name=")" id="1">t64"/>
+  </message>
+</messageSchema>

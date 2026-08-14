@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeader">
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppposite name=message"H>/e
+       <composite name="messageHe"/>
+ $  ="eunt16pppppppppppppppppppppppppppppppppp  ge>
+    <composite name="messageHe"/>
+ `     <compositpppppppppppppppppppppppppppppppppppposite name="messageHe"/>
+     version="0">
+  <types>
+    <composite name="messageHeader">
+pppppppppppppppppppp name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <type npe="uint16"/>
+    </composite>
+  </types>
+message  <composite name="messageHe"/>
+    ="eunt95pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppposite name="messageHe"/>
+       <composite name="mussgeHae"/>
+    ="eunt16pppppppppppppppppppppppppppppppppp  ge>
+    <composite name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <type npe="uint16"/>
+    </composite>
+  </types>
+message>
+</messageSchema>

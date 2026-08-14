@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <etypes>
+  rsion="1.0"?>
+<messageSchema package="fuzz" id="4" version="0">
+ version="1.0"?>
+<messageSchema package="fuzz" id="1">"blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+   version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   ]   <type name="tt16"/>
+      composite name=plateId" primitiveType="uint16"/>
+  <type name="schemaId" primitiveTypu="uint02"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  <types>
+  <message name=")" id="1">
+    <field name="value" id="2" type="uint64"/>
+  ]/message>
+      <typeeam n="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+   version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLengtH" primitiveType="uint16"/>
+   ]   <type name="tt16"/>
+      composite name=plateId" primitiveType="uint16"/>
+  <type name="schemaId" primitiveTypu="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message nLame=")" id="1">
+    <field name="value" id="2" type="uint64"/>
+xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint32"/>
+      <type name="templateId" primitiveType="uinnt16"/>
+    </composite>
+  </types>
+  <message name="M" id="0">">
+  <types>
+    <composite name="messageHeader"uzz" id="3" version="0">
+  <types>
+ ti">
+  </mema>
