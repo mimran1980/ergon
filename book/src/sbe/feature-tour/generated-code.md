@@ -45,15 +45,28 @@ impl<'a> CarDecoder<'a> {
 ## Encoder (type-state stages)
 
 ```rust,ignore
-// Wire order is enforced by named stage types.
-pub struct CarEncoder<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
+// Wire order is enforced by named stage types. The root encoder also carries a
+// fields-state parameter: tails are reachable only after `fixed()`.
+pub struct CarEncoder<
+    'a,
+    H: sbe_rt::HeaderState = sbe_rt::HeaderPresent,
+    F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed,
+> { ... }
 pub struct CarAfterFuelFigures<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 pub struct CarAfterPerformanceFigures<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 pub struct CarComplete<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 
+// `fixed()` moves FieldsUnfixed -> FieldsFixed; the tail methods exist only on
+// the fixed phase, so `wrap(...).fuel_figures(...)` is a compile error.
+pub type CarUnfixedEncoder<'a, H = sbe_rt::HeaderPresent> =
+    CarEncoder<'a, H, sbe_rt::FieldsUnfixed>;
+
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
+    pub fn fixed(self, fields: &CarFixedFields) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> { ... }
+}
+
 // Calling stages out of order is a type error — `CarEncoder` has no `asks()`.
-impl<'a> CarEncoder<'a> {
-    pub fn fixed(self, fields: &CarFixedFields) -> Self { ... }
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     pub fn fuel_figures(self, count: u16, f: impl FnOnce(...) -> ...) -> Result<CarAfterFuelFigures> { ... }
 }
 impl<'a> CarAfterFuelFigures<'a> {
