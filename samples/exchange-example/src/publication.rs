@@ -220,10 +220,7 @@ impl<P: Publication> ClaimPublisher<P> {
                                             l.price.mantissa,
                                             l.price.exponent,
                                         ))
-                                        .size_wire(Decimal::new(
-                                            l.size.mantissa,
-                                            l.size.exponent,
-                                        ));
+                                        .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
                                         Ok(())
                                     })?;
                                 }

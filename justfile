@@ -49,6 +49,13 @@ policy:
 # Run this before starting a release. It takes minutes, not hours, and every
 # entry either passes or tells you exactly what drifted.
 preflight:
+    # Cheapest gate, and one that actually bit: the 0.1.17 release aborted at
+    # step 2/8 on sample-crate fmt drift that had been sitting on the branch.
+    # `cargo fmt --all` does NOT reach samples/exchange-example — it is a
+    # separate workspace, so it needs its own invocation (same as `just fmt`).
+    @echo "=== formatting ==="
+    cargo fmt --all --check
+    cd samples/exchange-example && cargo fmt --check
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh

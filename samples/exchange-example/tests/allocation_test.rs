@@ -32,7 +32,8 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn warm_up() {
     use exchange_example::normalized_app::{
-        AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+        AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder,
+        L2BookFixedFields, Source, sbe_rt,
     };
     let mut buf = [0u8; 256];
     // Encode + decode to settle lazy-inits
@@ -44,7 +45,8 @@ fn warm_up() {
 #[test]
 fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+        AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields,
+        Source, sbe_rt,
     };
 
     warm_up();
@@ -99,7 +101,8 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal,
+        L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     warm_up();

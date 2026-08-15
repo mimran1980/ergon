@@ -74,7 +74,9 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{
+        BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5,
+    };
 
     let symbol = b"BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
@@ -110,7 +112,9 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::bitget_spot::{Depth50Decoder, Depth50Encoder, Depth50FixedFields, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{
+        Depth50Decoder, Depth50Encoder, Depth50FixedFields, InstCategory, Padding5,
+    };
 
     let asks_count = 3u16;
     let bids_count = 2u16;
@@ -249,7 +253,9 @@ fn bitget_verify_too_short() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::{ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
+    use exchange_example::binance_spot::{
+        ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields,
+    };
 
     let expected_ts: i64 = 1712345678000123;
 
@@ -257,7 +263,9 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
         .unwrap()
-        .fixed(&ServerTimeResponseFixedFields { server_time: expected_ts });
+        .fixed(&ServerTimeResponseFixedFields {
+            server_time: expected_ts,
+        });
     let encoded = encoder.as_bytes_with_header();
 
     // Decode
@@ -270,7 +278,9 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn binance_server_time_verify_passes() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::{ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
+    use exchange_example::binance_spot::{
+        ServerTimeResponseDecoder, ServerTimeResponseEncoder, ServerTimeResponseFixedFields,
+    };
 
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
@@ -514,7 +524,8 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::binance_spot::{
-        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder, WebSocketSessionLogonResponseFixedFields,
+        BoolEnum, WebSocketSessionLogonResponseDecoder, WebSocketSessionLogonResponseEncoder,
+        WebSocketSessionLogonResponseFixedFields,
     };
 
     let api_key = b"my-test-api-key";
@@ -732,7 +743,9 @@ fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std
 #[test]
 fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::binance_spot::WebSocketResponseDecoder;
-    use exchange_example::bitget_spot::{BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5};
+    use exchange_example::bitget_spot::{
+        BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5,
+    };
 
     // Encode a valid bitget BestBidAsk message
     let symbol = b"BTCUSDT";
@@ -906,7 +919,9 @@ fn binance_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::error::Error>> {
-    use exchange_example::binance_spot::{ServerTimeResponseEncoder, ServerTimeResponseFixedFields};
+    use exchange_example::binance_spot::{
+        ServerTimeResponseEncoder, ServerTimeResponseFixedFields,
+    };
     use exchange_example::bitget_spot::BestBidAskDecoder;
 
     // Encode a valid binance ServerTimeResponse message
@@ -931,7 +946,8 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
 #[test]
 fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal,
+        L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     let symbol = b"BTCUSDT";

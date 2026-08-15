@@ -305,8 +305,7 @@ fn hook_extends_message_and_entry_domain_and_compiles() {
 // unnoticed.
 
 #[test]
-fn config_and_item_context_debug_stay_short_and_useful()
--> Result<(), Box<dyn std::error::Error>> {
+fn config_and_item_context_debug_stay_short_and_useful() -> Result<(), Box<dyn std::error::Error>> {
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
 
@@ -322,7 +321,8 @@ fn config_and_item_context_debug_stay_short_and_useful()
     assert!(rendered.contains("hooks: Hooks(1)"), "{rendered}");
 
     let ir = parse(&std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schemas/example-schema.xml"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/schemas/example-schema.xml"),
     )?)?;
     Generator::new(config).generate(&Schema::from_ir(ir))?;
 

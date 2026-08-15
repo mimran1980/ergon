@@ -43,7 +43,8 @@ fn embedded_driver_launches_and_pub_sub_created() -> Result<(), Box<dyn std::err
 #[test]
 fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal,
+        L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     // ── Aeron setup ──────────────────────────────────────────────────

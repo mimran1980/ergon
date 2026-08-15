@@ -770,7 +770,10 @@ fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
         "shared composite must resolve through the seeded registry"
     );
     assert!(ir.tokens.iter().any(|t| t.name == "Quote"));
-    assert_eq!(ir.id, 7, "consumer keeps its own schema id, not the shared 0");
+    assert_eq!(
+        ir.id, 7,
+        "consumer keeps its own schema id, not the shared 0"
+    );
 
     // A missing file is an error, not a panic — the read happens before parse.
     assert!(ergo_sbe::parse_file_with_shared(dir.join("absent.xml"), &shared).is_err());

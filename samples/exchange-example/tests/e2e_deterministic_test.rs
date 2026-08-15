@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use exchange_example::config::CHANNEL;
 use exchange_example::normalized_app::{
-    AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
+    AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal,
+    L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
 };
 use rusteron_client::cformat;
 

@@ -7,7 +7,8 @@ use std::str::FromStr;
 
 use exchange_example::decimal::parse_decimal_exact;
 use exchange_example::normalized_app::{
-    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, L2BookFixedFields, Source, TryFromSbe, TryToSbe, sbe_rt,
+    AppMessageEncoder, Decimal, L2BookDecoder, L2BookEncoder, L2BookFixedFields, Source,
+    TryFromSbe, TryToSbe, sbe_rt,
 };
 
 #[test]
