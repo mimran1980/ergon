@@ -295,3 +295,48 @@ fn hook_extends_message_and_entry_domain_and_compiles() {
         "#,
     );
 }
+
+// ── Debug impls on the hook/config surface ─────────────────────────────
+//
+// `GenerationConfig`, `Hooks` and `ItemContext` all hand-write `Debug`
+// (`Hooks` holds `Arc<dyn Fn>` and `ItemContext` holds the whole schema, so
+// neither can derive it). Nothing called any of the three, so a panic or an
+// accidental dump of the entire IR into a hook author's log would have gone
+// unnoticed.
+
+#[test]
+fn config_and_item_context_debug_stay_short_and_useful()
+-> Result<(), Box<dyn std::error::Error>> {
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+
+    let config = GenerationConfig::new("dbg").with_hook(move |ctx: &ItemContext| {
+        sink.lock().expect("hook sink").push(format!("{ctx:?}"));
+        Vec::new()
+    });
+
+    let rendered = format!("{config:?}");
+    assert!(rendered.starts_with("GenerationConfig {"), "{rendered}");
+    assert!(rendered.contains("module_name: \"dbg\""), "{rendered}");
+    // Hooks must report its arity, never try to format the closures.
+    assert!(rendered.contains("hooks: Hooks(1)"), "{rendered}");
+
+    let ir = parse(&std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schemas/example-schema.xml"),
+    )?)?;
+    Generator::new(config).generate(&Schema::from_ir(ir))?;
+
+    let captured = seen.lock().expect("hook sink").clone();
+    assert!(!captured.is_empty(), "hooks must have fired");
+    // ItemContext carries the full schema; Debug must print kind + name only.
+    for line in &captured {
+        assert!(line.starts_with("ItemContext { kind: "), "{line}");
+        assert!(line.contains("name: "), "{line}");
+        assert!(!line.contains("tokens"), "must not dump the IR: {line}");
+    }
+    assert!(
+        captured.iter().any(|l| l.contains("MessageEncoder")),
+        "expected a MessageEncoder context, got {captured:?}"
+    );
+    Ok(())
+}

@@ -282,35 +282,6 @@ pub(crate) struct GenerationContext {
     pub enable_dispatch: bool,
 }
 
-impl GenerationContext {
-    fn from_schema(schema: &Schema, config: &GenerationConfig, multi_message: bool) -> Self {
-        let elements = partition_tokens(&schema.ir.tokens);
-        let header_size = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == schema.ir.header_type)
-            .and_then(|c| c[0].encoding.offset)
-            .unwrap_or(8);
-        Self {
-            elements,
-            byte_order: schema.ir.byte_order,
-            schema_id: schema.ir.id,
-            schema_version: schema.ir.version,
-            header_type: schema.ir.header_type.clone(),
-            header_size,
-            schema_name: schema.ir.package.clone(),
-            multi_message,
-            conversions: config.conversions.clone(),
-            domain_types: config.domain_types.clone(),
-            domain_objects: config.domain_objects,
-            domain_var_data: config.domain_var_data,
-            enable_display_debug: config.enable_display_debug,
-            enable_meta_attributes: config.enable_meta_attributes,
-            enable_dispatch: config.enable_dispatch,
-        }
-    }
-}
-
 /// SBE → Rust codec generator.
 ///
 /// Holds a [`GenerationConfig`]. Call [`Self::generate`] for one schema or
@@ -512,43 +483,6 @@ impl Generator {
             })?;
         }
         Ok(())
-    }
-
-    fn field_has_conversion(
-        field: &MessageField,
-        conversions: &[crate::ConversionSelector],
-    ) -> bool {
-        field_has_conversion_free(field, conversions)
-    }
-
-    /// Whether the config has a conversion selector matching the given type name,
-    /// semantic type, or field path. Also returns true for FieldPath selectors
-    /// that match `owner_name.field_name`.
-    fn has_conversion_for(
-        &self,
-        type_name: &str,
-        semantic_type: Option<&str>,
-        owner_name: Option<&str>,
-        field_name: &str,
-    ) -> bool {
-        for sel in &self.config.conversions {
-            match sel {
-                crate::ConversionSelector::NamedType(name) if name == type_name => return true,
-                crate::ConversionSelector::SemanticType(st)
-                    if semantic_type == Some(st.as_str()) =>
-                {
-                    return true;
-                }
-                crate::ConversionSelector::FieldPath(path) => {
-                    let expected = format!("{}.{}", owner_name.unwrap_or(""), field_name);
-                    if path == &expected || path == field_name {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
     }
 
     #[allow(missing_docs)]

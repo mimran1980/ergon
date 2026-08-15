@@ -79,24 +79,6 @@ fn write_null_at(
     }
 }
 
-fn optional_null_size(field: &MessageField) -> Option<usize> {
-    match &field.field_type {
-        FieldType::Primitive(prim, length) => {
-            let n = length.unwrap_or(1);
-            if n != 1 {
-                // Multi-byte char arrays / fixed arrays use per-element nulls
-                // elsewhere; single primitive optionals only here.
-                return None;
-            }
-            Some(prim.size())
-        }
-        FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
-            Some(encoding_type.size())
-        }
-        FieldType::Composite { .. } => None,
-    }
-}
-
 /// Null-image statements for one optional message field at `field_abs_offset`.
 ///
 /// Used by both `apply_nulls` and `fixed(&FixedFields)` when a field is `None`.
@@ -309,20 +291,12 @@ pub(crate) fn generate_nullification(
         match null_image_stmts_for_field(f, abs, &buf_expr_ts, byte_order, elements) {
             Ok(Some(s)) => stmts.extend(s),
             Ok(None) => {}
-            // Keep apply_nulls best-effort for legacy callers; fixed() rejects.
-            Err(_) => {
-                if let (Some(null_val), Some(size)) = (f.null_value, optional_null_size(f)) {
-                    if size > 0 && size <= 8 {
-                        stmts.extend(write_null_at(
-                            &buf_expr_ts,
-                            quote! { #offset_base_expr + #f_offset },
-                            null_val,
-                            size,
-                            byte_order,
-                        ));
-                    }
-                }
-            }
+            // `apply_nulls` stays best-effort where `fixed()` rejects: a field
+            // with no derivable null image contributes no statements. There is
+            // no fallback to attempt — `null_image_stmts_for_field` only errors
+            // for a primitive of width 0 or >8, and any such width is outside
+            // what a null image can be written into anyway.
+            Err(_) => {}
         }
     }
     if !stmts.is_empty() {

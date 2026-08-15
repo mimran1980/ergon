@@ -731,3 +731,50 @@ fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+// ── parse_file_with_shared ─────────────────────────────────────────────
+//
+// `parse_with_shared` (string form) is exercised above and elsewhere; the
+// file form was public but called by nothing, so a break in its path
+// resolution or its shared-registry seeding would not have been caught.
+
+#[test]
+fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shared = ergo_sbe::parse(
+        r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="SharedPrice"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+</messageSchema>"#,
+    )?;
+
+    let dir = std::env::temp_dir().join(format!("ergo-shared-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let consumer = dir.join("consumer.xml");
+    // The consumer declares no types of its own: `SharedPrice` resolves only
+    // because the shared schema seeded the registry.
+    std::fs::write(
+        &consumer,
+        r#"<?xml version="1.0"?>
+<messageSchema package="c" id="7" version="0" byteOrder="littleEndian" headerType="messageHeader">
+  <message name="Quote" id="1"><field name="px" id="1" type="SharedPrice"/></message>
+</messageSchema>"#,
+    )?;
+
+    let ir = ergo_sbe::parse_file_with_shared(&consumer, &shared)?;
+    assert!(
+        ir.tokens.iter().any(|t| t.name == "SharedPrice"),
+        "shared composite must resolve through the seeded registry"
+    );
+    assert!(ir.tokens.iter().any(|t| t.name == "Quote"));
+    assert_eq!(ir.id, 7, "consumer keeps its own schema id, not the shared 0");
+
+    // A missing file is an error, not a panic — the read happens before parse.
+    assert!(ergo_sbe::parse_file_with_shared(dir.join("absent.xml"), &shared).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
