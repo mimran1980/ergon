@@ -209,8 +209,13 @@ _release-pre:
 
 # Gates 6-9 plus publish/tag/release. Shared by both release paths.
 _release-post:
-    @echo "=== 6/8 mutation configuration ==="
-    just check-mutation
+    # Mutation testing is deliberately NOT on the release path. `cargo mutants
+    # --jobs 1` takes ~16 h and builds a full tree per mutant, which on a 16 GB
+    # machine exhausted the disk and killed the 0.1.17 release mid-run. It stays
+    # a real, runnable gate — `just check-mutation` — but it is manual, and the
+    # cheap config check is what the release enforces.
+    @echo "=== 6/8 mutation configuration (config only; full run is manual) ==="
+    ./scripts/check-mutation-config.sh
     @echo "=== 7/8 reference reproducibility ==="
     just check-sbe-references
     just check-bench-reference
