@@ -88,34 +88,44 @@ impl TypeRegistry {
 }
 
 /// Helper to parse optional u64 values from strings (like nullValue).
+/// Returns `None` for empty strings; `Some` for valid values.
+/// Prefer [`try_parse_u64_val`] when an attribute is present and must fail closed.
 pub(crate) fn parse_u64_val(s: &str, prim_type: Option<PrimitiveType>) -> Option<u64> {
+    try_parse_u64_val(s, prim_type).ok().flatten()
+}
+
+/// Fallible null/min/max parser. Empty → `Ok(None)`. Present-but-invalid → `Err`.
+pub(crate) fn try_parse_u64_val(
+    s: &str,
+    prim_type: Option<PrimitiveType>,
+) -> Result<Option<u64>, String> {
     if s.is_empty() {
-        return None;
+        return Ok(None);
     }
     match prim_type {
         Some(PrimitiveType::Char) if s.len() == 1 => {
-            return Some(s.chars().next().unwrap() as u64);
+            return Ok(Some(s.chars().next().unwrap() as u64));
         }
         Some(PrimitiveType::Float) | Some(PrimitiveType::Double) => {
             // Parse as float/double, then reinterpret bits as u64.
             // This preserves NaN, infinity, and negative zero bit patterns.
             if let Some(PrimitiveType::Float) = prim_type {
                 if let Ok(v) = s.parse::<f32>() {
-                    return Some(v.to_bits() as u64);
+                    return Ok(Some(v.to_bits() as u64));
                 }
             } else if let Ok(v) = s.parse::<f64>() {
-                return Some(v.to_bits() as u64);
+                return Ok(Some(v.to_bits() as u64));
             }
-            return None;
+            return Err(format!("'{s}' is not a valid float null/min/max value"));
         }
         _ => {}
     }
     if let Ok(v) = s.parse::<u64>() {
-        Some(v)
+        Ok(Some(v))
     } else if let Ok(v) = s.parse::<i64>() {
-        Some(v as u64)
+        Ok(Some(v as u64))
     } else {
-        None
+        Err(format!("'{s}' is not a valid integer null/min/max value"))
     }
 }
 
@@ -127,11 +137,15 @@ pub(crate) fn resolve_type_to_tokens(
     registry: &TypeRegistry,
     since_version: u16,
     span: Option<std::ops::Range<usize>>,
+    description: Option<String>,
 ) -> Option<Vec<Token>> {
     if let Some(encoding) = registry.encodings.get(type_name) {
         let mut field_enc = encoding.clone();
         if since_version > 0 {
             field_enc.since_version = since_version;
+        }
+        if description.is_some() {
+            field_enc.description = description;
         }
         Some(vec![
             Token {
@@ -157,6 +171,7 @@ pub(crate) fn resolve_type_to_tokens(
             signal: Signal::BeginField,
             encoding: Encoding {
                 since_version,
+                description,
                 ..Encoding::default()
             },
             span: span.clone(),

@@ -614,14 +614,16 @@ fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
             header_type: "messageHeader".into(),
             tokens: vec![],
         });
+        // Module names must be Rust identifiers (T-3); hyphens become underscores.
+        let module_name = format!("issue{}", num.replace('-', "_"));
         let mut generator =
-            ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(format!("issue{num}")));
+            ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name.clone()));
         let modules = generator.generate(&schema).unwrap();
         let module = modules
             .modules()
             .next()
             .unwrap_or_else(|| panic!("issue{num}: expected at least one module"));
-        assert_eq!(module.path, format!("issue{num}.rs"));
+        assert_eq!(module.path, format!("{module_name}.rs"));
         assert!(
             module.source.contains(&meta.id.to_string()),
             "issue{num}: source should contain schema id {}",

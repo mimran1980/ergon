@@ -1,0 +1,11 @@
+<?xmlrsio?>
+<messageSchema package="fuzz" id="0" versio.="0">
+  <types>
+    <composite name="mesoageHeader">
+   >
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <fi/>
+  </message>
+</messageSchema>

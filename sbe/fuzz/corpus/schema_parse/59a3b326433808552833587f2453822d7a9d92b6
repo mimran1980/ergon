@@ -1,0 +1,15 @@
+<?o
+<m	s"/	type <?xml version="0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+(     <namtype name="templateId" primitiveType="uint16"/>
+    ? <type name="schemaId" primitiveType="uint16"/>
+      <tnapmye e="version" primitiveType="uint10"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field nampackae="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

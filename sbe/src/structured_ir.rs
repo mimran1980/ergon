@@ -547,6 +547,7 @@ pub(crate) struct CompositeMember {
     pub(crate) name: String,
     pub(crate) offset: usize,
     pub(crate) since_version: u16,
+    pub(crate) description: Option<String>,
     pub(crate) member_type: MemberType,
 }
 
@@ -581,6 +582,7 @@ pub(crate) fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> 
             let name = tokens[i].name.clone();
             let offset = tokens[i].encoding.offset.unwrap_or(0);
             let since_version = tokens[i].encoding.since_version;
+            let description = tokens[i].encoding.description.clone();
             let presence = tokens[i].encoding.presence;
             let constant_value = tokens[i].encoding.constant_value.clone();
             let length = tokens[i].encoding.length;
@@ -682,6 +684,7 @@ pub(crate) fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> 
                 name,
                 offset,
                 since_version,
+                description,
                 member_type,
             });
 

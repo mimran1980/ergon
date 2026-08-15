@@ -1,0 +1,7 @@
+<?esxvmr										<?xml version="0.0"?>
+<messageSchema page="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader							">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="tem"/>
+      <typ neame="tem*											plateId" primitiveType="uiyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy*		*											plateId" primitiveTyyyma>

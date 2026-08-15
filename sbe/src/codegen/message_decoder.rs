@@ -25,6 +25,14 @@ use super::runtime::{
 };
 use super::tail_stages::generate_decoder_consuming_stages;
 
+/// Pure flyweight observers (getters, predicates, lengths) — discarding the
+/// return value does no decode work and is almost always a caller mistake.
+fn must_use_observer() -> proc_macro2::TokenStream {
+    quote::quote! {
+        #[must_use = "discarding this value is almost always a mistake"]
+    }
+}
+
 pub(crate) fn generate_message_decoder(
     msg: &MessageStructure,
     elements: &SchemaElements,
@@ -195,10 +203,8 @@ pub(crate) fn generate_message_decoder(
         #[must_use = "decoder must be read or advanced; dropping is fine only after use"]
         pub struct #decoder_ident<'a> {
             pub(crate) buf: &'a [u8],
-            /// Absolute address of the message body: `buf.as_ptr() as usize +
-            /// body_pos`. Cached once at construction so fixed-field accessors
-            /// become a single struct load + immediate-offset wire load.
-            pub(crate) base_addr: usize,
+            /// Byte offset of the message body within `self.buf`.
+            pub(crate) offset: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
         }
@@ -299,14 +305,14 @@ pub(crate) fn generate_message_decoder(
             acting_block_length: usize,
             acting_version: u16,
         ) -> Result<Self, sbe_rt::DecodeError> {
-            let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+            let Some(body_offset) = message_offset.checked_add(Self::HEADER_LENGTH) else {
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "message header",
                     needed: Self::HEADER_LENGTH,
                     available: buf.len().saturating_sub(message_offset),
                 });
             };
-            let available_body = buf.len().saturating_sub(body_pos);
+            let available_body = buf.len().saturating_sub(body_offset);
             let min_fixed = Self::min_readable_fixed_extent(acting_version);
             let body_need = if acting_block_length > min_fixed {
                 acting_block_length
@@ -342,10 +348,10 @@ pub(crate) fn generate_message_decoder(
         ) -> Self {
             // Cold panics use static strings so the success path stays free of
             // DecodeError/Display monomorphisation (batch decode no-LTO).
-            let Some(body_pos) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+            let Some(body_offset) = message_offset.checked_add(Self::HEADER_LENGTH) else {
                 panic!("buffer too short for message header");
             };
-            let available_body = buf.len().saturating_sub(body_pos);
+            let available_body = buf.len().saturating_sub(body_offset);
             let min_fixed = Self::min_readable_fixed_extent(acting_version);
             let body_need = if acting_block_length > min_fixed {
                 acting_block_length
@@ -375,10 +381,10 @@ pub(crate) fn generate_message_decoder(
             acting_block_length: usize,
             acting_version: u16,
         ) -> Self {
-            let body_pos = message_offset + Self::HEADER_LENGTH;
+            let body_offset = message_offset + Self::HEADER_LENGTH;
             Self {
                 buf,
-                base_addr: buf.as_ptr() as usize + body_pos,
+                offset: body_offset,
                 acting_block_length,
                 acting_version,
             }
@@ -421,20 +427,20 @@ pub(crate) fn generate_message_decoder(
             }
         };
         impl_body.extend(quote::quote! {
-            /// Decode a framed message at **message start** (`pos` = first
+            /// Decode a framed message at **message start** (`offset` = first
             /// byte of the header). Validates header fields and the
             /// version-aware fixed body extent. See [`Self::wrap`] for the
             /// message-start coordinate system.
             #[inline]
-            pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                if #hs > buf.len().saturating_sub(pos) {
+            pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
+                if #hs > buf.len().saturating_sub(offset) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
                         needed: #hs,
-                        available: buf.len().saturating_sub(pos),
+                        available: buf.len().saturating_sub(offset),
                     });
                 }
-                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
+                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, offset);
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
@@ -455,7 +461,7 @@ pub(crate) fn generate_message_decoder(
                     header.#hvr() as u64,
                 )?;
                 // Shared path with try_wrap: version-aware min fixed extent.
-                Self::try_wrap(buf, pos, acting_block_length, acting_version)
+                Self::try_wrap(buf, offset, acting_block_length, acting_version)
             }
 
             /// Trusted framed decode — **hybrid return** (freeze-friendly):
@@ -470,9 +476,9 @@ pub(crate) fn generate_message_decoder(
             /// [`Self::try_decode`] at untrusted boundaries when every failure
             /// must be a `Result`.
             #[inline]
-            pub fn decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub fn decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // Header read panics if the header region is short.
-                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, pos);
+                let header_bytes: [u8; #hs] = read_bytes::<#hs>(buf, offset);
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
@@ -493,7 +499,7 @@ pub(crate) fn generate_message_decoder(
                     header.#hvr() as u64,
                 )?;
                 // Body extent: panic (trusted tier), not Err.
-                Ok(Self::wrap(buf, pos, acting_block_length, acting_version))
+                Ok(Self::wrap(buf, offset, acting_block_length, acting_version))
             }
 
             /// Unchecked **extent**, checked **identity**.
@@ -504,11 +510,11 @@ pub(crate) fn generate_message_decoder(
             ///
             /// # Safety
             /// Header and version-readable fixed body for this template must
-            /// be fully in-bounds at `pos`.
+            /// be fully in-bounds at `offset`.
             #[inline]
-            pub unsafe fn decode_unchecked(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
+            pub unsafe fn decode_unchecked(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
                 // SAFETY: caller guarantees header bytes are in-bounds.
-                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, pos) };
+                let header_bytes: [u8; #hs] = unsafe { read_bytes_unchecked::<#hs>(buf, offset) };
                 let header = #hp(header_bytes);
                 let template_id = sbe_rt::checked_header_u16(
                     "templateId",
@@ -529,16 +535,18 @@ pub(crate) fn generate_message_decoder(
                     header.#hvr() as u64,
                 )?;
                 Ok(unsafe {
-                    Self::wrap_unchecked(buf, pos, acting_block_length, acting_version)
+                    Self::wrap_unchecked(buf, offset, acting_block_length, acting_version)
                 })
             }
         });
     }
 
+    let mu = must_use_observer();
     impl_body.extend(quote::quote! {
         /// Schema version from the message header (or wrap args), not the
         /// compiled schema constant. Fields with `sinceVersion` and optional
         /// presence depend on this value.
+        #mu
         #[inline]
         pub const fn acting_version(&self) -> u16 {
             self.acting_version
@@ -546,12 +554,12 @@ pub(crate) fn generate_message_decoder(
 
         /// Block length from the wire header / wrap args. Tail offsets use
         /// this acting length, not only the compiled `BLOCK_LENGTH`.
+        #mu
         #[inline]
         pub const fn acting_block_length(&self) -> usize {
             self.acting_block_length
         }
     });
-
     for f in &msg.fields {
         let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
@@ -582,6 +590,7 @@ pub(crate) fn generate_message_decoder(
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             impl_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #fname_ident(&self) -> &'static str {
                                     #val_lit
@@ -594,6 +603,7 @@ pub(crate) fn generate_message_decoder(
                                 impl_body.extend(doc_attr_tokens(desc));
                             }
                             impl_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #fname_ident(&self) -> #r_type_ty {
                                     #expr_parsed
@@ -665,10 +675,11 @@ pub(crate) fn generate_message_decoder(
                         }
                     };
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             #version_guard
-                            let all: [u8; #total_size_lit] = unsafe { read_addr_unchecked::<#total_size_lit>(self.base_addr, #offset_lit) };
+                            let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, self.offset + #offset_lit) };
                             [#(#elements),*]
                         }
                     });
@@ -679,6 +690,7 @@ pub(crate) fn generate_message_decoder(
                             proc_macro2::Span::call_site(),
                         );
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #copy_ident(&self, dst: &mut [u8]) -> usize {
                                 let src = self.#fn_snake_ident();
@@ -695,13 +707,14 @@ pub(crate) fn generate_message_decoder(
                 } else {
                     if f.presence == Presence::Optional {
                         let null_val = f.null_value.unwrap_or(0);
-                        let null_check_expr = if *prim == PrimitiveType::Float {
-                            format!("val.to_bits() == {null_val} as u32")
-                        } else if *prim == PrimitiveType::Double {
-                            format!("val.to_bits() == {null_val}")
-                        } else {
-                            format!("val == {null_val}_u64 as {r_type}")
-                        };
+                        let null_check_expr =
+                            if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
+                                // Any IEEE NaN is null (matches sbe-tool is_nan()).
+                                let _ = null_val;
+                                "val.is_nan()".to_string()
+                            } else {
+                                format!("val == {null_val}_u64 as {r_type}")
+                            };
                         let _since_lit =
                             syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
                         let offset_end = offset + prim_size;
@@ -727,10 +740,11 @@ pub(crate) fn generate_message_decoder(
                             )
                         };
                         let accessor = format!(
-                            "#[inline]\n\
+                            "#[must_use = \"discarding this value is almost always a mistake\"]\n\
+                             #[inline]\n\
                              pub fn {snake}(&self) -> Option<{rt}> {{\n\
                                  {version_guard}\
-                                 let val = {rt}::{order}(unsafe {{ read_addr_unchecked::<{ps}>(self.base_addr, {offset}) }});\n\
+                                 let val = {rt}::{order}(unsafe {{ read_bytes_unchecked::<{ps}>(self.buf, self.offset + {offset}) }});\n\
                                  if {null_check} {{\n\
                                      None\n\
                                  }} else {{\n\
@@ -760,12 +774,13 @@ pub(crate) fn generate_message_decoder(
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#r_type_ty> {
                                 if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                     return None;
                                 }
-                                Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                                Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                             }
                         });
                     } else {
@@ -773,10 +788,15 @@ pub(crate) fn generate_message_decoder(
                             impl_body.extend(doc_attr_tokens(desc));
                         }
                         impl_body.extend(deprecated_attr_tokens(f.deprecated));
+                        // Required scalar primitives are the decode_scalar hot path.
+                        // `always` is required for no-LTO parity with sbe-tool
+                        // (2026-08-13: plain `#[inline]` regressed decode_scalar
+                        // no-LTO to 1.47×; with always, LTO+no-LTO stay ≤1.00).
                         impl_body.extend(quote::quote! {
-                            #[inline]
+                            #mu
+                            #[inline(always)]
                             pub fn #fname_ident(&self) -> #r_type_ty {
-                                #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                                #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
                             }
                         });
                     }
@@ -805,19 +825,21 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_decoder_name<'_>> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            Some(#target_decoder_name { buf: self.buf, base_addr: self.base_addr + #offset_lit })
+                            Some(#target_decoder_name { buf: self.buf, offset: self.offset + #offset_lit })
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
-                            #target_decoder_name { buf: self.buf, base_addr: self.base_addr + #offset_lit }
+                            #target_decoder_name { buf: self.buf, offset: self.offset + #offset_lit }
                         }
                     });
                 }
@@ -833,19 +855,21 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            Some(#target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) }))
+                            Some(#target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) }))
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
-                            #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
+                            #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) })
                         }
                     });
                 }
@@ -874,6 +898,7 @@ pub(crate) fn generate_message_decoder(
                         let variant_ident =
                             syn::Ident::new(&pascal_variant, proc_macro2::Span::call_site());
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub const fn #fname_ident(&self) -> #target_ident {
                                 #target_ident::#variant_ident
@@ -887,24 +912,51 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     let raw_ident = quote::format_ident!("raw_{}", fname_snake);
-                    impl_body.extend(quote::quote! {
-                        #[inline]
-                        pub fn #fname_ident(&self) -> Option<#target_ident> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
+                    if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
+                        impl_body.extend(quote::quote! {
+                            /// Returns [`None`] when the field is absent at this version
+                            /// OR the wire discriminant equals [`#target_ident::NullVal`].
+                            #mu
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })).as_option()
                             }
-                            Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
-                        }
-                        /// Raw wire discriminant — bypasses enum mapping.
-                        /// Returns `None` when the field is not present in the acting version.
-                        #[inline]
-                        pub fn #raw_ident(&self) -> Option<#r_type_ty> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            /// Returns `None` when the field is not present in the acting version.
+                            #mu
+                            #[inline]
+                            pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                             }
-                            Some(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
-                        }
-                    });
+                        });
+                    } else {
+                        impl_body.extend(quote::quote! {
+                            #mu
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })))
+                            }
+                            /// Raw wire discriminant — bypasses enum mapping.
+                            /// Returns `None` when the field is not present in the acting version.
+                            #mu
+                            #[inline]
+                            pub fn #raw_ident(&self) -> Option<#r_type_ty> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
+                            }
+                        });
+                    }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
                         let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
@@ -930,27 +982,30 @@ pub(crate) fn generate_message_decoder(
                     let raw_body = quote::quote! {
                         /// Raw wire discriminant — bypasses enum mapping.
                         /// Use to inspect unknown/forward enum values without losing the original byte.
+                        #mu
                         #[inline]
                         pub fn #raw_ident(&self) -> #r_type_ty {
-                            #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                            #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
                         }
                     };
                     if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
                         impl_body.extend(quote::quote! {
                             /// Returns [`None`] when the wire discriminant equals
                             /// [`#target_ident::NullVal`]; [`Some`] otherwise.
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> Option<#target_ident> {
-                                let raw = #r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) });
+                                let raw = #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) });
                                 #target_ident::from_raw(raw).as_option()
                             }
                         });
                         impl_body.extend(raw_body);
                     } else {
                         impl_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #fname_ident(&self) -> #target_ident {
-                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                                #target_ident::from_raw(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                             }
                         });
                         impl_body.extend(raw_body);
@@ -996,7 +1051,8 @@ pub(crate) fn generate_message_decoder(
                             syn::LitInt::new(&bits.to_string(), proc_macro2::Span::call_site());
                         impl_body.extend(
                             syn::parse_str::<proc_macro2::TokenStream>(&format!(
-                                "#[inline] pub const fn {fn_name}(&self) -> {t} {{ {t}({bits}) }}",
+                                "#[must_use = \"discarding this value is almost always a mistake\"]\n\
+                                 #[inline] pub const fn {fn_name}(&self) -> {t} {{ {t}({bits}) }}",
                                 fn_name = fname_ident,
                                 t = target_ident,
                                 bits = bits_lit,
@@ -1011,19 +1067,21 @@ pub(crate) fn generate_message_decoder(
                     let offset_end_lit =
                         syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
                                 return None;
                             }
-                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })))
+                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })))
                         }
                     });
                 } else {
                     impl_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #fname_ident(&self) -> #target_ident {
-                            #target_ident(#r_type_ty::#order_fn(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                            #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                         }
                     });
                 }
@@ -1040,13 +1098,13 @@ pub(crate) fn generate_message_decoder(
     impl_body.extend(quote::quote! {
         /// Byte offset of the message body within `self.buf`.
         #[inline]
-        fn byte_pos(&self) -> usize {
-            self.base_addr - self.buf.as_ptr() as usize
+        fn byte_offset(&self) -> usize {
+            self.offset
         }
 
         #[inline]
         fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.byte_pos() + self.acting_block_length)
+            Ok(self.byte_offset() + self.acting_block_length)
         }
     });
 
@@ -1102,13 +1160,13 @@ pub(crate) fn generate_message_decoder(
                 let header = #dn_ident(bytes);
                 let count = header.#cf_ident() as usize;
                 let block_len = header.#bf_ident() as usize;
-                let mut pos = start + #dim_size_lit;
+                let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
-                    pos = #entry_decoder_ident::skip(self.buf, pos, block_len, self.acting_version)?;
+                    offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
                     idx += 1;
                 }
-                Ok(pos)
+                Ok(offset)
             }
         });
         k += 1;
@@ -1227,6 +1285,9 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {}
         };
+        if let Some(ref desc) = vd.description {
+            impl_body.extend(doc_attr_tokens(desc));
+        }
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1288,16 +1349,16 @@ pub(crate) fn generate_message_decoder(
                 proc_macro2::Span::call_site(),
             );
             impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without UTF-8
-                /// validation.
+                /// View this text var-data field as `&str` without character
+                /// encoding validation. Structural bounds are still checked.
                 ///
                 /// # Safety
                 ///
                 /// The wire bytes must be valid UTF-8.
                 #[inline]
-                pub unsafe fn #str_unchecked(&self) -> &'a str {
-                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
-                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
                 }
             });
         } else if vd.character_encoding.as_deref() == Some("ASCII") {
@@ -1326,16 +1387,16 @@ pub(crate) fn generate_message_decoder(
             );
             impl_body.extend(quote::quote! {
                 /// View this text var-data field as `&str` without ASCII
-                /// validation.
+                /// validation. Structural bounds remain fallible.
                 ///
                 /// # Safety
                 ///
                 /// The wire bytes must be 7-bit ASCII. For ASCII-declared
                 /// fields from a trusted source this is always true.
                 #[inline]
-                pub unsafe fn #str_unchecked(&self) -> &'a str {
-                    let bytes = unsafe { self.#vd_snake_ident().unwrap() };
-                    unsafe { core::str::from_utf8_unchecked(bytes) }
+                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                    let bytes = self.#vd_snake_ident()?;
+                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
                 }
             });
         }
@@ -1365,29 +1426,33 @@ pub(crate) fn generate_message_decoder(
         proc_macro2::Span::call_site(),
     );
     impl_body.extend(quote::quote! {
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            Ok(end - self.byte_pos())
+            Ok(end - self.byte_offset())
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
             let len = self.encoded_length()?;
             Ok(len + #hdr_size_lit)
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            let start = self.byte_pos();
+            let start = self.byte_offset();
             Ok(&self.buf[start..end])
         }
 
-        #[inline]
+        #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
             let end = self.#total_tail_ident()?;
-            let start = self.byte_pos().saturating_sub(Self::HEADER_LENGTH);
+            let start = self.byte_offset().saturating_sub(Self::HEADER_LENGTH);
             Ok(&self.buf[start..end])
         }
     });
@@ -1466,14 +1531,14 @@ pub(crate) fn generate_message_decoder(
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
                     let count = dim.#cf_ident() as usize;
-                    let mut entry_pos = offset + #ds_lit;
+                    let mut entry_offset = offset + #ds_lit;
                     for _ in 0..count {
-                        match #entry_dec_ident::skip(buf, entry_pos, #ebl_lit, 0) {
-                            Ok(next) => entry_pos = next,
+                        match #entry_dec_ident::skip(buf, entry_offset, #ebl_lit, 0) {
+                            Ok(next) => entry_offset = next,
                             Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                         }
                     }
-                    offset = entry_pos;
+                    offset = entry_offset;
                 }
             });
         } else {
@@ -1558,73 +1623,77 @@ pub(crate) fn generate_message_decoder(
     // mistaken for a publishable full frame.
     let meta_bytes = if msg.is_fixed() {
         quote::quote! {
-            /// Message body bytes (header exclusive). Fixed-only message —
-            /// this is the complete body.
-            #[inline]
-            pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.byte_pos();
-                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "body",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Message body bytes (header exclusive). Fixed-only message —
+                /// this is the complete body.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.decoder.byte_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "body",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
-            }
-            /// Header-inclusive frame bytes (fixed-only message — complete).
-            #[inline]
-            pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.message_offset();
-                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "frame",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Header-inclusive frame bytes (fixed-only message — complete).
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.message_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
             }
-        }
     } else {
         quote::quote! {
-            /// Fixed-block body only (groups/var-data not included).
-            /// For a complete frame walk tails then use the complete stage's
-            /// `as_bytes_with_header`, or the decoder's inherent
-            /// `as_bytes_with_header` which rescans tails without consuming
-            /// the stage.
-            #[inline]
-            pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.decoder.byte_pos();
-                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "body",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Fixed-block body only (groups/var-data not included).
+                /// For a complete frame walk tails then use the complete stage's
+                /// `as_bytes_with_header`, or the decoder's inherent
+                /// `as_bytes_with_header` which rescans tails without consuming
+                /// the stage.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_fixed_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.decoder.byte_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "body",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
-            }
-            /// Header + fixed block only — **not** a complete SBE message when
-            /// groups or var-data remain. Prefer the complete stage's
-            /// `as_bytes_with_header` after finishing the walk.
-            #[inline]
-            pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-                let start = self.message_offset();
-                let end = self.decoder.byte_pos() + self.decoder.acting_block_length;
-                if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "frame",
-                        needed: end.saturating_sub(start),
-                        available: self.decoder.buf.len().saturating_sub(start),
-                    });
+                /// Header + fixed block only — **not** a complete SBE message when
+                /// groups or var-data remain. Prefer the complete stage's
+                /// `as_bytes_with_header` after finishing the walk.
+                #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+                pub fn as_fixed_region_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    let start = self.message_offset();
+                    let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
+                    if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "frame",
+                            needed: end.saturating_sub(start),
+                            available: self.decoder.buf.len().saturating_sub(start),
+                        });
+                    }
+                    Ok(&self.decoder.buf[start..end])
                 }
-                Ok(&self.decoder.buf[start..end])
             }
-        }
     };
     ts.extend(quote::quote! {
         /// Buffer-placement and wire-frame metadata. Holds a reference to the
@@ -1641,36 +1710,42 @@ pub(crate) fn generate_message_decoder(
         impl<'m, 'a> #metadata_ident<'m, 'a> {
             /// Absolute offset of this message's frame start (first header byte)
             /// within the underlying buffer.
-            #[inline]
+            #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
             pub fn message_offset(&self) -> usize {
-                self.decoder.byte_pos().saturating_sub(#decoder_ident::HEADER_LENGTH)
+                self.decoder.byte_offset().saturating_sub(#decoder_ident::HEADER_LENGTH)
             }
             /// End of the **acting fixed block** (body start + acting block length).
             /// Not the full message end when groups/var-data follow — use a complete
             /// stage or inherent `encoded_length_with_header` after walking tails.
-            #[inline]
+            #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
             pub fn limit(&self) -> usize {
-                self.decoder.byte_pos() + self.decoder.acting_block_length
+                self.decoder.byte_offset() + self.decoder.acting_block_length
             }
             /// The full underlying buffer slice this decoder was wrapped on.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn buffer(&self) -> &'a [u8] {
                 self.decoder.buf
             }
             /// Bytes after the acting fixed block end. May still contain unread
             /// groups/var-data of **this** message until the consuming walk finishes.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn remaining(&self) -> &'a [u8] {
-                let end = (self.decoder.byte_pos() + self.decoder.acting_block_length).min(self.decoder.buf.len());
+                let end = (self.decoder.byte_offset() + self.decoder.acting_block_length).min(self.decoder.buf.len());
                 &self.decoder.buf[end..]
             }
             #meta_bytes
             /// Schema version from the message header (or wrap args), not the
             /// compiled schema constant. Fields with `sinceVersion` and optional
             /// presence depend on this value.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
             /// Block length from the wire header / wrap args. Tail offsets use
             /// this acting length, not only the compiled `BLOCK_LENGTH`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
     });
@@ -1681,6 +1756,7 @@ pub(crate) fn generate_message_decoder(
             /// version/block-length state. Returns a zero-copy reference to
             /// the parent decoder — no fields are copied. All utility methods
             /// are scoped here so no schema field name can collide with them.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
                 #metadata_ident { decoder: self }

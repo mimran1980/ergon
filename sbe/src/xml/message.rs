@@ -8,8 +8,8 @@ use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
     collect_description, element_children, is_primitive_name, opt_u16_attr, opt_usize_attr,
-    parse_presence, parse_primitive_type, preceding_xml_comments, string_attr, structural,
-    u16_attr, validate_sbe_name,
+    parse_deprecated_attr, parse_presence, parse_primitive_type, preceding_xml_comments,
+    string_attr, structural, u16_attr, validate_sbe_name,
 };
 use super::error::Fault;
 use super::registry::{TypeRegistry, parse_u64_val, resolve_type_to_tokens};
@@ -27,7 +27,7 @@ pub(crate) fn parse_message(
     let id = u16_attr(node, "id", "message @id")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
     let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
-    let message_deprecated = node.attribute("deprecated").is_some();
+    let message_deprecated = parse_deprecated_attr(node)?;
 
     validate_message_member_order(node)?;
 
@@ -87,29 +87,39 @@ pub(crate) fn parse_message(
                 }
             }
             if let Some(id_str) = child.attribute("id") {
-                if let Ok(child_id) = id_str.parse::<u16>() {
-                    if !seen_ids.insert(child_id) {
-                        return Err(Fault::invalid(
-                            child,
-                            "duplicate field/group/data id in message",
-                            id_str.to_string(),
-                        ));
-                    }
+                let child_id: u16 = id_str.parse().map_err(|_| {
+                    Fault::invalid(
+                        child,
+                        "field/group/data @id",
+                        format!("'{id_str}' is not a valid u16"),
+                    )
+                })?;
+                if !seen_ids.insert(child_id) {
+                    return Err(Fault::invalid(
+                        child,
+                        "duplicate field/group/data id in message",
+                        id_str.to_string(),
+                    ));
                 }
             }
             if let Some(offset_str) = child.attribute("offset") {
-                if let Ok(offset) = offset_str.parse::<usize>() {
-                    if let Some(prev) = prev_offset {
-                        if offset < prev {
-                            return Err(Fault::invalid(
-                                child,
-                                "field offset out of order",
-                                format!("offset {offset} after {prev}"),
-                            ));
-                        }
+                let offset: usize = offset_str.parse().map_err(|_| {
+                    Fault::invalid(
+                        child,
+                        "field @offset",
+                        format!("'{offset_str}' is not a valid non-negative integer"),
+                    )
+                })?;
+                if let Some(prev) = prev_offset {
+                    if offset < prev {
+                        return Err(Fault::invalid(
+                            child,
+                            "field offset out of order",
+                            format!("offset {offset} after {prev}"),
+                        ));
                     }
-                    prev_offset = Some(offset);
                 }
+                prev_offset = Some(offset);
             }
         }
     }
@@ -165,9 +175,8 @@ pub(crate) fn parse_message_child(
             let time_unit = explicit_time_unit
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
-            let explicit_deprecated = node.attribute("deprecated");
             let deprecated =
-                explicit_deprecated.is_some() || type_encoding.is_some_and(|e| e.deprecated);
+                parse_deprecated_attr(node)? || type_encoding.is_some_and(|e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
@@ -230,6 +239,7 @@ pub(crate) fn parse_message_child(
                 None
             };
 
+            let field_description = collect_description(node);
             if let Some(resolved) = resolve_type_to_tokens(
                 &field_name,
                 &type_name,
@@ -237,13 +247,21 @@ pub(crate) fn parse_message_child(
                 registry,
                 since_version,
                 Some(node.range()),
+                field_description,
             ) {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
-                    if let Some(offset_str) = node.attribute("offset")
-                        && let Ok(offset) = offset_str.parse::<usize>()
-                    {
-                        first.encoding.offset = Some(offset);
+                    if let Some(offset_str) = node.attribute("offset") {
+                        match offset_str.parse::<usize>() {
+                            Ok(offset) => first.encoding.offset = Some(offset),
+                            Err(_) => {
+                                return Err(Fault::invalid(
+                                    node,
+                                    "field @offset",
+                                    format!("'{offset_str}' is not a valid non-negative integer"),
+                                ));
+                            }
+                        }
                     }
                     first.encoding.presence = presence;
                     first.encoding.epoch = epoch;
@@ -267,13 +285,23 @@ pub(crate) fn parse_message_child(
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let group_deprecated = node.attribute("deprecated").is_some();
+            let group_deprecated = parse_deprecated_attr(node)?;
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
-            let group_block_length = node
-                .attribute("blockLength")
-                .and_then(|s| s.parse::<usize>().ok());
+            let group_block_length = match node.attribute("blockLength") {
+                Some(s) => match s.parse::<usize>() {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        return Err(Fault::invalid(
+                            node,
+                            "group @blockLength",
+                            format!("'{s}' is not a valid non-negative integer"),
+                        ));
+                    }
+                },
+                None => None,
+            };
 
             tokens.push(Token {
                 id: Some(id),
@@ -323,7 +351,7 @@ pub(crate) fn parse_message_child(
             let data_name = string_attr(node, "name", "data @name")?;
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let data_deprecated = node.attribute("deprecated").is_some();
+            let data_deprecated = parse_deprecated_attr(node)?;
             let type_name = node.attribute("type").unwrap_or("varDataEncoding");
             let data_presence = node
                 .attribute("presence")

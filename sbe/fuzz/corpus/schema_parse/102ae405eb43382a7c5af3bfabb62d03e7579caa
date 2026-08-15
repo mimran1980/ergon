@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="verType="uint16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="version" primi" primitiveType="uint16"/>
+ 
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLeveType="uint16"/>
+<?__      <t9pe name="version" primitiveType name="version" primitiveType="uint%6"/>
+ 
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      </typesn="1t.

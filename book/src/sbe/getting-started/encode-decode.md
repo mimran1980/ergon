@@ -28,14 +28,21 @@ only — they do **not** fill optional fixed fields with schema null sentinels
 (sbe-tool parity). Unwritten optional bytes retain whatever was already in the
 buffer (often zero, sometimes stale).
 
-If you leave any optional field unset, call **`apply_nulls()`** after wrap so
-every optional carries its schema null:
+**`fixed()` closes that gap for you.** Optional fields are `Option<T>` in the
+generated `FixedFields` struct, and `fixed()` writes the schema null wire image
+for every `None` — including fixed arrays and nested optional composite
+members. Since `fixed()` is the only route to a message's tails, the ordinary
+path never leaves a stale optional behind:
 
 ```rust,ignore
-// Schematic — call after wrap_and_apply_header when any optional may be unset:
-// enc.apply_nulls();
-// then fixed(...) / required setters only
+// `price` is optional; None writes the schema null image, not stale bytes.
+let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
+    .fixed(&QuoteFixedFields { symbol: *b"IBM     ", price: None })
+    .encoded_length_with_header();
 ```
+
+`apply_nulls()` remains for the `raw_fixed()` writer, where you set individual
+fields yourself and no `FixedFields` value describes which optionals are unset.
 
 See [Why NullVal Instead of Option](../design-notes/nullval.md).
 

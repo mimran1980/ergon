@@ -61,18 +61,19 @@ use {label}::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-    enc.serial_number(1)
-        .model_year(2020)
-        .available(BooleanType::T)
-        .code(Model::A)
-        .some_numbers([0; 4])
-        .vehicle_code([b'A'; 6])
-        .extras(OptionalExtras::default())
-        .engine(Engine::new(
-            1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-        ));
-    let done = enc
+    let done = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        .fixed(&CarFixedFields {{
+            serial_number: 1,
+            model_year: 2020,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [0; 4],
+            vehicle_code: [b'A'; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(
+                1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+            ),
+        }})
         .fuel_figures(0, |_| Ok(()))?
         .performance_figures(0, |_| Ok(()))?
         .manufacturer(b"x")?
@@ -86,6 +87,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 "#
             ),
         )?;
+        // The generated module references `ergo_sbe::…` for the optional
+        // string/byte types, so the dependency must be present whichever
+        // features the outer test run enables.
+        let sbe_path = Paths::sbe_dir().display().to_string().replace('\\', "\\\\");
         fs::write(
             dir.join("Cargo.toml"),
             format!(
@@ -93,6 +98,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 name = "{label}_consumer"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#
             ),
         )?;
@@ -103,6 +111,13 @@ edition = "2024"
             .args(["build"])
             .current_dir(&dir)
             .env("CARGO_TARGET_DIR", &target)
+            .env("CARGO_NET_OFFLINE", "true")
+            // The fixture asserts warning-freedom via its own `#![deny(warnings)]`.
+            // Ambient RUSTFLAGS (e.g. `cargo mutants` with cap_lints = true) would
+            // cap those lints to `allow` and turn this into a no-op that always
+            // passes. Let the fixture's attributes decide.
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         let _ = fs::remove_dir_all(&dir);

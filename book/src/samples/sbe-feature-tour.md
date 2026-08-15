@@ -7,7 +7,7 @@ crates.io / docs.rs teaching entry.
 
 `build.rs` uses **different APIs for different selectors**:
 
-```text
+```rust,no_run
 {{#include ../../../samples/sbe-feature-tour/build.rs:build_rs_example}}
 ```
 *(The real `build.rs` — this code is compiled and tested in CI.)*

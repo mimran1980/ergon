@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema packaga="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+     chema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="888888888888888888888888888888888888<?xmlrmegth" primitivsType="uint16"/>      <

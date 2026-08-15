@@ -97,40 +97,53 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(12345u64);
-        book.sequence(1u64);
-        let after_bids = book.bids(2, |bids| {
-            bids.add(|level| {
-                level.price(50000i64).qty(10i64);
-                level.orders(2, |orders| {
-                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-001").unwrap(); Ok(()) })?;
-                    orders.add(|o| { o.order_qty(5i64); o.order_id(b"ORD-002").unwrap(); Ok(()) })?;
-                    Ok(())
+        let after_bids = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&L3BookFixedFields {
+                timestamp: 12345u64,
+                sequence: 1u64,
+            })
+            .bids(2, |bids| {
+                bids.add(|mut level| {
+                    level.price(50000i64).qty(10i64);
+                    level.orders(2, |orders| {
+                        orders.add(|mut o| {
+                            o.order_qty(5i64);
+                            o.order_id(b"ORD-001")
+                        })?;
+                        orders.add(|mut o| {
+                            o.order_qty(5i64);
+                            o.order_id(b"ORD-002")
+                        })?;
+                        Ok(())
+                    })
                 })?;
-                Ok(())
-            })?;
-            bids.add(|level| {
-                level.price(49999i64).qty(3i64);
-                level.orders(1, |orders| {
-                    orders.add(|o| { o.order_qty(3i64); o.order_id(b"ORD-003").unwrap(); Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        }).unwrap();
-        let complete = after_bids.asks(1, |asks| {
-            asks.add(|level| {
-                level.price(50001i64).qty(8i64);
-                level.orders(1, |orders| {
-                    orders.add(|o| { o.order_qty(8i64); o.order_id(b"ORD-004").unwrap(); Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        }).unwrap();
+                bids.add(|mut level| {
+                    level.price(49999i64).qty(3i64);
+                    level.orders(1, |orders| {
+                        orders.add(|mut o| {
+                            o.order_qty(3i64);
+                            o.order_id(b"ORD-003")
+                        })?;
+                        Ok(())
+                    })
+                })
+            })
+            .unwrap();
+        let complete = after_bids
+            .asks(1, |asks| {
+                asks.add(|mut level| {
+                    level.price(50001i64).qty(8i64);
+                    level.orders(1, |orders| {
+                        orders.add(|mut o| {
+                            o.order_qty(8i64);
+                            o.order_id(b"ORD-004")
+                        })?;
+                        Ok(())
+                    })
+                })
+            })
+            .unwrap();
         let encoded = complete.as_bytes_with_header();
         let decoder = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(decoder.timestamp(), 12345, "timestamp");
@@ -168,16 +181,32 @@ fn l3_compute_encoded_length_positive() -> Result<(), Box<dyn std::error::Error>
         &src,
         r#"
         let mut buf = [0u8; 4096];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(0).sequence(0);
-        let complete = book.bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
-            bids.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
-            Ok(())
-        }).unwrap().asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
-            asks.add(|l| { l.price(0).qty(0); l.orders(0, |_| Ok(()))?; Ok(()) })?;
-            Ok(())
-        }).unwrap();
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&L3BookFixedFields {
+                timestamp: 0,
+                sequence: 0,
+            })
+            .bids(2, |bids| -> Result<(), sbe_rt::EncodeError> {
+                bids.add(|mut l| {
+                    l.price(0).qty(0);
+                    l.orders(0, |_| Ok(()))
+                })?;
+                bids.add(|mut l| {
+                    l.price(0).qty(0);
+                    l.orders(0, |_| Ok(()))
+                })?;
+                Ok(())
+            })
+            .unwrap()
+            .asks(1, |asks| -> Result<(), sbe_rt::EncodeError> {
+                asks.add(|mut l| {
+                    l.price(0).qty(0);
+                    l.orders(0, |_| Ok(()))
+                })?;
+                Ok(())
+            })
+            .unwrap();
         assert!(complete.encoded_length() > 0);
         println!("L3Book encode (2 bids, 1 ask): {} bytes", complete.encoded_length());
         "#,
@@ -194,21 +223,35 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 8192];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(999u64).sequence(7u64);
-        let complete = book.bids(1, |bids| {
-            bids.add(|level| {
-                level.price(100i64).qty(30i64);
-                level.orders(3, |orders| {
-                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-A").unwrap(); Ok(()) })?;
-                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-B").unwrap(); Ok(()) })?;
-                    orders.add(|o| { o.order_qty(10i64); o.order_id(b"ID-C").unwrap(); Ok(()) })?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        }).unwrap().asks(0, |_| Ok(())).unwrap();
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&L3BookFixedFields {
+                timestamp: 999u64,
+                sequence: 7u64,
+            })
+            .bids(1, |bids| {
+                bids.add(|mut level| {
+                    level.price(100i64).qty(30i64);
+                    level.orders(3, |orders| {
+                        orders.add(|mut o| {
+                            o.order_qty(10i64);
+                            o.order_id(b"ID-A")
+                        })?;
+                        orders.add(|mut o| {
+                            o.order_qty(10i64);
+                            o.order_id(b"ID-B")
+                        })?;
+                        orders.add(|mut o| {
+                            o.order_qty(10i64);
+                            o.order_id(b"ID-C")
+                        })?;
+                        Ok(())
+                    })
+                })
+            })
+            .unwrap()
+            .asks(0, |_| Ok(()))
+            .unwrap();
         let encoded = complete.as_bytes_with_header();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 999);
@@ -241,43 +284,44 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 16384];
-        let mut book = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        book.timestamp(555u64).sequence(42u64);
-        let complete = book.bids(1, |bids| {
-            bids.add(|level| {
-                level.price(200i64).qty(120i64);
-                level.orders(12, |orders| {
-                    for i in 0..12u64 {
-                        let id = format!("ORDER-{:02}", i);
-                        orders.add(|o| {
-                            o.order_qty(10i64);
-                            o.order_id(id.as_bytes()).unwrap();
-                            Ok(())
-                        })?;
-                    }
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        }).unwrap().asks(1, |asks| {
-            asks.add(|level| {
-                level.price(201i64).qty(120i64);
-                level.orders(12, |orders| {
-                    for i in 0..12u64 {
-                        let id = format!("ASK-{:-3}", i);
-                        orders.add(|o| {
-                            o.order_qty(10i64);
-                            o.order_id(id.as_bytes()).unwrap();
-                            Ok(())
-                        })?;
-                    }
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        }).unwrap();
+        let complete = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&L3BookFixedFields {
+                timestamp: 555u64,
+                sequence: 42u64,
+            })
+            .bids(1, |bids| {
+                bids.add(|mut level| {
+                    level.price(200i64).qty(120i64);
+                    level.orders(12, |orders| {
+                        for i in 0..12u64 {
+                            let id = format!("ORDER-{:02}", i);
+                            orders.add(|mut o| {
+                                o.order_qty(10i64);
+                                o.order_id(id.as_bytes())
+                            })?;
+                        }
+                        Ok(())
+                    })
+                })
+            })
+            .unwrap()
+            .asks(1, |asks| {
+                asks.add(|mut level| {
+                    level.price(201i64).qty(120i64);
+                    level.orders(12, |orders| {
+                        for i in 0..12u64 {
+                            let id = format!("ASK-{:03}", i);
+                            orders.add(|mut o| {
+                                o.order_qty(10i64);
+                                o.order_id(id.as_bytes())
+                            })?;
+                        }
+                        Ok(())
+                    })
+                })
+            })
+            .unwrap();
         let encoded = complete.as_bytes_with_header();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 555);
@@ -308,7 +352,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         for (i, entry) in a0_entries.iter().enumerate() {
             let e = entry.as_ref().unwrap();
             assert_eq!(e.order_qty(), 10, "ask order {} qty", i);
-            let expected = format!("ASK-{:-3}", i);
+            let expected = format!("ASK-{:03}", i);
             assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "ask order {} id", i);
         }
         println!("12 orders per level (bids + asks): PASSED");

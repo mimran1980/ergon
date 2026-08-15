@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type na-e="blockLength" priMitiveType="uint16"/>
+  (   <type  name="templateId" primitiveType="uint16"/>
+      <type nXme="schemaId" primitiveType="ui nt16"/>
+      <type name="versi2n" primitiveType="uint16"/>
+    <eaesSgch

@@ -1,0 +1,15 @@
+<?xml<?xml vers"1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite nackage="fuzz" ideType="uint16"/>
+ s>
+="0" ve<messageSchema package="fuzz" id="0" ve="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitivename="blockLength" primitame="gth" e="fuzz" id="0" version="0">
+  <types>
+ zrsion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitivename="blockLength" primitame="gth" e="fuzz" id="0" version="0">
+  <types>
+ zzzzz="uint16"/>
+      <type

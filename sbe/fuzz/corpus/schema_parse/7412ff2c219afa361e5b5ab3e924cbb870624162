@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typms>
+    <composite name="mer">
+ e="u0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typms>
+    <composite name="mer">
+ e="u0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint32"/>
+    <?ԉmposite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </meosite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="int32"/>
+    <?ԉmposite>
+  </tversion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typms>
+    <composite name="mer">
+ e="u0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>J<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typms>
+    <composite name="mer">
+ e="u0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxmsion="0">
+  <types>
+    <composite name="mer">
+ e="uialue" int16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <typms>
+    <composite name="mer">
+ e="u0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint16"/>
+    <?ԉmpxml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mer">
+ e="uint32"/>
+    <?ԉmpope="uint64"/>
+  </meosite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="int32"/>
+    <?ԉmposite>
+  </types>
+  <message name="M" id="1">ypes>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </meosite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

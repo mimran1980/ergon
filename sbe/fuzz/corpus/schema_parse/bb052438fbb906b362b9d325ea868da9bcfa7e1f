@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+ $<types>
+    <composite name="messageHeader">
+     mposite name="messageHeader">
+      <type name="blockLength" primitiveType="uint17"/>sageSchema package="fuzz" id="1" ver" id="1" version="0">
+ $<types>
+    <composite name="messageHeader">
+     mposite name="messageHeader">
+      <type name="blockLengt     mh" prim"fuzz" id="1" versiosion="0">
+ $<ty@es

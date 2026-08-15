@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" vereScsion="0">
+  <types>
+    <composite name="messageHeader">
+  ge>
+    <composite name="messqqageHe"/>
+    ="eunt16"/>
+      <type name="teqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqageHe"/>
+    ="eunt16"e="templa16"/>
+ype="tint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" t="uint64"/>
+  </message>
+</messageSchema>

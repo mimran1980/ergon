@@ -47,16 +47,27 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     fs::create_dir_all(&tests_dir).unwrap();
     fs::write(tests_dir.join("roundtrip.rs"), test_code).unwrap();
 
-    // Cargo.toml – crate depends on the generated module (no extra deps);
-    // proptest is only a dev-dep.
+    // Cargo.toml — the generated module references `ergo_sbe::…` for the
+    // optional string/byte types, so the dependency must be present whichever
+    // features the outer test run enables. proptest stays a dev-dep.
+    // …/sbe/tests/fixtures/schemas/example-schema.xml → …/sbe
+    let sbe_path = Paths::example_schema()
+        .ancestors()
+        .nth(4)
+        .expect("schema lives under sbe/tests/fixtures/schemas")
+        .to_path_buf();
     let cargo_toml = format!(
         "[package]\n\
          name = \"prop_{module_name}\"\n\
          version = \"0.1.0\"\n\
          edition = \"2024\"\n\
          \n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n\
+         \n\
          [dev-dependencies]\n\
-         proptest = \"1\"\n"
+         proptest = \"1\"\n",
+        sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo_toml).unwrap();
 
@@ -65,6 +76,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
         .args(["test"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 
@@ -119,15 +131,18 @@ proptest! {
         let engine = Engine::new(capacity, num_cylinders, mc, 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0));
 
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(serial_number);
-        car.model_year(model_year);
-        car.available(available);
-        car.code(code);
-        car.some_numbers(some_numbers);
-        car.vehicle_code(vehicle_code);
-        car.extras(extras);
-        car.engine(engine);
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number,
+                model_year,
+                available,
+                code,
+                some_numbers,
+                vehicle_code,
+                extras,
+                engine,
+            });
 
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
@@ -180,15 +195,18 @@ proptest! {
         activation in proptest::collection::vec(32u8..=126, 0..100),
     ) {
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(0);
-        car.model_year(2000);
-        car.available(BooleanType::F);
-        car.code(Model::A);
-        car.some_numbers([0u32; 4]);
-        car.vehicle_code([0u8; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 0,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(&manufacturer).unwrap();
@@ -242,24 +260,26 @@ proptest! {
         ),
     ) {
         let mut buf = [0u8; 4096];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(0);
-        car.model_year(2000);
-        car.available(BooleanType::F);
-        car.code(Model::A);
-        car.some_numbers([0u32; 4]);
-        car.vehicle_code([0u8; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 0,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1000, 4, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
 
         let count = entries.len() as u16;
         let car = car.fuel_figures(count, |g| {
             for (speed, mpg, usage) in &entries {
-                g.add(|e| {
+                g.add(|mut e| {
                     e.speed(*speed);
                     e.mpg(*mpg);
-                    e.usage_description(usage).unwrap();
-                    Ok(())
+                    e.usage_description(usage)
                 }).unwrap();
             }
             Ok(())
@@ -306,15 +326,18 @@ use prop_car_example::*;
 #[test]
 fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; 512];
-    let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    car.serial_number(0);
-    car.model_year(0);
-    car.available(BooleanType::F);
-    car.code(Model::A);
-    car.some_numbers([0u32; 4]);
-    car.vehicle_code([0u8; 6]);
-    car.extras(OptionalExtras::default());
-    car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+    let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 0,
+            model_year: 0,
+            available: BooleanType::F,
+            code: Model::A,
+            some_numbers: [0u32; 4],
+            vehicle_code: [0u8; 6],
+            extras: OptionalExtras::default(),
+            engine: Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        });
     let car = car.fuel_figures(0, |_| Ok(())).unwrap();
     let car = car.performance_figures(0, |_| Ok(())).unwrap();
     let car = car.manufacturer(b"").unwrap();
@@ -357,22 +380,25 @@ use prop_car_example::*;
 #[test]
 fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; 512];
-    let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    car.serial_number(u64::MAX);
-    car.model_year(u16::MAX);
-    car.available(BooleanType::T);
-    car.code(Model::C);
-    car.some_numbers([u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
-    car.vehicle_code([u8::MAX; 6]);
     let mut extras = OptionalExtras::default();
     extras.sun_roof(true);
     extras.sports_pack(true);
     extras.cruise_control(true);
-    car.extras(extras);
-    car.engine(Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+    let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: u64::MAX,
+            model_year: u16::MAX,
+            available: BooleanType::T,
+            code: Model::C,
+            some_numbers: [u32::MAX, u32::MAX, u32::MAX, u32::MAX],
+            vehicle_code: [u8::MAX; 6],
+            extras,
+            engine: Engine::new(u16::MAX, u8::MAX, [u8::MAX; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        });
 
     let car = car.fuel_figures(1, |g| {
-        g.add(|e| { e.speed(u16::MAX); e.mpg(f32::MAX); e.usage_description(b"").unwrap(); Ok(()) }).unwrap();
+        g.add(|mut e| { e.speed(u16::MAX); e.mpg(f32::MAX); e.usage_description(b"") })?;
         Ok(())
     }).unwrap();
     let car = car.performance_figures(0, |_| Ok(())).unwrap();

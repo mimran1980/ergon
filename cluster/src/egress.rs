@@ -283,7 +283,7 @@ impl EgressListener for NullListener {
 mod tests {
     use super::*;
     use crate::codecs::session::EventCode;
-    use crate::codecs::session::SessionEventEncoder;
+    use crate::codecs::session::{SessionEventEncoder, SessionEventFixedFields};
 
     #[test]
     fn test_foreign_session_session_event_ignored() -> Result<(), Box<dyn std::error::Error>> {
@@ -291,14 +291,17 @@ mod tests {
         let detail = b"ok";
         let len = SessionEventEncoder::compute_encoded_length_with_message_header(detail.len());
         let mut buf = vec![0u8; len];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.cluster_session_id(99)
-            .correlation_id(1)
-            .leadership_term_id(5)
-            .leader_member_id(0)
-            .code(EventCode::OK)
-            .version(1);
-        let _ = enc.detail(detail)?;
+        let _ = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionEventFixedFields {
+                cluster_session_id: 99,
+                correlation_id: 1,
+                leadership_term_id: 5,
+                leader_member_id: 0,
+                code: EventCode::OK,
+                version: Some(1),
+                leader_heartbeat_timeout_ns: None,
+            })
+            .detail(detail)?;
         struct Rec {
             called: bool,
         }
@@ -389,9 +392,13 @@ mod tests {
         let eps = b"0=localhost:9000,1=localhost:9001";
         let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
         let mut buf = vec![0u8; len];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(3).cluster_session_id(42).leader_member_id(1);
-        let _ = enc.ingress_endpoints(eps)?;
+        let _ = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&crate::codecs::session::NewLeaderEventFixedFields {
+                leadership_term_id: 3,
+                cluster_session_id: 42,
+                leader_member_id: 1,
+            })
+            .ingress_endpoints(eps)?;
         struct Rec {
             sid: i64,
             ltid: i64,
@@ -439,9 +446,12 @@ mod tests {
         let chal = b"server-challenge-data";
         let len = ChallengeEncoder::compute_encoded_length_with_message_header(chal.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(99).cluster_session_id(42);
-        let _ = enc.encoded_challenge(chal)?;
+        let _ = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&crate::codecs::session::ChallengeFixedFields {
+                correlation_id: 99,
+                cluster_session_id: 42,
+            })
+            .encoded_challenge(chal)?;
         struct Rec {
             cid: i64,
             sid: i64,

@@ -557,7 +557,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.14"
+version = "0.1.17"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.14"
+version = "0.1.17"
 dependencies = [
  "bytes",
  "chrono",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.14"
+version = "0.1.17"
 dependencies = [
  "bytes",
  "chrono",
@@ -602,6 +602,9 @@ dependencies = [
  "ergo-sbe",
  "hdrhistogram",
  "rust_decimal",
+ "sbe_tool_extension",
+ "sbe_tool_group_with_data",
+ "sbe_tool_optional_enum_nullify",
  "smol_str",
 ]
 
@@ -1538,6 +1541,18 @@ checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "sbe_tool_extension"
+version = "0.1.0"
+
+[[package]]
+name = "sbe_tool_group_with_data"
+version = "0.1.0"
+
+[[package]]
+name = "sbe_tool_optional_enum_nullify"
+version = "0.1.0"
 
 [[package]]
 name = "scopeguard"

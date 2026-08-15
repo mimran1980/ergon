@@ -8,8 +8,8 @@ use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
     collect_description, element_children, is_primitive_name, opt_u16_attr, opt_usize_attr,
-    parse_presence, parse_primitive_type, preceding_xml_comments, reject_duplicate_type_name,
-    string_attr, structural, u16_attr, validate_sbe_name,
+    parse_deprecated_attr, parse_presence, parse_primitive_type, preceding_xml_comments,
+    reject_duplicate_type_name, string_attr, structural, u16_attr, validate_sbe_name,
 };
 use super::error::Fault;
 use super::registry::{
@@ -156,11 +156,13 @@ pub(crate) fn parse_type_element(
     let length = opt_usize_attr(node, "length", "length")?;
     let epoch = node.attribute("epoch").map(str::to_string);
     let time_unit = node.attribute("timeUnit").map(str::to_string);
-    let deprecated = node.attribute("deprecated").is_some();
+    let deprecated = parse_deprecated_attr(node)?;
 
-    let null_value = node
-        .attribute("nullValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
+    let null_value = match node.attribute("nullValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "nullValue", e))?,
+        None => None,
+    };
     if null_value.is_some() && presence != Presence::Optional {
         let type_name = node.attribute("name").unwrap_or("<unnamed>");
         warn_once(
@@ -172,12 +174,16 @@ pub(crate) fn parse_type_element(
             warn_state,
         );
     }
-    let min_value = node
-        .attribute("minValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
-    let max_value = node
-        .attribute("maxValue")
-        .and_then(|s| parse_u64_val(s, primitive_type));
+    let min_value = match node.attribute("minValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "minValue", e))?,
+        None => None,
+    };
+    let max_value = match node.attribute("maxValue") {
+        Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
+            .map_err(|e| Fault::invalid(node, "maxValue", e))?,
+        None => None,
+    };
 
     // Constant `<type>`: body text, or `valueRef` (e.g. TimeUnit.nanosecond) as in
     // value-ref-schema.xml — same options sbe-tool accepts for constant fields.
@@ -237,7 +243,7 @@ pub(crate) fn parse_composite(
     validate_sbe_name(node, &name, "composite @name")?;
     reject_duplicate_type_name(node, &name, registry)?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-    let composite_deprecated = node.attribute("deprecated").is_some();
+    let composite_deprecated = parse_deprecated_attr(node)?;
 
     let mut composite_tokens = Vec::new();
     composite_tokens.push(Token {
@@ -285,6 +291,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -303,6 +310,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -344,6 +352,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 // Apply explicit member offset onto the BeginField wrapper.
                 if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
@@ -399,6 +408,7 @@ pub(crate) fn parse_composite(
                 registry,
                 since_val,
                 Some(child.range()),
+                None,
             ) {
                 composite_tokens.extend(resolved);
             }
@@ -496,6 +506,7 @@ pub(crate) fn parse_composite(
                     registry,
                     since_val,
                     Some(child.range()),
+                    None,
                 ) {
                     composite_tokens.extend(resolved);
                 } else {
@@ -596,12 +607,14 @@ pub(crate) fn parse_enum(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
-            deprecated: node.attribute("deprecated").is_some(),
+            deprecated: parse_deprecated_attr(node)?,
             description: collect_description(node),
             semantic_type,
-            null_value: node
-                .attribute("nullValue")
-                .and_then(|s| parse_u64_val(s, Some(encoding_type))),
+            null_value: match node.attribute("nullValue") {
+                Some(s) => super::registry::try_parse_u64_val(s, Some(encoding_type))
+                    .map_err(|e| Fault::invalid(node, "enum @nullValue", e))?,
+                None => None,
+            },
             ..Encoding::default()
         },
         span: None,
@@ -763,7 +776,7 @@ pub(crate) fn parse_set(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
-            deprecated: node.attribute("deprecated").is_some(),
+            deprecated: parse_deprecated_attr(node)?,
             description: collect_description(node),
             ..Encoding::default()
         },

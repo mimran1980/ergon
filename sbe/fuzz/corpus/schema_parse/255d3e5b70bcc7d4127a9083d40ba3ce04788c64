@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+ !  <co   <type name="mposite name="messageHeader">
+     mposite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <" version="0">
+  <typ"/>
+      <type na

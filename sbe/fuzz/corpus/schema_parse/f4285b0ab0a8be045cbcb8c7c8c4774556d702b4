@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="" e2vrsion="0">
+  <types>
+    <composite name="messageer">
+  </composite>
+  </types>
+ e>
+</messageSchema>

@@ -383,7 +383,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
                 ver_flags,
             })
             .entries(1, |g| {
-                g.add(|e| {
+                g.add(|mut e| {
                     e.entry_flags(entry_flags);
                     Ok(())
                 })?;
@@ -458,7 +458,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <message name="M" id="1" blockLength="2">
             <field name="current" id="1" type="u8" offset="0"/>
-            <field name="legacy" id="2" type="u8" offset="1" deprecated="true"/>
+            <field name="legacy" id="2" type="u8" offset="1" deprecated="1"/>
           </message>
         </messageSchema>"#;
     let ir = parse(xml)?;
@@ -551,7 +551,7 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
         let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
         let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { qty: 100, side: Side::Sell, inst, algo: BoolFlag::True, price })
-            .legs(1, |g| { g.add(|e| { e.ratio(50); Ok(()) })?; Ok(()) })?
+            .legs(1, |g| { g.add(|mut e| { e.ratio(50); Ok(()) })?; Ok(()) })?
             .note(b"abc")?
             .encoded_length_with_header();
         let dec = MsgDecoder::try_from(&buf[..len])?;
@@ -717,7 +717,8 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
         let price = Price::new(777, -1);
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
         let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-            .rows(1, |g| { g.add(|e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
+            .fixed(&MFixedFields {})
+            .rows(1, |g| { g.add(|mut e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;
         let mut rows = dec.into_rows()?;
@@ -762,7 +763,8 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
         r#"
         let mut buf = [0u8; MEncoder::compute_length_with_header(1)];
         let len = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-            .rows(1, |g| { g.add(|e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
+            .fixed(&MFixedFields {})
+            .rows(1, |g| { g.add(|mut e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;
         let mut rows = dec.into_rows()?;

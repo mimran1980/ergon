@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeader">
+ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppposite name="messageHe"/>
+     version="0">
+  <types>
+    <composite name="messageHeader">
+pppppppppppppppppppp name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <type npe="uint16"/>
+    </composite>
+  </types>
+message  <composite name="messageHe"/>
+    ="eunt16pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppposite name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16pppppppppppppppppppppppppppppppppp  ge>
+    <composite name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <type npe="uint16"/>
+    </composite>
+  </types>
+message>
+</messageSchema>

@@ -1,0 +1,11 @@
+<?xml<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeade
+" > r    <type nameage="fuzz" id="0" version="0">
+  <types>
+    <composite neme="messageHeade
+" > r    <type name="blockLength" primitame="gth" e="fuzz" id="0" version="0">
+  <types>
+ zzzzz="uint16"/>
+      <type

@@ -1,0 +1,51 @@
+<?xml version="0.0"?>
+<messageSchema package=",fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+     lllllllllllllllllllllllllllllllllllllllld" pe="uint16"/>
+    ? <type name="schemaId" primitiveType="ui"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </mexml
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"ssage>
+</messageSchema>

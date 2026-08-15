@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<ma package="fuzz" id="1" sion="0">
+  =types>
+    <composite name="messageHeader">
+/>
+      <type name="version" primtiveType="uint16"/>16"/>
+       <type name="versi

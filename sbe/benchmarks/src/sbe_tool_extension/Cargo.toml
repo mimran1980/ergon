@@ -1,0 +1,11 @@
+[package]
+name = "sbe_tool_extension"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Example schema which extends baseline schema."
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "sbe_tool_extension"
+path = "src/lib.rs"

@@ -1,0 +1,10 @@
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="`blockLength" primiveType="uint16"/>
+    </composite>
+  </types>
+  <message name=")" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

@@ -1,0 +1,9 @@
+<?x lvmresion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    eHeadesite name="messageHeader">
+ckLength" primitiveType="uint16  desiessageHeader">
+ckLength" primitiveType="uint08"/>emplateId" prim
+"/>emplateIdte name="messageHeader">
+ckLength" primitiveType="uint16"/>emplateId" primitiveType="uint16"/>
+"/>emplateId" p

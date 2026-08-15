@@ -1,0 +1,48 @@
+<?xmmlre m?>
+<?xmmlrexml?xmss
+re?><?xmllre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xml<enoi<"z"e"z"<?xml?xlre mess
+re?>
+<?xml<e"mlxmllre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xml<enoi<?><?xmllre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xmmlrexml?xmss
+re?><?ess
+re?><?xml?xmlre m?>
+<?xmmlrexml?xmss
+re?><?xmllre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xml<enoi<"z"e"z"<?xml?xlre mess
+re?>
+<?xml<e"mlxmllre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xml<enoi<"z"e"z"<?xml?xlre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?"z"e"z"<?xml?xlre mess
+re?>
+<?xml<e"mlrmess
+re?><?xml?xmlre m?>
+<?xml<enoil version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="me(sageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/></composite>
+  </types>
+  <message name=")" id="1">
+    <field  id="2" type="uint64"/>
+ 0</message>
+</messageSchema>

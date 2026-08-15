@@ -1,0 +1,10 @@
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mes{ageHeader">
+      <type namm="version" primitiveType="uint30"/>
+    </composite>
+  </types>
+  <message name=")" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

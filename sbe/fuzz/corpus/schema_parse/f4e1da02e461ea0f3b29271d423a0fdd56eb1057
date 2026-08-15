@@ -1,0 +1,6 @@
+<?xml="1.0"?>
+<messageSchema package="fuzz" id="1" >
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint02"/>
+      <type name="templateId" primitiveType="uint15"/>
+    d" prim

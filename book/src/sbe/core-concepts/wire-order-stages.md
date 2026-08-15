@@ -1,11 +1,10 @@
 # Wire Order via Named Stages
 
-### Why not “Java-style” parent hopping?
+### Why not parent hopping?
 
-In sbe-tool you often juggle flyweights and call something like `.parent()` to
-hand ownership back up the tree. In Rust that fight becomes **borrow-checker
-pain**: move a group encoder in, get stuck returning the parent, lose the
-thread of the code.
+sbe-tool's flyweight API uses `.parent()` to hand ownership back up the tree.
+In Rust that pattern hits the **borrow checker**: move a group encoder in, get
+stuck returning the parent, lose the thread of the code.
 
 ergo-sbe leans on **scoped closures** and **chaining** so nested schemas stay
 readable and you rarely pass encoder ownership field-to-field by hand:

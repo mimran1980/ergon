@@ -103,11 +103,12 @@ pub(crate) mod codecs;
 #[doc(hidden)]
 pub mod cluster_codec_types {
     pub use crate::codecs::session::{
-        AdminRequestType, AdminResponseCode, AdminResponseEncoder, AnyMessage, ChallengeDecoder, ChallengeEncoder,
-        ChallengeResponseEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, NewLeaderEventFixedFields,
-        SessionCloseRequestEncoder, SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
-        SessionEventDecoder, SessionEventEncoder, SessionKeepAliveEncoder, SessionMessageHeaderDecoder,
-        SessionMessageHeaderEncoder,
+        AdminRequestEncoder, AdminRequestFixedFields, AdminRequestType, AdminResponseCode, AdminResponseEncoder,
+        AdminResponseFixedFields, AnyMessage, ChallengeDecoder, ChallengeEncoder, ChallengeFixedFields,
+        ChallengeResponseEncoder, ChallengeResponseFixedFields, EventCode, NewLeaderEventDecoder,
+        NewLeaderEventEncoder, NewLeaderEventFixedFields, SessionCloseRequestEncoder, SessionConnectRequestEncoder,
+        SessionConnectRequestFixedFields, SessionEventDecoder, SessionEventEncoder, SessionEventFixedFields,
+        SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
     };
 }
 /// [`SessionBuilder`] configuration for connect.

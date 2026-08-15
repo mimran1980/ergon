@@ -18,8 +18,9 @@ use rusteron_client::{
 use crate::uri;
 
 use crate::codecs::session::{
-    AdminRequestEncoder, AdminRequestType, ChallengeResponseEncoder, SessionCloseRequestEncoder,
-    SessionConnectRequestEncoder, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
+    AdminRequestEncoder, AdminRequestFixedFields, AdminRequestType, ChallengeResponseEncoder,
+    ChallengeResponseFixedFields, SessionCloseRequestEncoder, SessionConnectRequestEncoder,
+    SessionConnectRequestFixedFields, SessionKeepAliveEncoder, SessionMessageHeaderEncoder,
 };
 /// Re-offer interval for SessionConnectRequest — roughly `message_timeout / 4`,
 /// clamped to [50, 1000] ms (mirrors Java `AeronCluster.AsyncConnect`).
@@ -312,14 +313,25 @@ impl AeronCluster {
         let idle_clone = builder.idle.clone();
         let mut captured: Option<crate::poller::EgressEvent> = None;
         while Instant::now() < deadline {
-            let _ = self.egress.poll_fn(
-                |data, _hdr| {
-                    if captured.is_none() {
-                        captured = crate::poller::parse_event(data).ok().flatten();
-                    }
-                },
-                1,
-            );
+            // Fail-closed: propagate Aeron poll and decode errors rather than
+            // masking them as a later connect timeout.
+            let mut decode_err: Option<ClusterError> = None;
+            self.egress
+                .poll_fn(
+                    |data, _hdr| {
+                        if captured.is_none() && decode_err.is_none() {
+                            match crate::poller::parse_event(data) {
+                                Ok(e) => captured = e,
+                                Err(e) => decode_err = Some(e),
+                            }
+                        }
+                    },
+                    1,
+                )
+                .map_err(|e| ClusterError::aeron("connect_poll", e))?;
+            if let Some(e) = decode_err {
+                return Err(e);
+            }
 
             match captured.take() {
                 Some(crate::poller::EgressEvent::SessionEvent {
@@ -347,12 +359,15 @@ impl AeronCluster {
                             // detail lists all members in id order, so a
                             // position-based parse would redirect back to the
                             // follower we just asked (an infinite loop).
-                            if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
-                                self.reconnect_ingress(builder, &ep)?;
-                                self.send_connect_request(builder, &creds)?;
-                                last_offer = Instant::now();
-                            }
-                            // keep polling
+                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                .ok_or_else(|| ClusterError::ReconnectFailed {
+                                    reason: format!(
+                                        "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
+                                    ),
+                                })?;
+                            self.reconnect_ingress(builder, &ep)?;
+                            self.send_connect_request(builder, &creds)?;
+                            last_offer = Instant::now();
                         }
                         _ => { /* keep polling */ }
                     }
@@ -441,11 +456,12 @@ impl AeronCluster {
             info.len(),
         );
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(0)
-            .response_stream_id(builder.egress_stream_id)
-            .version(0);
-        let _ = enc
+        let _ = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 0,
+                response_stream_id: builder.egress_stream_id,
+                version: Some(0),
+            })
             .response_channel(ch)?
             .encoded_credentials(credentials)?
             .client_info(&client_info_bytes())?;
@@ -460,10 +476,12 @@ impl AeronCluster {
     ) -> Result<(), ClusterError> {
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(credentials.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(correlation_id)
-            .cluster_session_id(cluster_session_id);
-        let _ = enc.encoded_credentials(credentials)?;
+        let _ = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ChallengeResponseFixedFields {
+                correlation_id,
+                cluster_session_id,
+            })
+            .encoded_credentials(credentials)?;
         let r = self.ingress.offer_raw(&buf, Handlers::NONE);
         offer_result("challenge_response", r).map(|_| ())
     }
@@ -709,12 +727,14 @@ impl AeronCluster {
         }
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
         let mut buf = vec![0u8; len];
-        let mut enc = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(self.leadership_term_id)
-            .cluster_session_id(self.cluster_session_id)
-            .correlation_id(correlation_id)
-            .request_type(request_type);
-        let complete = enc.payload(payload)?;
+        let complete = AdminRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&AdminRequestFixedFields {
+                leadership_term_id: self.leadership_term_id,
+                cluster_session_id: self.cluster_session_id,
+                correlation_id,
+                request_type,
+            })
+            .payload(payload)?;
         let bytes = complete.as_bytes_with_header();
         let r = self.ingress.offer_raw(bytes, Handlers::NONE);
         offer_result("admin_request", r)
@@ -1237,26 +1257,27 @@ impl AsyncClusterConnect {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
-                                    if let Some(ep) = crate::poller::parse_leader_endpoint(&detail, leader_member_id) {
-                                        let c = uri::udp_endpoint_cstr(&ep)?;
-                                        let aeron =
-                                            self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
-                                                reason: "no aeron client for redirect".into(),
-                                            })?;
-                                        let p = aeron
-                                            .add_exclusive_publication(
-                                                &c,
-                                                self.builder.ingress_stream_id,
-                                                Duration::from_secs(5),
-                                            )
-                                            .map_err(|e| {
-                                                ClusterError::reconnect(format!("redirect publication: {e}"))
-                                            })?;
-                                        self.ingress = Some(p);
-                                        self.leader_member_id = leader_member_id;
-                                        self.connect_sent = false;
-                                        self.encode_and_send_connect()?;
-                                    }
+                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                        .ok_or_else(|| ClusterError::ReconnectFailed {
+                                            reason: format!(
+                                                "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
+                                            ),
+                                        })?;
+                                    let c = uri::udp_endpoint_cstr(&ep)?;
+                                    let aeron = self.aeron.as_ref().ok_or_else(|| ClusterError::ReconnectFailed {
+                                        reason: "no aeron client for redirect".into(),
+                                    })?;
+                                    let p = aeron
+                                        .add_exclusive_publication(
+                                            &c,
+                                            self.builder.ingress_stream_id,
+                                            Duration::from_secs(5),
+                                        )
+                                        .map_err(|e| ClusterError::reconnect(format!("redirect publication: {e}")))?;
+                                    self.ingress = Some(p);
+                                    self.leader_member_id = leader_member_id;
+                                    self.connect_sent = false;
+                                    self.encode_and_send_connect()?;
                                 }
                                 _ => {}
                             }
@@ -1343,11 +1364,12 @@ impl AsyncClusterConnect {
             info.len(),
         );
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(0)
-            .response_stream_id(self.builder.egress_stream_id)
-            .version(0);
-        let _ = enc
+        let _ = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 0,
+                response_stream_id: self.builder.egress_stream_id,
+                version: Some(0),
+            })
             .response_channel(ch)?
             .encoded_credentials(&self.credentials)?
             .client_info(&client_info_bytes())?;
@@ -1366,9 +1388,12 @@ impl AsyncClusterConnect {
     fn send_challenge_response(&mut self, cid: i64, csid: i64, creds: &[u8]) -> Result<(), ClusterError> {
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(creds.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(cid).cluster_session_id(csid);
-        let _ = enc.encoded_credentials(creds)?;
+        let _ = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ChallengeResponseFixedFields {
+                correlation_id: cid,
+                cluster_session_id: csid,
+            })
+            .encoded_credentials(creds)?;
         if let Some(ingress) = &self.ingress {
             let r = ingress.offer_raw(&buf, Handlers::NONE);
             offer_result("challenge_response", r)?;
@@ -1380,17 +1405,19 @@ impl AsyncClusterConnect {
         let mut ev: Option<crate::poller::EgressEvent> = None;
         let mut err: Option<ClusterError> = None;
         if let Some(egress) = &self.egress {
-            let _ = egress.poll_fn(
-                |data, _hdr| {
-                    if ev.is_none() && err.is_none() {
-                        match crate::poller::parse_event(data) {
-                            Ok(e) => ev = e,
-                            Err(e) => err = Some(e),
+            egress
+                .poll_fn(
+                    |data, _hdr| {
+                        if ev.is_none() && err.is_none() {
+                            match crate::poller::parse_event(data) {
+                                Ok(e) => ev = e,
+                                Err(e) => err = Some(e),
+                            }
                         }
-                    }
-                },
-                1,
-            );
+                    },
+                    1,
+                )
+                .map_err(|e| ClusterError::aeron("async_connect_poll", e))?;
         }
         if let Some(e) = err {
             return Err(e);
@@ -1444,9 +1471,13 @@ mod tests {
         let len =
             SessionConnectRequestEncoder::compute_encoded_length_with_message_header(ch.len(), creds.len(), info.len());
         let mut buf = vec![0u8; len];
-        let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(0).response_stream_id(102).version(0);
-        let complete = enc
+        use crate::codecs::session::SessionConnectRequestFixedFields;
+        let complete = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 0,
+                response_stream_id: 102,
+                version: Some(0),
+            })
             .response_channel(ch)?
             .encoded_credentials(creds)?
             .client_info(&info)?;
@@ -1460,14 +1491,17 @@ mod tests {
 
     #[test]
     fn test_encoded_length_matches_encode_challenge_response() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::codecs::session::ChallengeResponseEncoder;
+        use crate::codecs::session::{ChallengeResponseEncoder, ChallengeResponseFixedFields};
 
         let creds = b"challenge-response-bytes";
         let len = ChallengeResponseEncoder::compute_encoded_length_with_message_header(creds.len());
         let mut buf = vec![0u8; len];
-        let mut enc = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(1).cluster_session_id(2);
-        let complete = enc.encoded_credentials(creds)?;
+        let complete = ChallengeResponseEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ChallengeResponseFixedFields {
+                correlation_id: 1,
+                cluster_session_id: 2,
+            })
+            .encoded_credentials(creds)?;
         assert_eq!(
             complete.as_bytes_with_header().len(),
             len,

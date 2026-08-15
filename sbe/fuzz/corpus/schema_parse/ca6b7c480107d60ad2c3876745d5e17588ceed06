@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+0   <composite name="messageHeader">
+       <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <fldn ieame="value" id="1" type="uint64"/>
+ ]</message>
+</messageSchema>

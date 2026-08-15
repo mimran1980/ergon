@@ -66,7 +66,8 @@ mod sbe_tool_car;
 
 use ergo::{
     BooleanType as ErgoBool, BoostType as ErgoBoost, Booster as ErgoBooster, CarDecoder as ErgoDec,
-    CarEncoder as ErgoEnc, Engine as ErgoEngine, Model as ErgoModel, OptionalExtras as ErgoExtras,
+    CarEncoder as ErgoEnc, CarFixedFields as ErgoFixedFields, Engine as ErgoEngine,
+    Model as ErgoModel, OptionalExtras as ErgoExtras,
 };
 use sbe_tool_car::sbe_tool::{
     Encoder, ReadBuf, SBE_SCHEMA_ID, SBE_SCHEMA_VERSION, WriteBuf,
@@ -275,35 +276,35 @@ impl CarPayload {
     }
 
     fn encode_ergo(&self, buf: &mut [u8]) -> usize {
-        let mut car = ErgoEnc::wrap_and_apply_header(buf, 0);
-        car.serial_number(self.serial);
-        car.model_year(self.year);
-        car.available(Self::ergo_bool(self.available));
-        car.code(self.ergo_model());
-        car.some_numbers(self.some_numbers);
-        car.vehicle_code(self.vehicle_code);
         let mut extras = ErgoExtras::default();
         extras.sun_roof(self.extras_bits & 0b001 != 0);
         extras.sports_pack(self.extras_bits & 0b010 != 0);
         extras.cruise_control(self.extras_bits & 0b100 != 0);
-        car.extras(extras);
-        car.engine(ErgoEngine::new(
-            self.engine_capacity,
-            self.engine_cylinders,
-            self.manufacturer_code,
-            self.efficiency,
-            Self::ergo_bool(self.booster_enabled),
-            ErgoBooster::new(self.ergo_boost(), self.horse_power),
-        ));
+        let car = ErgoEnc::wrap_and_apply_header(buf, 0).fixed(&ErgoFixedFields {
+            serial_number: self.serial,
+            model_year: self.year,
+            available: Self::ergo_bool(self.available),
+            code: self.ergo_model(),
+            some_numbers: self.some_numbers,
+            vehicle_code: self.vehicle_code,
+            extras,
+            engine: ErgoEngine::new(
+                self.engine_capacity,
+                self.engine_cylinders,
+                self.manufacturer_code,
+                self.efficiency,
+                Self::ergo_bool(self.booster_enabled),
+                ErgoBooster::new(self.ergo_boost(), self.horse_power),
+            ),
+        });
 
         let fuel = self.fuel.clone();
         let car = car
             .fuel_figures(fuel.len() as u16, |g| {
                 for f in &fuel {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.speed(f.speed).mpg(f.mpg);
-                        e.usage_description(f.usage)?;
-                        Ok(())
+                        e.usage_description(f.usage)
                     })?;
                 }
                 Ok(())
@@ -314,7 +315,7 @@ impl CarPayload {
         let car = car
             .performance_figures(perf.len() as u16, |g| {
                 for p in &perf {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.octane_rating(p.octane);
                         e.acceleration(p.accel.len() as u16, |a| {
                             for x in &p.accel {
@@ -324,8 +325,7 @@ impl CarPayload {
                                 })?;
                             }
                             Ok(())
-                        })?;
-                        Ok(())
+                        })
                     })?;
                 }
                 Ok(())
@@ -356,9 +356,9 @@ impl CarPayload {
 
         let mut extras = ToolExtras::default();
         extras
-            .sun_roof(self.extras_bits & 0b001 != 0)
-            .sports_pack(self.extras_bits & 0b010 != 0)
-            .cruise_control(self.extras_bits & 0b100 != 0);
+            .set_sun_roof(self.extras_bits & 0b001 != 0)
+            .set_sports_pack(self.extras_bits & 0b010 != 0)
+            .set_cruise_control(self.extras_bits & 0b100 != 0);
         car.extras(extras);
 
         let mut engine = car.engine_encoder();
@@ -548,9 +548,9 @@ fn assert_tool_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(car.some_numbers(), p.some_numbers);
     assert_eq!(car.vehicle_code(), p.vehicle_code);
     let extras = car.extras();
-    assert_eq!(extras.is_sun_roof(), p.extras_bits & 0b001 != 0);
-    assert_eq!(extras.is_sports_pack(), p.extras_bits & 0b010 != 0);
-    assert_eq!(extras.is_cruise_control(), p.extras_bits & 0b100 != 0);
+    assert_eq!(extras.get_sun_roof(), p.extras_bits & 0b001 != 0);
+    assert_eq!(extras.get_sports_pack(), p.extras_bits & 0b010 != 0);
+    assert_eq!(extras.get_cruise_control(), p.extras_bits & 0b100 != 0);
 
     let engine = car.engine_decoder();
     assert_eq!(engine.capacity(), p.engine_capacity);

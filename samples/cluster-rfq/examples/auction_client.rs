@@ -5,7 +5,7 @@
 //! ```
 
 use ergo_aeron_cluster::cluster_codec_types::{
-    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
+    SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionMessageHeaderEncoder,
 };
 use rusteron_client::cformat;
 use std::time::Duration;
@@ -49,9 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert!(need <= PAD, "connect frame {need} exceeds pad {PAD}");
         let mut storage = [0u8; PAD];
         let buf = &mut storage[..need];
-        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0)?;
-        enc.correlation_id(1).response_stream_id(102).version(0);
-        let complete = enc
+        let complete = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0)?
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 1,
+                response_stream_id: 102,
+                version: Some(0),
+            })
             .response_channel(channel)?
             .encoded_credentials(b"")?
             .client_info(b"")?;

@@ -512,10 +512,9 @@ pub fn ergo_probe_wire_parity_encode_full(buf: &mut [u8]) -> u64 {
             })
             .fuel_figures(1, |g| {
                 g.add(|mut entry| {
-                    entry.speed(40).mpg(33.3).usage_description(b"city")?;
-                    Ok(())
-                })?;
-                Ok(())
+                    entry.speed(40).mpg(33.3);
+                    entry.usage_description(b"city")
+                })
             })
             .expect("fuel figures")
             .performance_figures(0, |_| Ok(()))
@@ -571,7 +570,8 @@ pub fn tool_probe_wire_parity_encode_full(buf: &mut [u8]) -> u64 {
         let mut fuel = ToolFuel::default();
         fuel = t.fuel_figures_encoder(1, fuel);
         fuel.advance().expect("fuel advance");
-        fuel.speed(40).mpg(33.3).usage_description(b"city");
+        fuel.speed(40).mpg(33.3);
+        fuel.usage_description(b"city");
         t = fuel.parent().expect("fuel parent");
         let mut perf = ToolPerf::default();
         perf = t.performance_figures_encoder(0, perf);
@@ -632,9 +632,9 @@ pub fn ergo_probe_encode_group_entry(buf: &mut [u8]) -> u64 {
     let mut checksum = 0_u64;
     for _ in 0..OPERATIONS {
         FuelFiguresEncoder::wrap(black_box(&mut buf[..]), 0, 1)
-            .add(|e| {
-                e.speed(30_u16).mpg(35.9_f32).usage_description(b"urban")?;
-                Ok(())
+            .add(|mut e| {
+                e.speed(30_u16).mpg(35.9_f32);
+                e.usage_description(b"urban")
             })
             .expect("flat entry");
         // Group dimension header: blockLength at buf[0..2], numInGroup at buf[2..4],

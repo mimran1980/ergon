@@ -210,6 +210,7 @@ fn dimension_composites_are_byte_exact_for_u8_u16_u32_and_both_endians()
                         DimsEncoder::try_compute_encoded_length_with_header(1)?;
                     let mut storage = vec![0u8; frame_len];
                     let len = DimsEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+                        .fixed(&DimsFixedFields {{}})
                         .rows(1, |rows| {{
                             rows.add(|row| {{
                                 row.value(0x0102_0304);
@@ -430,17 +431,17 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
         let nested_len = NestedEncoder::try_wrap_and_apply_header(&mut nested, 0)?
             .fixed(&NestedFixedFields { seq: 2 })
             .outer(1, |outer| {
-                outer.add(|entry| {
-                    entry
-                        .value(30)
-                        .inner(1, |inner| {
-                            inner.add(|row| {
-                                row.value(40);
-                                Ok(())
-                            })?;
+                outer.add(|mut entry| {
+                    entry.value(30);
+                    // The entry completes with its nested group, so return that
+                    // proof rather than `Ok(())`.
+                    entry.inner(1, |inner| {
+                        inner.add(|row| {
+                            row.value(40);
                             Ok(())
                         })?;
-                    Ok(())
+                        Ok(())
+                    })
                 })?;
                 Ok(())
             })?

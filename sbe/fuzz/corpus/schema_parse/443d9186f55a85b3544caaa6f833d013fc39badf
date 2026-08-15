@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLenwth" primitiveType="uint16"/>
+ %    <type name="templateId" primitiveType="uint16"/>
+      plateId" primitveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" tpe="uint64"/>
+  </message>
+</messageSchema>

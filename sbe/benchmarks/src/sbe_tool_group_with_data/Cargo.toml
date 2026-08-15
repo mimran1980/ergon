@@ -1,0 +1,11 @@
+[package]
+name = "sbe_tool_group_with_data"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "null"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "sbe_tool_group_with_data"
+path = "src/lib.rs"

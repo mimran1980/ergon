@@ -40,5 +40,5 @@ generated_module = "session"
 package = "ergo-aeron-cluster"
 
 [metadata]
-baseline_tag = "0.1.13"
+baseline_tag = "v0.1.17"
 packages = ["ergo-sbe", "ergo-aeron-cluster"]

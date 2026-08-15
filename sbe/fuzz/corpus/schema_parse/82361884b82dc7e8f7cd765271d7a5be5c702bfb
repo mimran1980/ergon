@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>D
+    <composite name="messageHeader">
+    (/>
+ templateId" primitiveType="uint16"/>
+    on" pr </composite>
+  </types>
+</messageSchema>

@@ -56,7 +56,14 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
-            impl core::error::Error for DecodeError {}
+            impl core::error::Error for DecodeError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::InvalidUtf8 { error, .. } => Some(error),
+                        _ => None,
+                    }
+                }
+            }
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
@@ -300,6 +307,19 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             pub struct HeaderAbsent;
             impl private::Sealed for HeaderAbsent {}
             impl HeaderState for HeaderAbsent {}
+
+            /// Typestate for whether fixed fields have been committed via
+            /// `fixed(&FixedFields)`. Tail (group/var-data) methods are only
+            /// available on [`FieldsFixed`].
+            pub trait FieldsState: private::Sealed {}
+            /// Initial encoder stage — fixed fields / `fixed()` / `raw_fixed()` only.
+            pub struct FieldsUnfixed;
+            impl private::Sealed for FieldsUnfixed {}
+            impl FieldsState for FieldsUnfixed {}
+            /// After `fixed(&FixedFields)` — ordered group/var-data tails only.
+            pub struct FieldsFixed;
+            impl private::Sealed for FieldsFixed {}
+            impl FieldsState for FieldsFixed {}
 
             /// Return type for group closures (`add`, `bids`, …).
             /// Closures return `Result<(), EncodeError>`; `?` just works.
@@ -867,6 +887,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     struct Variant {
         variant_ident: syn::Ident,
         disc: proc_macro2::TokenStream,
+        description: Option<String>,
     }
 
     let variants: Vec<Variant> = tokens
@@ -876,6 +897,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             let val = t.encoding.constant_value.as_ref()?;
             let variant_ident =
                 syn::Ident::new(&to_pascal_case(&t.name), proc_macro2::Span::call_site());
+            let variant_desc = t.encoding.description.clone();
             let disc: proc_macro2::TokenStream = if is_char {
                 let byte = val.as_bytes().first().copied().unwrap_or(0);
                 let lit = syn::LitByte::new(byte, proc_macro2::Span::call_site());
@@ -896,6 +918,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             Some(Variant {
                 variant_ident,
                 disc,
+                description: variant_desc,
             })
         })
         .collect();
@@ -1026,11 +1049,29 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         src.push_str(".\n");
     }
 
+    // Build variant declarations with doc comments
+    let variant_decls: Vec<proc_macro2::TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let name = &v.variant_ident;
+            let disc = &v.disc;
+            if let Some(ref desc) = v.description {
+                let doc = doc_attr_tokens(desc);
+                quote::quote! {
+                    #doc
+                    #name = #disc,
+                }
+            } else {
+                quote::quote! { #name = #disc, }
+            }
+        })
+        .collect();
+
     let tokens = quote::quote! {
         #[repr(#r_type_ty)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum #name_ident {
-            #(#variant_names = #variant_discs,)*
+            #(#variant_decls)*
             /// Unknown enum value — the wire discriminant did not match any known variant.
             NullVal = #null_disc_ts,
         }
@@ -1038,6 +1079,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         impl #name_ident {
             /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
             /// regression when forced.
+            #[must_use = "discarding this value is almost always a mistake"]
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
@@ -1051,7 +1093,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 }
             }
 
-            /// Map [`NullVal`] → [`None`], any other variant → [`Some`].
+            /// Map [`Self::NullVal`] → [`None`], any other variant → [`Some`].
             #[inline]
             pub const fn as_option(self) -> Option<Self> {
                 if matches!(self, Self::NullVal) { None } else { Some(self) }
@@ -1134,6 +1176,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         choice_setters.push(set_bit_name.clone());
         choice_name_strs.push(syn::LitStr::new(&t.name, proc_macro2::Span::call_site()));
         bits.push(quote::quote! {
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn #is_bit_name(self) -> bool {
                 (self.0 & (1 << #bit_lit)) != 0
@@ -1168,6 +1211,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
         pub struct #name_ident(pub #r_type_ty);
 
         impl #name_ident {
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn raw(self) -> #r_type_ty {
                 self.0
@@ -1249,7 +1293,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
 /// Layout contract (do not “simplify” to `#[repr(C)]` native fields):
 /// - `#[repr(transparent)] pub struct Name(pub [u8; N])` — value == on-wire bytes
 /// - getters/setters use `from_{le,be}_bytes` / `to_{le,be}_bytes` at schema offsets
-/// - flyweight `NameDecoder { buf, pos }` for zero-copy reads from a message buffer
+/// - flyweight `NameDecoder { buf, offset }` for zero-copy reads from a message buffer
 /// - `const _: () = assert!(size_of::<Name>() == N)`
 ///
 /// On little-endian hosts, `from_le_bytes` is effectively a plain load; this is
@@ -1276,9 +1320,9 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
     let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
 
     let derives = if has_float {
-        quote::quote! { Clone, Copy, Debug, PartialEq, PartialOrd }
+        quote::quote! { Clone, Copy, PartialEq, PartialOrd }
     } else {
-        quote::quote! { Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash }
+        quote::quote! { Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash }
     };
 
     let order_suffix = match byte_order {
@@ -1303,6 +1347,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
 
+        if let Some(ref desc) = m.description {
+            getters.extend(doc_attr_tokens(desc));
+        }
+
         match &m.member_type {
             MemberType::Primitive {
                 prim,
@@ -1321,6 +1369,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> &'static str {
                                     #val_lit
@@ -1330,6 +1379,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                             let expr_str = constant_value_expr(*prim, val);
                             let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
                             getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> #r_type_ty {
                                     #expr
@@ -1349,6 +1399,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 
                     if *len > 0 {
                         getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
                                 let mut res = [0 as #r_type_ty; #len_lit];
@@ -1377,6 +1428,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         let zero_ty: syn::Type =
                             syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
                         getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> #zero_ty {
                                 []
@@ -1387,6 +1439,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     ctor_params.push(quote::quote! { #field_ident: #r_type_ty });
 
                     getters.extend(quote::quote! {
+                        #[must_use = "discarding this value is almost always a mistake"]
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
                             #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
@@ -1411,6 +1464,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(read_bytes::<#comp_size_lit>(&self.0, #offset_lit))
@@ -1440,6 +1494,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident::from_raw(#r_type_ty::#from_method(
@@ -1447,6 +1502,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         ))
                     }
                     /// Raw wire discriminant — bypasses enum mapping.
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #raw_ident(&self) -> #r_type_ty {
                         #r_type_ty::#from_method(
@@ -1475,6 +1531,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 ctor_params.push(quote::quote! { #field_ident: #target_ident });
 
                 getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
                         #target_ident(#r_type_ty::#from_method(
@@ -1501,10 +1558,33 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         src.push_str(" byte wire image.\n");
     }
 
+    let debug_impl = {
+        let s = proc_macro2::Span::call_site();
+        let mut fields_fmt = proc_macro2::TokenStream::new();
+        for m in &members {
+            let fn_name = syn::Ident::new(&to_snake_case(&m.name), s);
+            let name_str = m.name.as_str();
+            fields_fmt.extend(quote::quote! {
+                .field(#name_str, &self.#fn_name())
+            });
+        }
+        quote::quote! {
+            impl core::fmt::Debug for #name_ident {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    f.debug_struct(stringify!(#name_ident))
+                        #fields_fmt
+                        .finish()
+                }
+            }
+        }
+    };
+
     let ts = quote::quote! {
         #[derive(#derives)]
         #[repr(transparent)]
         pub struct #name_ident(pub [u8; #size_lit]);
+
+        #debug_impl
 
         impl #name_ident {
             #getters
@@ -1592,6 +1672,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         let field_ident = syn::Ident::new(&field_name, proc_macro2::Span::call_site());
         let offset_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
 
+        if let Some(ref desc) = m.description {
+            getters.extend(doc_attr_tokens(desc));
+        }
+
         match &m.member_type {
             MemberType::Primitive {
                 prim,
@@ -1610,6 +1694,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             decoder_getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> &'static str {
                                     #val_lit
@@ -1619,6 +1704,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                             let expr_str = constant_value_expr(*prim, val);
                             let expr: syn::Expr = syn::parse_str(&expr_str).unwrap();
                             decoder_getters.extend(quote::quote! {
+                                #[must_use = "discarding this value is almost always a mistake"]
                                 #[inline]
                                 pub const fn #field_ident(&self) -> #r_type_ty {
                                     #expr
@@ -1634,13 +1720,14 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         syn::LitInt::new(&len.to_string(), proc_macro2::Span::call_site());
                     if *len > 0 {
                         decoder_getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> [#r_type_ty; #len_lit] {
                                 let mut res = [0 as #r_type_ty; #len_lit];
                                 let mut idx = 0;
                                 while idx < #len_lit {
                                     res[idx] = #r_type_ty::#from_method(
-                                        unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit + idx * #prim_size_lit) }
+                                        unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit + idx * #prim_size_lit) }
                                     );
                                     idx += 1;
                                 }
@@ -1651,6 +1738,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                         let zero_ty: syn::Type =
                             syn::parse_str(&format!("[{}; 0]", r_type_str)).unwrap();
                         decoder_getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
                             #[inline]
                             pub fn #field_ident(&self) -> #zero_ty {
                                 []
@@ -1659,9 +1747,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     }
                 } else {
                     decoder_getters.extend(quote::quote! {
+                        #[must_use = "discarding this value is almost always a mistake"]
                         #[inline]
                         pub fn #field_ident(&self) -> #r_type_ty {
-                            #r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) })
+                            #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
                         }
                     });
                 }
@@ -1676,9 +1765,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&comp_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident(unsafe { read_addr_unchecked::<#comp_size_lit>(self.base_addr, #offset_lit) })
+                        #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, self.offset + #offset_lit) })
                     }
                 });
             }
@@ -1695,9 +1785,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                        #target_ident::from_raw(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                     }
                 });
             }
@@ -1714,9 +1805,10 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                     syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
 
                 decoder_getters.extend(quote::quote! {
+                    #[must_use = "discarding this value is almost always a mistake"]
                     #[inline]
                     pub fn #field_ident(&self) -> #target_ident {
-                        #target_ident(#r_type_ty::#from_method(unsafe { read_addr_unchecked::<#prim_size_lit>(self.base_addr, #offset_lit) }))
+                        #target_ident(#r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
                     }
                 });
             }
@@ -1731,10 +1823,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
         #[derive(Clone, Copy)]
         pub struct #decoder_name<'a> {
             pub(crate) buf: &'a [u8],
-            /// Absolute address of the composite body: `buf.as_ptr() as usize
-            /// + body_offset`. Cached once at construction so every accessor
-            /// becomes a single struct load + immediate-offset wire load.
-            pub(crate) base_addr: usize,
+            /// Byte offset of the composite body within `self.buf`.
+            pub(crate) offset: usize,
         }
 
         impl<'a> #decoder_name<'a> {
@@ -2042,14 +2132,14 @@ pub(crate) fn generate_any_message(
         /// to a [`FramingPolicy`].
         pub struct FrameCursor<'a> {
             buf: &'a [u8],
-            pos: usize,
+            offset: usize,
             framing: FramingPolicy,
         }
 
         impl<'a> FrameCursor<'a> {
             #[inline]
             pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {
-                Self { buf, pos: 0, framing }
+                Self { buf, offset: 0, framing }
             }
         }
 
@@ -2067,49 +2157,49 @@ pub(crate) fn generate_any_message(
             /// the same error forever.
             #[inline]
             fn next(&mut self) -> Option<Self::Item> {
-                if self.pos >= self.buf.len() {
+                if self.offset >= self.buf.len() {
                     return None;
                 }
-                // Any error below is terminal; parking `pos` at the end is what
+                // Any error below is terminal; parking `offset` at the end is what
                 // fuses the iterator without adding a success-path state field.
                 let terminal = self.buf.len();
                 let (header_len, frame_len) = match self.framing {
                     FramingPolicy::LengthPrefixU32Le => {
-                        if 4 > self.buf.len().saturating_sub(self.pos) {
-                            let available = self.buf.len().saturating_sub(self.pos);
-                            self.pos = terminal;
+                        if 4 > self.buf.len().saturating_sub(self.offset) {
+                            let available = self.buf.len().saturating_sub(self.offset);
+                            self.offset = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
                                 available,
                             }));
                         }
-                        let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.pos);
+                        let bytes: [u8; 4] = read_bytes::<4>(self.buf, self.offset);
                         let len = u32::from_le_bytes(bytes) as usize;
                         (4, len)
                     }
                     FramingPolicy::LengthPrefixU16Le => {
-                        if 2 > self.buf.len().saturating_sub(self.pos) {
-                            let available = self.buf.len().saturating_sub(self.pos);
-                            self.pos = terminal;
+                        if 2 > self.buf.len().saturating_sub(self.offset) {
+                            let available = self.buf.len().saturating_sub(self.offset);
+                            self.offset = terminal;
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
                                 available,
                             }));
                         }
-                        let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.pos);
+                        let bytes: [u8; 2] = read_bytes::<2>(self.buf, self.offset);
                         let len = u16::from_le_bytes(bytes) as usize;
                         (2, len)
                     }
                     FramingPolicy::Fixed(len) => (0, len),
                 };
 
-                let available = self.buf.len().saturating_sub(self.pos);
-                let frame_start = match self.pos.checked_add(header_len) {
+                let available = self.buf.len().saturating_sub(self.offset);
+                let frame_start = match self.offset.checked_add(header_len) {
                     Some(value) => value,
                     None => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -2120,7 +2210,7 @@ pub(crate) fn generate_any_message(
                 let frame_end = match frame_start.checked_add(frame_len) {
                     Some(value) => value,
                     None => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -2129,7 +2219,7 @@ pub(crate) fn generate_any_message(
                     }
                 };
                 if frame_end > self.buf.len() {
-                    self.pos = terminal;
+                    self.offset = terminal;
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
                         needed: header_len.saturating_add(frame_len),
@@ -2138,11 +2228,11 @@ pub(crate) fn generate_any_message(
                 }
                 match AnyMessage::decode_frame(self.buf, frame_start, frame_len) {
                     Ok(frame) => {
-                        self.pos = frame_end;
+                        self.offset = frame_end;
                         Some(Ok(frame))
                     }
                     Err(e) => {
-                        self.pos = terminal;
+                        self.offset = terminal;
                         Some(Err(e))
                     }
                 }
@@ -2167,12 +2257,12 @@ pub(crate) fn generate_any_message(
             decode_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
                     // try_wrap enforces version-aware fixed extent.
-                    Ok(Self::#name(#decoder::try_wrap(buf, pos, block_length, version)?))
+                    Ok(Self::#name(#decoder::try_wrap(buf, offset, block_length, version)?))
                 }
             });
             decode_arms_unchecked.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, pos, block_length, version) }))
+                    Ok(Self::#name(unsafe { #decoder::wrap_unchecked(buf, offset, block_length, version) }))
                 }
             });
         }
@@ -2181,15 +2271,15 @@ pub(crate) fn generate_any_message(
             impl<'a> AnyMessage<'a> {
                 /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
-                pub fn try_decode(buf: &'a [u8], pos: usize) -> Result<Self, sbe_rt::DecodeError> {
-                    if #header_size_lit > buf.len().saturating_sub(pos) {
+                pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
+                    if #header_size_lit > buf.len().saturating_sub(offset) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let header_bytes = read_bytes::<#header_size_lit>(buf, pos);
+                    let header_bytes = read_bytes::<#header_size_lit>(buf, offset);
                     let header = #header_type_ident(header_bytes);
                     let template_id = sbe_rt::checked_header_u16(
                         "templateId",
@@ -2222,9 +2312,9 @@ pub(crate) fn generate_any_message(
                 #[inline]
                 pub fn decode(
                     buf: &'a [u8],
-                    pos: usize,
+                    offset: usize,
                 ) -> Result<Self, sbe_rt::DecodeError> {
-                    Self::try_decode(buf, pos)
+                    Self::try_decode(buf, offset)
                 }
             }
         });
@@ -2246,24 +2336,24 @@ pub(crate) fn generate_any_message(
             let field_name = &m.name;
             decode_frame_arms.extend(quote::quote! {
                 #schema::TEMPLATE_ID => {
-                    let frame_end = pos.checked_add(frame_len).ok_or(
+                    let frame_end = offset.checked_add(frame_len).ok_or(
                         sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
                             needed: frame_len,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         }
                     )?;
                     if frame_end > buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
                             needed: frame_len,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let decoder = #decoder::try_decode(&buf[..frame_end], pos)?;
+                    let decoder = #decoder::try_decode(&buf[..frame_end], offset)?;
                     Ok(DecodedFrame {
                         message: Self::#name(decoder),
-                        range: pos .. frame_end,
+                        range: offset .. frame_end,
                         len: frame_len,
                     })
                 }
@@ -2273,16 +2363,16 @@ pub(crate) fn generate_any_message(
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
                 #[inline]
-                pub fn decode_frame(buf: &'a [u8], pos: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+                pub fn decode_frame(buf: &'a [u8], offset: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
                     // Trust boundary: always validate header fits
-                    if #header_size_lit > buf.len().saturating_sub(pos) {
+                    if #header_size_lit > buf.len().saturating_sub(offset) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len().saturating_sub(pos),
+                            available: buf.len().saturating_sub(offset),
                         });
                     }
-                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, pos);
+                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, offset);
                     let header = #header_type_ident(header_bytes);
                     let template_id = sbe_rt::checked_header_u16(
                         "templateId",
@@ -2300,27 +2390,27 @@ pub(crate) fn generate_any_message(
                         "blockLength",
                         header.#bl_ident() as u64,
                     )?;
-                    let body_pos = pos + #header_size_lit;
+                    let body_offset = offset + #header_size_lit;
 
                     #schema_id_validation
 
                     match template_id {
                         #decode_frame_arms
                         _ => {
-                            if frame_len > buf.len().saturating_sub(pos) {
+                            if frame_len > buf.len().saturating_sub(offset) {
                                 return Err(sbe_rt::DecodeError::BufferTooShort {
                                     field: "template body",
                                     needed: frame_len,
-                                    available: buf.len().saturating_sub(pos),
+                                    available: buf.len().saturating_sub(offset),
                                 });
                             }
-                            let frame = &buf[pos .. pos + frame_len];
+                            let frame = &buf[offset .. offset + frame_len];
                             Ok(DecodedFrame {
                                 message: Self::Unknown {
                                     header,
                                     frame,
                                 },
-                                range: pos .. pos + frame_len,
+                                range: offset .. offset + frame_len,
                                 len: frame_len,
                             })
                         }
@@ -2480,9 +2570,59 @@ pub(crate) fn generate_any_message(
     out
 }
 
-/// Make schema XML descriptions safe for rustdoc doctests.
+/// Compute a canonical wire fingerprint for a token slice representing an
+/// enum, set, or composite.
 ///
-/// Multi-line descriptions often carry indented ASCII protocol diagrams or
+/// Includes schema [`ByteOrder`] so little-endian and big-endian declarations
+/// of the same type name cannot be treated as interchangeable shared types.
+/// Also compares offsets, lengths, presence, constants, null/min/max,
+/// discriminants, and related encoding fields. Returns a deterministic string
+/// suitable for equality comparison only (not a cryptographic hash).
+pub(crate) fn canonical_token_fingerprint(
+    tokens: &[crate::ir::Token],
+    byte_order: crate::ir::ByteOrder,
+) -> String {
+    use std::fmt::Write;
+    let mut fp = String::new();
+    let _ = write!(fp, "bo{:?}:", byte_order);
+    for t in tokens {
+        let _ = write!(fp, "{}:{:?}:", t.name, t.signal);
+        let e = &t.encoding;
+        let _ = write!(fp, "sv{}:", e.since_version);
+        if let Some(p) = e.primitive_type {
+            let _ = write!(fp, "p{:?}:", p);
+        }
+        if let Some(o) = e.offset {
+            let _ = write!(fp, "o{}:", o);
+        }
+        if let Some(l) = e.length {
+            let _ = write!(fp, "l{}:", l);
+        }
+        if e.presence != crate::ir::Presence::Required {
+            let _ = write!(fp, "pr{:?}:", e.presence);
+        }
+        if let Some(ref cv) = e.constant_value {
+            let _ = write!(fp, "cv{}:", cv);
+        }
+        if let Some(nv) = e.null_value {
+            let _ = write!(fp, "nv{}:", nv);
+        }
+        if let Some(mi) = e.min_value {
+            let _ = write!(fp, "mi{}:", mi);
+        }
+        if let Some(mx) = e.max_value {
+            let _ = write!(fp, "mx{}:", mx);
+        }
+        if let Some(ref st) = e.semantic_type {
+            let _ = write!(fp, "st{}:", st);
+        }
+        if e.deprecated {
+            let _ = write!(fp, "dep:");
+        }
+    }
+    fp
+}
+
 /// XML-comment prose (e.g. cluster protocol codecs). Rustdoc treats 4-space
 /// indented blocks as Rust doctests, which then fail `cargo test --doc`.
 /// Fence multi-line content as `text` so it stays documentation only.
@@ -2502,6 +2642,23 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
         proc_macro2::Span::call_site(),
     );
     quote::quote! { #[doc = #lit] }
+}
+
+/// One `#[doc]` attribute per line of `text`.
+///
+/// A single `#[doc]` holding embedded newlines is rendered by `prettyplease`
+/// as a `/** … */` block whose continuation lines carry the item's
+/// indentation. Markdown reads a 4-space-indented line after a blank line as
+/// an indented **code block**, so rustdoc then tries to compile the prose as a
+/// doctest and fails. Emitting one attribute per line renders as `///`, which
+/// cannot form an indented code block.
+pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
+    let mut out = proc_macro2::TokenStream::new();
+    for line in text.split('\n') {
+        let lit = syn::LitStr::new(line, proc_macro2::Span::call_site());
+        out.extend(quote::quote! { #[doc = #lit] });
+    }
+    out
 }
 
 /// `#[deprecated]` when the item is schema-deprecated AND `with_deprecated_attrs()`

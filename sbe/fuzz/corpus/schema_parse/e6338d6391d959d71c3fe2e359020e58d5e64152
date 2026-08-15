@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<messageSchem id="1" version="0">
+  <types>
+    <composite name="mageHeader">
+      <type name="blockLength" primitivgType="uint15"/>
+      <typs>6"/>   </cema>

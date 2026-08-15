@@ -362,11 +362,15 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut sf = shared_types::OrderFlags::default();
             sf.aggressive(true);
             let mut buf = [0u8; 128];
-            let mut enc = shared_types::OrderEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-            enc.price(shared_types::InnerValue::new(10, 20));
-            enc.side(shared_types::OrderSide::Ask);
-            enc.flags(sf);
-            let enc = enc.note(b"hello")?;
+            let enc = shared_types::OrderEncoder::try_wrap_and_apply_header(&mut buf, 0)
+                .unwrap()
+                .fixed(&shared_types::OrderFixedFields {
+                    price: shared_types::InnerValue::new(10, 20),
+                    side: shared_types::OrderSide::Ask,
+                    flags: sf,
+                })
+                .note(b"hello")?;
+            let _ = enc;
             let dec = shared_types::OrderDecoder::try_decode(&buf, 0)?;
             assert_eq!(dec.price().x(), 10);
             assert_eq!(dec.side(), shared_types::OrderSide::Ask);
@@ -377,12 +381,16 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
             let mut cf = consumer::OrderFlags::default();
             cf.conditional(true);
             let mut buf2 = [0u8; 128];
-            let mut enc2 = consumer::TradeEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
-            enc2.qty(500);
-            enc2.side(consumer::OrderSide::Bid);
-            enc2.flags(cf);
-            enc2.value(consumer::InnerValue::new(7, 8));
-            let enc2 = enc2.note(b"world")?;
+            let enc2 = consumer::TradeEncoder::try_wrap_and_apply_header(&mut buf2, 0)
+                .unwrap()
+                .fixed(&consumer::TradeFixedFields {
+                    qty: 500,
+                    side: consumer::OrderSide::Bid,
+                    flags: cf,
+                    value: consumer::InnerValue::new(7, 8),
+                })
+                .note(b"world")?;
+            let _ = enc2;
             let dec2 = consumer::TradeDecoder::try_decode(&buf2, 0)?;
             assert_eq!(dec2.qty(), 500);
             assert_eq!(dec2.side(), consumer::OrderSide::Bid);
@@ -491,5 +499,285 @@ fn without_shared_module_each_schema_is_standalone() -> Result<(), Box<dyn std::
     assert!(mods[0].source.contains("pub mod sbe_rt"));
     assert!(mods[1].source.contains("pub mod sbe_rt"));
 
+    Ok(())
+}
+
+// ── T-3: validate multi-schema module plan before emission ─────────────
+
+fn mini_schema(package: &str, id: u16, extra_types: &str) -> Schema {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="{package}" id="{id}" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            {extra_types}
+          </types>
+          <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+        </sbe:messageSchema>"#
+    );
+    Schema::from_ir(ergo_sbe::parse(&xml).expect("parse mini schema"))
+}
+
+#[test]
+fn multi_schema_rejects_empty_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "")])
+        .expect_err("empty module name");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_path_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "../evil")])
+        .expect_err("path module");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_duplicate_module_names() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("shared");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "shared"), (&b, "shared")])
+        .expect_err("duplicate modules");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("duplicate") || msg.contains("shared"), "{msg}");
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_keyword_module_name() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "type")])
+        .expect_err("keyword module");
+    // Keywords may be rejected as invalid idents or accepted depending on
+    // is_valid_module_ident — either InvalidConfiguration is fine if rejected.
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. })
+            || err.to_string().contains("type"),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+// ── T-12: incompatible shared type fingerprints ────────────────────────
+
+#[test]
+fn multi_schema_rejects_incompatible_shared_enum() -> Result<(), Box<dyn std::error::Error>> {
+    let enum_a = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    // Same name, different discriminant for Sell.
+    let enum_b = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">9</validValue>
+      </enum>"#;
+    let a = mini_schema("a", 1, enum_a);
+    let b = mini_schema("b", 2, enum_b);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "common"), (&b, "other")])
+        .expect_err("incompatible enum");
+    match err {
+        ergo_sbe::GenerateError::IncompatibleSharedType {
+            name,
+            owner_module,
+            consumer_module,
+            difference,
+        } => {
+            assert!(name.contains("Side"), "{name}");
+            assert_eq!(owner_module, "common");
+            assert_eq!(consumer_module, "other");
+            assert!(!difference.is_empty(), "{difference}");
+        }
+        other => panic!("expected IncompatibleSharedType, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn multi_schema_accepts_identical_shared_enum() -> Result<(), Box<dyn std::error::Error>> {
+    let enum_xml = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    let a = mini_schema("a", 1, enum_xml);
+    let b = mini_schema("b", 2, enum_xml);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let modules = g.generate_multi(&[(&a, "common"), (&b, "other")])?;
+    assert_eq!(modules.modules().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_shared_module_not_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    // shared_module name must equal the first schema module (owner).
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "owner"), (&b, "consumer")])
+        .expect_err("mismatched shared owner");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("owner") || msg.contains("common") || msg.contains("first"),
+        "{msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_reserved_ident_gen() -> Result<(), Box<dyn std::error::Error>> {
+    let a = mini_schema("a", 1, "");
+    let b = mini_schema("b", 2, "");
+    let config = GenerationConfig::new("multi").with_shared_module("a");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "a"), (&b, "gen")])
+        .expect_err("gen is reserved");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn std::error::Error>>
+{
+    let enum_xml = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy">1</validValue>
+        <validValue name="Sell">2</validValue>
+      </enum>"#;
+    let le = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="a" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            {enum_xml}
+          </types>
+          <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
+        </sbe:messageSchema>"#
+    );
+    let be = le
+        .replace("littleEndian", "bigEndian")
+        .replace("package=\"a\"", "package=\"b\"")
+        .replace("id=\"1\"", "id=\"2\"");
+    let a = Schema::from_ir(ergo_sbe::parse(&le)?);
+    let b = Schema::from_ir(ergo_sbe::parse(&be)?);
+    let config = GenerationConfig::new("multi").with_shared_module("common");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "common"), (&b, "other")])
+        .expect_err("byte order mismatch");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::IncompatibleSharedType { .. }),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+// ── parse_file_with_shared ─────────────────────────────────────────────
+//
+// `parse_with_shared` (string form) is exercised above and elsewhere; the
+// file form was public but called by nothing, so a break in its path
+// resolution or its shared-registry seeding would not have been caught.
+
+#[test]
+fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shared = ergo_sbe::parse(
+        r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="SharedPrice"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+</messageSchema>"#,
+    )?;
+
+    let dir = std::env::temp_dir().join(format!("ergo-shared-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let consumer = dir.join("consumer.xml");
+    // The consumer declares no types of its own: `SharedPrice` resolves only
+    // because the shared schema seeded the registry.
+    std::fs::write(
+        &consumer,
+        r#"<?xml version="1.0"?>
+<messageSchema package="c" id="7" version="0" byteOrder="littleEndian" headerType="messageHeader">
+  <message name="Quote" id="1"><field name="px" id="1" type="SharedPrice"/></message>
+</messageSchema>"#,
+    )?;
+
+    let ir = ergo_sbe::parse_file_with_shared(&consumer, &shared)?;
+    assert!(
+        ir.tokens.iter().any(|t| t.name == "SharedPrice"),
+        "shared composite must resolve through the seeded registry"
+    );
+    assert!(ir.tokens.iter().any(|t| t.name == "Quote"));
+    assert_eq!(
+        ir.id, 7,
+        "consumer keeps its own schema id, not the shared 0"
+    );
+
+    // A missing file is an error, not a panic — the read happens before parse.
+    assert!(ergo_sbe::parse_file_with_shared(dir.join("absent.xml"), &shared).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

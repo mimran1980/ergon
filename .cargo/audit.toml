@@ -1,0 +1,17 @@
+# cargo-audit configuration.
+#
+# `cargo deny` reads deny.toml; `cargo audit` reads this file. Both run in the
+# release supply-chain gate, so an ignore must be recorded in BOTH or the gate
+# fails on one tool and passes on the other.
+
+[advisories]
+# RUSTSEC-2026-0235 — rkyv 0.7.46 out-of-bounds reads on archive validation.
+#
+# Not reachable: rkyv is an optional rust_decimal feature that nothing in this
+# workspace enables (`cargo tree -e normal` finds zero occurrences anywhere,
+# including both published crates). It is present only in Cargo.lock, which is
+# feature-agnostic. Fix requires rkyv >= 0.8.17, which needs an upstream
+# rust_decimal release — 1.42.1 is current and still pins rkyv 0.7.
+#
+# Re-check on each rust_decimal bump; drop once upstream moves to rkyv 0.8.
+ignore = ["RUSTSEC-2026-0235"]

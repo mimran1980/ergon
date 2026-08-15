@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<messageSche>
+  <types>
+    <composite name="messageHeer">
+ e"uint16"/>
+    </composite>
+  ma apckage="fuzz" id="eSche>
+types>
+    <composite name="messageHeader">
+ e"uint16"/>
+    </composite>  <types>
+    <composite name="messageHeader">
+ e"uint16"/>
+    </composite>
+  ma apxml version="1.0"?>
+<messageSche>
+  <types>
+    <compsite name="messageHeader">
+ e"uint16"/>
+    c</messageSchema>

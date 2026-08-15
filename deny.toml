@@ -70,10 +70,21 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    #"RUSTSEC-0000-0000",
-    #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
-    #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
-    #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
+    # rkyv 0.7.46 — out-of-bounds reads validating archives containing Rc/Arc.
+    #
+    # Not reachable here. rkyv is an OPTIONAL feature of rust_decimal, and
+    # nothing in this workspace enables it: `cargo tree -e normal` finds zero
+    # occurrences in ergo-sbe, ergo-aeron-cluster, sbe/benchmarks, and every
+    # sample. It appears only in Cargo.lock, which is feature-agnostic and so
+    # lists optional dependencies whether or not they are ever built.
+    #
+    # Neither published crate (ergo-sbe, ergo-aeron-cluster) depends on
+    # rust_decimal at all. The fix (rkyv >= 0.8.17) needs an upstream
+    # rust_decimal release; 1.42.1 is current and still pins rkyv 0.7.
+    #
+    # Re-check on each rust_decimal bump and drop this entry once upstream
+    # moves to rkyv 0.8.
+    { id = "RUSTSEC-2026-0235", reason = "rkyv is an optional rust_decimal feature that this workspace never enables; verified absent from every build graph and from both published crates" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.

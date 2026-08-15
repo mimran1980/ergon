@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="mess" id="1" vn="0">
+  <types>
+ !  <composite name="messageHeader">osite
+    </composite>
+  </types>
+  <message imitiveType="uint15"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

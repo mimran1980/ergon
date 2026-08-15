@@ -5,8 +5,10 @@
 //! field (panics on group optionals) or take the first `N` LE bytes of a BE
 //! encoding (wrong high-order bytes).
 
-use crate::ir::{ByteOrder, Presence};
-use crate::structured_ir::{FieldType, MessageField};
+use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal};
+use crate::structured_ir::{
+    FieldType, MemberType, MessageField, SchemaElements, parse_composite_members,
+};
 use quote::quote;
 
 /// Encode a schema null/constant integer as exactly `size` wire bytes.
@@ -44,22 +46,228 @@ fn null_bytes_expr(null_val: u64, size: usize, byte_order: ByteOrder) -> proc_ma
     quote! { [#(#lits),*] as [u8; #size_lit] }
 }
 
-fn optional_null_size(field: &MessageField) -> Option<usize> {
-    match &field.field_type {
+/// Emit a single copy of `size` null bytes at `offset_expr` into `buf_expr`.
+///
+/// Uses `get_unchecked_mut`, matching the generated field setters. A checked
+/// slice here would put a panic path inside `fixed()` — and because the
+/// `None` arm sits next to the hot `Some` arm, that panic path measurably
+/// pessimises the *taken* branch even when no field is ever `None`
+/// (`ergo_historic/null_option/encode_fixed` regressed 1.84x with the checked
+/// form). Safety is identical to the setters': the constructor already proved
+/// the buffer covers the fixed block, and this writes the same field extent.
+fn write_null_at(
+    buf_expr: &syn::Expr,
+    offset_expr: proc_macro2::TokenStream,
+    null_val: u64,
+    size: usize,
+    byte_order: ByteOrder,
+) -> proc_macro2::TokenStream {
+    let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+    let null_arr = null_bytes_expr(null_val, size, byte_order);
+    quote! {
+        {
+            let null_bytes: [u8; #size_lit] = #null_arr;
+            let offset = #offset_expr;
+            // SAFETY: the encoder constructor proved the buffer covers the
+            // fixed block; this is the same extent the field setter writes.
+            unsafe {
+                #buf_expr
+                    .get_unchecked_mut(offset..offset + #size_lit)
+                    .copy_from_slice(&null_bytes);
+            }
+        }
+    }
+}
+
+/// Null-image statements for one optional message field at `field_abs_offset`.
+///
+/// Used by both `apply_nulls` and `fixed(&FixedFields)` when a field is `None`.
+/// Returns `None` only for constant / non-optional fields (caller should skip).
+/// Returns `Err` when an optional field has no derivable null image.
+pub(crate) fn null_image_stmts_for_field(
+    f: &MessageField,
+    field_abs_offset: proc_macro2::TokenStream,
+    buf_expr: &syn::Expr,
+    byte_order: ByteOrder,
+    elements: &SchemaElements,
+) -> Result<Option<proc_macro2::TokenStream>, String> {
+    if f.presence != Presence::Optional {
+        return Ok(None);
+    }
+    match &f.field_type {
         FieldType::Primitive(prim, length) => {
             let n = length.unwrap_or(1);
-            if n != 1 {
-                // Multi-byte char arrays / fixed arrays use per-element nulls
-                // elsewhere; single primitive optionals only here.
-                return None;
+            let elem_size = prim.size();
+            if elem_size == 0 || elem_size > 8 {
+                return Err(format!(
+                    "optional field '{}': unsupported primitive width {elem_size}",
+                    f.name
+                ));
             }
-            Some(prim.size())
+            // Prefer schema nullValue; default element null is 0 for arrays
+            // (ASCII/char padding) and the IR null for scalar optionals.
+            let null_val = f.null_value.unwrap_or(0);
+            if n == 1 {
+                return Ok(Some(write_null_at(
+                    buf_expr,
+                    field_abs_offset,
+                    null_val,
+                    elem_size,
+                    byte_order,
+                )));
+            }
+            // Fixed array: write the element null image into every slot.
+            let mut stmts = proc_macro2::TokenStream::new();
+            for i in 0..n {
+                let off = i * elem_size;
+                let off_lit = syn::LitInt::new(&off.to_string(), proc_macro2::Span::call_site());
+                stmts.extend(write_null_at(
+                    buf_expr,
+                    quote! { #field_abs_offset + #off_lit },
+                    null_val,
+                    elem_size,
+                    byte_order,
+                ));
+            }
+            Ok(Some(stmts))
         }
         FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
-            Some(encoding_type.size())
+            let size = encoding_type.size();
+            // Prefer schema nullValue; enums default to encoding-type max (from resolve).
+            let null_val = f.null_value.unwrap_or(match encoding_type {
+                PrimitiveType::UInt8 => 255,
+                PrimitiveType::UInt16 => 65535,
+                PrimitiveType::UInt32 => 4294967295,
+                PrimitiveType::UInt64 => u64::MAX,
+                PrimitiveType::Int8 => -128i8 as u64,
+                PrimitiveType::Int16 => -32768i16 as u64,
+                PrimitiveType::Int32 => i32::MIN as u64,
+                PrimitiveType::Int64 => i64::MIN as u64,
+                _ => 0,
+            });
+            Ok(Some(write_null_at(
+                buf_expr,
+                field_abs_offset,
+                null_val,
+                size,
+                byte_order,
+            )))
         }
-        FieldType::Composite { .. } => None,
+        FieldType::Composite { name, size } => {
+            // Optional composite: zero the whole span, then write nested
+            // optional member null sentinels recursively. Nested composite
+            // member offsets are relative to that nested start and must be
+            // added to the parent field base (not treated as absolute).
+            let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+            let mut stmts = quote! {
+                {
+                    let offset = #field_abs_offset;
+                    #buf_expr[offset..offset + #size_lit].fill(0);
+                }
+            };
+            stmts.extend(composite_optional_null_stmts(
+                name,
+                field_abs_offset,
+                buf_expr,
+                byte_order,
+                elements,
+            )?);
+            Ok(Some(stmts))
+        }
     }
+}
+
+/// Recursively emit null images for optional members of a composite type.
+///
+/// `base_offset` is an absolute buffer expression for the start of this
+/// composite instance.
+fn composite_optional_null_stmts(
+    type_name: &str,
+    base_offset: proc_macro2::TokenStream,
+    buf_expr: &syn::Expr,
+    byte_order: ByteOrder,
+    elements: &SchemaElements,
+) -> Result<proc_macro2::TokenStream, String> {
+    let Some(comp_tokens) = elements.composites.iter().find(|c| c[0].name == type_name) else {
+        return Err(format!(
+            "optional composite type '{type_name}' not found in schema"
+        ));
+    };
+    // Prefer structured members (correct nested offsets). Also consult the
+    // raw token stream for optional + nullValue on primitive members, since
+    // MemberType::Primitive may not always surface nullValue.
+    let members = parse_composite_members(comp_tokens);
+    let mut stmts = proc_macro2::TokenStream::new();
+    for m in &members {
+        let mem_off_lit = syn::LitInt::new(&m.offset.to_string(), proc_macro2::Span::call_site());
+        let abs = quote! { #base_offset + #mem_off_lit };
+        match &m.member_type {
+            MemberType::Primitive {
+                prim,
+                length,
+                presence,
+                ..
+            } => {
+                if *presence != Presence::Optional {
+                    continue;
+                }
+                // Look up nullValue from the matching BeginField token when present.
+                let null_val = comp_tokens
+                    .iter()
+                    .find(|t| t.signal == Signal::BeginField && t.name == m.name)
+                    .and_then(|t| t.encoding.null_value)
+                    .unwrap_or(0);
+                let n = length.unwrap_or(1);
+                let elem_size = prim.size();
+                if !(1..=8).contains(&elem_size) {
+                    return Err(format!(
+                        "optional composite member '{}': unsupported width {elem_size}",
+                        m.name
+                    ));
+                }
+                if n == 1 {
+                    stmts.extend(write_null_at(
+                        buf_expr, abs, null_val, elem_size, byte_order,
+                    ));
+                } else {
+                    for i in 0..n {
+                        let slot = i * elem_size;
+                        let slot_lit =
+                            syn::LitInt::new(&slot.to_string(), proc_macro2::Span::call_site());
+                        stmts.extend(write_null_at(
+                            buf_expr,
+                            quote! { #abs + #slot_lit },
+                            null_val,
+                            elem_size,
+                            byte_order,
+                        ));
+                    }
+                }
+            }
+            MemberType::Composite { name, .. } => {
+                stmts.extend(composite_optional_null_stmts(
+                    name, abs, buf_expr, byte_order, elements,
+                )?);
+            }
+            MemberType::Enum { .. } | MemberType::Set { .. } => {
+                // Enum/set refs inside composites: parent span is zeroed; when
+                // the BeginField is optional with an explicit nullValue, stamp it.
+                if let Some(tok) = comp_tokens
+                    .iter()
+                    .find(|t| t.signal == Signal::BeginField && t.name == m.name)
+                    && tok.encoding.presence == Presence::Optional
+                    && let Some(null_val) = tok.encoding.null_value
+                {
+                    let prim = tok.encoding.primitive_type.unwrap_or(PrimitiveType::UInt8);
+                    let mem_size = prim.size();
+                    if (1..=8).contains(&mem_size) {
+                        stmts.extend(write_null_at(buf_expr, abs, null_val, mem_size, byte_order));
+                    }
+                }
+            }
+        }
+    }
+    Ok(stmts)
 }
 
 /// Generate null-sentinel write statements for optional fields.
@@ -69,34 +277,27 @@ pub(crate) fn generate_nullification(
     offset_base: &str,
     buf_expr: &str,
     byte_order: ByteOrder,
+    elements: &SchemaElements,
 ) {
     let mut stmts = proc_macro2::TokenStream::new();
+    let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
+    let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
     for f in fields {
         if f.presence != Presence::Optional {
             continue;
         }
-        let Some(null_val) = f.null_value else {
-            continue;
-        };
-        let Some(size) = optional_null_size(f) else {
-            continue;
-        };
-        if size == 0 || size > 8 {
-            continue;
-        }
-        let offset_base_expr: syn::Expr = syn::parse_str(offset_base).unwrap();
-        let buf_expr_ts: syn::Expr = syn::parse_str(buf_expr).unwrap();
         let f_offset = syn::Index::from(f.offset);
-        let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
-        let null_arr = null_bytes_expr(null_val, size, byte_order);
-
-        stmts.extend(quote! {
-            {
-                let null_bytes: [u8; #size_lit] = #null_arr;
-                let offset = #offset_base_expr + #f_offset;
-                #buf_expr_ts[offset..offset + #size_lit].copy_from_slice(&null_bytes);
-            }
-        });
+        let abs = quote! { #offset_base_expr + #f_offset };
+        match null_image_stmts_for_field(f, abs, &buf_expr_ts, byte_order, elements) {
+            Ok(Some(s)) => stmts.extend(s),
+            Ok(None) => {}
+            // `apply_nulls` stays best-effort where `fixed()` rejects: a field
+            // with no derivable null image contributes no statements. There is
+            // no fallback to attempt — `null_image_stmts_for_field` only errors
+            // for a primitive of width 0 or >8, and any such width is outside
+            // what a null image can be written into anyway.
+            Err(_) => {}
+        }
     }
     if !stmts.is_empty() {
         src.push_str(&stmts.to_string());

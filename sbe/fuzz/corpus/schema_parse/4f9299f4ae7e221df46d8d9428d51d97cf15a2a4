@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="me(sageHeader">
+      <type name="blockLeng6"/></composite>
+  </types>
+  <message name=")" id="1">
+    <field  id="2" type="uint64"/>
+ 0</message>
+</messageSchema>

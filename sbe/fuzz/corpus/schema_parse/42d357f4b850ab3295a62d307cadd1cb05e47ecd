@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="version" primitiveType="uint15"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchma package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="version" primitiv1eType="uint16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="version" primitiveType name="version" primitiveType="uint16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>*
+<?__      <t9pe e"nma=version" primitiveType="uint16"/>
+    </composite>
+  </ty>
+  <mess6gu name="M" id="0">
+    <field name="v16"/>
+    </composies>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe na/typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/ema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="version" primitiveType name="version" primitiveType="uint16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>*
+<?__      <t9pe name="version" primitiveType="uint16"/>
+    </composite>
+  </ty>
+  <mess6gu name="M" id="0">
+    <field name="v16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockL>
+<?__      <t9pe name="vealue" id="1" ess6gu name="M" id="0">
+    <field name="v16"/>
+    </composite>
+  </typesn="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+  blockLength" primitiveType="uint16"/>
+<?__      <t9pe name="vealue" id="1" type="uint64"/>
+  </message>
+</messa.0Schema>

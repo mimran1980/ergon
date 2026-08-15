@@ -297,7 +297,7 @@ name = "{name}"
 version = "0.0.0"
 edition = "2021"
 [dependencies]
-ergo-sbe = {{ path = "{ergo}" }}
+ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 {extra_deps}"#,
         name = name,
         ergo = ergo_path.display()
@@ -319,6 +319,7 @@ ergo-sbe = {{ path = "{ergo}" }}
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(&target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .map_err(|e| format!("spawn cargo: {e}"))?;
     if out.status.success() {
@@ -435,7 +436,7 @@ name = "docs_run"
 version = "0.0.0"
 edition = "2021"
 [dependencies]
-ergo-sbe = {{ path = "{}" }}
+ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#,
             ergo.display()
         ),
@@ -472,7 +473,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             qty: 10,
         })
         .legs(1, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.value(99);
                 Ok(())
             })?;
@@ -511,6 +512,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(tmp.path().join("target"))
+        .env("CARGO_NET_OFFLINE", "true")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
     Ok(())
@@ -585,7 +587,9 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             let (module, codec, deps, imports) = if body.trim().starts_with("{{#include") {
                 ("tour_codec", &tour_codec, TOUR_DEPS, TOUR_IMPORTS)
             } else {
-                ("docs_codec", &docs_codec, "", "")
+                // Literal fences may reference chrono/compact_str/smol_str/bytes
+                // — make them available so the fence compiles.
+                ("docs_codec", &docs_codec, "chrono = \"0.4\"\n", "")
             };
             let name = format!(
                 "book_{}_{}",

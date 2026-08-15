@@ -40,9 +40,20 @@ impl CredentialsSupplier for NullCredentialsSupplier {
 /// answerable without a custom supplier. Prefer a bespoke
 /// [`CredentialsSupplier`] implementation when the challenge must be derived
 /// from the encoded challenge bytes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct StaticCredentials {
     credentials: Vec<u8>,
+}
+
+impl core::fmt::Debug for StaticCredentials {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StaticCredentials")
+            .field(
+                "credentials",
+                &format_args!("<redacted {} bytes>", self.credentials.len()),
+            )
+            .finish()
+    }
 }
 
 impl StaticCredentials {
@@ -95,6 +106,27 @@ mod tests {
         assert_eq!(
             &*StaticCredentials::new(vec![1, 2, 3]).encoded_credentials().unwrap(),
             &[1u8, 2, 3][..]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug_redacts_credential_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let secret = b"leaked-credential-material-abc";
+        let supplier = StaticCredentials::new(secret.to_vec());
+        let dbg = format!("{supplier:?}");
+        assert!(
+            !dbg.contains("leaked-credential"),
+            "Debug must not include credential text: {dbg}"
+        );
+        assert!(
+            !dbg.as_bytes().windows(secret.len()).any(|w| w == secret),
+            "Debug must not include credential bytes"
+        );
+        assert!(dbg.contains("redacted"), "Debug should say redacted: {dbg}");
+        assert!(
+            dbg.contains(&format!("{} bytes", secret.len())),
+            "Debug may show length: {dbg}"
         );
         Ok(())
     }

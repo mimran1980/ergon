@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    eHeadesite name="messageHeader">
+ckLength" primitiveType="uint16    eHeadesiessageHead>
+ckLength" primitiveType="uint16"/>emplateId" primitiveType="uint16"/>
+"/>emplateIdte name="messageHeader">
+ckLength" primitiveType="uint16"/>emplateId" primitiveType="uint16"/>
+"/>emplateId" primitiveType="uint16"/>
+  messageSchema>

@@ -114,7 +114,7 @@ fn respond_schema1_body() -> String {
                 })
                 .fills_grp(fills_n as u16, |g| {
                     for (px_mant, qty_mant) in fills {
-                        g.add(|e| {
+                        g.add(|mut e| {
                             e.fill_px(DecimalEncoding::new(*px_mant))
                                 .fill_qty(QtyEncoding::new(*qty_mant));
                             Ok(())

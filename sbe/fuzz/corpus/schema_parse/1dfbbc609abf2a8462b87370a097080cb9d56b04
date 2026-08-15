@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1">
+      <typeeam n="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+   version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   ]   <type name="tt16"/>
+      composite name=plateId" primitiveType="uint16"/>
+  <type name="sch6"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name=")" id="1">
+    <field name="value" id="2" type="uint64"/>
+  </message>
+</messageSchema>

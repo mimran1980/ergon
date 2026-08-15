@@ -28,7 +28,12 @@ fn generate_with_config(
     let ir = ergo_sbe::parse(&xml)?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
-    let source = modules.modules().next().unwrap().source.clone();
+    let source = modules
+        .modules()
+        .next()
+        .ok_or("no module generated")?
+        .source
+        .clone();
     Ok(source)
 }
 
@@ -95,8 +100,7 @@ fn as_option_method_on_all_enums() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn null_as_option_runtime_wire_roundtrip() -> Result<(), Box<dyn Error>> {
-    // Prove that NullVal wire byte → Option::None at runtime.
+fn null_as_option_generates_option_getter() -> Result<(), Box<dyn Error>> {
     let types = r#"<enum name="Side" encodingType="uint8">
         <validValue name="Buy">1</validValue><validValue name="Sell">2</validValue>
     </enum>"#;
@@ -104,8 +108,6 @@ fn null_as_option_runtime_wire_roundtrip() -> Result<(), Box<dyn Error>> {
     let config = ergo_sbe::GenerationConfig::new("nao_rt")
         .with_null_as_option(ergo_sbe::ConversionSelector::named_type("Side"));
     let src = generate_with_config(config.clone(), types, fields)?;
-
-    // Verify the generated getter uses Option-wrapping via as_option()
     assert!(
         src.contains("as_option()"),
         "getter must use as_option() for NullVal→None mapping"

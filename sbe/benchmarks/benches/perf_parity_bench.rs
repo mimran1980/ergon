@@ -230,23 +230,27 @@ fn bench_decode_scalar(c: &mut Criterion) {
 
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
+            // Opaque once per Criterion iteration so the micro-batch measures
+            // field loads, not black_box overhead on a large decoder ref.
+            let car = black_box(&car);
+            let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = black_box(&car);
-                let sn = car.serial_number();
-                let my = car.model_year();
-                black_box((sn, my));
+                acc = acc.wrapping_add(car.serial_number());
+                acc = acc.wrapping_add(u64::from(car.model_year()));
             }
+            black_box(acc);
         });
     });
 
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
+            let sbe_tool_car = black_box(&sbe_tool_car);
+            let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
-                let sbe_tool_car = black_box(&sbe_tool_car);
-                let sn = sbe_tool_car.serial_number();
-                let my = sbe_tool_car.model_year();
-                black_box((sn, my));
+                acc = acc.wrapping_add(sbe_tool_car.serial_number());
+                acc = acc.wrapping_add(u64::from(sbe_tool_car.model_year()));
             }
+            black_box(acc);
         });
     });
 
@@ -593,6 +597,27 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
     // no extent check — use wrap_unchecked so the gated pair is equal work
     // (same unfairness class as batch decode; product bare wrap still proves).
+    // Fairness: the first benchmark measured in a group pays a one-off
+    // position penalty (CPU frequency ramp, icache/branch-predictor cold start).
+    // Measured at 1.0-1.6% — the same magnitude as the entire ergo/sbe-tool
+    // margin on this scenario, and it always landed on ergo because ergo was
+    // listed first. This throwaway arm absorbs it so neither implementation is
+    // measured cold. It is not a gated pair (check-bench-gate.sh matches the
+    // `*_body_only` names explicitly).
+    group.bench_function("warmup_body_only", |b| {
+        let mut buf = [0u8; 512];
+        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        b.iter(|| {
+            for _ in 0..MICRO_BATCH_SIZE {
+                // SAFETY: extent asserted directly above.
+                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
+                    .serial_number(black_box(1234))
+                    .model_year(black_box(2013));
+            }
+            black_box(&buf[8..18]);
+        });
+    });
+
     group.bench_function("ergo-sbe_body_only", |b| {
         let mut buf = [0u8; 512];
         // Untimed: prove the buffer holds a complete frame before the timed
@@ -820,21 +845,20 @@ fn bench_encode_full_stage_transition(c: &mut Criterion) {
                     ),
                 })
                 .fuel_figures(2, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.speed(30).mpg(35.9);
-                        Ok(())
+                        e.usage_description(b"")
                     })?;
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.speed(55).mpg(40.0);
-                        Ok(())
-                    })?;
-                    Ok(())
+                        e.usage_description(b"")
+                    })
                 })
                 .unwrap()
                 .performance_figures(1, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.octane_rating(95);
-                        Ok(())
+                        e.acceleration(0, |_| Ok(()))
                     })?;
                     Ok(())
                 })
@@ -886,9 +910,9 @@ fn assert_full_message_encode_wire_parity() {
             ),
         })
         .fuel_figures(1, |g| {
-            g.add(|ent| {
-                ent.speed(40).mpg(33.3).usage_description(b"city")?;
-                Ok(())
+            g.add(|mut ent| {
+                ent.speed(40).mpg(33.3);
+                ent.usage_description(b"city")
             })?;
             Ok(())
         })
@@ -927,7 +951,8 @@ fn assert_full_message_encode_wire_parity() {
     let mut fuel = ToolFuel::default();
     fuel = t.fuel_figures_encoder(1, fuel);
     fuel.advance().unwrap();
-    fuel.speed(40).mpg(33.3).usage_description(b"city");
+    fuel.speed(40).mpg(33.3);
+    fuel.usage_description(b"city");
     t = fuel.parent().unwrap();
     let mut perf = ToolPerf::default();
     perf = t.performance_figures_encoder(0, perf);
@@ -980,9 +1005,9 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
                         ),
                     })
                     .fuel_figures(1, |g| {
-                        g.add(|ent| {
-                            ent.speed(40).mpg(33.3).usage_description(b"city")?;
-                            Ok(())
+                        g.add(|mut ent| {
+                            ent.speed(40).mpg(33.3);
+                            ent.usage_description(b"city")
                         })?;
                         Ok(())
                     })
@@ -1029,7 +1054,8 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
                 let mut fuel = ToolFuel::default();
                 fuel = t.fuel_figures_encoder(1, fuel);
                 fuel.advance().unwrap();
-                fuel.speed(40).mpg(33.3).usage_description(b"city");
+                fuel.speed(40).mpg(33.3);
+                fuel.usage_description(b"city");
                 t = fuel.parent().unwrap();
                 let mut perf = ToolPerf::default();
                 perf = t.performance_figures_encoder(0, perf);

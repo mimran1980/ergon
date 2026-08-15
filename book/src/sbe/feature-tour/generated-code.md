@@ -8,7 +8,7 @@ For a schema with one message (`Car`), `ergo-sbe` emits a single Rust module wit
 // Each message gets a zero-allocation decoder.
 pub struct CarDecoder<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) base_addr: usize,
+    pub(crate) offset: usize,
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
@@ -36,7 +36,7 @@ impl<'a> CarDecoder<'a> {
     // Fixed fields are random-access — zero-copy reads after a checked wrap.
     #[inline]
     pub fn serial_number(&self) -> u64 {
-        let offset = self.pos + 0;
+        let offset = self.offset + 0;
         u64::from_le_bytes(/* private read after extent proof */)
     }
 }
@@ -45,15 +45,28 @@ impl<'a> CarDecoder<'a> {
 ## Encoder (type-state stages)
 
 ```rust,ignore
-// Wire order is enforced by named stage types.
-pub struct CarEncoder<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
+// Wire order is enforced by named stage types. The root encoder also carries a
+// fields-state parameter: tails are reachable only after `fixed()`.
+pub struct CarEncoder<
+    'a,
+    H: sbe_rt::HeaderState = sbe_rt::HeaderPresent,
+    F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed,
+> { ... }
 pub struct CarAfterFuelFigures<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 pub struct CarAfterPerformanceFigures<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 pub struct CarComplete<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> { ... }
 
+// `fixed()` moves FieldsUnfixed -> FieldsFixed; the tail methods exist only on
+// the fixed phase, so `wrap(...).fuel_figures(...)` is a compile error.
+pub type CarUnfixedEncoder<'a, H = sbe_rt::HeaderPresent> =
+    CarEncoder<'a, H, sbe_rt::FieldsUnfixed>;
+
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
+    pub fn fixed(self, fields: &CarFixedFields) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> { ... }
+}
+
 // Calling stages out of order is a type error — `CarEncoder` has no `asks()`.
-impl<'a> CarEncoder<'a> {
-    pub fn fixed(self, fields: &CarFixedFields) -> Self { ... }
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     pub fn fuel_figures(self, count: u16, f: impl FnOnce(...) -> ...) -> Result<CarAfterFuelFigures> { ... }
 }
 impl<'a> CarAfterFuelFigures<'a> {

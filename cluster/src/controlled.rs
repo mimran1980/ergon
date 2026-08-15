@@ -356,9 +356,13 @@ mod tests {
         let eps = b"0=localhost:9000";
         let len = NewLeaderEventEncoder::compute_encoded_length_with_message_header(eps.len());
         let mut buf = vec![0u8; len];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(1).cluster_session_id(99).leader_member_id(0);
-        let _ = enc.ingress_endpoints(eps)?;
+        let _ = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&crate::codecs::session::NewLeaderEventFixedFields {
+                leadership_term_id: 1,
+                cluster_session_id: 99,
+                leader_member_id: 0,
+            })
+            .ingress_endpoints(eps)?;
         struct Rec {
             called: bool,
         }

@@ -1,0 +1,29 @@
+<?____<?Jml version="1.0??>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+4"/>
+16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemTz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint39"/>
+ iveType="uint16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint32"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint08"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="s>
+   (  <typtype name="blockLength" primitisessageSchema>

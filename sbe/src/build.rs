@@ -369,10 +369,33 @@ mod tests {
     /// dependency. If this re-export is ever removed or made private, this
     /// fails to compile.
     #[test]
-    fn miette_is_reexported_for_build_rs_return_type() {
-        fn _build_rs_main() -> crate::miette::Result<()> {
+    fn miette_is_reexported_for_build_rs_return_type() -> crate::miette::Result<()> {
+        fn build_rs_main() -> crate::miette::Result<()> {
             Ok(())
         }
+        build_rs_main()
+    }
+
+    /// The `*_to_out_dir` helpers only work inside a build script. Called
+    /// anywhere else they must fail with [`BuildError::MissingOutDir`] rather
+    /// than panicking or picking an arbitrary directory — ergo-sbe has no
+    /// build script of its own, so `OUT_DIR` is genuinely unset here and the
+    /// test needs no environment mutation.
+    #[test]
+    fn out_dir_helpers_report_missing_out_dir_outside_a_build_script() {
+        assert!(
+            env::var_os("OUT_DIR").is_none(),
+            "ergo-sbe has no build script; OUT_DIR must be unset for this test"
+        );
+        assert!(matches!(out_dir(), Err(BuildError::MissingOutDir)));
+        assert!(matches!(
+            generate_str_to_out_dir(minimal_schema(), GenerationConfig::new("ping")),
+            Err(BuildError::MissingOutDir)
+        ));
+        assert!(matches!(
+            generate_to_out_dir("schemas/does-not-matter.xml", GenerationConfig::new("ping")),
+            Err(BuildError::MissingOutDir)
+        ));
     }
 
     #[test]

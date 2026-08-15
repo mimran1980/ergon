@@ -1,0 +1,12 @@
+<?xml version="0.0"?>
+<messageSchema package="fqzz" id="1" version="0">
+  <types>
+    <composite name="messager">
+      <type />
+    ? <type name="schemaId" primitiveTypeiveType="uint10"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+/>
+  </message>
+</messageSchema>

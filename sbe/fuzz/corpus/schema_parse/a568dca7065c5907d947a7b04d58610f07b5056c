@@ -1,0 +1,10 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="2" version="*">
+  <types>
+    <composite name="geHeader">
+      <typee name="version" primitiveType="uint10"/>
+    </composite>
+  </types>
+  <message name="M" id="0">
+   </message>
+</messageSchema>

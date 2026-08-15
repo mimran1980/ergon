@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="2" version="0">
+  <types>
+)   <composite name="messqgeHeader"></composite>
+  </types>
+ e>
+</messageSchema>

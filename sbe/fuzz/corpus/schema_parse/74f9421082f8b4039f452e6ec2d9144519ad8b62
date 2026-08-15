@@ -1,0 +1,7 @@
+<?xml<?xml `ersion="1.0"?>
+<messageSchema package="fuzz" id="5" version="0">
+  <types>
+    <composite nackage="fuzz" ideType="u" primitivename="blockLength" primitame="gth" e="fuzz" id="0" version="0">
+  <types>
+ zzzzz="uint16"/>
+      <type

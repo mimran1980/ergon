@@ -375,7 +375,7 @@ fn resolve_type_with_since_version() -> Result<(), Box<dyn std::error::Error>> {
             ..Encoding::default()
         },
     );
-    let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5, None);
+    let result = resolve_type_to_tokens("f", "myType", Some(1), &registry, 5, None, None);
     assert!(result.is_some());
     assert_eq!(result.unwrap()[0].encoding.since_version, 5);
 
@@ -2154,7 +2154,7 @@ fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<type name="OldType" primitiveType="uint32" deprecated="true"/>
+<type name="OldType" primitiveType="uint32" deprecated="1"/>
   </types>
   <message name="M" id="1">
 <field name="f" id="1" type="OldType"/>
@@ -2184,7 +2184,7 @@ fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
   <type name="version" primitiveType="uint16"/>
 </composite>
   </types>
-  <message name="M" id="1" deprecated="true">
+  <message name="M" id="1" deprecated="1">
 <field name="f" id="1" type="uint8"/>
   </message>
 </messageSchema>"#;
@@ -2212,7 +2212,7 @@ fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<field name="f" id="1" type="uint8" deprecated="true"/>
+<field name="f" id="1" type="uint8" deprecated="1"/>
   </message>
 </messageSchema>"#;
     let ir = parse(schema).unwrap();
@@ -2244,7 +2244,7 @@ fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<group name="g" id="2" dimensionType="groupSizeEncoding" deprecated="true">
+<group name="g" id="2" dimensionType="groupSizeEncoding" deprecated="1">
   <field name="f" id="3" type="uint32"/>
 </group>
   </message>
@@ -2277,7 +2277,7 @@ fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
 </composite>
   </types>
   <message name="M" id="1">
-<data name="d" id="2" type="varDataEncoding" deprecated="true"/>
+<data name="d" id="2" type="varDataEncoding" deprecated="1"/>
   </message>
 </messageSchema>"#;
     let ir = parse(schema).unwrap();
@@ -2302,7 +2302,7 @@ fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<composite name="OldComposite" deprecated="true">
+<composite name="OldComposite" deprecated="1">
   <type name="val" primitiveType="uint32"/>
 </composite>
   </types>
@@ -2332,7 +2332,7 @@ fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<enum name="OldEnum" encodingType="uint8" deprecated="true">
+<enum name="OldEnum" encodingType="uint8" deprecated="1">
   <validValue name="A">1</validValue>
 </enum>
   </types>
@@ -2362,7 +2362,7 @@ fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
   <type name="schemaId" primitiveType="uint16"/>
   <type name="version" primitiveType="uint16"/>
 </composite>
-<set name="OldSet" encodingType="uint8" deprecated="true">
+<set name="OldSet" encodingType="uint8" deprecated="1">
   <choice name="X">0</choice>
 </set>
   </types>
@@ -2941,5 +2941,149 @@ fn type_with_non_numeric_length_is_error() -> Result<(), Box<dyn std::error::Err
     let err = parse(&schema).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
+    Ok(())
+}
+
+// ── T-2: reject malformed layout numerics ──────────────────────────────
+
+fn mini_msg_xml(field_attrs: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite></types>
+          <sbe:message name="M" id="1">
+            <field name="a" id="1" type="uint32" {field_attrs}/>
+          </sbe:message>
+        </sbe:messageSchema>"#
+    )
+}
+
+#[test]
+fn malformed_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&mini_msg_xml(r#"offset="not-a-number""#)).expect_err("garbage offset");
+    let s = format!("{err:?}");
+    assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+#[test]
+fn negative_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&mini_msg_xml(r#"offset="-1""#)).expect_err("negative offset");
+    let s = format!("{err:?}");
+    assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+#[test]
+fn overflowing_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&mini_msg_xml(r#"offset="999999999999999999999999999999""#))
+        .expect_err("overflow offset");
+    let s = format!("{err:?}");
+    assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+#[test]
+fn malformed_group_block_length_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <sbe:message name="M" id="1">
+            <group name="g" id="2" dimensionType="groupSizeEncoding" blockLength="nope">
+              <field name="x" id="3" type="uint8"/>
+            </group>
+          </sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("garbage blockLength");
+    let s = format!("{err:?}");
+    assert!(s.contains("blockLength") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+#[test]
+fn valid_explicit_offset_still_parses() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(&mini_msg_xml(r#"offset="4""#))?;
+    assert!(!ir.tokens.is_empty());
+    Ok(())
+}
+
+// ── T-17: reject invalid deprecated / nullValue ────────────────────────
+
+#[test]
+fn deprecated_true_string_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Old" primitiveType="uint32" deprecated="true"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("deprecated=true");
+    let s = format!("{err:?}");
+    assert!(s.contains("deprecated") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+#[test]
+fn deprecated_negative_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Old" primitiveType="uint32" deprecated="-1"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
+        </sbe:messageSchema>"#;
+    assert!(parse(xml).is_err());
+    Ok(())
+}
+
+#[test]
+fn malformed_null_value_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Opt" primitiveType="uint32" presence="optional" nullValue="not-a-number"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Opt"/></sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("bad nullValue");
+    let s = format!("{err:?}");
+    assert!(s.contains("nullValue") || s.contains("Invalid"), "{s}");
     Ok(())
 }

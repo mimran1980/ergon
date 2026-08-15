@@ -35,6 +35,14 @@ With `with_shared_module("common_types")`, the first entry owns the shared
 enums/sets/composites; later entries `pub use super::common_types::*` and skip
 duplicate type generation.
 
+Module names must be unique, non-empty Rust identifiers (no path separators or
+keywords). Before any file is written, shared types with the same name are
+compared by a canonical wire fingerprint (token order, primitive encodings,
+offsets, presence, null/min/max, discriminants/choices, `sinceVersion`, and
+schema byte order). A name collision with a different fingerprint fails
+generation with `GenerateError::IncompatibleSharedType` rather than silently
+reusing the first schema's layout.
+
 ### `parse_with_shared` from in-memory strings
 
 ```rust,ignore

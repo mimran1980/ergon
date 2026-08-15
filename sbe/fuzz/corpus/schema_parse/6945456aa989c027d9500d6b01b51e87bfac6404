@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="00000000000000000000000000p000000000005484383546220070683" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type nativeType="uint16 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"/>
+      <type name="templ#    on" primitiveType
+
+="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id=
+"1">
+e="value" id="1" type="ui
+nt64"/>
+  </message>
+</messageSchema>

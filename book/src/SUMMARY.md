@@ -12,6 +12,7 @@
   - [Method Chaining](./sbe/getting-started/method-chaining.md)
   - [Multi-Schema Patterns](./sbe/getting-started/multi-schema.md)
   - [Coming from sbe-tool](./sbe/getting-started/from-sbe-tool.md)
+  - [Error Diagnostics](./sbe/getting-started/error-diagnostics.md)
 - [Feature Tour](./sbe/feature-tour.md)
   - [Exact Sizing](./sbe/feature-tour/exact-sizing.md)
   - [Bulk Arrays](./sbe/feature-tour/bulk-arrays.md)

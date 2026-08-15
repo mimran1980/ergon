@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<messageSche>
+  <types>
+    <composite name="messageHeader">
+ e-"uint16"/>
+    </composite>
+  ma package="fuzz"<types>
+    <composite name="messageHeader">
+ e-"uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint63"/>
+  </message>
+</messageSchema>

@@ -1,0 +1,20 @@
+<?xm( version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveTyp.="uint16"/>
+      <type name="templateIuint16"/>
+      <type name="version" primitiveTypeid="1">
+    <field name="valu
+
+
+
+
+
+ersion="ion="0">
+  <types>
+    =
+
+
+
+?em!>

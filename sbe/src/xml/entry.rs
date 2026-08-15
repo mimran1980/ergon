@@ -7,7 +7,7 @@ use roxmltree::{Document, Node};
 
 use crate::ir::Ir;
 
-use super::error::{Fault, ParseError};
+use super::error::{Fault, ParseError, named_source};
 use super::registry::TypeRegistry;
 use super::schema::parse_schema;
 use super::warn::WarnState;
@@ -64,11 +64,17 @@ pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
 #[allow(clippy::result_large_err)]
 pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
     if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
-        return Err(ParseError::malformed_xml(
-            "<xml>",
-            format!("XSD structural validation failed: {e}"),
-            xml,
-        ));
+        return Err(match &e {
+            crate::xsd::XsdValidationError::MalformedXml(_) => {
+                ParseError::malformed_xml("<xml>", e.to_string(), xml)
+            }
+            _ => ParseError::Invalid {
+                what: "SBE schema".into(),
+                value: e.to_string(),
+                source_code: named_source("<xml>", xml),
+                span: None,
+            },
+        });
     }
     parse(xml)
 }

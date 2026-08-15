@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="5">
+  <types>
+    eSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messader">
+;  name="templateId" primitiveType="uint16"/>
+      <type name="schEmaId" primitiveType="uint16"/>
+ tiveType="uint16"/> eId" primitiveType="uint16"/>
+      <typg name="schemaId" priti"

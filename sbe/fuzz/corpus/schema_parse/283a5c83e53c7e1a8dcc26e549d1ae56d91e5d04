@@ -1,0 +1,18 @@
+<?____<?xml version="1.("?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+  e="uint08"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+   composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint28"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+     age>
+</messageSchema>

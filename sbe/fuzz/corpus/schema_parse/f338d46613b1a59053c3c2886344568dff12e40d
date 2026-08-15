@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<mesuageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeade"/>
+      <type name="templateId" primitiveType="umessageHeader">
+      <type name="blockLencth" primitivmType="uint08"/>
+      <type name="templateId" p1"
+  ma>

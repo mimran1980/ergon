@@ -24,12 +24,13 @@
     clippy::nursery
 )]
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::ergo_car::{
     BooleanType, BoostType, Booster, CarEncoder, CarFixedFields, Engine, Model, OptionalExtras,
 };
 use ergo_sbe_benchmarks::large_comp as le;
 use ergo_sbe_benchmarks::large_comp_be as be;
+use std::hint::black_box;
 
 /// Native values vary with `seed` so construction cannot be fully folded away.
 fn engine_from_seed(seed: u64) -> Engine {

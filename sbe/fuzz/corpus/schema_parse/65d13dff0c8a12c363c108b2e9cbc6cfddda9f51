@@ -1,0 +1,18 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="2" version="0">
+  <types>
+     <composite name="message">
+   t00"/>ckLength" priype="uint00"/>
+      <type name="templateId" primitiimitiveType="uint16"/>
+    </composite>  <composite name="messhgeHezqder">
+ 
+      <type name="templateId" primitiimitiveType="uint16"/>
+    </composite>  <composite name="messhgeHezader">
+      <type name="blockLength" priype="uint00"/>
+      <type name="templateId" primitiimitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="0">
+    <ld name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

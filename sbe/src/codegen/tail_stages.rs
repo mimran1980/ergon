@@ -21,9 +21,9 @@ pub(crate) fn generate_owner_consuming_stages(
     groups: &[OwnerTailGroup],
     vardata: &[OwnerTailVarData],
     enable_dispatch: bool,
-    // True when the initial owner stage is a message decoder (caches `base_addr`,
-    // exposes `byte_pos()`); false for entry decoders, which keep `pos`.
-    initial_has_byte_pos: bool,
+    // True when the initial owner stage is a message decoder (keeps `offset`,
+    // exposes `byte_offset()`); false for entry decoders, which also keep `offset`.
+    initial_has_byte_offset: bool,
 ) -> proc_macro2::TokenStream {
     let total_tail = groups.len() + vardata.len();
     if total_tail == 0 {
@@ -53,7 +53,7 @@ pub(crate) fn generate_owner_consuming_stages(
             #[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
             pub struct #stage<'a> {
                 pub(crate) buf: &'a [u8],
-                pub(crate) pos: usize,
+                pub(crate) offset: usize,
                 pub(crate) tail_start: usize,
                 pub(crate) acting_version: u16,
                 pub(crate) acting_block_length: usize,
@@ -80,21 +80,21 @@ pub(crate) fn generate_owner_consuming_stages(
     }
 
     // The initial stage is the message decoder itself (message tails), which
-    // caches `base_addr` and exposes `byte_pos()` — there is no `pos` field on
-    // it. For entry tails the initial stage is the entry decoder, which keeps
-    // `pos` and has no `byte_pos()`. Later stages all carry `pos` directly.
+    // keeps `offset` and exposes `byte_offset()`. For entry tails the initial stage
+    // is the entry decoder, which also keeps `offset` and has no `byte_offset()`.
+    // Later stages all carry `offset` directly.
     let parent_pos_expr = |i: usize| -> syn::Expr {
-        if i == 0 && initial_has_byte_pos {
-            syn::parse_str("self.byte_pos()").unwrap()
+        if i == 0 && initial_has_byte_offset {
+            syn::parse_str("self.byte_offset()").unwrap()
         } else {
-            syn::parse_str("self.pos").unwrap()
+            syn::parse_str("self.offset").unwrap()
         }
     };
     let start_expr = |i: usize| -> syn::Expr {
-        if i == 0 && initial_has_byte_pos {
-            syn::parse_str("self.byte_pos() + self.acting_block_length").unwrap()
+        if i == 0 && initial_has_byte_offset {
+            syn::parse_str("self.byte_offset() + self.acting_block_length").unwrap()
         } else if i == 0 {
-            syn::parse_str("self.pos + self.acting_block_length").unwrap()
+            syn::parse_str("self.offset + self.acting_block_length").unwrap()
         } else {
             syn::parse_str("self.tail_start").unwrap()
         }
@@ -157,6 +157,7 @@ pub(crate) fn generate_owner_consuming_stages(
              advancing or constructing the next stage.\n\n\
              Cheaper than [`Self::{into_ident}`] when only the bytes are needed."
         );
+        let slice_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&slice_doc);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
@@ -217,7 +218,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     let data = &self.buf[data_start..data_end];
                     let next = #next_stage {
                         buf: self.buf,
-                        pos: #pp,
+                        offset: #pp,
                         tail_start: data_end,
                         acting_version: self.acting_version,
                         acting_block_length: self.acting_block_length,
@@ -225,7 +226,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     Ok((data, next))
                 }
 
-                #[doc = #slice_doc]
+                #slice_doc_tokens
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = #se;
@@ -308,14 +309,19 @@ pub(crate) fn generate_owner_consuming_stages(
                         /// Consume this stage, read the next text var-data field as
                         /// a `&str` without encoding validation, and advance.
                         ///
+                        /// Structural bounds (truncated payload, overflowing length)
+                        /// remain fallible — only character validation is skipped.
+                        ///
                         /// # Safety
                         /// The wire bytes must be valid for the schema-declared
                         /// character encoding (UTF-8 or ASCII).
                         #[inline]
-                        pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
-                            let (bytes, next) = unsafe { self.#into_ident().unwrap() };
+                        pub unsafe fn #as_str_unchecked(
+                            self,
+                        ) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (bytes, next) = self.#into_ident()?;
                             let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-                            (s, next)
+                            Ok((s, next))
                         }
                     }
                 });
@@ -472,17 +478,17 @@ pub(crate) fn generate_owner_consuming_stages(
                     // failed to decode, so the next stage would be built at a
                     // meaningless offset. Return the stored error instead.
                     #poisoned_finish_guard
-                    let mut pos = self.pos;
+                    let mut offset = self.offset;
                     let mut remaining = self.count;
                     let block_len = self.acting_block_length;
                     while remaining > 0 {
-                        pos = #entry_decoder_ident::skip(self.buf, pos, block_len, self.acting_version)?;
+                        offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
                         remaining -= 1;
                     }
                     Ok(#next_stage {
                         buf: self.buf,
-                        pos: self.parent_pos,
-                        tail_start: pos,
+                        offset: self.parent_pos,
+                        tail_start: offset,
                         acting_version: self.acting_version,
                         acting_block_length: self.parent_block_length,
                     })
@@ -497,7 +503,7 @@ pub(crate) fn generate_owner_consuming_stages(
     }
 
     let complete_ident = stage_after_ident(total_tail - 1);
-    // Message complete stages: `pos` is body start; header is `header_size`
+    // Message complete stages: `offset` is body start; header is `header_size`
     // bytes before. Entry complete stages pass `header_size == 0`, so the
     // header-inclusive view equals the body view.
     ts.extend(quote::quote! {
@@ -506,24 +512,24 @@ pub(crate) fn generate_owner_consuming_stages(
             /// complete entry bytes).
             #[inline]
             pub fn as_body_bytes(&self) -> &'a [u8] {
-                &self.buf[self.pos..self.tail_start]
+                &self.buf[self.offset..self.tail_start]
             }
             /// Complete SBE frame (header + body) for message stages.
             /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
             #[inline]
             pub fn as_bytes_with_header(&self) -> &'a [u8] {
-                &self.buf[self.pos - #header_size_lit..self.tail_start]
+                &self.buf[self.offset - #header_size_lit..self.tail_start]
             }
             /// Body length (excluding header).
             #[inline]
             pub fn encoded_length(&self) -> usize {
-                self.tail_start - self.pos
+                self.tail_start - self.offset
             }
             /// Total message length including the schema-declared header.
             /// Pure arithmetic: body length + `HEADER_LENGTH`.
             #[inline]
             pub fn encoded_length_with_header(&self) -> usize {
-                self.tail_start - self.pos + #header_size_lit
+                self.tail_start - self.offset + #header_size_lit
             }
             /// Bytes after this message/entry.
             #[inline]

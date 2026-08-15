@@ -13,7 +13,7 @@ use cluster_rfq::rfq_codec::{
     AcceptRfqCommandEncoder, CreateRfqCommandEncoder, QuoteRfqCommandEncoder, Side,
 };
 use ergo_aeron_cluster::cluster_codec_types::{
-    SessionConnectRequestEncoder, SessionMessageHeaderEncoder,
+    SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionMessageHeaderEncoder,
 };
 use rusteron_client::cformat;
 use std::time::Duration;
@@ -56,9 +56,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert!(need <= PAD, "connect frame {need} exceeds pad {PAD}");
         let mut storage = [0u8; PAD];
         let buf = &mut storage[..need];
-        let mut enc = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-        let _ = enc.correlation_id(1).response_stream_id(102).version(0);
-        let _ = enc
+        let _ = SessionConnectRequestEncoder::try_wrap_and_apply_header(buf, 0)
+            .unwrap()
+            .fixed(&SessionConnectRequestFixedFields {
+                correlation_id: 1,
+                response_stream_id: 102,
+                version: Some(0),
+            })
             .response_channel(channel)
             .unwrap()
             .encoded_credentials(b"")
@@ -110,7 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -118,7 +123,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                CreateRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                CreateRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(correlation)
                 .expire_time_ms(60_000)
@@ -149,7 +155,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -157,7 +164,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                QuoteRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                QuoteRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc
                 .correlation(quote_corr)
                 .rfq_id(1)
@@ -184,7 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hdr = HDR;
         let body = BODY;
         {
-            let mut sh = SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
+            let mut sh =
+                SessionMessageHeaderEncoder::try_wrap_and_apply_header(&mut msg[..hdr], 0).unwrap();
             let _ = sh
                 .leadership_term_id(ltid)
                 .cluster_session_id(csid)
@@ -192,7 +201,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let mut enc =
-                AcceptRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0).unwrap();
+                AcceptRfqCommandEncoder::try_wrap_and_apply_header(&mut msg[hdr..hdr + body], 0)
+                    .unwrap();
             let _ = enc.correlation(accept_corr).rfq_id(1).accept_user_id(500);
         }
         for _ in 0..10 {

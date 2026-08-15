@@ -1,0 +1,11 @@
+<?xmion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+ e="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+  GGGGGGGGGG" d="i1" "/>
+  </message>
+</messageSchema>
