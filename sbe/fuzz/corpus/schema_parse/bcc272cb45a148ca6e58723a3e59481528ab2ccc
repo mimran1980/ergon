@@ -1,0 +1,6 @@
+<?esxvmr																								<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader							">
+      <type name="bl*											pl																		<?xml irovsen="1.0"?>
+<?xml vgeSchema package="Schemz

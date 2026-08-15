@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<messageSchemape na="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+Type="/??????er"/>
+mitiveType="uint16"/>
+    </composite>e=   <type name="schemaId" primitiveType="uint16		version="type

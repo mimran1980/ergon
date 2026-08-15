@@ -52,16 +52,19 @@ mod tests {
     fn nested_group_codec() -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = [0u8; 256];
         let len = nested::TreeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
+            .fixed(&nested::TreeFixedFields {})
             .outer(1, |outer| {
-                outer.add(|entry| {
-                    entry.value(7).inner(1, |inner| {
-                        inner.add(|row| {
-                            row.quantity(9).label(b"miri")?;
-                            Ok(())
+                // Each entry completes with its tail (nested group / var-data),
+                // so the closure returns that proof instead of `Ok(())`.
+                outer.add(|mut entry| {
+                    entry.value(7);
+                    entry.inner(1, |inner| {
+                        inner.add(|mut row| {
+                            row.quantity(9);
+                            row.label(b"miri")
                         })?;
                         Ok(())
-                    })?;
-                    Ok(())
+                    })
                 })?;
                 Ok(())
             })?

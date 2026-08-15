@@ -1,0 +1,20 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" jrimitiveType="uin|16"/>
+    ? <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primiliveType="uint05"/>
+    </composite>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" jrimitiveType="uint16"/>
+    ? <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint05"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+     name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

@@ -37,35 +37,38 @@ fn car_encode_decode_perf_smoke() -> Result<(), Box<dyn std::error::Error>> {
 
         fn encode_car_vec() -> Vec<u8> {
             let mut buf = [0u8; 512];
-            let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-            car.serial_number(1234);
-            car.model_year(2013);
-            car.available(BooleanType::T);
-            car.code(Model::A);
-            car.some_numbers([1u32, 2, 3, 4]);
-            car.vehicle_code([97, 98, 99, 100, 101, 102]);
             let mut extras = OptionalExtras::default();
             extras.cruise_control(true);
             extras.sports_pack(true);
-            car.extras(extras);
-            car.engine(Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+
+            // Tails are reachable only after `fixed()` — the CarEncoder
+            // typestate moves FieldsUnfixed -> FieldsFixed.
+            let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+                .fixed(&CarFixedFields {
+                    serial_number: 1234,
+                    model_year: 2013,
+                    available: BooleanType::T,
+                    code: Model::A,
+                    some_numbers: [1u32, 2, 3, 4],
+                    vehicle_code: [97, 98, 99, 100, 101, 102],
+                    extras,
+                    engine: Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+                });
 
             let car = car.fuel_figures(1, |g| {
-                g.add(|e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle").unwrap(); Ok(()) }).unwrap();
+                g.add(|mut e| { e.speed(30).mpg(35.9); e.usage_description(b"Urban Cycle") })?;
                 Ok(())
             }).unwrap();
 
             let car = car.performance_figures(1, |g| {
-                g.add(|e| {
+                g.add(|mut e| {
                     e.octane_rating(95);
                     e.acceleration(3, |a| {
-                        a.add(|x| { x.mph(30).seconds(4.0); Ok(()) }).unwrap();
-                        a.add(|x| { x.mph(60).seconds(7.5); Ok(()) }).unwrap();
-                        a.add(|x| { x.mph(100).seconds(12.2); Ok(()) }).unwrap();
-                        Ok(())
-                    }).unwrap();
-                    Ok(())
-                }).unwrap();
+                        a.add(|x| { x.mph(30).seconds(4.0); Ok(()) })?;
+                        a.add(|x| { x.mph(60).seconds(7.5); Ok(()) })?;
+                        a.add(|x| { x.mph(100).seconds(12.2); Ok(()) })
+                    })
+                })?;
                 Ok(())
             }).unwrap();
 

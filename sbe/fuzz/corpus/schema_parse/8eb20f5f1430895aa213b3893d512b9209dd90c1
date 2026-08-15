@@ -1,0 +1,9 @@
+<?xml16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name<type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name=

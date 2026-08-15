@@ -237,32 +237,28 @@ fn bench_var_data(c: &mut Criterion) {
 
 fn nested_frame() -> Vec<u8> {
     let mut buffer = vec![0u8; 4096];
-    let len =
-        NestedEncoder::try_wrap_and_apply_header(&mut buffer, 0)
-            .unwrap()
-            .fixed(&NestedFixedFields { sequence: 1 })
-            .outer(5, |outer| {
-                for outer_index in 0u16..5 {
-                    outer.add(|entry| {
-                        entry
-                            .value(u64::from(outer_index))
-                            .inner(outer_index, |inner| {
-                                for inner_index in 0..outer_index {
-                                    inner.add(|row| {
-                                        row.value(u64::from(inner_index))
-                                            .payload(&vec![0x7f; usize::from(inner_index)])?;
-                                        Ok(())
-                                    })?;
-                                }
-                                Ok(())
+    let len = NestedEncoder::try_wrap_and_apply_header(&mut buffer, 0)
+        .unwrap()
+        .fixed(&NestedFixedFields { sequence: 1 })
+        .outer(5, |outer| {
+            for outer_index in 0u16..5 {
+                outer.add(|mut entry| {
+                    entry.value(u64::from(outer_index));
+                    entry.inner(outer_index, |inner| {
+                        for inner_index in 0..outer_index {
+                            inner.add(|mut row| {
+                                row.value(u64::from(inner_index));
+                                row.payload(&vec![0x7f; usize::from(inner_index)])
                             })?;
+                        }
                         Ok(())
-                    })?;
-                }
-                Ok(())
-            })
-            .unwrap()
-            .encoded_length_with_header();
+                    })
+                })?;
+            }
+            Ok(())
+        })
+        .unwrap()
+        .encoded_length_with_header();
     buffer.truncate(len);
     buffer
 }

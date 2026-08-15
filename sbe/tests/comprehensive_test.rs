@@ -21,12 +21,18 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::T); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -58,16 +64,22 @@ fn set_fields_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::T); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         extras.sports_pack(true);
         extras.sun_roof(false);
-        car.extras(extras);
-        car.engine(Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras,
+                engine: Engine::new(0, 0, [0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -96,12 +108,18 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         // Encode with empty var-data
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();  // empty var-data
@@ -140,12 +158,18 @@ fn all_scalar_accessor_paths() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234); car.model_year(2013);
-        car.available(BooleanType::T); car.code(Model::A);
-        car.some_numbers([1u32,2,3,4]); car.vehicle_code([97,98,99,100,101,102]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(2000, 4, [49,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1234,
+                model_year: 2013,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [1u32,2,3,4],
+                vehicle_code: [97,98,99,100,101,102],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(2000, 4, [49,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"Hon").unwrap();
@@ -197,12 +221,19 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         r#"
         let mut buf = [0u8; 256];
 
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(42); car.model_year(2013);
-        car.available_bool(true); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 42,
+                model_year: 2013,
+                // was `available_bool(true)` — the FixedFields path takes the enum.
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -215,12 +246,19 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         assert_eq!(dec.available(), BooleanType::T, "enum getter should also be T");
 
         let mut buf2 = [0u8; 256];
-        let mut car2 = CarEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
-        car2.serial_number(42); car2.model_year(2013);
-        car2.available_bool(false); car2.code(Model::A);
-        car2.some_numbers([0u32;4]); car2.vehicle_code([0u8;6]);
-        car2.extras(OptionalExtras::default());
-        car2.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car2 = CarEncoder::try_wrap_and_apply_header(&mut buf2, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 42,
+                model_year: 2013,
+                // was `available_bool(false)` — the FixedFields path takes the enum.
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car2 = car2.fuel_figures(0, |_| Ok(())).unwrap();
         let car2 = car2.performance_figures(0, |_| Ok(())).unwrap();
         let car2 = car2.manufacturer(b"").unwrap();
@@ -299,12 +337,18 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
         r#"
         let mut buf = [0u8; 256];
 
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(42); car.model_year(2013);
-        car.available(BooleanType::NullVal); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 42,
+                model_year: 2013,
+                available: BooleanType::NullVal,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -373,12 +417,18 @@ fn schema_id_from_header_extracts_correctly() -> Result<(), Box<dyn std::error::
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -402,12 +452,18 @@ fn constant_fields_return_correct_values() -> Result<(), Box<dyn std::error::Err
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -452,12 +508,18 @@ fn verify_function_detects_invalid_messages() -> Result<(), Box<dyn std::error::
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -509,12 +571,18 @@ fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -540,12 +608,18 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         &src,
         r#"
         let mut buf = [0u8; 512];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         // Encode varData fields
@@ -592,12 +666,18 @@ fn raw_enum_accessors_preserve_wire_discriminant() -> Result<(), Box<dyn std::er
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::T); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -623,15 +703,21 @@ fn raw_set_accessor_returns_underlying_bits() -> Result<(), Box<dyn std::error::
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1); car.model_year(2000);
-        car.available(BooleanType::F); car.code(Model::A);
-        car.some_numbers([0u32;4]); car.vehicle_code([0u8;6]);
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         extras.sports_pack(true);
-        car.extras(extras);
-        car.engine(Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras,
+                engine: Engine::new(0,0,[0,0,0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -775,13 +861,21 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
         &le_src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
             100000i32, 3000000000u32, 99999i64, 77777u64,
             1.0f32, 2.0f64);
-        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
-        enc.fixed_array([b'A'; 8]);
-        let _ = enc.var_data(b"endian-test").unwrap();
+        let _ = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&AllTypesFixedFields {
+                scalar_composite: scalar,
+                // Never set by the original snippet — kept at the zero image.
+                float_pair: FloatPair::new(0.0, 0.0),
+                enum_field: TestEnum::C,
+                set_field: TestSet::default(),
+                fixed_array: [b'A'; 8],
+            })
+            .var_data(b"endian-test")
+            .unwrap();
 
         // Verify header bytes follow schema byteOrder (LE for LE schema)
         // blockLength (LE u16 at offset 0): body is 52 bytes (AllScalars=41 + FloatPair=8 + enum=1 + set=1 + array=1)
@@ -822,13 +916,21 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
         &be_src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         let scalar = AllScalars::new(42i8, 128u8, 1000i16, 50000u16,
             100000i32, 3000000000u32, 99999i64, 77777u64,
             1.0f32, 2.0f64);
-        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
-        enc.fixed_array([b'A'; 8]);
-        let _ = enc.var_data(b"endian-test").unwrap();
+        let _ = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&AllTypesFixedFields {
+                scalar_composite: scalar,
+                // Never set by the original snippet — kept at the zero image.
+                float_pair: FloatPair::new(0.0, 0.0),
+                enum_field: TestEnum::C,
+                set_field: TestSet::default(),
+                fixed_array: [b'A'; 8],
+            })
+            .var_data(b"endian-test")
+            .unwrap();
 
         // Header follows schema byteOrder (BE) — matching sbe-tool wire output.
         let tid = u16::from_be_bytes([buf[2], buf[3]]);
@@ -869,7 +971,7 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
+        let enc = AllTypesEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         let scalar = AllScalars::new(
             42i8,             // i8_val
             128u8,            // u8_val
@@ -882,9 +984,17 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
             1.5f32,           // f32_val
             3.14159f64,       // f64_val
         );
-        enc.scalar_composite(scalar).enum_field(TestEnum::C).set_field(TestSet::default());
-        enc.fixed_array([b'A'; 8]);
-        let _ = enc.var_data(b"test").unwrap();
+        let _ = enc
+            .fixed(&AllTypesFixedFields {
+                scalar_composite: scalar,
+                // Never set by the original snippet — kept at the zero image.
+                float_pair: FloatPair::new(0.0, 0.0),
+                enum_field: TestEnum::C,
+                set_field: TestSet::default(),
+                fixed_array: [b'A'; 8],
+            })
+            .var_data(b"test")
+            .unwrap();
 
         let dec = AllTypesDecoder::try_decode(&buf, 0).unwrap();
         let s = dec.scalar_composite_value();

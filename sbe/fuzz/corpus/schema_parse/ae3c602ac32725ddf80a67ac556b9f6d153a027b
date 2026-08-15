@@ -1,0 +1,9 @@
+<?ema packag'="fuzz" id="1" version="0">
+  <types>
+    <compos<?xml version="0.0"?>
+<messageSchema package="fuzz" id="2" vsi="0">
+  <types>
+    <composite name="messageHeader">
+pe name="blkckLength"8"/>
+      <tyite name="messageHeader">
+      <type nape name=me="blockLength" pri"tmei

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeader">
+ppppppppppppppppppppppppppppppppppppp  <ceosmpiot name="messageHe"/>
+  ame="mppppppppp<e___pppppppposite name="messageHe"/>
+       <ceosmpiot name="messageHe"/>
+  ame="messageHe"/>
+    ="eunt16ppppppppppppppppppppppppppppppp  ge>
+    <couposite nam="uint16"/>
+    </composite>
+  </types>
+message>
+</messageSchema>

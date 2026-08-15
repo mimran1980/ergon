@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
 use ergo_aeron_cluster::cluster_codec_types::{
-    ChallengeDecoder, ChallengeEncoder, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder, SessionEventDecoder,
-    SessionEventEncoder, SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    ChallengeDecoder, ChallengeEncoder, ChallengeFixedFields, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder,
+    NewLeaderEventFixedFields, SessionEventDecoder, SessionEventEncoder, SessionEventFixedFields,
+    SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
 };
 
 use proptest::prelude::*;
@@ -42,9 +43,9 @@ proptest! {
         data in prop::collection::vec(any::<u8>(), 0..64),
     ) {
         let mut buf = [0u8; 256];
-        let mut enc = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.correlation_id(cid).cluster_session_id(csid);
-        let complete = enc.encoded_challenge(&data).unwrap();
+        let complete = ChallengeEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&ChallengeFixedFields { correlation_id: cid, cluster_session_id: csid })
+            .encoded_challenge(&data).unwrap();
         let bytes = complete.as_bytes_with_header();
 
         // Decode: skip header bytes (8), decode the body
@@ -63,9 +64,14 @@ proptest! {
         eps in "[a-z0-9=,:]{0,80}",
     ) {
         let mut buf = [0u8; 256];
-        let mut enc = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(ltid).cluster_session_id(csid).leader_member_id(mid);
-        let complete = enc.ingress_endpoints(eps.as_bytes()).unwrap();
+        let complete = NewLeaderEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&NewLeaderEventFixedFields {
+                leadership_term_id: ltid,
+                cluster_session_id: csid,
+                leader_member_id: mid,
+            })
+            .ingress_endpoints(eps.as_bytes())
+            .unwrap();
         let bytes = complete.as_bytes_with_header();
 
         let dec = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::decode(bytes, 0).expect("decode");
@@ -85,10 +91,18 @@ proptest! {
         detail in "[a-zA-Z0-9 ]{0,40}",
     ) {
         let mut buf = [0u8; 256];
-        let mut enc = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.cluster_session_id(csid).correlation_id(cid).leadership_term_id(ltid)
-            .leader_member_id(mid).code(EventCode::OK).version(1);
-        let complete = enc.detail(detail.as_bytes()).unwrap();
+        let complete = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&SessionEventFixedFields {
+                cluster_session_id: csid,
+                correlation_id: cid,
+                leadership_term_id: ltid,
+                leader_member_id: mid,
+                code: EventCode::OK,
+                version: Some(1),
+                leader_heartbeat_timeout_ns: None,
+            })
+            .detail(detail.as_bytes())
+            .unwrap();
         let bytes = complete.as_bytes_with_header();
 
         let dec = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::decode(bytes, 0).expect("decode");

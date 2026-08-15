@@ -319,6 +319,7 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(&target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .map_err(|e| format!("spawn cargo: {e}"))?;
     if out.status.success() {
@@ -472,7 +473,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             qty: 10,
         })
         .legs(1, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.value(99);
                 Ok(())
             })?;
@@ -511,6 +512,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(tmp.path().join("target"))
+        .env("CARGO_NET_OFFLINE", "true")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
     Ok(())

@@ -1,0 +1,11 @@
+<?xm( vonsie=r"2.?>
+<messageSchema package="fuzz" id="1" sion="0">
+  <types>
+    <composite n="messageHeader">
+      <type name="block"/>
+    </composite>
+  </types>
+  <message name=")" i_="1">
+    <ield nampe="uint64"/>
+  </message>
+</messageSchema>

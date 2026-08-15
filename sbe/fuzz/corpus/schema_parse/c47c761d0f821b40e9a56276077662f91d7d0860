@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+    <composite name="messageHeader">
+ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppposite name="mes    <composite name="messageHe"/>
+    ="eunt16"    ="eunt16ppppppppppppppppppppppppppppppp  ge>
+    <composite name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <type npe="uint16"/>
+    </composite>
+  </types>
+message>
+</messageSchema>

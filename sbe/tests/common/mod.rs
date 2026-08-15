@@ -22,7 +22,7 @@ use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
 pub struct Paths;
 
 impl Paths {
-    fn workspace_root() -> PathBuf {
+    pub fn workspace_root() -> PathBuf {
         let cwd = std::env::current_dir().unwrap();
         for ancestor in cwd.ancestors() {
             if ancestor.join("Cargo.toml").exists() && (ancestor.join("sbe").exists()) {
@@ -36,7 +36,7 @@ impl Paths {
         panic!("Cannot find workspace root from {cwd:?}");
     }
 
-    fn sbe_dir() -> PathBuf {
+    pub fn sbe_dir() -> PathBuf {
         Self::workspace_root().join("sbe")
     }
 
@@ -241,6 +241,16 @@ pub fn compile_fails_with_diagnostics(
         .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        // A compile-fail fixture asserts that a lint or type error FIRES. Ambient
+        // RUSTFLAGS can silence exactly that: `cargo mutants` runs with
+        // `cap_lints = true` (.cargo/mutants.toml), which caps every lint to
+        // `allow`, so a `#[deny(unused_must_use)]` fixture compiled cleanly and
+        // the test reported "expected a compile error, but the crate built
+        // successfully". Clear both spellings so the fixture's own attributes
+        // decide the outcome, not the environment that invoked the suite.
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .output()
         .expect("cargo build failed");
 
@@ -325,6 +335,7 @@ fn _compile_and_run(
         .args(&args)
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 
@@ -423,6 +434,10 @@ Ok(())
     );
     fs::write(src.join("main.rs"), &main).unwrap();
 
+    // The generated ergo module references `ergo_sbe::…` for the optional
+    // string/byte types, so the dependency must be present regardless of which
+    // features the outer test run enables.
+    let sbe_path_toml = Paths::sbe_dir().display().to_string().replace('\\', "\\\\");
     let cargo = format!(
         r#"[package]
 name = "{test_name}_dual"
@@ -433,6 +448,7 @@ edition = "2024"
 
 [dependencies]
 tool = {{ path = "{tool_path_toml}", package = "{package}" }}
+ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#
     );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
@@ -442,6 +458,7 @@ tool = {{ path = "{tool_path_toml}", package = "{package}" }}
         .args(["run", "--quiet"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed to start");
 
@@ -559,6 +576,7 @@ pub fn compile_and_run_two_modules(
         .args(["run"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 

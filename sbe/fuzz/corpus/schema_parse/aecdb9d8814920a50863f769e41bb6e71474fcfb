@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="0" version="0">
+  <types>
+ [  <composite name="messageHeader">
+  ge>
+    <composite name="messageHe"/>
+       <composite name="messageHe"/>
+    ="eunt16"/>
+      <typc npe="uint16"/>
+    </composite>
+  </types>
+message>
+</messageSchema>

@@ -1,0 +1,11 @@
+<?xml version="0.0"?>
+<messageSchema package="e xrsion=' nam" id="1=0">
+  <types>
+ !  <composite name="messageHeader">
+nt10"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

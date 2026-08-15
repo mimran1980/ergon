@@ -92,19 +92,22 @@ pub mod soundness_probe {
         {
             let mut frame = [0u8; 512];
             let n = {
-                let mut enc = CarEncoder::try_wrap_and_apply_header(&mut frame, 0).unwrap();
-                enc.serial_number(1)
-                    .model_year(2001)
-                    .available(BooleanType::T)
-                    .code(Model::A)
-                    .some_numbers([0; 4])
-                    .vehicle_code([0; 6])
-                    .extras(OptionalExtras::default())
-                    .engine(Engine::new(
-                        1, 1, [0; 3], 0i8, BooleanType::F,
-                        Booster::new(BoostType::TURBO, 0),
-                    ));
-                enc.fuel_figures(0, |_| Ok(()))
+                CarEncoder::try_wrap_and_apply_header(&mut frame, 0)
+                    .unwrap()
+                    .fixed(&CarFixedFields {
+                        serial_number: 1,
+                        model_year: 2001,
+                        available: BooleanType::T,
+                        code: Model::A,
+                        some_numbers: [0; 4],
+                        vehicle_code: [0; 6],
+                        extras: OptionalExtras::default(),
+                        engine: Engine::new(
+                            1, 1, [0; 3], 0i8, BooleanType::F,
+                            Booster::new(BoostType::TURBO, 0),
+                        ),
+                    })
+                    .fuel_figures(0, |_| Ok(()))
                     .unwrap()
                     .performance_figures(0, |_| Ok(()))
                     .unwrap()
@@ -196,19 +199,21 @@ fn checked_encode_byte_identity() -> Result<(), Box<dyn Error>> {
         "cu_id",
         &src,
         r#"
-        fn finish(mut enc: CarEncoder<'_>) -> usize {
-            enc.serial_number(99)
-                .model_year(2015)
-                .available(BooleanType::T)
-                .code(Model::B)
-                .some_numbers([9, 8, 7, 6])
-                .vehicle_code([b'Z'; 6])
-                .extras(OptionalExtras::default())
-                .engine(Engine::new(
-                    1600, 4, [b'E', b'N', b'G'], 0i8, BooleanType::F,
-                    Booster::new(BoostType::SUPERCHARGER, 1),
-                ));
-            enc.fuel_figures(0, |_| Ok(()))
+        fn finish(enc: CarUnfixedEncoder<'_>) -> usize {
+            enc.fixed(&CarFixedFields {
+                    serial_number: 99,
+                    model_year: 2015,
+                    available: BooleanType::T,
+                    code: Model::B,
+                    some_numbers: [9, 8, 7, 6],
+                    vehicle_code: [b'Z'; 6],
+                    extras: OptionalExtras::default(),
+                    engine: Engine::new(
+                        1600, 4, [b'E', b'N', b'G'], 0i8, BooleanType::F,
+                        Booster::new(BoostType::SUPERCHARGER, 1),
+                    ),
+                })
+                .fuel_figures(0, |_| Ok(()))
                 .unwrap()
                 .performance_figures(0, |_| Ok(()))
                 .unwrap()
@@ -269,18 +274,21 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
         &src,
         r#"
         fn encode(buf: &mut [u8]) -> usize {
-            let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0).unwrap();
-            enc.serial_number(1)
-                .model_year(2001)
-                .available(BooleanType::F)
-                .code(Model::A)
-                .some_numbers([0; 4])
-                .vehicle_code([0; 6])
-                .extras(OptionalExtras::default())
-                .engine(Engine::new(
-                    1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-                ));
-            enc.fuel_figures(0, |_| Ok(()))
+            CarEncoder::try_wrap_and_apply_header(buf, 0)
+                .unwrap()
+                .fixed(&CarFixedFields {
+                    serial_number: 1,
+                    model_year: 2001,
+                    available: BooleanType::F,
+                    code: Model::A,
+                    some_numbers: [0; 4],
+                    vehicle_code: [0; 6],
+                    extras: OptionalExtras::default(),
+                    engine: Engine::new(
+                        1, 1, [0; 3], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+                    ),
+                })
+                .fuel_figures(0, |_| Ok(()))
                 .unwrap()
                 .performance_figures(0, |_| Ok(()))
                 .unwrap()
@@ -300,6 +308,64 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
         assert_eq!(la, lb);
         assert_eq!(&va[..la], &vb[..lb]);
     "#,
+    );
+    Ok(())
+}
+
+// ── T-18: unchecked text accessors keep structural bounds fallible ─────
+
+#[test]
+fn as_str_unchecked_returns_result_and_rejects_truncated() -> Result<(), Box<dyn Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+        package="t18" id="18" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+          <type name="length" primitiveType="uint32"/>
+          <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+      </types>
+      <sbe:message name="Msg" id="1" blockLength="0">
+        <data name="payload" id="1" type="varStringEncoding"/>
+      </sbe:message>
+    </sbe:messageSchema>"#;
+    let schema = Schema::from_ir(parse(schema_xml)?);
+    let modules = Generator::new(GenerationConfig::new("t18")).generate(&schema)?;
+    let src = &modules.modules().next().unwrap().source;
+    compile_and_run(
+        "t18_str_unchecked",
+        src,
+        r#"
+        // Encode valid UTF-8 var-data (empty fixed block → fixed(&MsgFixedFields {})).
+        let mut buf = [0u8; 64];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields {})
+            .payload(b"hello")?
+            .encoded_length_with_header();
+        // Valid path: unchecked text returns Result and Ok when extents hold.
+        {
+            let dec = MsgDecoder::try_from(&buf[..len])?;
+            let (s, _done) = unsafe { dec.into_payload_as_str_unchecked()? };
+            assert_eq!(s, "hello");
+        }
+        // Truncated: length prefix claims more bytes than remain — Result::Err, no panic.
+        {
+            let mut short = [0u8; 12]; // header(8) + length(4) only, no payload
+            short[..8].copy_from_slice(&buf[..8]);
+            // length = 100 (way more than available)
+            short[8..12].copy_from_slice(&100u32.to_le_bytes());
+            let dec = MsgDecoder::try_from(&short[..]).expect("header ok");
+            let res = unsafe { dec.into_payload_as_str_unchecked() };
+            assert!(res.is_err(), "overflowing length must be fallible");
+        }
+        "#,
     );
     Ok(())
 }

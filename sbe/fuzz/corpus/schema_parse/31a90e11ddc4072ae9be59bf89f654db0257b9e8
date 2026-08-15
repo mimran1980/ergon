@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blo17"/>
+    </composite>
+  </types>nrsion" primitiveType="uin  <type namea>

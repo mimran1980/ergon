@@ -57,26 +57,58 @@ whether you continue evaluating the crate:
 
 ## Cumulative token usage (since 2026-06-28)
 
-Snapshot from `ccusage` on 2026-08-07. Claude Code and Codex agent usage only.
+Per-model high-water mark reconstructed from every `ccusage` snapshot committed
+to this file — 2026-08-03, 2026-08-07, 2026-08-13, and 2026-08-15. Claude Code
+and Codex agent usage only.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| claude-fable-5 | 128,112 | 210,931 | 5,707,178 | 44,132,249 | — | 50,178,470 | $168.76 |
-| claude-opus-4-8 | 153,359 | 505,224 | 3,840,858 | 93,893,329 | — | 98,392,770 | $86.22 |
-| claude-opus-5 | 1,702 | 575,673 | 2,454,943 | 204,567,008 | — | 207,599,326 | $139.50 |
+| claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
+| claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
+| claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
+| claude-opus-5 | 26,585 | 1,391,558 | 9,868,899 | 820,771,590 | — | 832,058,632 | $534.94 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
 | claude-sonnet-5 | 30,556 | 328,854 | 6,177,826 | 218,888,413 | — | 225,425,649 | $71.84 |
 | deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $19.28 |
 | deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $71.89 |
-| glm-4.7 | 2,620,188 | 287,011 | 0 | 56,403,328 | — | 59,310,527 | $8.41 |
-| glm-5.2 | 19,826,248 | 2,577,598 | 0 | 1,868,156,352 | — | 1,890,560,198 | $524.82 |
+| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
+| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
-| gpt-5.6-sol | 33,916,058 | 3,205,179 | 0 | 970,537,472 | 1,524,674 | 1,009,183,383 | $758.17 |
-| **Total** | **159,052,174** | **32,893,371** | **18,203,535** | **17,914,836,171** | **1,555,944** | **18,126,541,195** | **$1,870.77** |
+| gpt-5.6-luna | 1,552,433 | 172,891 | 0 | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
+| gpt-5.6-sol | 38,397,426 | 3,623,277 | 0 | 1,087,179,264 | 1,754,000 | 1,130,953,967 | $851.29 |
+| **Total** | **177,175,732** | **36,809,308** | **32,296,539** | **19,758,947,980** | **1,883,663** | **20,007,113,222** | **$3,176.69** |
 
 **Notes:**
 
+- **Why a high-water mark, not the latest snapshot.** `ccusage` keeps no ledger:
+  it recomputes totals by reading local session transcripts. Claude Code deleted
+  transcripts older than `cleanupPeriodDays` (default 30 at the time), so a
+  `--since 2026-06-28` query lost its earliest days as time passed. Re-running it
+  on 2026-08-13 reported 15.03B tokens against 18.13B on 2026-08-07 and 17.04B on
+  2026-08-03 — usage did not fall; visibility did. Because the tool can only ever
+  under-report, the per-model maximum across all committed snapshots is the best
+  available lower bound. Git history is the real ledger here: it preserves
+  **4.54B tokens** that `ccusage` can no longer see — the 2026-08-15 run reported
+  15.46B (14.31B Claude + 1.15B Codex) against a reconstructed 20.01B.
+- Two models exist in only one snapshot, and would be lost by any single run:
+  `claude-haiku-4-5-20251001` (2.36M tokens, 2026-08-03 only — its transcripts
+  have since been deleted) and `gpt-5.6-luna` (48.7M, first appears 2026-08-13).
+- Corroborating evidence for the retention theory: `gpt-5.5` is byte-identical in
+  every snapshot, and `gpt-5.6-sol` grows monotonically (837M → 1,009M → 1,074M
+  → 1,131M). Codex keeps its own session logs under a different policy, so only the
+  Claude-Code-hosted models (fable, DeepSeek, GLM) lost history.
+- Retention has since been raised to `cleanupPeriodDays: 90`, so future snapshots
+  should degrade more slowly — but the fix is not retroactive.
+- Columns are maximised independently, so a row may combine values from different
+  snapshots. Every column is monotonic in reality, so this stays a lower bound.
+- Extraction is scoped to this section. The file carries a second per-model table
+  further down (`## Observed usage and actual spend`); a merge that reads the
+  whole file last-wins silently replaces the high-water values here and produces
+  a *smaller* cumulative total. If the grand total ever falls below the previously
+  committed one, the merge is wrong — investigate, do not publish.
 - Grok usage is not included — `ccusage` does not currently track xAI/Grok API calls.
+- Antigravity / Gemini CLI usage is not included: the `observer` tool that
+  reports it was not installed on the machine that ran this snapshot.
 - All costs are at enterprise/pay-as-you-go API rates observed by ccusage.
   Subscription fees (Claude $20/mo, OpenAI $20/mo, Grok $30/mo) are not included.
 - "Reasoning Output" applies to GPT models only (Codex agent); ccusage reports

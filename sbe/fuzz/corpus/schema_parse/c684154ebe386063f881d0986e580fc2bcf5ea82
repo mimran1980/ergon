@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messagezz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+    versione name="blockLength" primit1" 1ype="uint64"/>
+  </message>
+</mesd" primita>

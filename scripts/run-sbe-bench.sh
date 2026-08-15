@@ -140,6 +140,7 @@ for profile in "${PROFILES[@]}"; do
         ;;
     esac
     env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+    env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench
 
     stamp_profile "$criterion_dir" "$RUN_ID" "$profile"
 

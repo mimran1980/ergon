@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" ed="1" version="0">
+  <types>
+    <composite ame="messcgeHeader">
+      <type name="b|ockLength" primitiveType="uin nt16"/>
+    </composite>
+  </types>
+  <message name=")" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

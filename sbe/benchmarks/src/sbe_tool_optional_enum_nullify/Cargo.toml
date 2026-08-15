@@ -1,0 +1,11 @@
+[package]
+name = "sbe_tool_optional_enum_nullify"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "optional enum nullify test case"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "sbe_tool_optional_enum_nullify"
+path = "src/lib.rs"

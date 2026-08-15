@@ -32,7 +32,8 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 
 fn warm_up() {
     use exchange_example::normalized_app::{
-        AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+        AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder,
+        L2BookFixedFields, Source, sbe_rt,
     };
     let mut buf = [0u8; 256];
     // Encode + decode to settle lazy-inits
@@ -44,7 +45,8 @@ fn warm_up() {
 #[test]
 fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+        AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields,
+        Source, sbe_rt,
     };
 
     warm_up();
@@ -57,29 +59,30 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     let before = ALLOC_COUNT.load(Ordering::Relaxed);
 
-    let mut outer = AppMessageEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
-    outer.sent_ts(1);
-    let _ = outer
+    let _ = AppMessageEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+        .unwrap()
+        .fixed(&AppMessageFixedFields { sent_ts: 1 })
         .app_name(b"x")
         .unwrap()
         .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-            let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
-            enc.source(Source::Bitget)
-                .exchange_timestamp(1)
-                .receive_timestamp(2)
-                .sequence(1);
-            let enc = enc
+            let _ = L2BookEncoder::try_wrap_and_apply_header(payload, 0)
+                .unwrap()
+                .fixed(&L2BookFixedFields {
+                    source: Source::Bitget,
+                    exchange_timestamp: 1,
+                    receive_timestamp: 2,
+                    sequence: 1,
+                })
                 .bids(1, |g| {
-                    g.add(|e| {
+                    g.add(|mut e| {
                         e.price_wire(Decimal::new(1, 0));
                         e.size_wire(Decimal::new(1, 0));
                         Ok(())
                     })?;
                     Ok(())
-                })
-                .unwrap();
-            let enc = enc.asks(0, |_| Ok(())).unwrap();
-            enc.symbol(b"X").unwrap();
+                })?
+                .asks(0, |_| Ok(()))?
+                .symbol(b"X")?;
             Ok(())
         })
         .unwrap();
@@ -98,7 +101,8 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::normalized_app::{
-        AnyMessage, AppMessageDecoder, AppMessageEncoder, Decimal, L2BookEncoder, Source, sbe_rt,
+        AnyMessage, AppMessageDecoder, AppMessageEncoder, AppMessageFixedFields, Decimal,
+        L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
     warm_up();
@@ -111,29 +115,30 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
     // Pre-encode
     {
-        let mut outer = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        outer.sent_ts(1);
-        let _ = outer
+        let _ = AppMessageEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&AppMessageFixedFields { sent_ts: 1 })
             .app_name(b"x")
             .unwrap()
             .payload_with(inner_len, |payload| -> Result<(), sbe_rt::EncodeError> {
-                let mut enc = L2BookEncoder::try_wrap_and_apply_header(payload, 0).unwrap();
-                enc.source(Source::Bitget)
-                    .exchange_timestamp(1)
-                    .receive_timestamp(2)
-                    .sequence(1);
-                let enc = enc
+                let _ = L2BookEncoder::try_wrap_and_apply_header(payload, 0)
+                    .unwrap()
+                    .fixed(&L2BookFixedFields {
+                        source: Source::Bitget,
+                        exchange_timestamp: 1,
+                        receive_timestamp: 2,
+                        sequence: 1,
+                    })
                     .bids(1, |g| {
-                        g.add(|e| {
+                        g.add(|mut e| {
                             e.price_wire(Decimal::new(1, 0));
                             e.size_wire(Decimal::new(1, 0));
                             Ok(())
                         })?;
                         Ok(())
-                    })
-                    .unwrap();
-                let enc = enc.asks(0, |_| Ok(())).unwrap();
-                enc.symbol(b"X").unwrap();
+                    })?
+                    .asks(0, |_| Ok(()))?
+                    .symbol(b"X")?;
                 Ok(())
             })
             .unwrap();

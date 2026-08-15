@@ -1,0 +1,72 @@
+<?____<?Jml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+4"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="schemaId" primitiveTypint64"/>
+   (  <typtype name="blockLength" primitiveType="uint64"/>
+ mitiveTypme="schemaId"tiveType="uint16"/>
+    
+ersion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primit" version="0">
+  <types>
+    <composite name="messageHeader">
+4"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="schemaId" primitiveTypint64"/>
+   (  <typtype name="blockLength" primitiveType="uint64"/>
+ mitiveTypme="schemaId"tiveType="uint16"/>
+    
+ersion="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="schemaId" primitiveTypint64"/>
+   ivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="schemaId" primitiveTypint64"/>
+   (  <typtype name="blockLength" primitiveType="  <message name="M" id="1">
+</message>
+</messageSchema>

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::cluster_codec_types::SessionConnectRequestEncoder;
+use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -46,9 +46,12 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     let ingress = a.add_publication(&ing_cstr, 101, Duration::from_secs(5))?;
 
     let mut buf = [0u8; 512];
-    let mut enc = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0);
-    enc.correlation_id(1).response_stream_id(102).version(0);
-    let complete = enc
+    let complete = SessionConnectRequestEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&SessionConnectRequestFixedFields {
+            correlation_id: 1,
+            response_stream_id: 102,
+            version: Some(0),
+        })
         .response_channel(cluster.egress_channel.as_bytes())?
         .encoded_credentials(b"")?
         .client_info(b"")?;

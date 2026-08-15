@@ -1,0 +1,4 @@
+<?x<?xml version="1.0"?>
+<messageSchema package="fmxuzz" id="0" version="ml0">
+  <types>
+      <type name="schemaId" primitiveType="uint16z"/

@@ -1,0 +1,22 @@
+<?____<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messXgeHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+ mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uversion="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint64"/>
+$mitiveType="uint16"/>
+    </composite>
+  </types>primitivemType="uint64"/>
+      <typtype name="blockLelgth" primitiveType="uint64"/>
+ mitiveTypme="schemaId" primitiveTypint64"/>
+   (  <typtype name="blockLength" primitiveType="uint64"/>
+ mitiveTypme="skhemaId"tiveType="uint16"/>
+    
+  <message name="M" id="1">
+</message>
+</messageSchema>

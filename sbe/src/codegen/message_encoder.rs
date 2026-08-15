@@ -17,7 +17,7 @@ use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;
 use super::message_header_template::message_header_template;
-use super::nullification::generate_nullification;
+use super::nullification::{generate_nullification, null_image_stmts_for_field};
 use super::runtime::{doc_attr_tokens, emit_field_consts, to_pascal_case, to_snake_case};
 
 pub(crate) fn generate_message_encoder(
@@ -88,7 +88,7 @@ pub(crate) fn generate_message_encoder(
     let span = proc_macro2::Span::call_site();
     let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
-    let fixed_encoder_ident = syn::Ident::new(&format!("{}FixedEncoder", name), span);
+    let unfixed_encoder_ident = syn::Ident::new(&format!("{}UnfixedEncoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
 
     // Pre-compute the exact schema-declared header wire image. Composite
@@ -145,49 +145,86 @@ pub(crate) fn generate_message_encoder(
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
-    for stage in &stage_idents {
+    for (si, stage) in stage_idents.iter().enumerate() {
         let stage_name = stage.to_string();
         let stage_name_lit = syn::LitStr::new(&stage_name, span);
-        ts.extend(quote::quote! {
-            #[doc = concat!("Encoder stage `", #stage_name_lit, "` — write tail elements in wire order.")]
-            #[must_use = "encoder must be consumed to write the message"]
-            pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
-                buf: &'a mut [u8],
-                msg_offset: usize,
-                offset: usize,
-                _header: core::marker::PhantomData<H>,
-            }
-
-        });
-        // Encoder Display + Debug: only when the decoder has Display/Debug.
-        if enable_display_debug {
+        // First stage (message encoder) carries FieldsState so tails are
+        // unavailable until `fixed(&FixedFields)`. Later stages are already
+        // past fixed and only need HeaderState.
+        let is_root = si == 0 && total_tail > 0;
+        if is_root {
             ts.extend(quote::quote! {
-                impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for #stage<'a, H> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        match #name_decoder_ident::decode(
-                            self.buf, self.msg_offset,
-                        ) {
-                            Ok(dec) => core::fmt::Display::fmt(&dec, f),
-                            Err(_) => write!(f, "<partial {}>", #stage_name_lit),
-                        }
-                    }
-                }
-
-                impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for #stage<'a, H> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        match #name_decoder_ident::decode(
-                            self.buf, self.msg_offset,
-                        ) {
-                            Ok(dec) => core::fmt::Debug::fmt(&dec, f),
-                            Err(_) => f.debug_struct(#stage_name_lit)
-                                .field("msg_offset", &self.msg_offset)
-                                .field("offset", &self.offset)
-                                .field("buf_len", &self.buf.len())
-                                .finish(),
-                        }
-                    }
+                #[doc = concat!("Encoder stage `", #stage_name_lit, "` — call `fixed(&FixedFields)` before tails.")]
+                #[must_use = "encoder must be consumed to write the message"]
+                pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent, F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed> {
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                    offset: usize,
+                    _header: core::marker::PhantomData<H>,
+                    _fields: core::marker::PhantomData<F>,
                 }
             });
+        } else {
+            ts.extend(quote::quote! {
+                #[doc = concat!("Encoder stage `", #stage_name_lit, "` — write tail elements in wire order.")]
+                #[must_use = "encoder must be consumed to write the message"]
+                pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+                    buf: &'a mut [u8],
+                    msg_offset: usize,
+                    offset: usize,
+                    _header: core::marker::PhantomData<H>,
+                }
+            });
+        }
+        // Encoder Display + Debug: only when the decoder has Display/Debug.
+        if enable_display_debug {
+            if is_root {
+                ts.extend(quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> core::fmt::Display for #stage<'a, H, F> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            match #name_decoder_ident::decode(self.buf, self.msg_offset) {
+                                Ok(dec) => core::fmt::Display::fmt(&dec, f),
+                                Err(_) => write!(f, "<partial {}>", #stage_name_lit),
+                            }
+                        }
+                    }
+                    impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> core::fmt::Debug for #stage<'a, H, F> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            match #name_decoder_ident::decode(self.buf, self.msg_offset) {
+                                Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+                                Err(_) => f.debug_struct(#stage_name_lit)
+                                    .field("msg_offset", &self.msg_offset)
+                                    .field("offset", &self.offset)
+                                    .field("buf_len", &self.buf.len())
+                                    .finish(),
+                            }
+                        }
+                    }
+                });
+            } else {
+                ts.extend(quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState> core::fmt::Display for #stage<'a, H> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            match #name_decoder_ident::decode(self.buf, self.msg_offset) {
+                                Ok(dec) => core::fmt::Display::fmt(&dec, f),
+                                Err(_) => write!(f, "<partial {}>", #stage_name_lit),
+                            }
+                        }
+                    }
+                    impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for #stage<'a, H> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            match #name_decoder_ident::decode(self.buf, self.msg_offset) {
+                                Ok(dec) => core::fmt::Debug::fmt(&dec, f),
+                                Err(_) => f.debug_struct(#stage_name_lit)
+                                    .field("msg_offset", &self.msg_offset)
+                                    .field("offset", &self.offset)
+                                    .field("buf_len", &self.buf.len())
+                                    .finish(),
+                            }
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -196,6 +233,16 @@ pub(crate) fn generate_message_encoder(
     // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
     let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
+    // Individual setters for `raw_fixed()` writer (body-relative offsets).
+    let mut raw_impl_contents = proc_macro2::TokenStream::new();
+    // When the message has tails, the root encoder carries FieldsState and
+    // constructions must initialise `_fields`. Fixed-only messages omit it.
+    let fields_phantom = if total_tail > 0 {
+        quote::quote! { _fields: core::marker::PhantomData, }
+    } else {
+        quote::quote! {}
+    };
+    let root_has_fields = total_tail > 0;
 
     if is_fixed {
         impl_consts.extend(quote::quote! {
@@ -348,6 +395,7 @@ pub(crate) fn generate_message_encoder(
                 msg_offset,
                 offset: body_offset + #block_length_lit,
                 _header: core::marker::PhantomData,
+                #fields_phantom
             }
         }
     };
@@ -415,6 +463,7 @@ pub(crate) fn generate_message_encoder(
                 msg_offset: offset,
                 offset: body_offset + #block_length_lit,
                 _header: core::marker::PhantomData,
+                #fields_phantom
             }
         }
     };
@@ -455,6 +504,7 @@ pub(crate) fn generate_message_encoder(
             &offset_base,
             "self.buf",
             byte_order,
+            elements,
         );
         if !null_buf.is_empty() {
             let null_ts: proc_macro2::TokenStream = null_buf
@@ -485,12 +535,20 @@ pub(crate) fn generate_message_encoder(
         let body_offset_lit = syn::LitInt::new(&body_offset.to_string(), span);
         // Absolute buffer index under the truthful coordinate system.
         let abs_offset = quote::quote! { self.msg_offset + #body_offset_lit };
+        // RawFixedWriter holds a body-only slice with msg_offset = 0, so field
+        // offsets are body-relative (schema field offset), not header-inclusive.
+        let field_off_lit = syn::LitInt::new(&f.offset.to_string(), span);
+        let raw_abs = quote::quote! { self.msg_offset + #field_off_lit };
         // In converter mode, raw setters are suffixed _wire when a domain
         // Raw setters become *_wire when a conversion is configured so the
         // converted setter takes the original name.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{f_name}_wire"));
         let method_name = wire_name.as_deref().unwrap_or(&f_name);
         let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
+
+        // Field descriptions must attach to the setter method (impl_contents),
+        // not the outer token stream — otherwise they float free of the API.
+        let field_doc = f.description.as_ref().map(|d| doc_attr_tokens(d));
 
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
@@ -506,9 +564,26 @@ pub(crate) fn generate_message_encoder(
                         // [u8; N] / [i8; N] / char: no multi-byte endian swap; bulk
                         // copy via u8 view (i8 arrays cannot `copy_from_slice` into [u8]).
                         impl_contents.extend(quote::quote! {
+                            #field_doc
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                                 let offset = #abs_offset;
+                                unsafe {
+                                    let dst = self.buf.get_unchecked_mut(offset..offset + #len_lit);
+                                    let src = core::slice::from_raw_parts(
+                                        val.as_ptr() as *const u8,
+                                        #len_lit,
+                                    );
+                                    dst.copy_from_slice(src);
+                                }
+                                self
+                            }
+                        });
+                        raw_impl_contents.extend(quote::quote! {
+                            #field_doc
+                            #[inline]
+                            pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                let offset = #raw_abs;
                                 unsafe {
                                     let dst = self.buf.get_unchecked_mut(offset..offset + #len_lit);
                                     let src = core::slice::from_raw_parts(
@@ -543,11 +618,48 @@ pub(crate) fn generate_message_encoder(
                                 Ok(self.#f_ident(tmp))
                             }
                         });
+                        raw_impl_contents.extend(quote::quote! {
+                            #[inline]
+                            pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
+                                if src.len() > #len_lit {
+                                    return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                                        field: #field_lit,
+                                        max_length: #len_lit,
+                                        actual: src.len(),
+                                    });
+                                }
+                                let mut tmp = [0 as #r_type; #len_lit];
+                                let bytes = src.as_bytes();
+                                let mut i = 0usize;
+                                while i < bytes.len() {
+                                    tmp[i] = bytes[i] as #r_type;
+                                    i += 1;
+                                }
+                                Ok(self.#f_ident(tmp))
+                            }
+                        });
                     } else {
                         impl_contents.extend(quote::quote! {
+                            #field_doc
                             #[inline]
                             pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
                                 let offset = #abs_offset;
+                                let mut idx = 0usize;
+                                while idx < #len_lit {
+                                    unsafe {
+                                        self.buf.get_unchecked_mut(offset + idx * #prim_size_lit..offset + (idx + 1) * #prim_size_lit)
+                                            .copy_from_slice(&val[idx].#to_endian());
+                                    }
+                                    idx += 1;
+                                }
+                                self
+                            }
+                        });
+                        raw_impl_contents.extend(quote::quote! {
+                            #field_doc
+                            #[inline]
+                            pub fn #f_ident(&mut self, val: [#r_type; #len_lit]) -> &mut Self {
+                                let offset = #raw_abs;
                                 let mut idx = 0usize;
                                 while idx < #len_lit {
                                     unsafe {
@@ -572,23 +684,51 @@ pub(crate) fn generate_message_encoder(
                                 self.#f_ident([#(#params),*])
                             }
                         });
+                        raw_impl_contents.extend(quote::quote! {
+                            #[inline]
+                            pub fn #put_ident(&mut self, #(#params: #r_type),*) -> &mut Self {
+                                self.#f_ident([#(#params),*])
+                            }
+                        });
                     }
                 } else if prim_size == 1 {
                     // Direct byte write for u8/i8/char — 1 instruction vs 3.
                     impl_contents.extend(quote::quote! {
+                        #field_doc
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             *unsafe { self.buf.get_unchecked_mut(#abs_offset) } = val as u8;
                             self
                         }
                     });
+                    raw_impl_contents.extend(quote::quote! {
+                        #field_doc
+                        #[inline]
+                        pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
+                            *unsafe { self.buf.get_unchecked_mut(#raw_abs) } = val as u8;
+                            self
+                        }
+                    });
                 } else {
                     impl_contents.extend(quote::quote! {
+                        #field_doc
                         #[inline]
                         pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
                             let offset = #abs_offset;
                             // SAFETY: wrap/wrap_and_apply_header validates buf.len() >= msg_offset + HEADER + BLOCK,
                             // and field extent is within BLOCK_LENGTH by construction.
+                            unsafe {
+                                self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
+                                    .copy_from_slice(&val.#to_endian());
+                            }
+                            self
+                        }
+                    });
+                    raw_impl_contents.extend(quote::quote! {
+                        #field_doc
+                        #[inline]
+                        pub fn #f_ident(&mut self, val: #r_type) -> &mut Self {
+                            let offset = #raw_abs;
                             unsafe {
                                 self.buf.get_unchecked_mut(offset..offset + #prim_size_lit)
                                     .copy_from_slice(&val.#to_endian());
@@ -605,9 +745,20 @@ pub(crate) fn generate_message_encoder(
                 let target_type: syn::Type = syn::parse_str(&to_pascal_case(comp_name)).unwrap();
                 let comp_size_lit = syn::LitInt::new(&comp_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #field_doc
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
+                        self.buf[offset..offset + #comp_size_lit]
+                            .copy_from_slice(&val.0);
+                        self
+                    }
+                });
+                raw_impl_contents.extend(quote::quote! {
+                    #field_doc
+                    #[inline]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = #raw_abs;
                         self.buf[offset..offset + #comp_size_lit]
                             .copy_from_slice(&val.0);
                         self
@@ -626,9 +777,19 @@ pub(crate) fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #field_doc
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
+                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
+                        self
+                    }
+                });
+                raw_impl_contents.extend(quote::quote! {
+                    #field_doc
+                    #[inline]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = #raw_abs;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
                         self
                     }
@@ -643,6 +804,13 @@ pub(crate) fn generate_message_encoder(
                             self
                         }
                     });
+                    raw_impl_contents.extend(quote::quote! {
+                        #[inline]
+                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                            self.buf[#raw_abs] = val as u8;
+                            self
+                        }
+                    });
                 }
             }
             FieldType::Set {
@@ -653,9 +821,19 @@ pub(crate) fn generate_message_encoder(
                 let prim_size = encoding_type.size();
                 let prim_size_lit = syn::LitInt::new(&prim_size.to_string(), span);
                 impl_contents.extend(quote::quote! {
+                    #field_doc
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
+                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
+                        self
+                    }
+                });
+                raw_impl_contents.extend(quote::quote! {
+                    #field_doc
+                    #[inline]
+                    pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
+                        let offset = #raw_abs;
                         self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
                         self
                     }
@@ -689,6 +867,9 @@ pub(crate) fn generate_message_encoder(
             }
             let fname_snake = to_snake_case(&f.name);
             let f_ident = syn::Ident::new(&fname_snake, span);
+            if let Some(ref desc) = f.description {
+                fixed_fields_ts.extend(doc_attr_tokens(desc));
+            }
             let is_optional = f.presence == crate::Presence::Optional;
             if is_optional {
                 let ty = field_type_ident(&f.field_type, span);
@@ -704,8 +885,9 @@ pub(crate) fn generate_message_encoder(
         }
         ts.extend(quote::quote! {
             /// Complete set of latest-version fixed fields for this message.
-            /// Required fields are concrete values; optional/versioned fields
-            /// are `Option<T>`. Constants are excluded.
+            /// Required fields (including `sinceVersion` fields) are concrete
+            /// values; only presence-optional fields are `Option<T>`. Constants
+            /// are excluded.
             ///
             /// This struct is **intentionally exhaustive** (not
             /// `#[non_exhaustive]`): when the schema adds a fixed field, every
@@ -723,6 +905,7 @@ pub(crate) fn generate_message_encoder(
         // Build the write block: for each non-constant field, write from the struct.
         // Use _wire suffixed setters for converter-enabled composite fields.
         let mut write_stmts = proc_macro2::TokenStream::new();
+        let buf_expr: syn::Expr = syn::parse_quote!(self.buf);
         for f in &msg.fields {
             if f.presence == crate::Presence::Constant {
                 continue;
@@ -739,11 +922,46 @@ pub(crate) fn generate_message_encoder(
             };
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
-                // Optional fields: write when Some, skip when None.
-                // Callers who need null sentinels can call apply_nulls() explicitly.
+                // Some → write value; None → write exact schema null image so
+                // dirty buffers cannot leak prior optional values.
+                let body_off = header_size + f.offset;
+                let body_off_lit = syn::LitInt::new(&body_off.to_string(), span);
+                let abs_off = quote::quote! { self.msg_offset + #body_off_lit };
+                let null_write = match null_image_stmts_for_field(
+                    f, abs_off, &buf_expr, byte_order, elements,
+                ) {
+                    Ok(Some(ts)) => ts,
+                    Ok(None) => {
+                        // Optional field without a wire image — treat as zero fill
+                        // of the declared field size (defensive; should not happen
+                        // for resolved optionals).
+                        let sz = f.field_type.size();
+                        let sz_lit = syn::LitInt::new(&sz.to_string(), span);
+                        quote::quote! {
+                            {
+                                let offset = self.msg_offset + #body_off_lit;
+                                self.buf[offset..offset + #sz_lit].fill(0);
+                            }
+                        }
+                    }
+                    Err(reason) => {
+                        // Surface as a compile_error! so the consumer build fails
+                        // with a typed diagnostic rather than panicking the generator.
+                        let msg_lit = syn::LitStr::new(
+                            &format!(
+                                "cannot derive null image for optional field '{}' on message '{}': {reason}",
+                                f.name, msg.name
+                            ),
+                            span,
+                        );
+                        quote::quote! { compile_error!(#msg_lit); }
+                    }
+                };
                 write_stmts.extend(quote::quote! {
                     if let Some(ref v) = fixed.#field_ident {
                         self.#setter_ident(*v);
+                    } else {
+                        #null_write
                     }
                 });
             } else {
@@ -757,18 +975,46 @@ pub(crate) fn generate_message_encoder(
         // reach the generated docs verbatim.
         let fixed_doc = format!(
             "Set all fixed fields at once from a [`{fixed_name}`] value.\n\n\
-             Required fields are always written; optional fields are written \
-             when `Some`. Returns the encoder for tail methods."
+             Required fields are always written; optional fields write the \
+             schema null wire image when `None` (including nested optional \
+             composite members). Returns the encoder ready for ordered tail methods."
         );
-        impl_contents.extend(quote::quote! {
-            #[doc = #fixed_doc]
-            #[inline]
-            #[must_use]
-            pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
-                #write_stmts
-                self
-            }
-        });
+        let fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&fixed_doc);
+        // With tails: transition FieldsUnfixed → FieldsFixed so group/var methods unlock.
+        // Fixed-only messages: stay on Self (no FieldsState parameter).
+        if root_has_fields {
+            impl_contents.extend(quote::quote! {
+                #fixed_doc_tokens
+                // `inline(always)`, not `inline`: T-13 added a null-image `else`
+                // arm per optional field, which pushed this body past LLVM's
+                // inline threshold and got the hint declined. Measured on
+                // `ergo_historic/null_option/encode_fixed`: 2.33ns baseline →
+                // 4.28ns (hint declined) → 1.92ns (forced). Re-verify with
+                // `just bench-historic` before weakening this.
+                #[inline(always)]
+                #[must_use]
+                pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
+                    #write_stmts
+                    #name_encoder_ident {
+                        buf: self.buf,
+                        msg_offset: self.msg_offset,
+                        offset: self.offset,
+                        _header: core::marker::PhantomData,
+                        _fields: core::marker::PhantomData,
+                    }
+                }
+            });
+        } else {
+            impl_contents.extend(quote::quote! {
+                #fixed_doc_tokens
+                #[inline(always)]
+                #[must_use]
+                pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
+                    #write_stmts
+                    self
+                }
+            });
+        }
     }
 
     {
@@ -779,22 +1025,28 @@ pub(crate) fn generate_message_encoder(
              only on this writer. When done, embed the fields in a \
              [`{fixed_name}`] and call the encoder's `fixed()`."
         );
+        let raw_struct_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&raw_struct_doc);
         let raw_fixed_doc = format!(
             "Return a dedicated raw fixed-field writer. All individual field \
              setters are available on the writer. To advance to tail stages, \
              collect the values into a [`{fixed_name}`] and call `fixed()`."
         );
+        let raw_fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&raw_fixed_doc);
         ts.extend(quote::quote! {
-            #[doc = #raw_struct_doc]
+            #raw_struct_doc_tokens
             #[must_use = "raw fixed writer must be embedded in FixedFields"]
             pub struct #raw_name<'a> {
                 buf: &'a mut [u8],
                 msg_offset: usize,
                 offset: usize,
             }
+
+            impl<'a> #raw_name<'a> {
+                #raw_impl_contents
+            }
         });
         impl_contents.extend(quote::quote! {
-            #[doc = #raw_fixed_doc]
+            #raw_fixed_doc_tokens
             #[inline]
             #[must_use]
             pub fn raw_fixed(self) -> #raw_name<'a> {
@@ -808,20 +1060,27 @@ pub(crate) fn generate_message_encoder(
         });
     }
 
-    // Concrete (default H) for associated constants + constructors — no turbofish.
+    // Concrete (default H, default F=Unfixed) for associated constants + constructors.
     ts.extend(quote::quote! {
         impl<'a> #name_encoder_ident<'a> {
             #impl_consts
         }
     });
-    // Generic over H so body-only wrap (HeaderAbsent) can set fields and run
-    // the same stage chain. Default `H = HeaderPresent` keeps the happy path
-    // inference-friendly.
-    ts.extend(quote::quote! {
-        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
-            #impl_contents
-        }
-    });
+    // Fixed-field setters + fixed() live on the unfixed phase (or any H when
+    // the message has no tails / no FieldsState parameter).
+    if root_has_fields {
+        ts.extend(quote::quote! {
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
+                #impl_contents
+            }
+        });
+    } else {
+        ts.extend(quote::quote! {
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+                #impl_contents
+            }
+        });
+    }
 
     // ── Metadata facet ──────────────────────────────────────────────────
     let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
@@ -832,12 +1091,12 @@ pub(crate) fn generate_message_encoder(
             /// Message body bytes written so far (header exclusive).
             #[inline]
             pub fn as_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.offset]
+                &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
             }
             /// Header-inclusive frame bytes (message is fixed-only — complete).
             #[inline]
             pub fn as_bytes_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.offset]
+                &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
             }
         }
     } else {
@@ -847,14 +1106,14 @@ pub(crate) fn generate_message_encoder(
             /// `as_bytes_with_header`.
             #[inline]
             pub fn as_fixed_body_bytes(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset + #header_size_lit..self.encoder.offset]
+                &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
             }
             /// Header + fixed block only — **not** a complete SBE message when
             /// groups or var-data remain. Prefer the complete stage's
             /// `as_bytes_with_header`.
             #[inline]
             pub fn as_fixed_region_with_header(&self) -> &[u8] {
-                &self.encoder.buf[self.encoder.msg_offset..self.encoder.offset]
+                &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
             }
         }
     };
@@ -863,43 +1122,64 @@ pub(crate) fn generate_message_encoder(
         /// — zero-copy. Utility methods live here so no schema field can
         /// collide with them.
         #[derive(Clone, Copy)]
-        pub struct #enc_metadata_ident<'m, 'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
-            encoder: &'m #name_encoder_ident<'a, H>,
+        pub struct #enc_metadata_ident<'m, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+            encoder_msg_offset: usize,
+            encoder_offset: usize,
+            encoder_buf: &'m [u8],
+            _h: core::marker::PhantomData<H>,
         }
 
-        impl<'m, 'a, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, 'a, H> {
+        impl<'m, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, H> {
             #meta_bytes
             /// Absolute offset of this message within the original buffer
             /// (the `msg_offset` argument passed to `wrap`).
             #[inline]
             pub const fn message_offset(&self) -> usize {
-                self.encoder.msg_offset
+                self.encoder_msg_offset
             }
             /// Absolute current write cursor within the original buffer.
             #[inline]
             pub const fn limit(&self) -> usize {
-                self.encoder.offset
+                self.encoder_offset
             }
             /// The complete original buffer this encoder wraps.
             #[inline]
             pub const fn buffer(&self) -> &[u8] {
-                self.encoder.buf
+                self.encoder_buf
             }
         }
     });
 
-    ts.extend(quote::quote! {
-        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
-            /// Metadata accessor: buffer positions, wire-frame boundaries.
-            /// Returns a zero-copy reference to the parent encoder.
-            /// All utility methods are scoped here so no schema field name
-            /// can collide with them.
-            #[inline]
-            pub fn get_metadata(&self) -> #enc_metadata_ident<'_, 'a, H> {
-                #enc_metadata_ident { encoder: self }
+    // get_metadata on both unfixed and fixed phases (and fixed-only encoders).
+    if root_has_fields {
+        ts.extend(quote::quote! {
+            impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
+                #[inline]
+                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
+                    #enc_metadata_ident {
+                        encoder_msg_offset: self.msg_offset,
+                        encoder_offset: self.offset,
+                        encoder_buf: self.buf,
+                        _h: core::marker::PhantomData,
+                    }
+                }
             }
-        }
-    });
+        });
+    } else {
+        ts.extend(quote::quote! {
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+                #[inline]
+                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
+                    #enc_metadata_ident {
+                        encoder_msg_offset: self.msg_offset,
+                        encoder_offset: self.offset,
+                        encoder_buf: self.buf,
+                        _h: core::marker::PhantomData,
+                    }
+                }
+            }
+        });
+    }
 
     if total_tail > 0 {
         let mut tail_idx = 0;
@@ -936,9 +1216,21 @@ pub(crate) fn generate_message_encoder(
                  Prefer [`Self::{g_snake}`] when the count is known at compile \
                  time or from a small input."
             );
+            let unknown_count_doc_tokens =
+                crate::codegen::runtime::doc_lines_tokens(&unknown_count_doc);
 
+            // Root stage (first group) only available after fixed(&FixedFields).
+            let root_impl_header = if tail_idx == 0 {
+                quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H, sbe_rt::FieldsFixed>
+                }
+            } else {
+                quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H>
+                }
+            };
             ts.extend(quote::quote! {
-                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
+                #root_impl_header {
                     /// Encode this group with a known count up front.
                     /// Closures return [`sbe_rt::GroupResult`]
                     /// (`Result<(), EncodeError>`); `?` works — there is no
@@ -984,7 +1276,7 @@ pub(crate) fn generate_message_encoder(
                         })
                     }
 
-                    #[doc = #unknown_count_doc]
+                    #unknown_count_doc_tokens
                     #[inline]
                     #[must_use]
                     pub fn #g_snake_unknown<F>(
@@ -1100,8 +1392,17 @@ pub(crate) fn generate_message_encoder(
                 })
             };
 
+            let vd_impl_header = if tail_idx == 0 {
+                quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H, sbe_rt::FieldsFixed>
+                }
+            } else {
+                quote::quote! {
+                    impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H>
+                }
+            };
             ts.extend(quote::quote! {
-                impl<'a, H: sbe_rt::HeaderState> #current_stage<'a, H> {
+                #vd_impl_header {
                     #[inline]
                     #[must_use]
                     pub fn #vd_snake(
@@ -1290,6 +1591,18 @@ pub(crate) fn generate_message_encoder(
                 const SCHEMA_ID: u16 = #schema_id_lit;
                 const SCHEMA_VERSION: u16 = #schema_version_lit;
             }
+        });
+    }
+
+    // ── T-14: UnfixedEncoder names the pre-`fixed()` stage ──────────
+    if total_tail > 0 {
+        ts.extend(quote::quote! {
+            /// Pre-`fixed()` root encoder stage. Individual fixed-field setters
+            /// and [`fixed`](Self::fixed) live here; group/var-data tails are
+            /// only available on the [`sbe_rt::FieldsFixed`] phase after
+            /// `fixed(&FixedFields)`.
+            pub type #unfixed_encoder_ident<'a, H = sbe_rt::HeaderPresent> =
+                #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed>;
         });
     }
 

@@ -60,6 +60,25 @@ jobs:
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
       - run: ./scripts/check-public-api.sh
 
+      # Gates that previously lived ONLY inside `just release`. Because a full
+      # release takes hours and is rarely completed, breakage in these went
+      # unnoticed — in 2026-08 four were found broken at once, three of them
+      # already broken on main. They are seconds-to-minutes here.
+      - name: Repository hygiene
+        run: ./scripts/check-repository-hygiene.sh
+      - name: Book fences allowlisted (rust,ignore drift)
+        run: ./scripts/check-book-fences.sh
+      - name: Book content checks
+        run: ./scripts/check-book-content.sh
+      - name: sbe-tool benchmark comparators match upstream
+        run: ./scripts/regenerate-sbe-benchmark-reference.sh --check
+      # Self-test of the release's fail-closed evidence packaging. This one had
+      # a path bug that made it impossible to pass, and its self-test asserted
+      # the same wrong path — so the bug was invisible until a release reached
+      # step 9/9. Run the self-test itself on every push.
+      - name: Benchmark evidence packaging self-test
+        run: bash scripts/test-package-bench-artifacts.sh
+
   test:
     needs: policy
     runs-on: ubuntu-24.04

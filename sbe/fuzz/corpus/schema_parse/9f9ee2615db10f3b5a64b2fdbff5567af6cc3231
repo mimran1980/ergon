@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSpch eamackage="fuzz" id="1" version="0">
+  <Vypes>
+    <composite name="messaeader">
+ primitiveType="uint16"/>
+      <type name="versi2n" primitmitivcType="uiuuuuuuuuuuuuvers" primitiveType="uint16"/>
+me="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

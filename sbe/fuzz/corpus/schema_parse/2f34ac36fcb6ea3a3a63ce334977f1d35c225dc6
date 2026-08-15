@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite Name="messageHeader">
+;  name="templateId" primitiveType="uint6"/>
+      <type name="schEmaId" primitiveType="uint16"/>
+ tive name="v" primitiveType="uint16"/>
+  type="un&4/6ti">
+  </meisage>uuuuwuuunt92rma>

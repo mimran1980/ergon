@@ -29,49 +29,46 @@ mod common;
 /// Encode a full Car message using the **checked** API.
 /// Returns the total encoded length (header + body).
 fn encode_checked(buf: &mut [u8]) -> usize {
-    let mut car = CarEncoder::wrap_and_apply_header(buf, 0);
-    car.serial_number(1234);
-    car.model_year(2013);
-    car.available(BooleanType::T);
-    car.code(Model::A);
-    car.some_numbers([1u32, 2, 3, 4]);
-    car.vehicle_code([97, 98, 99, 100, 101, 102]);
-    {
-        let mut extras = OptionalExtras::default();
-        extras.cruise_control(true);
-        extras.sports_pack(true);
-        car.extras(extras);
-    }
-    car.engine(Engine::new(
-        2000,
-        4,
-        [49, 0, 0],
-        0i8,
-        BooleanType::F,
-        Booster::new(BoostType::TURBO, 0),
-    ));
-
-    let car = car
+    let mut extras = OptionalExtras::default();
+    extras.cruise_control(true);
+    extras.sports_pack(true);
+    let car = CarEncoder::wrap_and_apply_header(buf, 0)
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1u32, 2, 3, 4],
+            vehicle_code: [97, 98, 99, 100, 101, 102],
+            extras,
+            engine: Engine::new(
+                2000,
+                4,
+                [49, 0, 0],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 0),
+            ),
+        })
         .fuel_figures(3, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(30).mpg(35.9);
-                Ok(())
+                e.usage_description(b"")
             })?;
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(45).mpg(28.4);
-                Ok(())
+                e.usage_description(b"")
             })?;
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(55).mpg(23.7);
-                Ok(())
-            })?;
-            Ok(())
+                e.usage_description(b"")
+            })
         })
         .unwrap();
 
     let car = car
         .performance_figures(1, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.octane_rating(95);
                 e.acceleration(3, |a| {
                     a.add(|x| {
@@ -87,10 +84,8 @@ fn encode_checked(buf: &mut [u8]) -> usize {
                         Ok(())
                     })?;
                     Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
+                })
+            })
         })
         .unwrap();
 
@@ -106,49 +101,47 @@ fn encode_full(buf: &mut [u8]) -> usize {
     // Write header manually (wrap does not write it)
     buf[0..8].copy_from_slice(&CarEncoder::<'_>::HEADER_TEMPLATE);
 
-    let mut car = CarEncoder::try_wrap(buf, 0).unwrap();
-    car.serial_number(1234);
-    car.model_year(2013);
-    car.available(BooleanType::T);
-    car.code(Model::A);
-    car.some_numbers([1u32, 2, 3, 4]);
-    car.vehicle_code([97, 98, 99, 100, 101, 102]);
-    {
-        let mut extras = OptionalExtras::default();
-        extras.cruise_control(true);
-        extras.sports_pack(true);
-        car.extras(extras);
-    }
-    car.engine(Engine::new(
-        2000,
-        4,
-        [49, 0, 0],
-        0i8,
-        BooleanType::F,
-        Booster::new(BoostType::TURBO, 0),
-    ));
-
-    let car = car
+    let mut extras = OptionalExtras::default();
+    extras.cruise_control(true);
+    extras.sports_pack(true);
+    let car = CarEncoder::try_wrap(buf, 0)
+        .unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1u32, 2, 3, 4],
+            vehicle_code: [97, 98, 99, 100, 101, 102],
+            extras,
+            engine: Engine::new(
+                2000,
+                4,
+                [49, 0, 0],
+                0i8,
+                BooleanType::F,
+                Booster::new(BoostType::TURBO, 0),
+            ),
+        })
         .fuel_figures(3, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(30).mpg(35.9);
-                Ok(())
+                e.usage_description(b"")
             })?;
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(45).mpg(28.4);
-                Ok(())
+                e.usage_description(b"")
             })?;
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(55).mpg(23.7);
-                Ok(())
-            })?;
-            Ok(())
+                e.usage_description(b"")
+            })
         })
         .unwrap();
 
     let car = car
         .performance_figures(1, |g| {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.octane_rating(95);
                 e.acceleration(3, |a| {
                     a.add(|x| {
@@ -164,10 +157,8 @@ fn encode_full(buf: &mut [u8]) -> usize {
                         Ok(())
                     })?;
                     Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
+                })
+            })
         })
         .unwrap();
 

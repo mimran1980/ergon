@@ -166,6 +166,18 @@ pub enum GenerateError {
         /// Why it was rejected.
         reason: String,
     },
+    /// Multi-schema generation found the same type name with incompatible
+    /// wire layouts across schemas.
+    IncompatibleSharedType {
+        /// Shared type name (enum, set, or composite).
+        name: String,
+        /// Module that first defined the type.
+        owner_module: String,
+        /// Module that reuses the name with a different layout.
+        consumer_module: String,
+        /// First differing property / fingerprint mismatch summary.
+        difference: String,
+    },
 }
 
 impl core::fmt::Display for GenerateError {
@@ -209,6 +221,18 @@ impl core::fmt::Display for GenerateError {
                 write!(
                     f,
                     "invalid configuration option '{option}': value '{value}' — {reason}"
+                )
+            }
+            Self::IncompatibleSharedType {
+                name,
+                owner_module,
+                consumer_module,
+                difference,
+            } => {
+                write!(
+                    f,
+                    "shared type '{name}' is wire-incompatible between modules \
+                     '{owner_module}' (owner) and '{consumer_module}': {difference}"
                 )
             }
         }
@@ -256,35 +280,6 @@ pub(crate) struct GenerationContext {
     pub enable_display_debug: bool,
     pub enable_meta_attributes: bool,
     pub enable_dispatch: bool,
-}
-
-impl GenerationContext {
-    fn from_schema(schema: &Schema, config: &GenerationConfig, multi_message: bool) -> Self {
-        let elements = partition_tokens(&schema.ir.tokens);
-        let header_size = elements
-            .composites
-            .iter()
-            .find(|c| c[0].name == schema.ir.header_type)
-            .and_then(|c| c[0].encoding.offset)
-            .unwrap_or(8);
-        Self {
-            elements,
-            byte_order: schema.ir.byte_order,
-            schema_id: schema.ir.id,
-            schema_version: schema.ir.version,
-            header_type: schema.ir.header_type.clone(),
-            header_size,
-            schema_name: schema.ir.package.clone(),
-            multi_message,
-            conversions: config.conversions.clone(),
-            domain_types: config.domain_types.clone(),
-            domain_objects: config.domain_objects,
-            domain_var_data: config.domain_var_data,
-            enable_display_debug: config.enable_display_debug,
-            enable_meta_attributes: config.enable_meta_attributes,
-            enable_dispatch: config.enable_dispatch,
-        }
-    }
 }
 
 /// SBE → Rust codec generator.
@@ -490,43 +485,6 @@ impl Generator {
         Ok(())
     }
 
-    fn field_has_conversion(
-        field: &MessageField,
-        conversions: &[crate::ConversionSelector],
-    ) -> bool {
-        field_has_conversion_free(field, conversions)
-    }
-
-    /// Whether the config has a conversion selector matching the given type name,
-    /// semantic type, or field path. Also returns true for FieldPath selectors
-    /// that match `owner_name.field_name`.
-    fn has_conversion_for(
-        &self,
-        type_name: &str,
-        semantic_type: Option<&str>,
-        owner_name: Option<&str>,
-        field_name: &str,
-    ) -> bool {
-        for sel in &self.config.conversions {
-            match sel {
-                crate::ConversionSelector::NamedType(name) if name == type_name => return true,
-                crate::ConversionSelector::SemanticType(st)
-                    if semantic_type == Some(st.as_str()) =>
-                {
-                    return true;
-                }
-                crate::ConversionSelector::FieldPath(path) => {
-                    let expected = format!("{}.{}", owner_name.unwrap_or(""), field_name);
-                    if path == &expected || path == field_name {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
-    }
-
     #[allow(missing_docs)]
     fn effective_domain_types(
         &self,
@@ -605,6 +563,123 @@ impl Generator {
         let mut modules = GeneratedModuleSet::default();
         let mut shared_types: HashSet<String> = HashSet::new();
         let empty_set: HashSet<String> = HashSet::new();
+
+        // Validate per-schema module names before emitting any file.
+        {
+            let mut seen = HashSet::new();
+            for (i, (_, module_name)) in schemas.iter().enumerate() {
+                if !crate::config::is_valid_module_ident(module_name) {
+                    return Err(GenerateError::InvalidConfiguration {
+                        option: format!("schemas[{i}].module_name"),
+                        value: module_name.to_string(),
+                        reason:
+                            "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
+                                .into(),
+                    });
+                }
+                if !seen.insert(module_name.to_string()) {
+                    return Err(GenerateError::InvalidConfiguration {
+                        option: format!("schemas[{i}].module_name"),
+                        value: module_name.to_string(),
+                        reason:
+                            "duplicate module name — each schema must have a unique module name"
+                                .into(),
+                    });
+                }
+            }
+        }
+
+        // Validate shared types have identical wire fingerprints when names
+        // collide. A type name is not wire identity — same-name types with
+        // different layouts or byte order silently produce corrupted codecs.
+        if schemas.len() > 1 && self.config.shared_module.is_some() {
+            let owner_module = schemas[0].1.to_string();
+            let owner_byte_order = schemas[0].0.ir.byte_order;
+            let first_elements = partition_tokens(&schemas[0].0.ir.tokens);
+            for (schema, consumer_module) in schemas.iter().skip(1) {
+                let elements = partition_tokens(&schema.ir.tokens);
+                let consumer_byte_order = schema.ir.byte_order;
+                let check = |kind: &str, name: String, a: String, b: String| {
+                    if a != b {
+                        Err(GenerateError::IncompatibleSharedType {
+                            name: name.clone(),
+                            owner_module: owner_module.clone(),
+                            consumer_module: consumer_module.to_string(),
+                            difference: format!(
+                                "{kind} fingerprint mismatch (owner={a}, consumer={b})"
+                            ),
+                        })
+                    } else {
+                        Ok(())
+                    }
+                };
+                // Compare enums
+                for et in &elements.enums {
+                    let name = to_pascal_case(&et[0].name);
+                    if let Some(ref_et) = first_elements
+                        .enums
+                        .iter()
+                        .find(|e| to_pascal_case(&e[0].name) == name)
+                    {
+                        check(
+                            "enum",
+                            name,
+                            canonical_token_fingerprint(ref_et, owner_byte_order),
+                            canonical_token_fingerprint(et, consumer_byte_order),
+                        )?;
+                    }
+                }
+                // Compare sets
+                for st in &elements.sets {
+                    let name = to_pascal_case(&st[0].name);
+                    if let Some(ref_st) = first_elements
+                        .sets
+                        .iter()
+                        .find(|s| to_pascal_case(&s[0].name) == name)
+                    {
+                        check(
+                            "set",
+                            name,
+                            canonical_token_fingerprint(ref_st, owner_byte_order),
+                            canonical_token_fingerprint(st, consumer_byte_order),
+                        )?;
+                    }
+                }
+                // Compare composites
+                for ct in &elements.composites {
+                    let name = to_pascal_case(&ct[0].name);
+                    if let Some(ref_ct) = first_elements
+                        .composites
+                        .iter()
+                        .find(|c| to_pascal_case(&c[0].name) == name)
+                    {
+                        check(
+                            "composite",
+                            name,
+                            canonical_token_fingerprint(ref_ct, owner_byte_order),
+                            canonical_token_fingerprint(ct, consumer_byte_order),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // Shared module name must identify the first-schema (owner) module so
+        // consumers' `pub use super::<shared>::*` resolves to the owner crate
+        // path rather than a free-floating alias.
+        if let Some(ref shared) = self.config.shared_module {
+            let owner = schemas[0].1;
+            if shared != owner {
+                return Err(GenerateError::InvalidConfiguration {
+                    option: "shared_module".into(),
+                    value: shared.clone(),
+                    reason: format!(
+                        "must equal the first schema module name (owner '{owner}'); \
+                         consumers import `super::{shared}::*` from that module"
+                    ),
+                });
+            }
+        }
 
         // Validate conversions against the union of all schemas' types, not
         // each schema individually. A NamedType selector may only exist in
@@ -1183,7 +1258,9 @@ impl Generator {
             /// # Safety
             /// Caller guarantees `offset + N` does not overflow and
             /// `offset + N <= buf.len()`.
-            #[inline]
+            // `always`: pairs with scalar getter `#[inline(always)]` for no-LTO
+            // decode_scalar parity (plain `#[inline]` lost the maintained gate).
+            #[inline(always)]
             #[allow(dead_code)] // used from generated accessors in this module
             unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
                 // SAFETY: caller guarantees offset + N <= buf.len().

@@ -157,6 +157,7 @@ pub(crate) fn generate_owner_consuming_stages(
              advancing or constructing the next stage.\n\n\
              Cheaper than [`Self::{into_ident}`] when only the bytes are needed."
         );
+        let slice_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&slice_doc);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
@@ -225,7 +226,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     Ok((data, next))
                 }
 
-                #[doc = #slice_doc]
+                #slice_doc_tokens
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     let offset = #se;
@@ -308,14 +309,19 @@ pub(crate) fn generate_owner_consuming_stages(
                         /// Consume this stage, read the next text var-data field as
                         /// a `&str` without encoding validation, and advance.
                         ///
+                        /// Structural bounds (truncated payload, overflowing length)
+                        /// remain fallible — only character validation is skipped.
+                        ///
                         /// # Safety
                         /// The wire bytes must be valid for the schema-declared
                         /// character encoding (UTF-8 or ASCII).
                         #[inline]
-                        pub unsafe fn #as_str_unchecked(self) -> (&'a str, #next_stage<'a>) {
-                            let (bytes, next) = unsafe { self.#into_ident().unwrap() };
+                        pub unsafe fn #as_str_unchecked(
+                            self,
+                        ) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (bytes, next) = self.#into_ident()?;
                             let s = unsafe { core::str::from_utf8_unchecked(bytes) };
-                            (s, next)
+                            Ok((s, next))
                         }
                     }
                 });

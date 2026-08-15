@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>jMz%omospite name=">      <type name="blockLength" primitiveType="uint16"/>
+   
+    <composite name="ssamegeHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+"uint16"/>
+    on" pruzz" id="1" version="0">
+  <types>jM"uint16"/>
+"uint16"/>
+    on" pruzz" id="1" version="0">
+  <types>jMz%omospite name=">
+      <type name="blockLength" primitiveType="uint16"/>
+   
+    <composite name="ssamegeHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+"uint16"/>
+    on" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message imitiveType="uint16"/>
+  z%omospite name=">
+      <type name="blockLength" primitiveType="uint16"/>
+   
+    <composite name="ssamegeHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+"uint16"/>
+    on" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message imitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="valu4"/>
+  </message>
+</messageSchema>

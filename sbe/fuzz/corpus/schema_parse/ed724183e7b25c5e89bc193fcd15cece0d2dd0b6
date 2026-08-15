@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint31"/>imitiveTy<?xml pe="uint16"/>
+      <type name="version" primitiversion="1.0"?>
+<meveTyels

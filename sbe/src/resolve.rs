@@ -545,8 +545,9 @@ fn default_null(prim: PrimitiveType) -> Option<u64> {
         PrimitiveType::UInt32 => Some(4294967295),
         PrimitiveType::Int64 => Some(-9223372036854775808i64 as u64),
         PrimitiveType::UInt64 => Some(18446744073709551615),
-        PrimitiveType::Float => Some(0x7F800001), // NaN sentinel as bits
-        PrimitiveType::Double => Some(0x7FF8000000000001), // NaN sentinel as bits
+        // Match sbe-tool / IEEE quiet NaN so null images are wire-identical.
+        PrimitiveType::Float => Some(f32::NAN.to_bits() as u64),
+        PrimitiveType::Double => Some(f64::NAN.to_bits()),
     }
 }
 

@@ -137,15 +137,15 @@ fn direct_flatgroup_exact_length() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf_storage = [0u8; 8192];
 assert!(len <= buf_storage.len());
 let mut buf = &mut buf_storage[..len];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-        enc.symbol(42);
+        let enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&FlatGroupFixedFields { symbol: 42 });
         let complete = enc.bids(2, |bids| {
-            bids.add(|e| { e.price(100i64).qty(10i32); Ok(()) })?;
-            bids.add(|e| { e.price(101i64).qty(20i32); Ok(()) })?;
+            bids.add(|mut e| { e.price(100i64).qty(10i32); Ok(()) })?;
+            bids.add(|mut e| { e.price(101i64).qty(20i32); Ok(()) })?;
             Ok(())
         })?
         .asks(1, |asks| {
-            asks.add(|e| { e.price(200i64).qty(30i32); Ok(()) })?;
+            asks.add(|mut e| { e.price(200i64).qty(30i32); Ok(()) })?;
             Ok(())
         })?
         .description(desc)?;
@@ -302,10 +302,10 @@ fn one_byte_short_buffer_fails() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf_storage = [0u8; 8192];
 assert!(len <= buf_storage.len());
 let mut buf = &mut buf_storage[..len];
-        let mut enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-        enc.symbol(42);
+        let enc = FlatGroupEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&FlatGroupFixedFields { symbol: 42 });
         let complete = enc.bids(1, |g| {
-            g.add(|e| { e.price(1i64).qty(1i32); Ok(()) })?;
+            g.add(|mut e| { e.price(1i64).qty(1i32); Ok(()) })?;
             Ok(())
         })?
         .asks(0, |_| Ok(()))?

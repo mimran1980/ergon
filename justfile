@@ -34,6 +34,45 @@ policy:
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
+# Every cheap correctness gate in one pass — the ones that otherwise only run
+# inside `just release`.
+#
+# Why this exists: four gates were found broken in one sitting (2026-08), three
+# of them already broken on main. Each is reachable only from a ~2h release that
+# nobody completes, so breakage accumulated invisibly:
+#   - package-bench-artifacts read the run-manifest at the wrong path and could
+#     NEVER pass; its own self-test asserted the same wrong path
+#   - check-book-fences had a stale allowlist and 4 undocumented ignore fences
+#   - the sbe-tool benchmark comparators had drifted from upstream
+#   - cargo mutants' baseline failed because cap_lints silenced a deny-lint fixture
+#
+# Run this before starting a release. It takes minutes, not hours, and every
+# entry either passes or tells you exactly what drifted.
+preflight:
+    # Cheapest gate, and one that actually bit: the 0.1.17 release aborted at
+    # step 2/8 on sample-crate fmt drift that had been sitting on the branch.
+    # `cargo fmt --all` does NOT reach samples/exchange-example — it is a
+    # separate workspace, so it needs its own invocation (same as `just fmt`).
+    @echo "=== formatting ==="
+    cargo fmt --all --check
+    cd samples/exchange-example && cargo fmt --check
+    @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
+    bash scripts/tests/test-test-policy.sh
+    bash scripts/tests/test-quality-ratchets.sh
+    bash scripts/test-package-bench-artifacts.sh
+    @echo "=== repository + docs ==="
+    ./scripts/check-repository-hygiene.sh
+    ./scripts/check-book-fences.sh
+    ./scripts/check-book-content.sh
+    @echo "=== checked-in generated artifacts still match their source ==="
+    ./scripts/regenerate-golden.sh --check
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    ./scripts/regenerate-sbe-benchmark-reference.sh --check
+    @echo "=== config ==="
+    ./scripts/check-mutation-config.sh
+    @echo ""
+    @echo "audit: all cheap gates pass"
+
 # Full local check: hygiene, format, clippy, tests (no Java / Aeron jars).
 check-local: policy
     ./scripts/check-repository-hygiene.sh
@@ -104,27 +143,95 @@ release-check: test check-coverage check-generated-rustdoc
     bash scripts/measure-codegen-cold-path.sh
     @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
 
+# Release when the benchmark gates were already proven on a QUIET machine.
+#
+# Why this exists: `just release` runs the benchmark gates ~40 minutes into its
+# own run, so they execute on a machine hot from compiling and testing. On the
+# tightest maintained pair (encode_scalar_body_only, ergon ~0.99 against a hard
+# 1.00 ceiling) that measurement noise alone decides pass/fail — measured 0.985
+# idle vs 1.027-1.104 mid-release, on identical code.
+#
+# This recipe does NOT weaken anything. Every gate still runs except the bench
+# re-run, and step 9/9 (`package-bench-artifacts.sh`) fails closed unless BOTH
+# profile run-manifests stamp the current HEAD. So publishing without fresh,
+# commit-matched benchmark evidence remains impossible — the evidence just has
+# to be produced on an idle machine first:
+#
+#   just bench-cluster && just bench && just bench-historic   # quiet machine
+#   just release-verified                                     # same commit
+#
+# Re-run the benches if you commit anything afterwards; the manifest check will
+# reject stale evidence rather than let it through.
+release-verified: _check-release-notes
+    @echo "=== 0/8 confirm benchmark evidence exists for HEAD ==="
+    bash scripts/package-bench-artifacts.sh /tmp/ergon-bench-evidence-precheck
+    @rm -rf /tmp/ergon-bench-evidence-precheck
+    just _release-pre
+    just _release-post
+
 # Full release gate: test + bench → publish → tag → GitHub release → bump.
 # The LLM must bump the version + write changelog + write release notes before
 # calling this. The version is read from workspace Cargo.toml.
+#
+# Runs the benchmark gates inline, ~40 min in, on a machine hot from the test
+# suite. If the tightest maintained ratio fails there, re-measure on an idle
+# machine before believing it, then use `just release-verified`.
 release: _check-release-notes
     just clean
-    @echo "=== Gate: test suite (inc. clippy) ==="
-    just test
-    @echo "=== Gate: cluster benchmarks ==="
+    just _release-pre
+    @echo "=== 5/8 benchmark gates (cluster + parity + historic) ==="
     just bench-cluster
-    @echo "=== Gate: SBE benchmarks ==="
     just bench
-    @echo "=== Release check ==="
+    just bench-historic
+    just _release-post
+
+# Gates 1-4. Shared by `release` and `release-verified`.
+_release-pre:
+    @echo "=== 1/8 supply-chain audit ==="
+    # No `-` prefix: these must BLOCK the release. They previously ignored their
+    # exit codes, so a live RUSTSEC advisory printed "error: 1 vulnerability
+    # found!" and the release published straight past it. Record unreachable
+    # advisories as documented ignores (deny.toml AND .cargo/audit.toml — the
+    # two tools read different files) rather than re-muting the gate.
+    cargo deny check
+    cargo audit
+    @echo "=== 2/8 test suite (clippy + tests + samples + cluster) ==="
+    just test
+    @echo "=== 3/8 miri UB detection ==="
+    cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
+    @echo "=== 4/8 fuzz corpus replay ==="
+    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
+    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+
+# Gates 6-9 plus publish/tag/release. Shared by both release paths.
+_release-post:
+    # Mutation testing is deliberately NOT on the release path. `cargo mutants
+    # --jobs 1` takes ~16 h and builds a full tree per mutant, which on a 16 GB
+    # machine exhausted the disk and killed the 0.1.17 release mid-run. It stays
+    # a real, runnable gate — `just check-mutation` — but it is manual, and the
+    # cheap config check is what the release enforces.
+    @echo "=== 6/8 mutation configuration (config only; full run is manual) ==="
+    ./scripts/check-mutation-config.sh
+    @echo "=== 7/8 reference reproducibility ==="
+    just check-sbe-references
+    just check-bench-reference
+    @echo "=== 8/9 release check ==="
     just release-check
+    @echo "=== 9/9 package benchmark evidence (fail-closed) ==="
+    mkdir -p release-assets
+    bash scripts/package-bench-artifacts.sh release-assets
     @echo "=== publish ergo-sbe ==="
     cargo publish -p ergo-sbe
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
     @echo "=== tag ==="
     just _tag
-    @echo "=== GitHub release ==="
-    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md
+    @echo "=== GitHub release (with bench archives) ==="
+    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md release-assets/*.tar.gz
     @echo "=== release v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') complete ==="
 
 _tag:
@@ -307,13 +414,37 @@ check-bench-reference:
     ./scripts/regenerate-sbe-benchmark-reference.sh --check
 
 # Cluster codec benchmarks (ergo-sbe vs sbe-tool head-to-head).
+# Criterion results must be separated by profile: CARGO_TARGET_DIR only moves
+# the binary tree. Relative CARGO_TARGET_DIR / CRITERION_HOME can resolve under
+# the package dir (cluster/) rather than the workspace root, so both must be
+# absolute workspace paths. package-bench-artifacts expects:
+#   LTO    → <repo>/target/criterion
+#   no-LTO → <repo>/target/bench-no-lto/criterion
 bench-cluster:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{justfile_directory()}}"
+    lto_crit="$root/target/criterion"
+    no_lto_crit="$root/target/bench-no-lto/criterion"
+    no_lto_target="$root/target/bench-no-lto"
+    mkdir -p "$lto_crit" "$no_lto_crit"
+    commit="$(git -C "$root" rev-parse HEAD)"
+    rustc_v="$(rustc --version)"
+    target="$(rustc -vV | sed -n 's/^host: //p')"
+    run_id="cluster-$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$root" rev-parse --short HEAD)"
+    stamp="$root/scripts/stamp-cluster-bench-manifest.sh"
     # LTO-on (release profile: lto=true, codegen-units=1)
-    cargo bench -p ergo-aeron-cluster
+    CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
+    "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
     # LTO-off — publish both profiles per the benchmark fairness matrix
-    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-aeron-cluster
-    @echo ""
-    @echo "=== Gate (LTO) ==="
-    ./scripts/check-bench-gate.sh target/criterion 0.005 cluster
-    @echo "=== Gate (no-LTO) ==="
-    ./scripts/check-bench-gate.sh target/bench-no-lto/criterion 0.005 cluster
+    CARGO_TARGET_DIR="$no_lto_target" \
+      CARGO_PROFILE_BENCH_LTO=false \
+      CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
+      CRITERION_HOME="$no_lto_crit" \
+      cargo bench -p ergo-aeron-cluster
+    "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
+    echo ""
+    echo "=== Gate (LTO) ==="
+    ./scripts/check-bench-gate.sh "$lto_crit" 0.005 cluster
+    echo "=== Gate (no-LTO) ==="
+    ./scripts/check-bench-gate.sh "$no_lto_crit" 0.005 cluster

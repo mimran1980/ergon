@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="2mposite" version="0">
+  <types>
+    <composite name="messageNHeader">
+     Length" primitiType="uint16"/>
+    </composite>
+  </types>
+ge>
+</messageSchema>

@@ -1,5 +1,50 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.17] — 2026-08-14
+
+### Changed
+- **Breaking:** writing a message's tail now requires the fixed block first.
+  `wrap*` returns `{Msg}UnfixedEncoder`; groups and var-data are reachable only
+  after `.fixed(&{Msg}FixedFields { … })`. "Tails before the fixed block" is now
+  unrepresentable rather than a runtime hazard.
+- Gate the fixed-stride group proof APIs (`add_checked`, `start_entry`,
+  `complete`, `EntryComplete`) on groups that actually have a fixed stride. A
+  dynamic entry with a var-data tail can no longer claim completion.
+- `ClusterError` is `#[non_exhaustive]`, so adding a variant is not a breaking
+  change for downstream matches.
+- Decode errors keep their UTF-8 cause in the error chain instead of flattening it.
+- Malformed XML and schema-invalid SBE now surface as distinct errors.
+
+### Added
+- Schema `description` text is emitted as rustdoc on messages, fields,
+  composite members, enum variants, group entries, and var-data.
+- `#[must_use]` on pure generated observers — getters, set predicates, raw
+  enum/set values, and metadata queries — so discarding them is a warning.
+- Multi-schema generation validates that same-named shared types have identical
+  wire fingerprints, and rejects duplicate or non-identifier module names.
+- Fail-closed benchmark evidence packaging (`scripts/package-bench-artifacts.sh`)
+  wired into both the release workflow and `just release`.
+- sbe-tool parity benchmarks for optional-enum nullification and
+  group-with-data, both gated at the strict `1.00` ceiling.
+
+### Fixed
+- Optional primitive fields write the schema null image when set to `None`,
+  including fixed arrays and nested optional composite members.
+- Cluster egress decoding runs through one canonical fail-closed path; short,
+  truncated, and invalid-text frames report the real error instead of a
+  misleading timeout.
+- `parse_event` reports the real template id for decoded-but-unprojected frames
+  instead of `0`.
+- Session builder timeouts reject zero, sub-millisecond, and overflow values,
+  and each timeout field tracks its own error so one cannot mask another.
+- `StaticCredentials` and `SessionBuilder` redact credential material from
+  `Debug` output.
+- Duplicate member IDs in an ingress endpoint map are rejected.
+- Generated multi-paragraph rustdoc is emitted one line per `#[doc]`, so it is
+  no longer parsed as an indented Markdown code block and compiled as a doctest.
+
 ## [0.1.16] — 2026-08-10
 
 ### Changed

@@ -1,0 +1,9 @@
+<?xml version="0.0"?>
+<messageSchema HHHHckage="fuzz" id="0" vn="0">
+  <types>
+composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

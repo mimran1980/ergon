@@ -123,14 +123,25 @@ fn warm_up_all() {
     let _ = black_box((CarDecoder::SCHEMA_ID, CarDecoder::TEMPLATE_ID));
 
     let mut buf = [0u8; 512];
-    let mut enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-    enc.serial_number(1234);
-    enc.model_year(2013);
-    enc.available(BooleanType::T);
-    enc.code(Model::A);
-    enc.some_numbers([1u32, 2, 3, 4]);
-    enc.vehicle_code([97, 98, 99, 100, 101, 102]);
-    enc.extras(OptionalExtras(0));
+    let enc = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1u32, 2, 3, 4],
+            vehicle_code: [97, 98, 99, 100, 101, 102],
+            extras: OptionalExtras(0),
+            engine: Engine::new(
+                2000,
+                4,
+                [78, 57, 48],
+                35,
+                BooleanType::T,
+                Booster::new(BoostType::TURBO, 200),
+            ),
+        });
     let enc = enc.fuel_figures(0, |_g| Ok(())).unwrap();
     let enc = enc.performance_figures(0, |_g| Ok(())).unwrap();
     let enc = enc.manufacturer(b"Honda").unwrap();
@@ -206,14 +217,25 @@ fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 fn encode_into_caller_buffer_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; 512];
     measure("encode into caller buffer", || {
-        let mut car = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras(0));
+        let car = CarEncoder::try_wrap_and_apply_header(black_box(&mut buf), 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1234,
+                model_year: 2013,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [1u32, 2, 3, 4],
+                vehicle_code: [97, 98, 99, 100, 101, 102],
+                extras: OptionalExtras(0),
+                engine: Engine::new(
+                    2000,
+                    4,
+                    [78, 57, 48],
+                    35,
+                    BooleanType::T,
+                    Booster::new(BoostType::TURBO, 200),
+                ),
+            });
         let car = car.fuel_figures(0, |_g| Ok(())).unwrap();
         let car = car.performance_figures(0, |_g| Ok(())).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();

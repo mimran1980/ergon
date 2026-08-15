@@ -12,6 +12,9 @@ path = "src/lib.rs"
 
 [dependencies]
 ergo-sbe = { path = ".." }
+sbe_tool_optional_enum_nullify = { path = "src/sbe_tool_optional_enum_nullify" }
+sbe_tool_extension = { path = "src/sbe_tool_extension" }
+sbe_tool_group_with_data = { path = "src/sbe_tool_group_with_data" }
 rust_decimal = "1"
 compact_str = { version = "0.8", optional = true }
 smol_str = { version = "0.3", optional = true }
@@ -83,8 +86,12 @@ harness = false
 [[bench]]
 name = "chrono_converter_bench"
 harness = false
+required-features = ["chrono"]
 [[bench]]
 name = "ergo_historic_bench"
+harness = false
+[[bench]]
+name = "perf_parity_extended_bench"
 harness = false
 
 [features]

@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+ 0<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint16"/>
+ s>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitvieType="uint16"/>
+  z" id="1" voiesrn="0">
+  <types>
+    <compossageSchema package="fuzz" id="[" version="0">
+  
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint16"/>
+ s>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitvieType="uint16"/>
+  z" id="1" version="0">
+  <types>
+  d="site name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   ersion="0">
+  <types>
+    <composite name="messageHeader">
+RRRR name="blockLength" primitive="blockLength" primitvieType="uint16"/>
+  z" id="1" version="0">
+  <types>
+  d="site name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   ersion="0">
+  <types>
+    <composite name="messageHeader">
+RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+ 0<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint16"/>
+ s>
+   RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+ 0<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint16"/>
+ s>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitvieType="uint16"/>
+  z" id="1" version="0">
+  <types>
+    <compossageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+  <types>
+    <composite name="messageHead=er">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint08"/>
+ s>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitvieType="uint16"/>
+  z" id="1" version="0">
+  <types>
+  d="site name="messageuipackage="fuzz" id="eader">
+RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      <type name="blockLength" primitiveType="uint16"/>
+   package="fuzr" id="1" version="0">
+ 0<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLength" primitiveType="uint16"/>
+ s>
+    <composite name="messageHeader">
+      <type name="blockLength" primitive="blockLeng="blockLength" primitive="blockLength" primitiveType="uint16"/>    <

@@ -63,28 +63,60 @@ pub(crate) fn generate_converter_impls(
 
             // checked domain accessors are fallible — no `.expect`.
             let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-            decoder_methods.extend(quote::quote! {
-                #[inline]
-                pub fn #try_ident(
-                    &self,
-                ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
-                    <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
-                        self.#raw_decoder_getter()
-                    )
-                }
-            });
+            let is_optional = f.presence == crate::ir::Presence::Optional;
+            if is_optional {
+                decoder_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &self,
+                    ) -> Result<Option<#dt_ty>, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
+                        match self.#raw_decoder_getter() {
+                            Some(wire) => <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(wire).map(Some),
+                            None => Ok(None),
+                        }
+                    }
+                });
+            } else {
+                decoder_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &self,
+                    ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
+                        <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
+                            self.#raw_decoder_getter()
+                        )
+                    }
+                });
+            }
 
-            encoder_methods.extend(quote::quote! {
-                #[inline]
-                pub fn #try_ident(
-                    &mut self,
-                    value: #dt_ty,
-                ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
-                    let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
-                    self.#wire_setter(wire);
-                    Ok(self)
-                }
-            });
+            if is_optional {
+                encoder_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &mut self,
+                        val: Option<#dt_ty>,
+                    ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
+                        let wire = match val {
+                            Some(v) => Some(<#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&v)?),
+                            None => None,
+                        };
+                        self.#wire_setter(wire);
+                        Ok(self)
+                    }
+                });
+            } else {
+                encoder_methods.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &mut self,
+                        value: #dt_ty,
+                    ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
+                        let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                        self.#wire_setter(wire);
+                        Ok(self)
+                    }
+                });
+            }
         } else {
             let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
             let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);

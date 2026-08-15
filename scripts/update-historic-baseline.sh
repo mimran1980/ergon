@@ -19,6 +19,8 @@ for root, _, files in os.walk(criterion_dir):
             fn_name = parts[1]
             key = group_dir.replace("ergo_historic_", "ergo_historic/", 1)
             key = f"{key}/{fn_name}"
+            if not key.startswith("ergo_historic/"):
+                continue
             with open(os.path.join(root, "estimates.json")) as fh:
                 e = json.load(fh)
             baselines[key] = e.get("slope", e["median"])["point_estimate"]

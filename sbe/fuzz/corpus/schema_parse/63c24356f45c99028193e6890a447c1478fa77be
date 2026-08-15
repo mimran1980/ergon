@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="1">
+  <types>
+    <composite name="messageHeader">
+      <type n                                                                ="va                                                                                                                                lue" id="1" type="uint64"/>
+ ]</message>
+</messageSchema>

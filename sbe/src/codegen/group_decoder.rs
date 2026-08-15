@@ -19,6 +19,13 @@ use super::runtime::{
     constant_value_expr, doc_attr_tokens, emit_field_consts, to_pascal_case, to_snake_case,
 };
 
+/// Pure flyweight observers — discarding the return is almost always a mistake.
+fn must_use_observer() -> proc_macro2::TokenStream {
+    quote::quote! {
+        #[must_use = "discarding this value is almost always a mistake"]
+    }
+}
+
 pub(crate) fn generate_group_decoder(
     g: &MessageGroup,
     elements: &SchemaElements,
@@ -32,6 +39,7 @@ pub(crate) fn generate_group_decoder(
     all_enums_as_option: bool,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
+    let mu = must_use_observer();
     let span = proc_macro2::Span::call_site();
     let name = scoped_name.to_string();
     let decoder_ident = quote::format_ident!("{}Decoder", name);
@@ -254,6 +262,7 @@ pub(crate) fn generate_group_decoder(
                 })
             }
 
+            #mu
             #[inline]
             pub fn is_empty(&self) -> bool {
                 self.count == 0
@@ -323,6 +332,7 @@ pub(crate) fn generate_group_decoder(
         impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
             /// Entries not yet advanced (count), not a byte slice.
             /// For message-level byte tails use `get_metadata().remaining()`.
+            #mu
             #[inline]
             pub const fn remaining(&self) -> usize {
                 self.count
@@ -822,6 +832,10 @@ pub(crate) fn generate_group_decoder(
         let offset_lit = syn::LitInt::new(&f.offset.to_string(), proc_macro2::Span::call_site());
         let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
 
+        if let Some(ref desc) = f.description {
+            entry_body.extend(doc_attr_tokens(desc));
+        }
+
         match &f.field_type {
             FieldType::Primitive(prim, length) => {
                 let r_type = rust_type(*prim);
@@ -835,6 +849,7 @@ pub(crate) fn generate_group_decoder(
                         if *prim == PrimitiveType::Char && val.len() > 1 {
                             let val_lit = syn::LitStr::new(val, proc_macro2::Span::call_site());
                             entry_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #f_name_ident(&self) -> &'static str {
                                     #val_lit
@@ -844,6 +859,7 @@ pub(crate) fn generate_group_decoder(
                             let expr = constant_value_expr(*prim, val);
                             let expr_parsed: syn::Expr = syn::parse_str(&expr).unwrap();
                             entry_body.extend(quote::quote! {
+                                #mu
                                 #[inline]
                                 pub const fn #f_name_ident(&self) -> #r_type_ty {
                                     #expr_parsed
@@ -883,6 +899,7 @@ pub(crate) fn generate_group_decoder(
                         });
                     }
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
                             if self.acting_version < #since_lit
@@ -897,13 +914,13 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else if f.presence == Presence::Optional {
                     let null_val = f.null_value.unwrap_or(0);
-                    let null_check = if *prim == PrimitiveType::Float {
-                        format!("val.to_bits() == {} as u32", null_val)
-                    } else if *prim == PrimitiveType::Double {
-                        format!("val.to_bits() == {}", null_val)
-                    } else {
-                        format!("val == {}_u64 as {}", null_val, r_type)
-                    };
+                    let null_check =
+                        if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
+                            let _ = null_val;
+                            "val.is_nan()".to_string()
+                        } else {
+                            format!("val == {}_u64 as {}", null_val, r_type)
+                        };
                     let null_check_expr: syn::Expr = syn::parse_str(&null_check).unwrap();
                     let offset_end_lit = syn::LitInt::new(
                         &(f.offset + prim_size).to_string(),
@@ -915,6 +932,7 @@ pub(crate) fn generate_group_decoder(
                     );
 
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
                             if self.acting_version < #since_lit
@@ -941,6 +959,7 @@ pub(crate) fn generate_group_decoder(
                         proc_macro2::Span::call_site(),
                     );
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#r_type_ty> {
                             if self.acting_version < #since_lit
@@ -956,6 +975,7 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> #r_type_ty {
                             let offset = self.offset + #offset_lit;
@@ -987,6 +1007,7 @@ pub(crate) fn generate_group_decoder(
                 // Default: flyweight (zero-copy).
                 if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#target_decoder_name<'_>> {
                             if self.acting_version < #since_lit
@@ -1000,6 +1021,7 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
                             let offset = self.offset + #offset_lit;
@@ -1012,6 +1034,7 @@ pub(crate) fn generate_group_decoder(
                     syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit
@@ -1025,6 +1048,7 @@ pub(crate) fn generate_group_decoder(
                             ))
                         }
 
+                        #mu
                         #[inline]
                         pub fn #raw_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit
@@ -1040,12 +1064,14 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #as_struct_ident(&self) -> #target_ident {
                             let offset = self.offset + #offset_lit;
                             #target_ident(unsafe { read_bytes_unchecked::<#comp_size_lit>(self.buf, offset) })
                         }
 
+                        #mu
                         #[inline]
                         pub const fn #raw_ident(&self) -> #target_ident {
                             let offset = self.offset + #offset_lit;
@@ -1078,6 +1104,7 @@ pub(crate) fn generate_group_decoder(
                     syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
                 if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit
@@ -1091,6 +1118,7 @@ pub(crate) fn generate_group_decoder(
                             )))
                         }
 
+                        #mu
                         #[inline]
                         pub fn #raw_ident(&self) -> Option<#r_type_ty> {
                             if self.acting_version < #since_lit
@@ -1106,6 +1134,7 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else {
                     let raw_getter = quote::quote! {
+                        #mu
                         #[inline]
                         pub const fn #raw_ident(&self) -> #r_type_ty {
                             let offset = self.offset + #offset_lit;
@@ -1118,6 +1147,7 @@ pub(crate) fn generate_group_decoder(
                         entry_body.extend(quote::quote! {
                             /// Returns [`None`] when the wire discriminant equals
                             /// [`#target_ident::NullVal`]; [`Some`] otherwise.
+                            #mu
                             #[inline]
                             pub fn #f_name_ident(&self) -> Option<#target_ident> {
                                 let offset = self.offset + #offset_lit;
@@ -1128,6 +1158,7 @@ pub(crate) fn generate_group_decoder(
                         entry_body.extend(raw_getter);
                     } else {
                         entry_body.extend(quote::quote! {
+                            #mu
                             #[inline]
                             pub fn #f_name_ident(&self) -> #target_ident {
                                 let offset = self.offset + #offset_lit;
@@ -1215,6 +1246,7 @@ pub(crate) fn generate_group_decoder(
                     syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
                 if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> Option<#target_ident> {
                             if self.acting_version < #since_lit
@@ -1228,6 +1260,7 @@ pub(crate) fn generate_group_decoder(
                             )))
                         }
 
+                        #mu
                         #[inline]
                         pub fn #raw_ident(&self) -> Option<#r_type_ty> {
                             if self.acting_version < #since_lit
@@ -1243,12 +1276,14 @@ pub(crate) fn generate_group_decoder(
                     });
                 } else {
                     entry_body.extend(quote::quote! {
+                        #mu
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_ident {
                             let offset = self.offset + #offset_lit;
                             #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
                         }
 
+                        #mu
                         #[inline]
                         pub const fn #raw_ident(&self) -> #r_type_ty {
                             let offset = self.offset + #offset_lit;
@@ -1483,6 +1518,7 @@ pub(crate) fn generate_group_decoder(
     let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
+            #mu
             #[inline]
             pub fn encoded_length(&self) -> usize {
                 self.acting_block_length

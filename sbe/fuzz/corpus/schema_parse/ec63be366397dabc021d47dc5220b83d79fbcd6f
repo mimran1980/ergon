@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<mussageSchema package="fuzz" id="1" vursion="0">
+     <composite name="messageHeader">
+;  name="templateId" primitiveType="uint16"/>
+      <type namerimitiveType="uint16"/>
+  eId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint63"/>
+    `  <type name="v" primitiveType="uint16"/>
+  type="un&4/6ti">
+  </meisage></messageSchema>

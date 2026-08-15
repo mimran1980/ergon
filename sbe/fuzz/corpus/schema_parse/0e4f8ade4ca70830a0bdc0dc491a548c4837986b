@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<messageSchema on="0">
+  <types>
+ mitiveType="uint32"A>
+      <type name="1941Ğߏa941ď.01941Ğߏa1ď.2475450Ğߏaa74XXmXXXXXX.0a75XXmXXXXXXXXXXX.0a75XXmXXXXXX.01941Ğߏa941ď.01941Ğߏa941ďaa44XXmXXXXXX.01.4012475941Ğߏaa01941Ğߏa941ďaXXXXXX.01941Ğߏa941ď.01941Ğߏa941ďaa44XXmXXXXXX.01.4012475941Ğߏaa01941Ğߏa941ďaa44XXmXXXXXX.01.401247594Ğߏa941ďaa44XXmXXXXXX.01.4012475imitiveType="uint16"/>
+    </composite>
+int64"/>
+  </message>
+</messageSchema>

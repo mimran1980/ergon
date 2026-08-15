@@ -142,14 +142,6 @@ fn composite_flyweight_is_zero_copy_value_is_eager_wire_copy()
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1234);
-        car.model_year(2013);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([97, 98, 99, 100, 101, 102]);
-        car.extras(OptionalExtras::default());
         let eng = Engine::new(
             2000,
             4,
@@ -158,7 +150,18 @@ fn composite_flyweight_is_zero_copy_value_is_eager_wire_copy()
             BooleanType::T,
             Booster::new(BoostType::NITROUS, 200),
         );
-        car.engine(eng);
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1234,
+                model_year: 2013,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [1u32, 2, 3, 4],
+                vehicle_code: [97, 98, 99, 100, 101, 102],
+                extras: OptionalExtras::default(),
+                engine: eng,
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"Honda").unwrap();
@@ -209,15 +212,18 @@ fn composite_encoder_writes_wire_image_bulk() -> Result<(), Box<dyn std::error::
             Booster::new(BoostType::TURBO, 99),
         );
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(1);
-        car.model_year(2000);
-        car.available(BooleanType::F);
-        car.code(Model::A);
-        car.some_numbers([0u32; 4]);
-        car.vehicle_code([0u8; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(eng);
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2000,
+                available: BooleanType::F,
+                code: Model::A,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: eng,
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();
@@ -255,17 +261,20 @@ fn fixed_scalar_fields_use_explicit_le_loads() -> Result<(), Box<dyn std::error:
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        car.serial_number(0x0102_0304_0506_0708);
-        car.model_year(0xBEEF);
-        car.available(BooleanType::T);
-        car.code(Model::A);
-        car.some_numbers([1u32, 2, 3, 4]);
-        car.vehicle_code([0u8; 6]);
-        car.extras(OptionalExtras::default());
-        car.engine(Engine::new(
-            1, 1, [0, 0, 0], 0, BooleanType::F, Booster::new(BoostType::TURBO, 0),
-        ));
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 0x0102_0304_0506_0708,
+                model_year: 0xBEEF,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [1u32, 2, 3, 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(
+                    1, 1, [0, 0, 0], 0, BooleanType::F, Booster::new(BoostType::TURBO, 0),
+                ),
+            });
         let car = car.fuel_figures(0, |_| Ok(())).unwrap();
         let car = car.performance_figures(0, |_| Ok(())).unwrap();
         let car = car.manufacturer(b"").unwrap();

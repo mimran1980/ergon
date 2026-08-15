@@ -52,6 +52,14 @@ const PAIRS: &[(&str, &str, &str)] = &[
     ("parity_encode_throughput_10k", "ergo-sbe", "sbe-tool"),
     ("parity_throughput_batch_10k", "ergo-sbe", "sbe-tool"),
     ("parity_wire_parity_encode_full", "ergo-sbe", "sbe-tool"),
+    // The gate builds its lookup key as `parity_${group//\//_}`, so the
+    // `extended/...` groups land here as a single `parity_extended_...` dir.
+    (
+        "parity_extended_optional_enum_nullify",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+    ("parity_extended_group_with_data", "ergo-sbe", "sbe-tool"),
 ];
 
 const RUN_ID: &str = "b20260807T000000Z-1234-abcdef123456";

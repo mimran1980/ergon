@@ -1,0 +1,14 @@
+<?xml version="0.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+ !  <composite name="mesder">
+  nsageHeype="uint16"/>
+(     <type name="templateId" primitiveType="uint16"/>
+ int16"/>
+      <type name="version" piivmtrieType="uint10"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+  name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

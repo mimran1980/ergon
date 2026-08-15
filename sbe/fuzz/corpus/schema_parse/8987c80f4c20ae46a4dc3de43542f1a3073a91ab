@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHead;er">
+      <e name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message na?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      imitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primititeType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="value" id="1" typeme="M" id="1">
+    <fieldeeeeeeeeeeeeeeeeeeeeeemessageHead;er">
+      <e name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message na?xml version="1.0"?>
+<messageSchema package="fuzz" id="1" version="0">
+  <types>
+    <composite name="messageHeader">
+      imitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primititeType="uint16"/>
+    </composite>
+  </types>
+  <messageeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee name="value" id="1" type="uint64"/>
+  </message>
+</messageSchema>

@@ -47,17 +47,16 @@ jobs:
       - name: Mandatory pre-release verification
         run: just release-check
 
-      - name: Run SBE benchmarks (LTO + no-LTO) — before publish
+      - name: Run SBE benchmarks
         run: just bench
 
-      - name: Run cluster benchmarks (LTO + no-LTO) — before publish
+      - name: Run cluster benchmarks
         run: just bench-cluster
 
-      - name: Cache cargo-release binary
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-release
-          key: cargo-release-${{ runner.os }}
+      - name: Package benchmark artifacts
+        run: |
+          mkdir -p release-assets
+          bash scripts/package-bench-artifacts.sh release-assets
 
       - name: Install cargo-release
         run: cargo install cargo-release --locked
@@ -73,28 +72,19 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: false
         run: |
           cargo release "${{ github.event.inputs.release_type }}" \
-            -p ergo-sbe \
-            --execute \
-            --no-confirm \
-            --verbose
+            -p ergo-sbe --execute --no-confirm --verbose
 
       - name: Wait for crates.io index
         run: |
           VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
             | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')
-          echo "Waiting for ergo-sbe $VERSION to appear on crates.io..."
           for i in $(seq 1 30); do
             if curl -sf "https://crates.io/api/v1/crates/ergo-sbe/$VERSION" >/dev/null 2>&1; then
-              echo "ergo-sbe $VERSION is now available"
+              echo "ergo-sbe $VERSION available"
               break
             fi
-            echo "  attempt $i/30 — waiting 10s..."
             sleep 10
           done
-          if [ "$i" -eq 30 ]; then
-            echo "ERROR: ergo-sbe $VERSION did not appear on crates.io within 5 minutes"
-            exit 1
-          fi
 
       - name: Publish ergo-aeron-cluster
         env:
@@ -102,10 +92,7 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: false
         run: |
           cargo release "${{ github.event.inputs.release_type }}" \
-            -p ergo-aeron-cluster \
-            --execute \
-            --no-confirm \
-            --verbose
+            -p ergo-aeron-cluster --execute --no-confirm --verbose
 
       - name: Push to GitHub
         uses: ad-m/github-push-action@v0.8.0
@@ -113,20 +100,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
           tags: true
-
-      - name: Archive SBE benchmark results
-        run: |
-          tar -czf bench-sbe-lto.tar.gz -C target/bench-runs .
-          echo "SBE benchmarks archived"
-
-      - name: Archive cluster benchmark results
-        run: |
-          tar -czf bench-cluster-lto.tar.gz -C target criterion
-          tar -czf bench-cluster-no-lto.tar.gz -C target/bench-no-lto criterion 2>/dev/null || true
-          echo "Cluster benchmarks archived"
-
-      - name: Build release artifacts
-        run: cargo build --release --workspace
 
       - name: Extract version
         id: version
@@ -137,61 +110,9 @@ jobs:
 
       - name: Create GitHub release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          release_name: v${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-
-      - name: Upload SBE bench artifacts (LTO)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-sbe-lto.tar.gz
-          asset_name: bench-sbe-lto-${{ steps.version.outputs.version }}.json
-          asset_content_type: application/json
-
-      - name: Upload SBE bench artifacts (no-LTO)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-sbe-no-lto.tar.gz
-          asset_name: bench-sbe-no-lto-${{ steps.version.outputs.version }}.json
-          asset_content_type: application/json
-
-      - name: Upload cluster bench artifacts (LTO)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-cluster-lto.json
-          asset_name: bench-cluster-lto-${{ steps.version.outputs.version }}.json
-          asset_content_type: application/json
-
-      - name: Upload cluster bench artifacts (no-LTO)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: bench-cluster-no-lto.json
-          asset_name: bench-cluster-no-lto-${{ steps.version.outputs.version }}.json
-          asset_content_type: application/json
-
-      - name: Upload run manifests
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: run-manifest-sbe.json
-          asset_name: run-manifest-sbe-${{ steps.version.outputs.version }}.json
-          asset_content_type: application/json
+          name: v${{ steps.version.outputs.version }}
+          files: release-assets/*.tar.gz
+          fail_on_unmatched_files: true
