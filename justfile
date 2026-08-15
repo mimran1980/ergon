@@ -34,6 +34,38 @@ policy:
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
+# Every cheap correctness gate in one pass — the ones that otherwise only run
+# inside `just release`.
+#
+# Why this exists: four gates were found broken in one sitting (2026-08), three
+# of them already broken on main. Each is reachable only from a ~2h release that
+# nobody completes, so breakage accumulated invisibly:
+#   - package-bench-artifacts read the run-manifest at the wrong path and could
+#     NEVER pass; its own self-test asserted the same wrong path
+#   - check-book-fences had a stale allowlist and 4 undocumented ignore fences
+#   - the sbe-tool benchmark comparators had drifted from upstream
+#   - cargo mutants' baseline failed because cap_lints silenced a deny-lint fixture
+#
+# Run this before starting a release. It takes minutes, not hours, and every
+# entry either passes or tells you exactly what drifted.
+preflight:
+    @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
+    bash scripts/tests/test-test-policy.sh
+    bash scripts/tests/test-quality-ratchets.sh
+    bash scripts/test-package-bench-artifacts.sh
+    @echo "=== repository + docs ==="
+    ./scripts/check-repository-hygiene.sh
+    ./scripts/check-book-fences.sh
+    ./scripts/check-book-content.sh
+    @echo "=== checked-in generated artifacts still match their source ==="
+    ./scripts/regenerate-golden.sh --check
+    ./scripts/regenerate-sbe-tool-reference.sh --check
+    ./scripts/regenerate-sbe-benchmark-reference.sh --check
+    @echo "=== config ==="
+    ./scripts/check-mutation-config.sh
+    @echo ""
+    @echo "audit: all cheap gates pass"
+
 # Full local check: hygiene, format, clippy, tests (no Java / Aeron jars).
 check-local: policy
     ./scripts/check-repository-hygiene.sh
