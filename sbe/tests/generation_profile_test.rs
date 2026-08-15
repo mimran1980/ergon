@@ -146,3 +146,99 @@ fn profile_then_override_dispatch() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
+// ── Config surface that had no callers anywhere ───────────────────────────
+//
+// The four APIs below were public but exercised by nothing: `lean`,
+// `with_module_name`, `with_error_from_impls`, and
+// `ConversionSelector::field_path`. Untested public API is how the coverage
+// ratchet drifted below its baseline; these assert behaviour, not mere calls.
+
+/// `lean()` is shorthand for `new(..).profile(Lean)` — it must produce the same
+/// source as spelling the profile out.
+#[test]
+fn lean_shorthand_matches_explicit_lean_profile() -> Result<(), Box<dyn Error>> {
+    let shorthand = generate_with(&Paths::example_schema(), "cfg_lean_a", |_| {
+        GenerationConfig::lean("cfg_lean_a")
+    })?;
+    let explicit = generate_with(&Paths::example_schema(), "cfg_lean_a", |c| {
+        c.profile(GenerationProfile::Lean)
+    })?;
+    assert_eq!(
+        shorthand, explicit,
+        "lean() must be exactly new(..).profile(Lean)"
+    );
+    Ok(())
+}
+
+/// `with_module_name` renames the emitted module.
+#[test]
+fn with_module_name_renames_the_generated_module() -> Result<(), Box<dyn Error>> {
+    let src = generate_with(&Paths::example_schema(), "cfg_before", |c| {
+        c.with_module_name("cfg_renamed")
+    })?;
+    // The module name reaches generated output via the sbe_rt path/doc header.
+    assert!(
+        !src.is_empty(),
+        "renamed module must still generate a source module"
+    );
+    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
+    let schema = Schema::from_ir(ir);
+    let modules =
+        Generator::new(GenerationConfig::new("cfg_before").with_module_name("cfg_renamed"))
+            .generate(&schema)?;
+    let m = modules.modules().next().ok_or("no module")?;
+    assert_eq!(
+        m.path, "cfg_renamed.rs",
+        "with_module_name must win over the name passed to new()"
+    );
+    Ok(())
+}
+
+/// `with_error_from_impls` emits `From<EncodeError>` / `From<DecodeError>` for
+/// the caller's error type.
+#[test]
+fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
+    let src = generate_with(&Paths::example_schema(), "cfg_errfrom", |c| {
+        c.with_error_from_impls("crate::MyError")
+    })?;
+    assert!(
+        src.contains("impl From<sbe_rt::EncodeError> for crate::MyError"),
+        "encode error conversion must be generated"
+    );
+    assert!(
+        src.contains("impl From<sbe_rt::DecodeError> for crate::MyError"),
+        "decode error conversion must be generated"
+    );
+    Ok(())
+}
+
+/// A malformed error path is rejected at generation time rather than emitting
+/// source that cannot compile.
+#[test]
+fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>> {
+    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
+    let schema = Schema::from_ir(ir);
+    let err = Generator::new(
+        GenerationConfig::new("cfg_errbad").with_error_from_impls("not a rust type!"),
+    )
+    .generate(&schema)
+    .expect_err("a non-type error path must fail generation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("error-from path") || msg.contains("error_from_path"),
+        "error must name the offending option, got: {msg}"
+    );
+    Ok(())
+}
+
+/// `ConversionSelector::field_path` builds the `FieldPath` variant.
+#[test]
+fn conversion_selector_field_path_constructor() {
+    use ergo_sbe::ConversionSelector;
+    assert_eq!(
+        ConversionSelector::field_path("Car.price"),
+        ConversionSelector::FieldPath("Car.price".to_string()),
+        "field_path must construct the FieldPath variant"
+    );
+}
