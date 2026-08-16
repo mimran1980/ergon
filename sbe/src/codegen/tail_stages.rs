@@ -170,6 +170,31 @@ pub(crate) fn generate_owner_consuming_stages(
         let vd_name_lit = syn::LitStr::new(&vd.name, span);
         let se = start_expr(i);
         let pp = parent_pos_expr(i);
+        // Only the entry decoder carries the `tail_end` one-shot cache, and it
+        // holds the end of the *last* tail component. So the non-consuming
+        // slice accessor can reuse it exactly when this var-data is both the
+        // first and the last tail of a group entry — the common
+        // "group of records, one string each" shape. Mirrors the flat entry
+        // accessor in `group_decoder.rs`; without it the two same-signature
+        // methods on the same type differ only in that this one re-reads and
+        // re-validates a length header the iterator already resolved.
+        let slice_cached_tail = if i == 0 && !initial_has_byte_offset && total_tail == 1 {
+            quote::quote! {
+                // `Iterator::next` cached the complete validated entry extent,
+                // including this prefix and payload.
+                if let Some(end) = self.tail_end.get() {
+                    let data_offset =
+                        self.offset + self.acting_block_length + #prefix_size_lit;
+                    // SAFETY: `tail_end` is only ever set by `encoded_length`
+                    // from `tail_offset_N`, which bounds-checked
+                    // `end <= buf.len()` and `data_offset <= end` before
+                    // caching.
+                    return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                }
+            }
+        } else {
+            quote::quote! {}
+        };
         let mut max_check = proc_macro2::TokenStream::new();
         if let Some(max) = vd.max_length {
             let max_lit = syn::LitInt::new(&max.to_string(), span);
@@ -229,6 +254,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 #slice_doc_tokens
                 #[inline]
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #slice_cached_tail
                     let offset = #se;
                     if offset + #prefix_size_lit > self.buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {

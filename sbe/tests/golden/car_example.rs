@@ -3303,6 +3303,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     ///Cheaper than [`Self::into_usage_description`] when only the bytes are needed.
     #[inline]
     pub fn usage_description_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        if let Some(end) = self.tail_end.get() {
+            let data_offset = self.offset + self.acting_block_length + 4;
+            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+        }
         let offset = self.offset + self.acting_block_length;
         if offset + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
