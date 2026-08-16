@@ -2805,9 +2805,11 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.price(Decimal::new(12345, -2));  // 123.45
-        enc.size(Decimal::new(100, 0));       // 100
+        let enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(12345, -2), // 123.45
+                size: Decimal::new(100, 0),     // 100
+            });
         let encoded = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_decode(&encoded, 0).unwrap();
@@ -2903,9 +2905,11 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.price_wire(Decimal::new(99, -2));
-        enc.size_wire(Decimal::new(3, 0));
+        let enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(99, -2),
+                size: Decimal::new(3, 0),
+            });
         let wire = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_decode(&wire, 0).unwrap();
@@ -2942,9 +2946,11 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
         r#"
         // Wire path: encode via price_wire, decode via price_wire
         let mut buf_wire = [0u8; 256];
-        let mut enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0);
-        enc_wire.price_wire(Decimal::new(12345, -2));
-        enc_wire.size_wire(Decimal::new(100, 0));
+        let enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(12345, -2),
+                size: Decimal::new(100, 0),
+            });
         let wire_bytes = enc_wire.as_bytes_with_header().to_vec();
 
         // Verify wire decode

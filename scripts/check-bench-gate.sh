@@ -8,8 +8,8 @@
 # regression slope, so the gate uses that same estimator (falling back to the
 # median for flat-sampling benchmarks without a slope).
 #
-# The SBE suite has NO noise tolerance: `1.0000` passes and any mathematical
-# ratio above `1.00` fails. The separate cluster policy keeps its tolerance.
+# Both suites have NO noise tolerance: `1.0000` passes and any mathematical
+# ratio above `1.00` fails. A caller-supplied tolerance argument is ignored.
 #
 # With `--run-id <id>` the gate additionally proves provenance: the profile
 # directory must carry a matching `run-manifest.json` and every consumed
@@ -41,9 +41,10 @@ if [[ "$SUITE" != "sbe" && "$SUITE" != "cluster" && "$SUITE" != "all" ]]; then
     exit 2
 fi
 
-# The SBE ceiling is literal. Whatever a caller passes, the SBE suite runs at
-# zero tolerance so `1.0001` can never be waved through as noise.
+# Ceilings are literal. Whatever a caller passes, both suites run at zero
+# tolerance so `1.0001` can never be waved through as noise.
 SBE_TOLERANCE=0
+CLUSTER_TOLERANCE=0
 
 failures=0
 
@@ -196,7 +197,11 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     if [[ "$SUITE" == "all" ]]; then
         echo ""
     fi
-    echo "=== Cluster bench gate (tolerance $NOISE_TOLERANCE) ==="
+    echo "=== Cluster bench gate (strict, tolerance $CLUSTER_TOLERANCE) ==="
+
+    if [ -n "$EXPECTED_RUN_ID" ]; then
+        verify_manifest "$CRITERION_DIR" "$EXPECTED_RUN_ID" || failures=$((failures + 1))
+    fi
 
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool"
@@ -221,7 +226,17 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
             continue
         fi
 
-        check_ratio "$group (ergo-sbe/sbe-tool)" "$ergo_estimate" "$sbe_estimate" 1.00 "$NOISE_TOLERANCE" \
+        if [ -n "$EXPECTED_RUN_ID" ]; then
+            stale=0
+            verify_estimate_run_id "$(estimate_dir "${group}/${ergo_fn}")" "$EXPECTED_RUN_ID" "$group/$ergo_fn" || stale=1
+            verify_estimate_run_id "$(estimate_dir "${group}/${sbe_fn}")" "$EXPECTED_RUN_ID" "$group/$sbe_fn" || stale=1
+            if [ "$stale" -eq 1 ]; then
+                failures=$((failures + 1))
+                continue
+            fi
+        fi
+
+        check_ratio "$group (ergo-sbe/sbe-tool)" "$ergo_estimate" "$sbe_estimate" 1.00 "$CLUSTER_TOLERANCE" \
             || failures=$((failures + 1))
     done
 fi

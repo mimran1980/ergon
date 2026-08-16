@@ -155,6 +155,26 @@ fn complete_manifest(run_id: &str) -> String {
     )
 }
 
+const CLUSTER_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "cluster_encode_session_message_header",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+    ("cluster_encode_session_keep_alive", "ergo-sbe", "sbe-tool"),
+    (
+        "cluster_decode_session_message_header",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+    ("cluster_decode_session_event", "ergo-sbe", "sbe-tool"),
+    (
+        "cluster_encode_claim_shaped_header_plus_app",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+];
+
 fn run_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     Ok(
         Command::new(repository()?.join("scripts/check-bench-gate.sh"))
@@ -163,6 +183,40 @@ fn run_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Er
             .args(extra)
             .output()?,
     )
+}
+
+fn run_cluster_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(
+        Command::new(repository()?.join("scripts/check-bench-gate.sh"))
+            .arg(dir)
+            .args(["0.5", "cluster"])
+            .args(extra)
+            .output()?,
+    )
+}
+
+fn write_all_cluster_pairs(
+    root: &Path,
+    ergo: f64,
+    reference: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (group, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        write_estimate(root, group, ergo_fn, ergo, ergo)?;
+        write_estimate(root, group, ref_fn, reference, reference)?;
+    }
+    Ok(())
+}
+
+fn stamp_cluster_run_ids(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for (group, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        for function in [ergo_fn, ref_fn] {
+            fs::write(
+                estimate_dir(root, group, function).join("run-id.txt"),
+                run_id,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn describe(output: &Output) -> String {
@@ -412,6 +466,56 @@ fn the_runner_gates_exactly_the_directory_it_produces() -> Result<(), Box<dyn st
         profiles,
         vec!["no-lto".to_string(), "lto".to_string()],
         "both optimisation profiles are blocking, so both must appear in the plan"
+    );
+    Ok(())
+}
+
+// ── Cluster provenance + literal 1.00 ──────────────────────────────────────
+
+#[test]
+fn cluster_stamped_results_from_the_expected_run_pass() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    stamp_cluster_run_ids(&criterion.0, RUN_ID)?;
+    write_manifest(&criterion.0, &complete_manifest(RUN_ID))?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        output.status.success(),
+        "correctly stamped cluster results from this run must pass:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_wrong_run_id_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    stamp_cluster_run_ids(&criterion.0, RUN_ID)?;
+    write_manifest(&criterion.0, &complete_manifest(RUN_ID))?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", "deliberately-wrong"])?;
+    assert!(
+        !output.status.success(),
+        "a wrong --run-id must fail the cluster gate instead of scoring a stale tree:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_a_ratio_barely_above_one_fails_even_with_caller_tolerance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.4, 100.0)?;
+
+    // 0.5 is passed as the tolerance argument — cluster must ignore it.
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "cluster runs at zero tolerance regardless of the tolerance argument:\n{}",
+        describe(&output)
     );
     Ok(())
 }

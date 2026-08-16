@@ -322,10 +322,9 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(dec.x(), 1);
         assert_eq!(dec.maybe(), Some(2));
 
-        // apply_nulls() nullifies ALL optional fields (by design).
+        // `fixed(None)` writes the schema null image for optional fields.
         let n2 = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
             .fixed(&MsgFixedFields { x: 99, maybe: None })
-            .apply_nulls()
             .encoded_length_with_header();
         let dec2 = MsgDecoder::try_from(&buf[..n2]).expect("decode");
         assert_eq!(dec2.x(), 99);

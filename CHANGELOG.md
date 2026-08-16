@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Removed
+- **Breaking:** the XSD-shaped validation surface — `validate_against_sbe_xsd`,
+  `parse_with_xsd_validation`, `SBE_XSD`, `XsdValidationError`, and the `xsd`
+  module. It was never a W3C engine, and `parse` already reports malformed XML
+  and a missing `messageSchema` root as span-bearing `ParseError`s. Use `parse`
+  and match on `ParseError` instead.
+
+### Changed
+- Fixed-only encoders now carry `FieldsState`: `as_bytes_with_header`,
+  `as_body_bytes`, `encoded_length*`, and `into_remaining_mut` exist only
+  after `fixed(&FixedFields)`, so a reused buffer cannot publish or pack
+  unwritten required fields.
+- Cluster bench gate uses the same literal `1.00` ceiling as SBE and requires
+  `--run-id` provenance (`just bench-cluster` stamps per-estimate run ids).
+- `check-public-api.sh` strips a leading `v` from `baseline_tag` before
+  passing `--baseline-version` to cargo-semver-checks.
+
+### Fixed
+- Schema `nullValue` / `minValue` / `maxValue` that do not fit the declared
+  primitive width are rejected at parse time (no more `256_u64 as u8`).
+  Signed enum `validValue`s are compared as signed, so `int8` `-1` is
+  accepted when `minValue="-5"` and `maxValue="5"`.
+- Maintained cluster decode benches wrap both arms at the body offset without
+  extra template/schema/version work on the sbe-tool side.
+- Docs-validation temp crates `cargo fetch` before `CARGO_NET_OFFLINE=true`,
+  so a clean CI runner is not missing optional transitive crates.
+
 ## [0.1.17] — 2026-08-14
 
 ### Changed

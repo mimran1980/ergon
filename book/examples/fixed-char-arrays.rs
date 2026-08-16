@@ -1,8 +1,7 @@
-//! Per-field flyweight access — zero-copy, no allocation.
+//! Fixed-width char array access.
 //! Compiled against the feature-tour codec by the book-fence test.
 
-// ANCHOR: flyweight_access
-// Encode a sample car first (normally bytes come from the wire)
+// ANCHOR: char_arrays
 let complete_len = CarEncoder::compute_length()
     .fuel_figures_ragged(0, |_| Ok(()))?
     .performance_figures_ragged(0, |_| Ok(()))?
@@ -33,10 +32,10 @@ let n = CarEncoder::try_wrap_and_apply_header(buf, 0)?
     .activation_code(b"abc")?
     .encoded_length_with_header();
 assert_eq!(n, complete_len);
-// Now decode — read only the fields you need, no DTO allocation:
+
 let car = CarDecoder::try_from(&buf[..n])?;
-assert_eq!(car.serial_number(), 1234);
-assert_eq!(car.model_year(), 2013);
-assert_eq!(car.code(), Model::A);
-assert_eq!(car.engine().capacity(), 2000);
-// ANCHOR_END: flyweight_access
+let mut dst = [0u8; 6];
+assert_eq!(car.copy_vehicle_code(&mut dst), 6);
+assert_eq!(&dst, b"ABCDEF");
+assert_eq!(car.vehicle_code(), *b"ABCDEF");
+// ANCHOR_END: char_arrays

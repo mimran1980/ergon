@@ -7321,8 +7321,10 @@ impl<'a> CarComplete<'a, sbe_rt::HeaderPresent> {
         &self.buf[self.msg_offset..self.offset]
     }
 }
-impl<'a> __sbe_message_sealed::Sealed for CarEncoder<'a> {}
-impl<'a> sbe_rt::SbeMessage for CarEncoder<'a> {
+impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> __sbe_message_sealed::Sealed
+for CarEncoder<'a, H, F> {}
+impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> sbe_rt::SbeMessage
+for CarEncoder<'a, H, F> {
     const TEMPLATE_ID: u16 = 1;
     const BLOCK_LENGTH: usize = 45;
     const SCHEMA_ID: u16 = 1;

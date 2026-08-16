@@ -48,14 +48,21 @@ use ergo_aeron_cluster::cluster_codec_types::*;
 let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
     + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
-// Encode the outer message.
-let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
-enc.leadership_term_id(7).cluster_session_id(99).timestamp(42);
+// Encode the outer message. `fixed()` writes the required body so a reused
+// buffer cannot publish leftover bytes.
+let enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&SessionMessageHeaderFixedFields {
+        leadership_term_id: 7,
+        cluster_session_id: 99,
+        timestamp: 42,
+    });
 
 // into_remaining_mut() returns the unwritten tail.
 SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
-    .leadership_term_id(7)
-    .cluster_session_id(99);
+    .fixed(&SessionKeepAliveFixedFields {
+        leadership_term_id: 7,
+        cluster_session_id: 99,
+    });
 
 // Decode: remaining() gives bytes after the first message.
 let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;
@@ -123,9 +130,9 @@ Every decoder exposes `get_metadata()` which returns a `Metadata` struct:
 | Method | Returns |
 |--------|---------|
 | `buffer()` | The entire original `&[u8]` buffer |
-| `remaining()` | Bytes after this message (`&buffer[message_len..]`) |
-| `message_start()` | Absolute offset of this message within `buffer()` |
-| `message_len()` | Header-inclusive encoded length of this message |
+| `remaining()` | Bytes after the acting fixed block (`&buffer[limit()..]`) |
+| `message_offset()` | Absolute offset of this message's frame start within `buffer()` |
+| `limit()` | End of the acting fixed block (not the full frame when tails follow) |
 
 `remaining()` is the key for chaining — it gives you the exact tail slice where
 the next message begins, zero-copy.

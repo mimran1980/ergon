@@ -1,16 +1,13 @@
 //! Coverage for Java sbe-tool parity features:
-//! field metadata, fixed-array bulk helpers, keyword append, XSD validation,
-//! and domain DTO range checks.
+//! field metadata, fixed-array bulk helpers, keyword append, and domain DTO
+//! range checks.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
 #![allow(clippy::restriction)]
 #![allow(unused)]
 
-use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_shared,
-    parse_with_xsd_validation, validate_against_sbe_xsd,
-};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse, parse_with_shared};
 
 mod common;
 use common::compile_and_run;
@@ -170,32 +167,6 @@ fn keyword_append_rewrites_type_field() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-#[test]
-fn xsd_validation_accepts_and_rejects() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(SBE_XSD.contains("messageSchema"));
-    let good = r#"<?xml version="1.0"?>
-        <messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
-          <types>
-            <composite name="messageHeader">
-              <type name="blockLength" primitiveType="uint16"/>
-              <type name="templateId" primitiveType="uint16"/>
-              <type name="schemaId" primitiveType="uint16"/>
-              <type name="version" primitiveType="uint16"/>
-            </composite>
-            <type name="u32" primitiveType="uint32"/>
-          </types>
-          <message name="M" id="1">
-            <field name="x" id="1" type="u32"/>
-          </message>
-        </messageSchema>"#;
-    validate_against_sbe_xsd(good)?;
-    let _ = parse_with_xsd_validation(good)?;
-
-    let bad = r#"<?xml version="1.0"?><messageSchema id="1" version="0"><types/><message name="M" id="1"><bogus/></message></messageSchema>"#;
-    assert!(validate_against_sbe_xsd(bad).is_err());
-    assert!(parse_with_xsd_validation(bad).is_err());
-    Ok(())
-}
 
 #[test]
 fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error>> {

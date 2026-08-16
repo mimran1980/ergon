@@ -74,11 +74,11 @@ fn assert_session_message_header_encode_parity() {
     let slot = HDR + body;
 
     let mut ergo = vec![0u8; slot];
-    let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
+    let _ = ErgoEncoder::wrap(&mut ergo, 0)
         .leadership_term_id(5)
         .cluster_session_id(42)
-        .timestamp(0)
-        .encoded_length();
+        .timestamp(0);
+    let ergo_body = ErgoEncoder::BLOCK_LENGTH;
 
     let mut sbe_tool = vec![0u8; slot];
     let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), HDR);
@@ -100,10 +100,10 @@ fn assert_session_keep_alive_encode_parity() {
     let slot = HDR + body;
 
     let mut ergo = vec![0u8; slot];
-    let ergo_body = ErgoEncoder::wrap(&mut ergo, 0)
+    let _ = ErgoEncoder::wrap(&mut ergo, 0)
         .leadership_term_id(5)
-        .cluster_session_id(42)
-        .encoded_length();
+        .cluster_session_id(42);
+    let ergo_body = ErgoEncoder::BLOCK_LENGTH;
 
     let mut sbe_tool = vec![0u8; slot];
     let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool), HDR);
@@ -308,33 +308,15 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
 
 // ── Decode: SessionMessageHeader (fixed, 32 bytes) ──────────────────────
 //
-// Equal-work audit (2026-07-18): production ergon `wrap_and_apply_header`
-// always checks buffer length + template_id + schema_id. sbe-tool's
-// `header()` only `debug_assert`s template_id (elided in release). Without
-// matching release checks the sbe-tool arm was under-worked (~1.17× unfair).
+// Equal-work decode: both arms wrap at a proven extent and read the same
+// fields. Neither parses or validates template_id / schema_id / version.
+// Ergo wrap() is extent-only; sbe-tool wrap(body_offset, acting_*) matches
+// that — MessageHeaderDecoder + identity checks would be extra work.
 
 const MSG_HDR_FIXTURE: [u8; 32] = [
     0x18, 0x00, 0x01, 0x00, 0x6f, 0x00, 0x10, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0xd2, 0x02, 0x96, 0x49, 0x00, 0x00, 0x00, 0x00,
 ];
-
-const MSG_HDR_TEMPLATE_ID: u16 = 1;
-const MSG_HDR_SCHEMA_ID: u16 = 111;
-const MSG_HDR_SCHEMA_VERSION: u16 = 16;
-
-#[inline(always)]
-fn sbe_tool_header_ok(
-    template_id: u16,
-    schema_id: u16,
-    version: u16,
-    expected_tid: u16,
-    expected_sid: u16,
-    expected_ver: u16,
-) -> bool {
-    // Same three comparisons ergon decode() performs: template_id, schema_id, version.
-    // Return value is black_box'd so LLVM cannot DCE the checks.
-    black_box(template_id == expected_tid && schema_id == expected_sid && version <= expected_ver)
-}
 
 fn bench_decode_msg_header(c: &mut Criterion) {
     {
@@ -367,29 +349,20 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use reference_sbe::{
-                ReadBuf, message_header_codec::MessageHeaderDecoder,
-                session_message_header_codec::SessionMessageHeaderDecoder,
-            };
+            use reference_sbe::{ReadBuf, session_message_header_codec::SessionMessageHeaderDecoder};
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);
-                // Equal-work: same extent check ergon wrap() performs.
-                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH {
+                let block = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH;
+                // Same extent check ergon wrap() performs. No header identity.
+                if buf.len() < HDR + block {
                     continue;
                 }
-                let rb = ReadBuf::new(buf);
-                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
-                if !sbe_tool_header_ok(
-                    hdr.template_id(),
-                    hdr.schema_id(),
-                    hdr.version(),
-                    MSG_HDR_TEMPLATE_ID,
-                    MSG_HDR_SCHEMA_ID,
-                    MSG_HDR_SCHEMA_VERSION,
-                ) {
-                    continue;
-                }
-                let d = SessionMessageHeaderDecoder::default().header(hdr, 0);
+                let d = SessionMessageHeaderDecoder::default().wrap(
+                    ReadBuf::new(buf),
+                    HDR,
+                    block as u16,
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::SCHEMA_VERSION,
+                );
                 black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
             }
         });
@@ -406,10 +379,6 @@ const SESSION_EVENT_FIXTURE: [u8; 67] = [
     0x6f, 0x6d, 0x65, 0x2d, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c,
 ];
 
-const SESSION_EVENT_TEMPLATE_ID: u16 = 2;
-const SESSION_EVENT_SCHEMA_ID: u16 = 111;
-const SESSION_EVENT_SCHEMA_VERSION: u16 = 16;
-
 fn bench_decode_session_event(c: &mut Criterion) {
     {
         use reference_sbe::{
@@ -422,7 +391,7 @@ fn bench_decode_session_event(c: &mut Criterion) {
         let ergo_leadership_term_id = ergo.leadership_term_id();
         let ergo_leader_member_id = ergo.leader_member_id();
         let ergo_code = ergo.code() as u8;
-        let (ergo_detail, _) = ergo.into_detail().unwrap();
+        let ergo_detail = ergo.detail_slice().unwrap();
 
         let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(&SESSION_EVENT_FIXTURE), 0);
         let mut tool = SessionEventDecoder::default().header(header, 0);
@@ -453,35 +422,32 @@ fn bench_decode_session_event(c: &mut Criterion) {
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
                 let code = dec.code();
-                let (detail, _) = dec.into_detail().unwrap();
+                // Slice only — matches sbe-tool `detail_slice`. `into_detail()`
+                // also constructs the next stage and is more work. `continue`
+                // matches the sbe-tool arm's fail-closed skip (no panic path).
+                let Ok(detail) = dec.detail_slice() else {
+                    continue;
+                };
                 black_box((cid, csid, ltid, lmid, code, detail));
             }
         });
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use reference_sbe::{
-                ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder,
-            };
+            use reference_sbe::{ReadBuf, session_event_codec::SessionEventDecoder};
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
-                // Same extent check ergon decode() performs: header + block must fit.
-                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH {
+                let block = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH;
+                // Same extent check ergon wrap() performs. No header identity.
+                if buf.len() < HDR + block {
                     continue;
                 }
-                let rb = ReadBuf::new(buf);
-                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
-                if !sbe_tool_header_ok(
-                    hdr.template_id(),
-                    hdr.schema_id(),
-                    hdr.version(),
-                    SESSION_EVENT_TEMPLATE_ID,
-                    SESSION_EVENT_SCHEMA_ID,
-                    SESSION_EVENT_SCHEMA_VERSION,
-                ) {
-                    continue;
-                }
-                let mut dec = SessionEventDecoder::default().header(hdr, 0);
+                let mut dec = SessionEventDecoder::default().wrap(
+                    ReadBuf::new(buf),
+                    HDR,
+                    block as u16,
+                    ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::SCHEMA_VERSION,
+                );
                 // Field reads first (matches Ergo order: scalars then detail).
                 let cid = dec.correlation_id();
                 let csid = dec.cluster_session_id();
@@ -503,10 +469,6 @@ fn bench_decode_session_event(c: &mut Criterion) {
 }
 
 // ── Decode: NewLeaderEvent (var-data endpoints) ──────────────────────────
-
-const NEW_LEADER_TEMPLATE_ID: u16 = 3;
-const NEW_LEADER_SCHEMA_ID: u16 = 111;
-const NEW_LEADER_SCHEMA_VERSION: u16 = 16;
 
 fn new_leader_fixture() -> Vec<u8> {
     use ergo_aeron_cluster::cluster_codec_types::{NewLeaderEventEncoder, NewLeaderEventFixedFields};
@@ -569,28 +531,20 @@ fn bench_decode_new_leader(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use reference_sbe::{
-                ReadBuf, message_header_codec::MessageHeaderDecoder, new_leader_event_codec::NewLeaderEventDecoder,
-            };
+            use reference_sbe::{ReadBuf, new_leader_event_codec::NewLeaderEventDecoder};
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(fixture.as_slice());
-                // Equal-work: same extent check ergon wrap() performs.
-                if buf.len() < 8 + ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::BLOCK_LENGTH {
+                let block = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::BLOCK_LENGTH;
+                // Same extent check ergon wrap() performs. No header identity.
+                if buf.len() < HDR + block {
                     continue;
                 }
-                let rb = ReadBuf::new(buf);
-                let hdr = MessageHeaderDecoder::default().wrap(rb, 0);
-                if !sbe_tool_header_ok(
-                    hdr.template_id(),
-                    hdr.schema_id(),
-                    hdr.version(),
-                    NEW_LEADER_TEMPLATE_ID,
-                    NEW_LEADER_SCHEMA_ID,
-                    NEW_LEADER_SCHEMA_VERSION,
-                ) {
-                    continue;
-                }
-                let mut dec = NewLeaderEventDecoder::default().header(hdr, 0);
+                let mut dec = NewLeaderEventDecoder::default().wrap(
+                    ReadBuf::new(buf),
+                    HDR,
+                    block as u16,
+                    ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::SCHEMA_VERSION,
+                );
                 let csid = dec.cluster_session_id();
                 let ltid = dec.leadership_term_id();
                 let lmid = dec.leader_member_id();
@@ -623,11 +577,11 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
         use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder as ToolEncoder};
 
         let mut ergo = vec![0u8; total];
-        let ergo_body = ErgoEncoder::wrap(&mut ergo[..hdr_slot], 0)
+        let _ = ErgoEncoder::wrap(&mut ergo[..hdr_slot], 0)
             .leadership_term_id(5)
             .cluster_session_id(42)
-            .timestamp(0)
-            .encoded_length();
+            .timestamp(0);
+        let ergo_body = ErgoEncoder::BLOCK_LENGTH;
         ergo[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
 
         let mut sbe_tool = vec![0u8; total];

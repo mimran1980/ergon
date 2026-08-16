@@ -1591,11 +1591,17 @@ fn fixed_array_u8_and_i8_patterns() {
             },
         ];
         for a16 in patterns {
-            let mut ebuf = [0u8; 1024];
-            let mut e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0)
-                .fixed(&DemoFixedFields { fixed16_u8: *a16, fixed16_char: *a16, fixed16_ascii_u8: *a16, fixed16_utf8_u8: *a16, ..demo_zero() });
             let i8v: [i8; 16] = core::array::from_fn(|i| a16[i] as i8);
-            e.fixed16i8(i8v);
+            let mut ebuf = [0u8; 1024];
+            let _e = DemoEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&DemoFixedFields {
+                    fixed16_u8: *a16,
+                    fixed16_char: *a16,
+                    fixed16_ascii_u8: *a16,
+                    fixed16_utf8_u8: *a16,
+                    fixed16i8: i8v,
+                    ..demo_zero()
+                });
             let el = DemoEncoder::ENCODED_LENGTH;
 
             let mut tbuf = [0u8; 1024];

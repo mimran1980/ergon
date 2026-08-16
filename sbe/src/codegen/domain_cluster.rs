@@ -1113,12 +1113,14 @@ pub(crate) fn generate_domain_recursive(
                 Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)
             }
         } else {
-            // Fixed-only message: encoder implements AsRef<[u8]>
+            // Fixed-only: setters stay on FieldsUnfixed. Length is the const
+            // frame size — `encoded_length*` is only on FieldsFixed.
             quote::quote! {
                 let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
                 #(#encode_stmts)*
-                Ok(enc.encoded_length() + #encoder_ident::HEADER_LENGTH)
+                let _ = enc;
+                Ok(#encoder_ident::ENCODED_LENGTH)
             }
         };
         ts.extend(quote::quote! {

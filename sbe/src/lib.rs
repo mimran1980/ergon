@@ -44,7 +44,7 @@
 //!
 //! | Layer | Module | Responsibility |
 //! |-------|--------|----------------|
-//! | Schema input | [`xml`], [`xsd`], [`schema`] | Parse SBE XML, optional XSD shape check, [`Schema`] |
+//! | Schema input | [`xml`], [`schema`] | Parse SBE XML, [`Schema`] |
 //! | Intermediate | [`ir`], [`resolve`] | Token stream + offsets / block lengths |
 //! | Options | [`config`] | Module name, conversions, domain objects, … |
 //! | Codegen | [`codegen`] | Rust source modules |
@@ -192,11 +192,6 @@
 //! Field `type` becomes `type_` (default append `"_"`). Override with
 //! [`GenerationConfig::with_keyword_append_token`].
 //!
-//! ## XSD structural check
-//!
-//! Optional CI gate: [`validate_against_sbe_xsd`] or [`parse_with_xsd_validation`].
-//! Official XSD text is embedded as [`SBE_XSD`].
-//!
 //! # Design
 //!
 //! - Wire-compatible with official SBE / sbe-tool baselines where tested
@@ -339,14 +334,6 @@ pub(crate) mod structured_ir;
     clippy::unnecessary_cast
 )]
 pub mod xml;
-/// Optional XSD-shaped validation ([`validate_against_sbe_xsd`], [`SBE_XSD`]).
-#[allow(
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::unwrap_used,
-    clippy::expect_used
-)]
-pub mod xsd;
 
 pub use build::{
     BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_dir, generate_to_out_dir,
@@ -360,11 +347,7 @@ pub use config::{
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
-pub use xml::{
-    ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
-    parse_with_xsd_validation,
-};
-pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
+pub use xml::{ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared};
 
 /// Chrono timestamp converters — feature-gated behind `chrono`.
 ///

@@ -6,6 +6,11 @@ defaults to the encoding type's null sentinel: the maximum value for unsigned
 types (e.g. `255` for `uint8`) and the minimum value for signed types (e.g.
 `-128` for `int8`).
 
+`nullValue` / `minValue` / `maxValue` on a type or field must fit the declared
+primitive width. `nullValue="256"` on `uint8` is a parse error — it would
+otherwise collapse to `0` on the wire and make `Some(0)` indistinguishable from
+`None`. See [Error Diagnostics](../getting-started/error-diagnostics.md).
+
 An early design tried wrapping every enum field in `Option<EventCode>` at the
 field site:
 
@@ -56,7 +61,7 @@ writes the value and `None` writes the exact schema null wire image (including
 nested optional composite members). Dirty buffer reuse is therefore safe when
 you go through `fixed`. Prefer that path for whole-message encodes.
 
-`apply_nulls()` remains as a raw/per-field convenience after
+`apply_nulls()` remains on the unfixed encoder after
 `wrap_and_apply_header` when you set individual optional fields piecemeal
 instead of using `FixedFields`. See
 [Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
@@ -104,7 +109,7 @@ pub fn available(&self) -> BooleanType { … }
 pub fn available_bool(&self) -> Result<bool, DecodeError> { … }
 ```
 
-For enums and other types, the `NullVal` variant remains the canonical
-approach. An opt-in `Option<T>` mapping via configuration is tracked as a
-future enhancement — the wire encoding is compatible either way.
+For enums and other types, the `NullVal` variant remains the default.
+`with_null_as_option` (above) is the opt-in `Option<T>` mapping; the
+wire encoding is identical either way.
 

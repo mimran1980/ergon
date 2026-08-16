@@ -12,10 +12,11 @@ generator produces.
 ## Examples
 
 ```sh
-cargo run --example flyweight       # flyweight codec generation + API surface
-cargo run --example domain_objects  # owned domain-object generation (DTOs)
-cargo run --example l3_nested       # 3-level nested-group API surface
-cargo run --example dump_gen        # dump full generated source to stdout
+# From the repository root — this crate is not a workspace member.
+cargo run --manifest-path samples/sbe-codegen-examples/Cargo.toml --example flyweight
+cargo run --manifest-path samples/sbe-codegen-examples/Cargo.toml --example domain_objects
+cargo run --manifest-path samples/sbe-codegen-examples/Cargo.toml --example l3_nested
+cargo run --manifest-path samples/sbe-codegen-examples/Cargo.toml --example dump_gen
 ```
 
 ## What each shows

@@ -101,6 +101,41 @@ impl PrimitiveType {
             Self::Int64 | Self::UInt64 | Self::Double => 8,
         }
     }
+
+    /// Unsigned integer primitives plus `char` (one octet).
+    pub(crate) const fn is_unsigned_int(self) -> bool {
+        matches!(
+            self,
+            Self::Char | Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64
+        )
+    }
+
+    /// Signed integer primitives.
+    pub(crate) const fn is_signed_int(self) -> bool {
+        matches!(self, Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64)
+    }
+
+    /// Inclusive range for a signed integer primitive.
+    pub(crate) const fn signed_range(self) -> Option<(i64, i64)> {
+        match self {
+            Self::Int8 => Some((i8::MIN as i64, i8::MAX as i64)),
+            Self::Int16 => Some((i16::MIN as i64, i16::MAX as i64)),
+            Self::Int32 => Some((i32::MIN as i64, i32::MAX as i64)),
+            Self::Int64 => Some((i64::MIN, i64::MAX)),
+            _ => None,
+        }
+    }
+
+    /// Maximum inclusive value for an unsigned integer primitive (or `char`).
+    pub(crate) const fn unsigned_max(self) -> Option<u64> {
+        match self {
+            Self::Char | Self::UInt8 => Some(u8::MAX as u64),
+            Self::UInt16 => Some(u16::MAX as u64),
+            Self::UInt32 => Some(u32::MAX as u64),
+            Self::UInt64 => Some(u64::MAX),
+            _ => None,
+        }
+    }
 }
 
 /// How a token is encoded on the wire.

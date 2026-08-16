@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use super::registry::{try_parse_u64_val, value_in_declared_range};
 use super::*;
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 use miette::Diagnostic;
@@ -3085,5 +3086,157 @@ fn malformed_null_value_is_error() -> Result<(), Box<dyn std::error::Error>> {
     let err = parse(xml).expect_err("bad nullValue");
     let s = format!("{err:?}");
     assert!(s.contains("nullValue") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+fn opt_uint8_schema(attr: &str, value: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Opt" primitiveType="uint8" presence="optional" {attr}="{value}"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Opt"/></sbe:message>
+        </sbe:messageSchema>"#
+    )
+}
+
+#[test]
+fn uint8_null_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("nullValue", "256")).expect_err("uint8 nullValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("nullValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_min_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("minValue", "256")).expect_err("uint8 minValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("minValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_max_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("maxValue", "256")).expect_err("uint8 maxValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("maxValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_null_value_negative_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = try_parse_u64_val("-1", Some(PrimitiveType::UInt8)).expect_err("uint8 -1");
+    assert!(
+        err.contains("out of range") || err.contains("not a valid"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_null_value_minus_one_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        try_parse_u64_val("-1", Some(PrimitiveType::Int8))?,
+        Some((-1i8) as u64)
+    );
+    Ok(())
+}
+
+#[test]
+fn signed_declared_range_compares_as_i64() -> Result<(), Box<dyn std::error::Error>> {
+    let minus_five = try_parse_u64_val("-5", Some(PrimitiveType::Int8))?.unwrap();
+    let five = try_parse_u64_val("5", Some(PrimitiveType::Int8))?.unwrap();
+    let minus_one = try_parse_u64_val("-1", Some(PrimitiveType::Int8))?.unwrap();
+    let six = try_parse_u64_val("6", Some(PrimitiveType::Int8))?.unwrap();
+    value_in_declared_range(PrimitiveType::Int8, minus_one, Some(minus_five), Some(five))?;
+    assert!(
+        value_in_declared_range(PrimitiveType::Int8, six, Some(minus_five), Some(five)).is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_enum_value_minus_one_is_inside_minus_five_to_five() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="tiny" primitiveType="int8" minValue="-5" maxValue="5"/>
+            <enum name="E" encodingType="tiny">
+              <validValue name="Neg">-1</validValue>
+              <validValue name="Pos">3</validValue>
+            </enum>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
+        </sbe:messageSchema>"#;
+    parse(xml).map_err(|e| format!("{e:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn int8_enum_value_six_is_above_max_five() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="tiny" primitiveType="int8" minValue="-5" maxValue="5"/>
+            <enum name="E" encodingType="tiny">
+              <validValue name="TooBig">6</validValue>
+            </enum>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("6 is above maxValue=5");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("validValue") || s.contains("range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_null_value_128_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = try_parse_u64_val("128", Some(PrimitiveType::Int8)).expect_err("int8 128");
+    assert!(err.contains("out of range"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn uint8_null_value_255_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        try_parse_u64_val("255", Some(PrimitiveType::UInt8))?,
+        Some(255)
+    );
     Ok(())
 }

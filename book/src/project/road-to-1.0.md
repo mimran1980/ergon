@@ -53,27 +53,27 @@ Cluster may remain `0.x` after sbe 1.0.
 - Changelog: repository root `CHANGELOG.md`.
 - External pilot: [External Schema Pilot](external-pilot.md).
 - Cluster compatibility: [Cluster Compatibility](../cluster/compatibility.md).
-- API baseline manifest: `api/public-api-baseline.toml` (checked by `scripts/check-public-api.sh`).
-- Performance ledger: [Performance Release Ledger](performance-release-ledger.md) —
-  artifacts uploaded to each GitHub release by `.github/workflows/release.yml`.
+- API baseline manifest: `api/public-api-baseline.toml`. `scripts/check-public-api.sh`
+  runs cargo-semver-checks on the two publishable crates. Generated-fixture
+  API extraction is **not** implemented yet (see the manifest header).
+- Benchmark evidence: `just bench` + `just bench-cluster` write
+  provenance-stamped Criterion trees; `scripts/package-bench-artifacts.sh`
+  attaches them to a GitHub release. A number without a matching run-id /
+  HEAD commit is not evidence.
 
-### Status (2026-08-11)
-
-Published tags/releases (not the same as performance proof):
-
-| Version | GitHub release | Benchmark assets |
-|---------|----------------|------------------|
-| 0.1.14 | **none** | n/a |
-| 0.1.15 | published | **zero assets** |
-| 0.1.16 | published | **zero assets** |
-| 0.1.17 | not cut | packaging fixed in-tree (T-15); attach on release |
+### Status (2026-08-16)
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | Baseline manifest created; full semver diff pending 1.0 RC (T-100) |
-| 2. Parity gate at ≤1.00 | Local LTO gates green across 0.1.14–0.1.16 development; **GitHub release assets are missing**, so three-in-a-row with downloadable proof is **not yet sealed** (see [Performance Release Ledger](performance-release-ledger.md)). Historic regression gate added in 0.1.16. Fail-closed packaging lands with 0.1.17. |
-| 3. Wire compatibility | Done (FIX SBE conformance, sbe-tool parity tests) |
-| 4. Warning-free consumers | Done (0.1.14) |
-| 5. Book + migration docs | Done (CHANGELOG.md + book + error-diagnostics, multi-message/framing, miette error page) |
-| 6. External signal | Pilot page created; FIX SBE conformance suite passing |
-| Cluster 1.0 criteria | Compatibility page + CI workflow created; bench-cluster gate active |
+| 1. API-freeze audit | Manifest exists; crate-level cargo-semver-checks runs in CI. Generated-API fixture diffs are **not** enforced. |
+| 2. Parity gate at ≤1.00 | Gate is a literal `1.00` for SBE **and** cluster, with `--run-id` provenance. Three consecutive released minors with downloadable assets are **not** sealed. |
+| 3. Wire compatibility | Dual-encode parity tests and FIX SBE conformance are green. |
+| 4. Trust boundary | Fuzz + Miri fixtures exist; treat any open P0 as blocking. |
+| 5. Docs | Book + migration pages published. |
+| 6. External signal | **Open.** The in-repo FIX SBE suite is internal wire evidence, not an external user or latency case study. |
+| Cluster 1.0 criteria | Separate clock; compatibility page + `just bench-cluster` exist. |
+
+**Release ancestry.** Tag `v0.1.17` exists on GitHub with assets, but it is
+**not** an ancestor of `main` (`git describe --tags` on `main` still reports
+a `v0.1.15-*` describe). Do not treat `v0.1.17` as the tip of published
+history until that tag is merged or a replacement tag is cut from `main`.

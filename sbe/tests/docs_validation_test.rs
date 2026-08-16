@@ -12,9 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd,
-};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
 
 const fn header_and_types() -> &'static str {
     r#"
@@ -314,6 +312,21 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
     )
     .map_err(|e| e.to_string())?;
     let target_dir = tmp_root.join("target");
+    // Fetch first so a clean CI cache has optional/transitive crates
+    // (e.g. rust_decimal → ahash). Then check offline so a later registry
+    // blip cannot flake the compile.
+    let fetch = Command::new("cargo")
+        .args(["fetch", "--quiet", "--manifest-path"])
+        .arg(crate_dir.join("Cargo.toml"))
+        .output()
+        .map_err(|e| format!("spawn cargo fetch: {e}"))?;
+    if !fetch.status.success() {
+        return Err(format!(
+            "cargo fetch failed:\n{}\n{}",
+            String::from_utf8_lossy(&fetch.stdout),
+            String::from_utf8_lossy(&fetch.stderr)
+        ));
+    }
     let out = Command::new("cargo")
         .args(["check", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
@@ -507,6 +520,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 "#,
     )?;
 
+    let fetch = Command::new("cargo")
+        .args(["fetch", "--quiet", "--manifest-path"])
+        .arg(crate_dir.join("Cargo.toml"))
+        .status()?;
+    assert!(fetch.success(), "docs_run cargo fetch failed");
     let status = Command::new("cargo")
         .args(["run", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
@@ -515,13 +533,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .env("CARGO_NET_OFFLINE", "true")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
-    Ok(())
-}
-
-#[test]
-fn xsd_constant_and_validate_align_with_docs() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(SBE_XSD.contains("messageSchema"));
-    validate_against_sbe_xsd(&docs_schema_xml())?;
     Ok(())
 }
 
