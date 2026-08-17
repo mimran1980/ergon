@@ -1,13 +1,16 @@
 //! Coverage for Java sbe-tool parity features:
-//! field metadata, fixed-array bulk helpers, keyword append, and domain DTO
-//! range checks.
+//! field metadata, fixed-array bulk helpers, keyword append, XSD validation,
+//! and domain DTO range checks.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
 #![allow(clippy::restriction)]
 #![allow(unused)]
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse, parse_with_shared};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_shared,
+    parse_with_xsd_validation, validate_against_sbe_xsd,
+};
 
 mod common;
 use common::compile_and_run;
@@ -113,18 +116,107 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(&code, b"ABCDEF");
 
         // vehicle_code_str: pass a short string, auto-padded with zeros.
-        // Use individual setters — no fixed() struct needed.
+        // Individual setters live on the raw writer; it does not advance to
+        // tail stages, so the length is the fixed-only const.
         let mut buf2 = [0u8; MEncoder::compute_length_with_header()];
-        let len2 = MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+        MEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+            .raw_fixed()
             .put_some_numbers(0, 0, 0, 0)
-            .vehicle_code_str("XYZ")?
-            .encoded_length_with_header();
+            .vehicle_code_str("XYZ")?;
+        let len2 = MEncoder::compute_length_with_header();
         let dec2 = MDecoder::try_from(&buf2[..len2])?;
         let mut code2 = [0u8; 6];
         dec2.copy_vehicle_code(&mut code2);
         assert_eq!(&code2, b"XYZ\0\0\0", "short string should be zero-padded");
     "#,
     );
+    Ok(())
+}
+
+#[test]
+fn xsd_validation_accepts_and_rejects() -> Result<(), Box<dyn std::error::Error>> {
+    assert!(SBE_XSD.contains("messageSchema"));
+    let good = r#"<?xml version="1.0"?>
+        <messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="u32" primitiveType="uint32"/>
+          </types>
+          <message name="M" id="1">
+            <field name="x" id="1" type="u32"/>
+          </message>
+        </messageSchema>"#;
+    validate_against_sbe_xsd(good)?;
+    let _ = parse_with_xsd_validation(good)?;
+
+    let bad = r#"<?xml version="1.0"?><messageSchema id="1" version="0"><types/><message name="M" id="1"><bogus/></message></messageSchema>"#;
+    assert!(validate_against_sbe_xsd(bad).is_err());
+    assert!(parse_with_xsd_validation(bad).is_err());
+    Ok(())
+}
+
+/// The validator must accept the vendor extensions and namespaced attributes
+/// that real schemas carry. Each case below was a false rejection: the
+/// published XSD does not declare them, but sbe-tool accepts them, so
+/// rejecting them fails checked-in schemas (`l3-book`, `binance-spot`).
+#[test]
+fn xsd_validation_accepts_real_world_extensions() -> Result<(), Box<dyn std::error::Error>> {
+    let schema = |types_extra: &str, body: &str| {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian"
+               xmlns:mbx="http://binance.com/sbe">
+  <types{types_extra}>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <type name="u32" primitiveType="uint32"/>
+    {body}
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="u32" mbx:exponent="priceExponent"/>
+    <data name="note" id="2" type="varStringEncoding" characterEncoding="UTF-8"/>
+  </message>
+</messageSchema>"#
+        )
+    };
+
+    // Control: the shape itself is valid.
+    validate_against_sbe_xsd(&schema("", ""))?;
+
+    // `package` on <types>, `unit` on <type>.
+    validate_against_sbe_xsd(&schema(r#" package="scoped""#, ""))?;
+    validate_against_sbe_xsd(&schema(
+        "",
+        r#"<type name="qty" primitiveType="uint32" unit="shares"/>"#,
+    ))?;
+
+    // `jsonValue` on <validValue> and on <choice>.
+    validate_against_sbe_xsd(&schema(
+        "",
+        r#"<enum name="Side" encodingType="uint8">
+             <validValue name="Buy" jsonValue="B">1</validValue>
+           </enum>"#,
+    ))?;
+    validate_against_sbe_xsd(&schema(
+        "",
+        r#"<set name="Flags" encodingType="uint8">
+             <choice name="A" jsonValue="a">0</choice>
+           </set>"#,
+    ))?;
+
     Ok(())
 }
 
@@ -166,7 +258,6 @@ fn keyword_append_rewrites_type_field() -> Result<(), Box<dyn std::error::Error>
     );
     Ok(())
 }
-
 
 #[test]
 fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error>> {

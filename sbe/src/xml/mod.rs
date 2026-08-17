@@ -4,6 +4,7 @@
 //! |----------|----------|
 //! | [`parse`] | Schema already in a string |
 //! | [`parse_file`] | Path on disk; resolves `xi:include` relative to the file |
+//! | [`parse_with_xsd_validation`] | Same as [`parse`], after structural XSD check |
 //!
 //! After parse, wrap with [`crate::Schema::from_ir`] and pass to
 //! [`crate::Generator`].
@@ -39,7 +40,9 @@ mod warn;
 #[cfg(test)]
 mod tests;
 
-pub use entry::{parse, parse_file, parse_file_with_shared, parse_with_shared};
+pub use entry::{
+    parse, parse_file, parse_file_with_shared, parse_with_shared, parse_with_xsd_validation,
+};
 pub use error::ParseError;
 
 // Test-visible re-exports of parse internals (xml is already #[doc(hidden)]).

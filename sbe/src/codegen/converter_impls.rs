@@ -261,12 +261,20 @@ pub(crate) fn generate_converter_impls(
         String::new()
     } else {
         // Generic over H so body-only wrap (`HeaderAbsent`) gets conversion
-        // setters, matching ordinary field setters on `impl<H> Encoder`.
+        // setters. Emitted once per *concrete* fields phase, mirroring the
+        // ordinary field setters: these methods delegate to the raw `*_wire`
+        // setters, which live on concrete impls (a generic `impl<H, F>` cannot
+        // resolve them), and the fixed-phase copy is what gives a domain-typed
+        // field a route to a terminal method — `fixed()` accepts wire values
+        // only, so conversions cannot go through it.
         quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #decoder_methods
             }
-            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H> {
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
+                #encoder_methods
+            }
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H, sbe_rt::FieldsFixed> {
                 #encoder_methods
             }
         }

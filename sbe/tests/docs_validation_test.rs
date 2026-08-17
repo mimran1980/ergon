@@ -12,7 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd,
+};
 
 const fn header_and_types() -> &'static str {
     r#"
@@ -466,7 +468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
     let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
     let heartbeat_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-        .seq(7)
+        .fixed(&HeartbeatFixedFields { seq: 7 })
         .encoded_length_with_header();
     let dec = HeartbeatDecoder::try_from(&buf[..heartbeat_len])?;
     assert_eq!(dec.seq(), 7);
@@ -533,6 +535,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .env("CARGO_NET_OFFLINE", "true")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
+    Ok(())
+}
+
+#[test]
+fn xsd_constant_and_validate_align_with_docs() -> Result<(), Box<dyn std::error::Error>> {
+    assert!(SBE_XSD.contains("messageSchema"));
+    validate_against_sbe_xsd(&docs_schema_xml())?;
     Ok(())
 }
 

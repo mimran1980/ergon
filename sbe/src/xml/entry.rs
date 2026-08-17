@@ -7,7 +7,7 @@ use roxmltree::{Document, Node};
 
 use crate::ir::Ir;
 
-use super::error::{Fault, ParseError};
+use super::error::{Fault, ParseError, named_source};
 use super::registry::TypeRegistry;
 use super::schema::parse_schema;
 use super::warn::WarnState;
@@ -51,6 +51,34 @@ pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
         TypeRegistry::from_parsed_schema(shared),
         &warn_state,
     )
+}
+
+/// [`parse`] after [`crate::validate_against_sbe_xsd`].
+///
+/// Use in CI for schema authors. Still not a full W3C XSD engine — see
+/// [`crate::xsd`]. [`parse`] alone already rejects malformed XML, a bad
+/// root, unexpected elements, and unknown attributes; this adds the XSD's
+/// wider element/attribute shape check on top.
+///
+/// # Errors
+///
+/// XSD structural failures or any [`parse`] error.
+#[allow(clippy::result_large_err)]
+pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
+    if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
+        return Err(match &e {
+            crate::xsd::XsdValidationError::MalformedXml(_) => {
+                ParseError::malformed_xml("<xml>", e.to_string(), xml)
+            }
+            _ => ParseError::Invalid {
+                what: "SBE schema".into(),
+                value: e.to_string(),
+                source_code: named_source("<xml>", xml),
+                span: None,
+            },
+        });
+    }
+    parse(xml)
 }
 
 /// Parse a schema file; resolve `xi:include` relative to the file's directory.

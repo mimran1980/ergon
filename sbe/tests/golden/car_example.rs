@@ -6608,6 +6608,118 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
     }
 }
+impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
+    #[inline]
+    pub fn serial_number(&mut self, val: u64) -> &mut Self {
+        let offset = self.msg_offset + 8;
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 8)
+                .copy_from_slice(&val.to_le_bytes());
+        }
+        self
+    }
+    #[inline]
+    pub fn model_year(&mut self, val: u16) -> &mut Self {
+        let offset = self.msg_offset + 16;
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 2)
+                .copy_from_slice(&val.to_le_bytes());
+        }
+        self
+    }
+    #[inline]
+    pub fn available(&mut self, val: BooleanType) -> &mut Self {
+        let offset = self.msg_offset + 18;
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+        self.buf[self.msg_offset + 18] = val as u8;
+        self
+    }
+    #[inline]
+    pub fn code(&mut self, val: Model) -> &mut Self {
+        let offset = self.msg_offset + 19;
+        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
+        let offset = self.msg_offset + 20;
+        let mut idx = 0usize;
+        while idx < 4 {
+            unsafe {
+                self.buf
+                    .get_unchecked_mut(offset + idx * 4..offset + (idx + 1) * 4)
+                    .copy_from_slice(&val[idx].to_le_bytes());
+            }
+            idx += 1;
+        }
+        self
+    }
+    #[inline]
+    pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
+        self.some_numbers([v0, v1, v2, v3])
+    }
+    #[inline]
+    pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
+        let offset = self.msg_offset + 36;
+        unsafe {
+            let dst = self.buf.get_unchecked_mut(offset..offset + 6);
+            let src = core::slice::from_raw_parts(val.as_ptr() as *const u8, 6);
+            dst.copy_from_slice(src);
+        }
+        self
+    }
+    #[inline]
+    pub fn vehicle_code_str(
+        &mut self,
+        src: &str,
+    ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if src.len() > 6 {
+            return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                field: "vehicleCode",
+                max_length: 6,
+                actual: src.len(),
+            });
+        }
+        let mut tmp = [0 as u8; 6];
+        let bytes = src.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            tmp[i] = bytes[i] as u8;
+            i += 1;
+        }
+        Ok(self.vehicle_code(tmp))
+    }
+    #[inline]
+    pub fn put_vehicle_code(
+        &mut self,
+        v0: u8,
+        v1: u8,
+        v2: u8,
+        v3: u8,
+        v4: u8,
+        v5: u8,
+    ) -> &mut Self {
+        self.vehicle_code([v0, v1, v2, v3, v4, v5])
+    }
+    #[inline]
+    pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
+        let offset = self.msg_offset + 42;
+        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
+        self
+    }
+    #[inline]
+    pub fn engine(&mut self, val: Engine) -> &mut Self {
+        let offset = self.msg_offset + 43;
+        self.buf[offset..offset + 10].copy_from_slice(&val.0);
+        self
+    }
+}
 /// Buffer-placement metadata. Holds a reference to the parent encoder
 /// — zero-copy. Utility methods live here so no schema field can
 /// collide with them.

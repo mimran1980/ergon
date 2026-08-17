@@ -242,6 +242,13 @@ pub(crate) fn generate_message_encoder(
     // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
     let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
+    // Phase transitions (`fixed()` / `raw_fixed()`) — these must stay on the
+    // unfixed phase, unlike the individual setters, which are safe in either
+    // phase. Splitting them is what lets a conversion setter (`*_from`) reach
+    // a terminal method: it can run after `fixed()` has proven every required
+    // field written, instead of being stranded on an encoder that can never
+    // complete.
+    let mut phase_contents = proc_macro2::TokenStream::new();
     // Individual setters for `raw_fixed()` writer (body-relative offsets).
     let mut raw_impl_contents = proc_macro2::TokenStream::new();
     // Root encoder always carries FieldsState so completion byte views (and
@@ -984,7 +991,7 @@ pub(crate) fn generate_message_encoder(
              composite members). Returns the encoder ready for ordered tail methods."
         );
         let fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&fixed_doc);
-        impl_contents.extend(quote::quote! {
+        phase_contents.extend(quote::quote! {
             #fixed_doc_tokens
             // `inline(always)`, not `inline`: T-13 added a null-image `else`
             // arm per optional field, which pushed this body past LLVM's
@@ -1035,7 +1042,7 @@ pub(crate) fn generate_message_encoder(
                 #raw_impl_contents
             }
         });
-        impl_contents.extend(quote::quote! {
+        phase_contents.extend(quote::quote! {
             #raw_fixed_doc_tokens
             #[inline]
             #[must_use]
@@ -1056,9 +1063,25 @@ pub(crate) fn generate_message_encoder(
             #impl_consts
         }
     });
-    // Fixed-field setters + fixed() live on the unfixed phase.
+    // Unfixed phase: setters plus the phase transitions. Emitted as one
+    // concrete impl, exactly as before — these are the benchmarked hot paths
+    // (`encode_scalar_body_only`, `optional_enum_nullify`), and relocating
+    // them into a generic `impl<H, F>` measurably regressed both against
+    // sbe-tool. Keep this block concrete and unsplit.
     ts.extend(quote::quote! {
         impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
+            #impl_contents
+            #phase_contents
+        }
+    });
+    // Fixed phase: the same individual setters again, so a conversion setter
+    // (`*_from`) can run after `fixed()` and still reach a terminal method —
+    // `fixed()` takes wire values, so a domain-typed field has no other route
+    // to completion. Phase transitions are deliberately absent: `fixed()`
+    // stays one-way, so terminal methods remain locked until every required
+    // field is written.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
             #impl_contents
         }
     });

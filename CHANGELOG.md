@@ -2,12 +2,21 @@
 
 ## [Unreleased]
 
-### Removed
-- **Breaking:** the XSD-shaped validation surface — `validate_against_sbe_xsd`,
-  `parse_with_xsd_validation`, `SBE_XSD`, `XsdValidationError`, and the `xsd`
-  module. It was never a W3C engine, and `parse` already reports malformed XML
-  and a missing `messageSchema` root as span-bearing `ParseError`s. Use `parse`
-  and match on `ParseError` instead.
+### Added
+- Reject unknown attributes on `<messageSchema>`, `<message>`, `<field>`,
+  `<group>`, and `<data>` at parse time, so an authoring typo (`presense`,
+  `semanticTpye`) is an error instead of being silently ignored. Namespaced
+  attributes (`xsi:*`, `xi:*`, and vendor namespaces such as Binance's
+  `mbx:*`) are outside the SBE grammar and still pass.
+
+### Fixed
+- `validate_against_sbe_xsd` no longer rejects valid real-world schemas. It
+  dropped every namespaced vendor attribute check (`mbx:exponent`) on the
+  floor, and its allow-lists omitted `characterEncoding` on `<data>`, `unit`
+  on `<type>`, `jsonValue` on `<validValue>` / `<choice>`, and `package` on
+  `<types>` — enough to reject checked-in `l3-book` and `binance-spot`
+  schemas. Attribute allow-lists are now shared with the parser so the two
+  cannot drift apart.
 
 ### Changed
 - Fixed-only encoders now carry `FieldsState`: `as_bytes_with_header`,

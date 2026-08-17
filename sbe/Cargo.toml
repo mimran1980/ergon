@@ -13,6 +13,7 @@ homepage.workspace = true
 authors.workspace = true
 include = [
     "src/**/*.rs",
+    "src/**/*.xsd",
     "README.md",
     "Cargo.toml",
 ]
