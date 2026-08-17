@@ -450,14 +450,14 @@ pub enum BooleanType {
     NullVal = 255,
 }
 impl BooleanType {
-    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced.
+    /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
-    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             0 => Self::F,
@@ -540,14 +540,14 @@ pub enum Model {
     NullVal = 0,
 }
 impl Model {
-    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced.
+    /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
-    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'A' => Self::A,
@@ -608,14 +608,14 @@ pub enum BoostType {
     NullVal = 0,
 }
 impl BoostType {
-    /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-    /// regression when forced.
+    /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
-    /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
+    #[inline]
     pub const fn from_raw(val: u8) -> Self {
         match val {
             b'T' => Self::TURBO,
