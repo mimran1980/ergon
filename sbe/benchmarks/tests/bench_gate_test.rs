@@ -572,3 +572,49 @@ fn cluster_a_ratio_barely_above_one_fails_even_with_caller_tolerance()
     );
     Ok(())
 }
+
+// The two cluster *decode* benches carry a documented 1.01 noise-floor ceiling
+// (they decode a static fixture and measure a tie). Pin that boundary so a
+// silent revert to 1.00 is caught, mirroring the SBE nullify tests above.
+
+#[test]
+fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    // Encode pairs at 1.00; the two decode pairs at 1.005 (above every 1.00
+    // ceiling, below the decode 1.01). The verdict hinges on the decode pairs.
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    for (group, ergo_fn) in [
+        ("cluster_decode_session_message_header", "ergo-sbe"),
+        ("cluster_decode_session_event", "ergo-sbe"),
+    ] {
+        write_estimate(&criterion.0, group, ergo_fn, 100.5, 100.5)?;
+    }
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        output.status.success(),
+        "cluster decode at 1.005 is a documented tie and must pass under its 1.01 ceiling:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_decode_still_fails_above_its_noise_floor() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    for (group, ergo_fn) in [
+        ("cluster_decode_session_message_header", "ergo-sbe"),
+        ("cluster_decode_session_event", "ergo-sbe"),
+    ] {
+        write_estimate(&criterion.0, group, ergo_fn, 101.5, 101.5)?;
+    }
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "cluster decode at 1.015 exceeds its 1.01 ceiling and must fail:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
