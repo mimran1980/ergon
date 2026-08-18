@@ -101,12 +101,12 @@ For `BooleanType` fields, ergon emits a `_bool()` accessor alongside the
 standard enum getter:
 
 ```rust,ignore
-// Standard getter — returns the enum variant
-pub fn available(&self) -> BooleanType { … }
+// Standard getter — returns the enum variant (raw wire discriminant).
+pub fn available_wire(&self) -> BooleanType { … }
 
 // Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
 // Required fields → Result<bool, DecodeError>; optional → Option<bool>.
-pub fn available_bool(&self) -> Result<bool, DecodeError> { … }
+pub fn try_available_bool(&self) -> Result<bool, DecodeError> { … }
 ```
 
 For enums and other types, the `NullVal` variant remains the default.

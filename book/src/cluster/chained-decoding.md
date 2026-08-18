@@ -19,14 +19,14 @@ let len_b = MsgBEncoder::compute_length_with_header(data_b.len());
 let mut buf = vec![0u8; len_a + len_b];
 
 // Encode MsgA at offset 0.
-let a_len = MsgAEncoder::wrap_and_apply_header(&mut buf[..len_a], 0)?
+let a_len = MsgAEncoder::wrap_and_apply_header(&mut buf[..len_a], 0)
     .fixed(&fields_a)
     .data(data_a)?
     .encoded_length_with_header();
 assert_eq!(a_len, len_a);
 
 // Encode MsgB at offset len_a.
-let b_len = MsgBEncoder::wrap_and_apply_header(&mut buf[len_a..], 0)?
+let b_len = MsgBEncoder::wrap_and_apply_header(&mut buf[len_a..], 0)
     .fixed(&fields_b)
     .data(data_b)?
     .encoded_length_with_header();
@@ -90,8 +90,9 @@ fn dispatch(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         AnyMessage::SessionEvent(decoder) => {
+            let code = decoder.code();
             let (detail, _) = decoder.into_detail_as_str()?;
-            println!("event {}: {detail}", decoder.code());
+            println!("event {code}: {detail}");
         }
         AnyMessage::NewLeaderEvent(decoder) => {
             let (endpoints, _) = decoder.into_ingress_endpoints_as_str()?;

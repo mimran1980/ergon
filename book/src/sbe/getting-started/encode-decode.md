@@ -53,8 +53,9 @@ optional behind:
 
 ```rust,ignore
 // `price` is optional; None writes the schema null image, not stale bytes.
-let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)?
-    .fixed(&QuoteFixedFields { symbol: *b"IBM     ", price: None })
+// (Illustrative — use your schema's message name and optional field.)
+let len = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+    .fixed(&OrderFixedFields { symbol: *b"IBM     ", price: None })
     .encoded_length_with_header();
 ```
 
