@@ -118,6 +118,28 @@ pub(crate) fn try_parse_u64_val(
             }
             return Err(format!("'{s}' is not a valid float null/min/max value"));
         }
+        Some(prim) if prim.is_unsigned_int() => {
+            let v = s
+                .parse::<u64>()
+                .map_err(|_| format!("'{s}' is not a valid integer null/min/max value"))?;
+            if let Some(max) = prim.unsigned_max()
+                && v > max
+            {
+                return Err(format!("'{s}' is out of range for {prim:?}"));
+            }
+            return Ok(Some(v));
+        }
+        Some(prim) if prim.is_signed_int() => {
+            let v = s
+                .parse::<i64>()
+                .map_err(|_| format!("'{s}' is not a valid integer null/min/max value"))?;
+            if let Some((min, max)) = prim.signed_range()
+                && !(min..=max).contains(&v)
+            {
+                return Err(format!("'{s}' is out of range for {prim:?}"));
+            }
+            return Ok(Some(v as u64));
+        }
         _ => {}
     }
     if let Ok(v) = s.parse::<u64>() {
@@ -127,6 +149,45 @@ pub(crate) fn try_parse_u64_val(
     } else {
         Err(format!("'{s}' is not a valid integer null/min/max value"))
     }
+}
+
+/// Compare a parsed wire-bit pattern against declared min/max.
+///
+/// Signed values are stored as `v as u64` two's-complement bits. Comparing
+/// those bits as unsigned rejects legal negatives (`int8` `-1` vs `maxValue=5`).
+pub(crate) fn value_in_declared_range(
+    prim: PrimitiveType,
+    value_bits: u64,
+    min_bits: Option<u64>,
+    max_bits: Option<u64>,
+) -> Result<(), String> {
+    if prim.is_signed_int() {
+        let v = value_bits as i64;
+        if let Some(min) = min_bits {
+            let min = min as i64;
+            if v < min {
+                return Err(format!("{v}: below encodingType minValue {min}"));
+            }
+        }
+        if let Some(max) = max_bits {
+            let max = max as i64;
+            if v > max {
+                return Err(format!("{v}: above encodingType maxValue {max}"));
+            }
+        }
+        return Ok(());
+    }
+    if let Some(min) = min_bits
+        && value_bits < min
+    {
+        return Err(format!("{value_bits}: below encodingType minValue {min}"));
+    }
+    if let Some(max) = max_bits
+        && value_bits > max
+    {
+        return Err(format!("{value_bits}: above encodingType maxValue {max}"));
+    }
+    Ok(())
 }
 
 /// Resolve a type reference to a list of tokens.

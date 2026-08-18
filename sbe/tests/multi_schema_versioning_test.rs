@@ -781,3 +781,85 @@ fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+// ── Shared boolean enum domain type (no conflicting impls) ───────────────
+
+/// A boolean enum shared across two schemas, mapped to `bool` via
+/// `with_domain_type`, must emit its `TryFromSbe`/`TryToSbe` impl exactly once
+/// — in the module that owns `sbe_rt`. Emitting it in the importing module too
+/// produced "conflicting implementations of trait `TryFromSbe<BooleanType>`
+/// for type `bool`" across the two modules.
+#[test]
+fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::Error>> {
+    fn schema(pkg: &str, id: u16, msg: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="{pkg}" id="{id}" version="0" byteOrder="littleEndian" headerType="messageHeader">
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <enum name="BooleanType" encodingType="uint8">
+    <validValue name="F">0</validValue>
+    <validValue name="T">1</validValue>
+  </enum>
+</types>
+<sbe:message name="{msg}" id="1">
+  <field name="flag" id="1" type="BooleanType"/>
+</sbe:message>
+</sbe:messageSchema>"#
+        )
+    }
+
+    let ir_a = ergo_sbe::parse(&schema("a", 101, "AMsg"))?;
+    let ir_b = ergo_sbe::parse(&schema("b", 202, "BMsg"))?;
+    let schema_a = Schema::from_ir(ir_a);
+    let schema_b = Schema::from_ir(ir_b);
+
+    let config = GenerationConfig::new("multi")
+        .with_shared_module("common_types")
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("BooleanType"),
+            "bool",
+        );
+    let mut g = Generator::new(config);
+    let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;
+    let mods: Vec<_> = modules.modules().collect();
+
+    // The bool impl must appear once (in the shared owner) and never in the
+    // importing module, or the two-module crate fails to compile.
+    let owner_has_impl = mods[0]
+        .source
+        .contains("impl TryFromSbe<BooleanType> for bool");
+    let importer_has_impl = mods[1]
+        .source
+        .contains("impl TryFromSbe<BooleanType> for bool");
+    assert!(owner_has_impl, "shared owner must emit the bool impl");
+    assert!(
+        !importer_has_impl,
+        "importing module must NOT re-emit the bool impl (conflicting implementation)"
+    );
+
+    // And the two modules compile together and the accessor round-trips.
+    compile_and_run_two_modules(
+        "bool_multi",
+        "common_types",
+        &mods[0].source,
+        "market_data",
+        &mods[1].source,
+        r#"
+        let mut buf = [0u8; 256];
+        let len = common_types::AMsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&common_types::AMsgFixedFields { flag: common_types::BooleanType::T })
+            .encoded_length_with_header();
+        let dec = common_types::AMsgDecoder::try_decode(&buf[..len], 0)?;
+        assert_eq!(dec.try_flag()?, true);
+        "#,
+    );
+
+    Ok(())
+}

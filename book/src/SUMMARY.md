@@ -74,6 +74,5 @@
 - [AI Assistance Disclosure](./project/ai-assistance.md)
 - [Verification & Release](./project/verification.md)
 - [Road to 1.0](./project/road-to-1.0.md)
-- [Performance Release Ledger](./project/performance-release-ledger.md)
 - [External Schema Pilot](./project/external-pilot.md)
 - [Package Scope](./project/package-scope.md)

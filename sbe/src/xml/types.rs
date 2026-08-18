@@ -14,7 +14,7 @@ use super::attr::{
 use super::error::Fault;
 use super::registry::{
     TypeRegistry, compute_type_size, estimate_composite_member_size, parse_u64_val,
-    resolve_type_to_tokens,
+    resolve_type_to_tokens, value_in_declared_range,
 };
 use super::warn::{WarnState, warn_once};
 
@@ -664,50 +664,13 @@ pub(crate) fn parse_enum(
                 }
             }
             // Enum values must lie within the encoding type's min/max when set.
-            if let Some(parsed_val) = parse_u64_val(val_text, Some(encoding_type)) {
-                if let Some(min) = encoding_min {
-                    if parsed_val < min {
-                        return Err(Fault::invalid(
-                            child,
-                            "validValue range",
-                            format!("{val_text}: below encodingType minValue {min}"),
-                        ));
-                    }
-                }
-                if let Some(max) = encoding_max {
-                    if parsed_val > max {
-                        return Err(Fault::invalid(
-                            child,
-                            "validValue range",
-                            format!("{val_text}: above encodingType maxValue {max}"),
-                        ));
-                    }
-                }
-            } else if !val_text.is_empty() {
-                // Signed negative values (e.g. null sentinel candidates) still
-                // violate min/max when the encoding type constrains the range.
-                if let Ok(signed) = val_text.parse::<i64>() {
-                    if let Some(min) = encoding_min {
-                        // min_value stored as u64; compare when non-negative path fails
-                        if signed < 0 {
-                            return Err(Fault::invalid(
-                                child,
-                                "validValue range",
-                                format!("{val_text}: outside encodingType minValue {min}"),
-                            ));
-                        }
-                    }
-                    if encoding_min.is_some() || encoding_max.is_some() {
-                        // Negative values are always out of a positive min/max range.
-                        if signed < 0 {
-                            return Err(Fault::invalid(
-                                child,
-                                "validValue range",
-                                format!("{val_text}: outside encodingType min/max range"),
-                            ));
-                        }
-                    }
-                }
+            // Signed min/max are stored as two's-complement `u64` bits — compare
+            // as `i64` so `int8` `-1` is inside `-5..=5`.
+            if let Some(parsed_val) = parse_u64_val(val_text, Some(encoding_type))
+                && let Err(why) =
+                    value_in_declared_range(encoding_type, parsed_val, encoding_min, encoding_max)
+            {
+                return Err(Fault::invalid(child, "validValue range", why));
             }
 
             validate_sbe_name(child, &val_name, "validValue @name")?;

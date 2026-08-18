@@ -1300,12 +1300,22 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
 
     // ── encode via converter methods (*_from) ───────────────────────
     // Verify the converter-aware encoder also produces correct wire values.
-    let mut buf2 = vec![0u8; EventEncoder::ENCODED_LENGTH];
-    EventEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+    let mut buf2 = [0u8; EventEncoder::ENCODED_LENGTH];
+    // Converter setters run after `fixed()` has proven every required field
+    // written, so they reach a terminal method: this is the completion path
+    // for domain-typed fields, which `fixed()` itself cannot take (it accepts
+    // wire values only).
+    let converter_len = EventEncoder::try_wrap_and_apply_header(&mut buf2, 0)?
+        .fixed(&EventFixedFields {
+            created_at:  TimestampNanos([0u8; 8]),
+            updated_at:  TimestampMicros([0u8; 8]),
+            received_at: TimestampMillis([0u8; 8]),
+        })
         .created_at_from(&nanos_ts)?
         .updated_at_from(&micros_ts)?
         .received_at_from(&millis_ts)?
         .encoded_length_with_header();
+    assert_eq!(converter_len, EventEncoder::ENCODED_LENGTH);
     // Bytes after the header must match between raw-wire encode and converter encode.
     assert_eq!(&buf[8..], &buf2[8..],
         "converter encode and raw-wire encode must produce identical bytes");

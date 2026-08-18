@@ -56,7 +56,9 @@ pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
 /// [`parse`] after [`crate::validate_against_sbe_xsd`].
 ///
 /// Use in CI for schema authors. Still not a full W3C XSD engine — see
-/// [`crate::xsd`].
+/// [`crate::xsd`]. [`parse`] alone already rejects malformed XML, a bad
+/// root, unexpected elements, and unknown attributes; this adds the XSD's
+/// wider element/attribute shape check on top.
 ///
 /// # Errors
 ///

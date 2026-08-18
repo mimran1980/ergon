@@ -1,7 +1,8 @@
 //! Unit tests for the XML parser.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use super::registry::{try_parse_u64_val, value_in_declared_range};
 use super::*;
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 use miette::Diagnostic;
@@ -1110,6 +1111,79 @@ fn invalid_primitive_error_renders_source_snippet_via_miette()
 }
 
 /// Walk up to find the workspace root (where the top-level Cargo.toml lives).
+/// The opt-in XSD validator must never reject a schema [`parse`] accepts.
+///
+/// This swept up six real bugs: it dropped namespaced vendor attributes
+/// (`mbx:exponent`) on the floor, and its allow-lists omitted
+/// `characterEncoding` on `<data>`, `unit` on `<type>`, `jsonValue` on
+/// `<validValue>`/`<choice>`, and `package` on `<types>` — between them enough
+/// to reject the checked-in `l3-book` and `binance-spot` schemas. It also
+/// required `@version`, which upstream sbe-tool's own fixtures omit.
+///
+/// Unit tests with hand-written schemas cannot catch this class of bug; only
+/// the real corpus can, so the corpus is the assertion.
+///
+/// **Scope:** this catches the validator being *stricter than the parser* —
+/// i.e. drift in the lists `xsd.rs` owns alone (`<types>`, `<type>`,
+/// `<composite>`, `<enum>`, `<set>`, `<validValue>`, `<choice>`). It cannot
+/// catch a regression in the lists both share via `schema_attrs`, because
+/// breaking one of those makes `parse` reject the same schema, which the
+/// parser-valid filter below then skips. Shared-list coverage comes from
+/// `grammar_attributes_absent_from_the_fixture_corpus_are_accepted` and from
+/// every fixture-driven test in the suite.
+#[test]
+fn xsd_validator_accepts_every_parser_valid_schema() -> Result<(), Box<dyn std::error::Error>> {
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect(&p, out);
+            } else if p.extension().is_some_and(|x| x == "xml") {
+                out.push(p);
+            }
+        }
+    }
+
+    let root = workspace_root();
+    let mut files = Vec::new();
+    for sub in ["sbe/tests", "samples", "cluster/schemas"] {
+        collect(&root.join(sub), &mut files);
+    }
+    files.sort();
+
+    let mut checked = 0usize;
+    let mut bad = Vec::new();
+    for f in &files {
+        let Ok(xml) = std::fs::read_to_string(f) else {
+            continue;
+        };
+        // Only schemas the parser itself accepts are in scope — a negative
+        // fixture proves nothing about the validator.
+        if parse(&xml).is_err() {
+            continue;
+        }
+        checked += 1;
+        if let Err(e) = crate::xsd::validate_against_sbe_xsd(&xml) {
+            bad.push(format!("{}: {e}", f.display()));
+        }
+    }
+
+    assert!(
+        checked > 100,
+        "expected the schema corpus to be found; only {checked} parsed"
+    );
+    assert!(
+        bad.is_empty(),
+        "XSD validator rejected {} schema(s) the parser accepts:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+    Ok(())
+}
+
 fn workspace_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
@@ -2464,6 +2538,111 @@ const HEADER_TYPES: &str = r#"
   <type name="version" primitiveType="uint16"/>
 </composite>"#;
 
+/// An unknown attribute is an authoring typo — `presense` for `presence`
+/// silently drops the intent, so the parser must reject it rather than
+/// ignore it. Namespaced attributes (`xsi:*`, `xi:*`) are outside the SBE
+/// grammar and must still pass.
+#[test]
+fn unknown_attributes_are_rejected_but_namespaced_ones_pass()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema = |schema_attrs: &str, field_attrs: &str| {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian"{schema_attrs}>
+  <types>{HEADER_TYPES}
+    <type name="u32" primitiveType="uint32"/>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="u32"{field_attrs}/>
+  </message>
+</messageSchema>"#
+        )
+    };
+
+    // Control: the same schema with no stray attribute parses, so a failure
+    // below is the attribute and not a malformed fixture.
+    parse(&schema("", ""))?;
+
+    // Typo on the root element.
+    assert!(matches!(
+        parse(&schema(r#" bogusAttr="x""#, "")).unwrap_err(),
+        ParseError::Invalid { .. }
+    ));
+
+    // Typo on a field — `presense` is the classic one.
+    assert!(matches!(
+        parse(&schema("", r#" presense="optional""#)).unwrap_err(),
+        ParseError::Invalid { .. }
+    ));
+
+    // Namespaced attributes are not part of the SBE grammar; they must pass.
+    parse(&schema(
+        r#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="sbe.xsd""#,
+        "",
+    ))?;
+
+    Ok(())
+}
+
+/// Guards the allow-list entries that no checked-in schema exercises.
+///
+/// The lists are the union of the SBE XSD grammar with what real schemas
+/// carry, because neither source alone is complete: the corpus omits valid
+/// grammar attributes, and the published XSD omits `constantValue` /
+/// `length` / `nullValue` / `characterEncoding` that sbe-tool accepts. The
+/// 160-schema fixture corpus defends the second half; nothing but this test
+/// defends the first, so dropping one of these would reject valid SBE with
+/// every repository test still green.
+#[test]
+fn grammar_attributes_absent_from_the_fixture_corpus_are_accepted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema = |field_attrs: &str, data_attrs: &str| {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}
+    <type name="u32" primitiveType="uint32"/>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="u32"{field_attrs}/>
+    <data name="note" id="2" type="varStringEncoding"{data_attrs}/>
+  </message>
+</messageSchema>"#
+        )
+    };
+
+    // Control first: the bare shape must parse.
+    parse(&schema("", ""))?;
+
+    // `<data>` is typed `sbe:fieldType` by the XSD, so it takes the full
+    // field attribute set — not the narrower list one might hand-write.
+    for attr in [
+        r#" epoch="unix""#,
+        r#" timeUnit="nanosecond""#,
+        r#" offset="0""#,
+        r#" semanticType="Length""#,
+    ] {
+        parse(&schema("", attr)).map_err(|e| format!("<data>{attr} must be accepted, got: {e}"))?;
+    }
+
+    // Grammar-declared field attributes no fixture happens to use.
+    for attr in [
+        r#" minValue="0""#,
+        r#" maxValue="99""#,
+        r#" epoch="unix""#,
+        r#" timeUnit="nanosecond""#,
+    ] {
+        parse(&schema(attr, ""))
+            .map_err(|e| format!("<field>{attr} must be accepted, got: {e}"))?;
+    }
+
+    Ok(())
+}
+
 #[test]
 fn include_of_message_schema_wrapped_types_registers_types()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -3085,5 +3264,157 @@ fn malformed_null_value_is_error() -> Result<(), Box<dyn std::error::Error>> {
     let err = parse(xml).expect_err("bad nullValue");
     let s = format!("{err:?}");
     assert!(s.contains("nullValue") || s.contains("Invalid"), "{s}");
+    Ok(())
+}
+
+fn opt_uint8_schema(attr: &str, value: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Opt" primitiveType="uint8" presence="optional" {attr}="{value}"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Opt"/></sbe:message>
+        </sbe:messageSchema>"#
+    )
+}
+
+#[test]
+fn uint8_null_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("nullValue", "256")).expect_err("uint8 nullValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("nullValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_min_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("minValue", "256")).expect_err("uint8 minValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("minValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_max_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(&opt_uint8_schema("maxValue", "256")).expect_err("uint8 maxValue=256");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("maxValue") || s.contains("out of range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uint8_null_value_negative_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = try_parse_u64_val("-1", Some(PrimitiveType::UInt8)).expect_err("uint8 -1");
+    assert!(
+        err.contains("out of range") || err.contains("not a valid"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_null_value_minus_one_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        try_parse_u64_val("-1", Some(PrimitiveType::Int8))?,
+        Some((-1i8) as u64)
+    );
+    Ok(())
+}
+
+#[test]
+fn signed_declared_range_compares_as_i64() -> Result<(), Box<dyn std::error::Error>> {
+    let minus_five = try_parse_u64_val("-5", Some(PrimitiveType::Int8))?.unwrap();
+    let five = try_parse_u64_val("5", Some(PrimitiveType::Int8))?.unwrap();
+    let minus_one = try_parse_u64_val("-1", Some(PrimitiveType::Int8))?.unwrap();
+    let six = try_parse_u64_val("6", Some(PrimitiveType::Int8))?.unwrap();
+    value_in_declared_range(PrimitiveType::Int8, minus_one, Some(minus_five), Some(five))?;
+    assert!(
+        value_in_declared_range(PrimitiveType::Int8, six, Some(minus_five), Some(five)).is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_enum_value_minus_one_is_inside_minus_five_to_five() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="tiny" primitiveType="int8" minValue="-5" maxValue="5"/>
+            <enum name="E" encodingType="tiny">
+              <validValue name="Neg">-1</validValue>
+              <validValue name="Pos">3</validValue>
+            </enum>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
+        </sbe:messageSchema>"#;
+    parse(xml).map_err(|e| format!("{e:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn int8_enum_value_six_is_above_max_five() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="tiny" primitiveType="int8" minValue="-5" maxValue="5"/>
+            <enum name="E" encodingType="tiny">
+              <validValue name="TooBig">6</validValue>
+            </enum>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("6 is above maxValue=5");
+    let s = format!("{err:?}");
+    assert!(
+        s.contains("validValue") || s.contains("range") || s.contains("Invalid"),
+        "{s}"
+    );
+    Ok(())
+}
+
+#[test]
+fn int8_null_value_128_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let err = try_parse_u64_val("128", Some(PrimitiveType::Int8)).expect_err("int8 128");
+    assert!(err.contains("out of range"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn uint8_null_value_255_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        try_parse_u64_val("255", Some(PrimitiveType::UInt8))?,
+        Some(255)
+    );
     Ok(())
 }

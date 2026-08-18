@@ -1,19 +1,19 @@
 # External Schema Pilot
 
-> The final ergo-sbe exit criterion (roadmap § 1.0) requires an external
-> schema family to exercise the full pipeline.
+> The 1.0 exit criterion requires an **external** user or production pilot
+> with wire **and** latency results against their own schema — not only
+> in-repo tests.
 
-## Status: ✅ Complete (pre-existing test suite)
+## Status: Open
 
 The **FIX SBE Conformance Suite** (`sbe/tests/fix_sbe_conformance_test.rs`,
-fixtures, and `scripts/run-fix-sbe-conformance.sh`) has been in the
-repository since 0.1.10 and continues to pass. Wire parity against the
-Real Logic Java reference is verified for multiple message shapes
-including nested groups and var-data.
+fixtures, and `scripts/run-fix-sbe-conformance.sh`) is necessary internal
+wire evidence. It is **not** the 1.0 external-signal criterion: there is
+no external user, no independent schema family, and no latency measurement
+from outside this repository.
 
-This page documents the existing pilot as the 1.0 external-signal
-criterion. No new code was required on this branch — the suite was
-already complete.
+Treat this page as the checklist for that missing signal, not a completed
+exit item.
 
 ### Schema
 

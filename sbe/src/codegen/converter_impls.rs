@@ -63,7 +63,17 @@ pub(crate) fn generate_converter_impls(
 
             // checked domain accessors are fallible — no `.expect`.
             let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-            let is_optional = f.presence == crate::ir::Presence::Optional;
+            // A domain accessor is `Option`-wrapped exactly when the raw
+            // accessor it delegates to is. That is: a field gated by
+            // `sinceVersion` returns `Option` (absent before its version), and
+            // a primitive/enum with `presence="optional"` null-maps to
+            // `Option`. A *composite* with `presence="optional"` does NOT —
+            // there is no null image for a composite, so the raw `_value()`
+            // accessor stays plain and wrapping it here produced a type
+            // mismatch (`Some`/`None` on a non-`Option`).
+            let is_optional = f.since_version > 0
+                || (f.presence == crate::ir::Presence::Optional
+                    && !matches!(f.field_type, FieldType::Composite { .. }));
             if is_optional {
                 decoder_methods.extend(quote::quote! {
                     #[inline]
@@ -89,34 +99,24 @@ pub(crate) fn generate_converter_impls(
                 });
             }
 
-            if is_optional {
-                encoder_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #try_ident(
-                        &mut self,
-                        val: Option<#dt_ty>,
-                    ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
-                        let wire = match val {
-                            Some(v) => Some(<#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&v)?),
-                            None => None,
-                        };
-                        self.#wire_setter(wire);
-                        Ok(self)
-                    }
-                });
-            } else {
-                encoder_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #try_ident(
-                        &mut self,
-                        value: #dt_ty,
-                    ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
-                        let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
-                        self.#wire_setter(wire);
-                        Ok(self)
-                    }
-                });
-            }
+            // The encoder setter always takes the domain value directly. The
+            // raw `*_wire` setter it delegates to takes the plain wire type —
+            // `Option`/null handling lives in `fixed(&FixedFields)`, which
+            // writes the schema null image for `None`. Wrapping the domain
+            // value in `Option` here produced a type mismatch on optional
+            // primitives (`self.ts_wire(Option<u64>)` against `ts_wire(u64)`).
+            // Absence is expressed on the raw path, not the domain setter.
+            encoder_methods.extend(quote::quote! {
+                #[inline]
+                pub fn #try_ident(
+                    &mut self,
+                    value: #dt_ty,
+                ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
+                    let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                    self.#wire_setter(wire);
+                    Ok(self)
+                }
+            });
         } else {
             let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
             let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
@@ -261,12 +261,20 @@ pub(crate) fn generate_converter_impls(
         String::new()
     } else {
         // Generic over H so body-only wrap (`HeaderAbsent`) gets conversion
-        // setters, matching ordinary field setters on `impl<H> Encoder`.
+        // setters. Emitted once per *concrete* fields phase, mirroring the
+        // ordinary field setters: these methods delegate to the raw `*_wire`
+        // setters, which live on concrete impls (a generic `impl<H, F>` cannot
+        // resolve them), and the fixed-phase copy is what gives a domain-typed
+        // field a route to a terminal method — `fixed()` accepts wire values
+        // only, so conversions cannot go through it.
         quote::quote! {
             impl<'a> #decoder_ident<'a> {
                 #decoder_methods
             }
-            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H> {
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
+                #encoder_methods
+            }
+            impl<'a, H: sbe_rt::HeaderState> #encoder_ident<'a, H, sbe_rt::FieldsFixed> {
                 #encoder_methods
             }
         }

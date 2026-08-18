@@ -1163,7 +1163,13 @@ impl Generator {
         }
 
         // 6b. Emit TryFromSbe/TryToSbe impls for configured domain-type conversions.
-        if self.config.has_conversions() {
+        // Only the module that owns `sbe_rt` emits these. The built-in impls
+        // target well-known types (`bool`, `rust_decimal`, `chrono`), and a
+        // shared-module consumer re-emitting `impl TryFromSbe<BooleanType> for
+        // bool` against the imported `BooleanType` collides with the owner's
+        // identical impl ("conflicting implementation"). Every non-shared
+        // module owns its own `sbe_rt`, so this still fires for each of them.
+        if self.config.has_conversions() && emit_sbe_rt {
             let impl_blocks =
                 generate_conversion_impl_blocks(&elements, &self.config.conversions, domain_types);
             src.push_str(&impl_blocks);

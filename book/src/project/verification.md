@@ -21,12 +21,8 @@ output so `road-to-1.0.md` criterion 2 (three consecutive minors ≤ `1.00`)
 is auditable:
 
 ```sh
-# from monorepo root
-CARGO_TARGET_DIR=sbe/benchmarks/target/bench-no-lto \
-  CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
-  cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-./scripts/check-bench-gate.sh sbe/benchmarks/target/bench-no-lto/criterion 0.005 sbe \
-  | tee /tmp/ergon-sbe-bench-gate.txt   # attach to release notes / CI artifact
+# from monorepo root — stamps target/bench-runs/<run-id>/ and gates at 1.00
+just bench
 ```
 
 Store the gate stdout in the GitHub release notes or CI artifact named

@@ -15,7 +15,8 @@
 mod common;
 use common::{
     Paths, assert_source_ok, compile_and_run, compile_and_run_two_modules,
-    compile_and_run_with_feature, compile_fails_with_diagnostics, generate, run_fixture_test,
+    compile_and_run_with_deps, compile_and_run_with_feature, compile_fails_with_diagnostics,
+    generate, generate_domain_with, run_fixture_test,
 };
 
 const MODULE: &str = "car_example";
@@ -2805,9 +2806,11 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
         &src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.price(Decimal::new(12345, -2));  // 123.45
-        enc.size(Decimal::new(100, 0));       // 100
+        let enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(12345, -2), // 123.45
+                size: Decimal::new(100, 0),     // 100
+            });
         let encoded = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_decode(&encoded, 0).unwrap();
@@ -2818,6 +2821,69 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
         assert_eq!(size.mantissa(), 100);
         assert_eq!(size.exponent(), 0);
     "#,
+    );
+    Ok(())
+}
+
+/// Domain types (`rust_decimal::Decimal`, `chrono::DateTime`) must round-trip
+/// through **optional** fields. A composite decimal has no null image, so its
+/// `try_*` accessor is a plain `Result<Decimal>`; an optional primitive
+/// timestamp null-maps to `Option<DateTime>`. This also exercises multiple
+/// distinct decimal composites (Decimal64 + Decimal128) under one config.
+#[test]
+fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn std::error::Error>>
+{
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/optional-domain-types.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "opt_domain", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal64"),
+            "rust_decimal::Decimal",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal128"),
+            "rust_decimal::Decimal",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        )
+    });
+    compile_and_run_with_deps(
+        "opt_domain",
+        &src,
+        r#"
+        use rust_decimal::Decimal;
+        use chrono::{DateTime, Utc};
+
+        let mut buf = [0u8; 256];
+        let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&QuoteFixedFields {
+                price64: None,
+                size64: Decimal64::new(0, 0),
+                price128: None,
+                ts: None,
+            })
+            .try_price64(Decimal::new(12345, 2))?
+            .try_size64(Decimal::new(100, 0))?
+            .try_price128(Decimal::new(99999, 1))?
+            .try_ts(DateTime::from_timestamp(42, 0).unwrap())?
+            .encoded_length_with_header();
+
+        let dec = QuoteDecoder::try_decode(&buf[..len], 0)?;
+
+        // Optional decimal composites decode to a plain Decimal — a composite
+        // has no null image, so `presence="optional"` does not become Option.
+        assert_eq!(dec.try_price64()?, Decimal::new(12345, 2));
+        assert_eq!(dec.try_size64()?, Decimal::new(100, 0));
+        assert_eq!(dec.try_price128()?, Decimal::new(99999, 1));
+
+        // Optional primitive timestamp null-maps to Option<DateTime<Utc>>.
+        assert_eq!(dec.try_ts()?, Some(DateTime::from_timestamp(42, 0).unwrap()));
+        "#,
+        "chrono = \"0.4\"\nrust_decimal = \"1\"\n",
     );
     Ok(())
 }
@@ -2903,9 +2969,11 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         src,
         r#"
         let mut buf = [0u8; 256];
-        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.price_wire(Decimal::new(99, -2));
-        enc.size_wire(Decimal::new(3, 0));
+        let enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(99, -2),
+                size: Decimal::new(3, 0),
+            });
         let wire = enc.as_bytes_with_header().to_vec();
 
         let dec = OrderDecoder::try_decode(&wire, 0).unwrap();
@@ -2942,9 +3010,11 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
         r#"
         // Wire path: encode via price_wire, decode via price_wire
         let mut buf_wire = [0u8; 256];
-        let mut enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0);
-        enc_wire.price_wire(Decimal::new(12345, -2));
-        enc_wire.size_wire(Decimal::new(100, 0));
+        let enc_wire = OrderEncoder::wrap_and_apply_header(&mut buf_wire, 0)
+            .fixed(&OrderFixedFields {
+                price: Decimal::new(12345, -2),
+                size: Decimal::new(100, 0),
+            });
         let wire_bytes = enc_wire.as_bytes_with_header().to_vec();
 
         // Verify wire decode

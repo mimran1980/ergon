@@ -16,6 +16,7 @@
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
+//! | [`demo_bulk_add`] | `bulk_add` on the fixed-stride nested `acceleration` group |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
 #![allow(
@@ -175,6 +176,80 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 // ANCHOR_END: encode_sample_car
 // ANCHOR_END: demo_car_size_and_encode
 
+/// Nested `acceleration` rows are a fixed-stride leaf group — `bulk_add`
+/// writes every entry after one region check.
+// ANCHOR: demo_bulk_add
+pub fn demo_bulk_add() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut extras = OptionalExtras::default();
+    extras.cruise_control(true);
+    let rows = [
+        CarPerformanceFiguresAccelerationEntry {
+            mph: 30,
+            seconds: 4.0,
+        },
+        CarPerformanceFiguresAccelerationEntry {
+            mph: 60,
+            seconds: 7.5,
+        },
+    ];
+    let complete_len = CarEncoder::compute_length()
+        .fuel_figures_ragged(0, |_| Ok(()))?
+        .performance_figures_ragged(1, |pf| {
+            pf.add()?.acceleration(|acc| {
+                acc.uniform(2)?;
+                Ok(())
+            })?;
+            Ok(())
+        })?
+        .manufacturer(5)?
+        .model(5)?
+        .activation_code(3)?
+        .encoded_length_with_header();
+    const PAD: usize = 256;
+    assert!(
+        complete_len <= PAD,
+        "bulk-add car length {complete_len} exceeds pad {PAD}"
+    );
+    let mut storage = [0u8; PAD];
+    let buf = &mut storage[..complete_len];
+    let len = CarEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&CarFixedFields {
+            serial_number: 1234,
+            model_year: 2013,
+            available: true.into(),
+            code: Model::A,
+            some_numbers: [10, 20, 30, 40],
+            vehicle_code: *b"ABCDEF",
+            extras,
+            engine: Engine::new(
+                2000,
+                4,
+                *b"123",
+                0i8,
+                false.into(),
+                Booster::new(BoostType::TURBO, 210),
+            ),
+        })
+        .fuel_figures(0, |_| Ok(()))?
+        .performance_figures(1, |g| {
+            g.add(|mut e| {
+                e.octane_rating(95);
+                e.acceleration(2, |a| {
+                    a.bulk_add(&rows)?;
+                    Ok(())
+                })
+            })?;
+            Ok(())
+        })?
+        .manufacturer(b"Honda")?
+        .model(b"Civic")?
+        .activation_code(b"abc")?
+        .encoded_length_with_header();
+    assert_eq!(len, complete_len);
+    Ok(buf[..len].to_vec())
+}
+// ANCHOR_END: demo_bulk_add
+
 // ─── 3. Decoder consuming stages ───────────────────────────────────────────
 
 /// Walk Car in wire order: fixed random-access fields, then groups, then var-data.
@@ -258,11 +333,12 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let hb_len = HeartbeatEncoder::compute_length_with_header();
     let nanos: u64 = 1_700_000_000_000_000_000;
-    HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0).unwrap()
+    let _hb_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0).unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 1,
             timestamp: nanos,
-        });
+        })
+        .encoded_length_with_header();
 
     let note_body = b"hello AnyMessage";
     let note_len = NoteEncoder::compute_length_with_header(note_body.len());
@@ -483,10 +559,10 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let price = Rd::new(12345, 2); // 123.45
     let size = Rd::new(10, 0);
-    let len = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-        .price_from(&price)?
-        .size_from(&size)?
-        .encoded_length_with_header();
+    let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+    enc.price_from(&price)?;
+    enc.size_from(&size)?;
+    let len = QuoteEncoder::compute_length_with_header();
 
     let dec = QuoteDecoder::try_from(&buf[..len])?;
     let wire = dec.price_value();
@@ -551,6 +627,10 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("8) with_conversion only (generic price_as / price_from)");
     let _q = demo_conversion_only()?;
+    println!("   ok\n");
+
+    println!("9) bulk_add on fixed-stride acceleration rows");
+    let _bulk = demo_bulk_add()?;
     println!("   ok\n");
 
     println!("All feature-tour demos passed.");

@@ -7,12 +7,19 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 manifest="$root/api/public-api-baseline.toml"
 
-# Read baseline version from manifest (strip quotes).
-baseline=$(grep 'baseline_tag' "$manifest" | sed 's/.*"\(.*\)".*/\1/')
-baseline="${1:-$baseline}"
+# Read baseline tag from manifest (strip quotes). cargo-semver-checks
+# --baseline-version is a crates.io version, not a git tag — strip a leading v.
+baseline_tag=$(grep '^baseline_tag' "$manifest" | sed 's/.*"\(.*\)".*/\1/')
+if [ "${1:-}" = "--print-baseline-version" ]; then
+    echo "${baseline_tag#v}"
+    exit 0
+fi
+baseline_tag="${1:-$baseline_tag}"
+baseline="${baseline_tag#v}"
 
 echo "=== public API semver check ==="
-echo "baseline: $baseline (from $manifest)"
+echo "baseline tag: $baseline_tag"
+echo "baseline version: $baseline (crates.io / cargo-semver-checks)"
 echo ""
 
 # Verify the manifest references real schemas.
@@ -42,19 +49,37 @@ if ! command -v cargo-semver-checks &>/dev/null; then
 fi
 
 rc=0
-for pkg in ergo-sbe ergo-aeron-cluster; do
-    echo "  checking $pkg against $baseline..."
+# Do not pass --workspace: cargo-semver-checks then rustdocs every
+# workspace member, and the published ergo-aeron-cluster 0.1.17 build.rs
+# requires a sibling aeron/ tree + Gradle. Check each crate alone.
+echo "  checking ergo-sbe against $baseline..."
+if cargo semver-checks check-release \
+    -p ergo-sbe \
+    --baseline-version "$baseline" \
+    2>&1; then
+    echo "  PASS: ergo-sbe has no semver violations against $baseline"
+else
+    echo "  FAIL: ergo-sbe has breaking API changes against $baseline"
+    rc=1
+fi
+
+if [ "${CLUSTER_SEMVER_CHECKS:-0}" = "1" ]; then
+    echo "  checking ergo-aeron-cluster against $baseline..."
     if cargo semver-checks check-release \
-        --workspace \
-        -p "$pkg" \
+        -p ergo-aeron-cluster \
+        --exclude-features test-harness \
         --baseline-version "$baseline" \
         2>&1; then
-        echo "  PASS: $pkg has no semver violations against $baseline"
+        echo "  PASS: ergo-aeron-cluster has no semver violations against $baseline"
     else
-        echo "  FAIL: $pkg has breaking API changes against $baseline"
+        echo "  FAIL: ergo-aeron-cluster has breaking API changes against $baseline"
         rc=1
     fi
-done
+else
+    echo "  skip ergo-aeron-cluster crates.io rustdoc baseline"
+    echo "    (published 0.1.17 build.rs requires aeron/ + Gradle;"
+    echo "     set CLUSTER_SEMVER_CHECKS=1 to force)"
+fi
 
 # Future: generate each fixture from the manifest, compile to a temp crate,
 # extract its public API with `cargo public-api`, and diff against the
@@ -63,7 +88,7 @@ done
 
 if [ $rc -eq 0 ]; then
     echo ""
-    echo "check-public-api: PASS (both crates semver-clean against $baseline)"
+    echo "check-public-api: PASS (ergo-sbe semver-clean against $baseline)"
 else
     echo ""
     echo "check-public-api: FAIL — update CHANGELOG.md or bump the baseline tag"

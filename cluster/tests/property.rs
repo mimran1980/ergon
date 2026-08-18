@@ -2,7 +2,8 @@
 use ergo_aeron_cluster::cluster_codec_types::{
     ChallengeDecoder, ChallengeEncoder, ChallengeFixedFields, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder,
     NewLeaderEventFixedFields, SessionEventDecoder, SessionEventEncoder, SessionEventFixedFields,
-    SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    SessionKeepAliveEncoder, SessionKeepAliveFixedFields, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+    SessionMessageHeaderFixedFields,
 };
 
 use proptest::prelude::*;
@@ -15,8 +16,13 @@ proptest! {
         ts in any::<i64>(),
     ) {
         let mut buf = [0u8; 128];
-        let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(ltid).cluster_session_id(csid).timestamp(ts);
+        let enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0).fixed(
+            &SessionMessageHeaderFixedFields {
+                leadership_term_id: ltid,
+                cluster_session_id: csid,
+                timestamp: ts,
+            },
+        );
         let bytes = enc.as_bytes_with_header().to_vec();
         let dec = SessionMessageHeaderDecoder::decode(&bytes, 0).expect("decode");
         prop_assert_eq!(dec.leadership_term_id(), ltid);
@@ -30,8 +36,12 @@ proptest! {
         csid in any::<i64>(),
     ) {
         let mut buf = [0u8; 128];
-        let mut enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
-        enc.leadership_term_id(ltid).cluster_session_id(csid);
+        let enc = SessionKeepAliveEncoder::wrap_and_apply_header(&mut buf, 0).fixed(
+            &SessionKeepAliveFixedFields {
+                leadership_term_id: ltid,
+                cluster_session_id: csid,
+            },
+        );
         let bytes = enc.as_bytes_with_header();
         prop_assert_eq!(u16::from_le_bytes([bytes[2], bytes[3]]), 5); // KEEP_ALIVE
     }

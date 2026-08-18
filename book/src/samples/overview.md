@@ -12,7 +12,9 @@ implementations — they move with experimental APIs on purpose.
 | **2a** | [L3 Order Book](l3-book.md) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
 | **2b** | [Exchange Example](exchange-example.md) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [Codegen as Library](codegen-library.md) | Generator **as a library** (no `build.rs`) |
-| Later | [Cluster HA Orderbook](cluster-ha-orderbook.md) | Aeron cluster integration (Java harness for some paths) |
+| Later | [Cluster Tutorial](cluster-tutorial.md) | Connect, offer, poll, keep-alive, close |
+| Later | [Cluster HA Orderbook](cluster-ha-orderbook.md) | Claim-based Cluster publishing + HA-shaped book |
+| Later | [Cluster RFQ](cluster-rfq.md) | RFQ / auction codecs over Cluster |
 
 ```sh
 # 1 — always start here

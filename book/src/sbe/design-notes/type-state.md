@@ -50,15 +50,21 @@ and would double the generated type count.
 
 ```rust,ignore
 // Approximate generated shape — not Encoder<AfterBids>:
-pub struct BookEncoder<'a, H: HeaderState = HeaderPresent> { /* buf, msg_offset, pos */ }
+pub struct BookEncoder<'a, H: HeaderState = HeaderPresent, F: FieldsState = FieldsUnfixed> {
+    /* buf, msg_offset, pos + ZST markers */
+}
 pub struct BookAfterBids<'a, H: HeaderState = HeaderPresent> { /* same layout */ }
 pub struct BookAfterAsks<'a, H: HeaderState = HeaderPresent> { /* same layout */ }
 
-impl BookEncoder<'a> {
+impl BookEncoder<'a, H, FieldsFixed> {
     pub fn bids(self, …) -> Result<BookAfterBids<'a>, …> { … }
     // no asks() — bids first on the wire
 }
 ```
+
+`F` is why `wrap*` cannot publish `as_bytes_with_header` until `fixed(&FixedFields)`
+has written the required body. Tail stages drop `F` — they are already past the
+fixed block.
 
 Calling stages out of order is a type error. See
 [Wire order via named stages](../core-concepts/wire-order-stages.md) for the

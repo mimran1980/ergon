@@ -47,6 +47,7 @@ Other samples:
 | Consuming decoder stages | `demo_car_decode_stages` |
 | Owned DTO | `demo_car_domain_dto` |
 | `AnyMessage` | `demo_any_message` |
+| `bulk_add` (fixed-stride leaf group) | `demo_bulk_add` |
 | Checked decode / wrap / verify | `demo_try_vs_trusted` |
 | Display / Debug | `demo_display_debug` |
 | **`with_conversion` only** | **`demo_conversion_only`** |

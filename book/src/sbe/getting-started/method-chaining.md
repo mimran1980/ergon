@@ -10,17 +10,17 @@ intermediate encoder variables.
 ```rust,no_run
 {{#include ../../../examples/heartbeat-encode.rs:staged_chaining}}
 ```
-*(From `book/examples/heartbeat-encode.rs` — compiles against the feature-tour codec.)*
+*(From `book/examples/heartbeat-encode.rs` — compiled against the feature-tour codec.)*
 
 ### Staged chaining vs fixed-only
 
-For a fixed-only message like `Heartbeat`, `wrap_and_apply_header` returns
-the encoder. `.fixed(...)` consumes `self` and returns `Self` by value:
-
-```rust,no_run
-{{#include ../../../examples/heartbeat-encode.rs:staged_chaining}}
-```
-*(From `book/examples/heartbeat-encode.rs` — compiles against the book test codec.)*
+For a fixed-only message like `Heartbeat`, `wrap*` returns
+`HeartbeatEncoder<'_, H, FieldsUnfixed>`. `.fixed(&HeartbeatFixedFields { … })`
+consumes that value and returns `FieldsFixed`, which is the only phase that
+exposes `as_bytes_with_header` / `as_body_bytes` / `encoded_length*` /
+`into_remaining_mut`. Individual field setters stay
+on the unfixed phase and on [`raw_fixed()`](encode-decode.md); they are not on
+that complete view.
 
 **Avoid (interrupted chain, rebinding):**
 
@@ -33,10 +33,10 @@ let enc = enc.manufacturer(b"Honda").unwrap();
 let len = enc.encoded_length_with_header();
 ```
 
-**Every encoder stage is chainable** — fixed setters return `&mut Self`;
-fallible group/var-data transitions return `Result<NextStage, _>` and compose
-with `?` in the same expression. Intermediate encoder rebinding and manual
-`.unwrap()` defeat this design.
+**Every encoder stage is chainable** — `fixed()` and each tail method return
+the next stage (or `Result<NextStage, _>`) and compose with `?` in the same
+expression. Intermediate encoder rebinding and manual `.unwrap()` defeat this
+design.
 
 For the full Car example with groups and var-data, see the
 [feature tour](../feature-tour.md) page.

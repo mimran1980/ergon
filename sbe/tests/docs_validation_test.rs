@@ -314,6 +314,21 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
     )
     .map_err(|e| e.to_string())?;
     let target_dir = tmp_root.join("target");
+    // Fetch first so a clean CI cache has optional/transitive crates
+    // (e.g. rust_decimal → ahash). Then check offline so a later registry
+    // blip cannot flake the compile.
+    let fetch = Command::new("cargo")
+        .args(["fetch", "--quiet", "--manifest-path"])
+        .arg(crate_dir.join("Cargo.toml"))
+        .output()
+        .map_err(|e| format!("spawn cargo fetch: {e}"))?;
+    if !fetch.status.success() {
+        return Err(format!(
+            "cargo fetch failed:\n{}\n{}",
+            String::from_utf8_lossy(&fetch.stdout),
+            String::from_utf8_lossy(&fetch.stderr)
+        ));
+    }
     let out = Command::new("cargo")
         .args(["check", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
@@ -453,7 +468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fixed length + try wrap (docs: safe decode/encode)
     let mut buf = [0u8; HeartbeatEncoder::ENCODED_LENGTH];
     let heartbeat_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)?
-        .seq(7)
+        .fixed(&HeartbeatFixedFields { seq: 7 })
         .encoded_length_with_header();
     let dec = HeartbeatDecoder::try_from(&buf[..heartbeat_len])?;
     assert_eq!(dec.seq(), 7);
@@ -507,6 +522,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 "#,
     )?;
 
+    let fetch = Command::new("cargo")
+        .args(["fetch", "--quiet", "--manifest-path"])
+        .arg(crate_dir.join("Cargo.toml"))
+        .status()?;
+    assert!(fetch.success(), "docs_run cargo fetch failed");
     let status = Command::new("cargo")
         .args(["run", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
