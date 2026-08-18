@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.18] — 2026-08-18
 
 ### Added
 - Reject unknown attributes on `<messageSchema>`, `<message>`, `<field>`,
@@ -8,6 +8,9 @@
   `semanticTpye`) is an error instead of being silently ignored. Namespaced
   attributes (`xsi:*`, `xi:*`, and vendor namespaces such as Binance's
   `mbx:*`) are outside the SBE grammar and still pass.
+- Multiple distinct decimal composites (`Decimal64`, `Decimal128`, …) can each
+  map to `rust_decimal::Decimal` via `with_domain_type`; each gets its own
+  `TryFromSbe`/`TryToSbe` impl.
 
 ### Fixed
 - `validate_against_sbe_xsd` no longer rejects valid real-world schemas. It
@@ -17,6 +20,14 @@
   `<types>` — enough to reject checked-in `l3-book` and `binance-spot`
   schemas. Attribute allow-lists are now shared with the parser so the two
   cannot drift apart.
+- Domain-typed optional fields no longer produce a type mismatch. An optional
+  `rust_decimal::Decimal` composite decodes to a plain `Decimal` (a composite
+  has no null image), an optional `chrono::DateTime<Utc>` decodes to
+  `Option<DateTime>`, and the encoder setters take the plain domain value.
+- A boolean enum mapped to `bool` via `with_domain_type` now emits its
+  `TryFromSbe`/`TryToSbe` impl once per shared module instead of in every
+  consumer, which caused a "conflicting implementation" across multi-schema
+  modules.
 
 ### Changed
 - Fixed-only encoders now carry `FieldsState`: `as_bytes_with_header`,
