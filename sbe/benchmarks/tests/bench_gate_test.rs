@@ -578,7 +578,8 @@ fn cluster_a_ratio_barely_above_one_fails_even_with_caller_tolerance()
 // silent revert to 1.00 is caught, mirroring the SBE nullify tests above.
 
 #[test]
-fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>> {
+fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>>
+{
     let criterion = TempCriterion::new()?;
     // Encode pairs at 1.00; the two decode pairs at 1.005 (above every 1.00
     // ceiling, below the decode 1.01). The verdict hinges on the decode pairs.
