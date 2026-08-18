@@ -66,22 +66,31 @@ pub(crate) fn generate_conversion_impl_blocks(
         out.push_str(&ts.to_string());
     }
 
-    let has_decimal_conv = domain_types
-        .iter()
-        .any(|(sel, _)| matches!(sel, crate::ConversionSelector::NamedType(n) if n == "Decimal"));
     let has_chrono_conv = domain_types.iter().any(|(sel, _)| {
         matches!(sel, crate::ConversionSelector::SemanticType(st) if st == "UTCTimestamp")
     });
 
-    if has_decimal_conv {
-        let dec_composite = elements.composites.iter().find(|c| c[0].name == "Decimal");
-        let dec_name = dec_composite
-            .map(|c| to_pascal_case(&c[0].name))
-            .unwrap_or_else(|| "Decimal".to_string());
-        let dec_ident = syn::Ident::new(&dec_name, span);
+    // Emit rust_decimal TryFromSbe/TryToSbe for EVERY composite mapped to
+    // "rust_decimal::Decimal" — not just one literally named "Decimal". A
+    // schema with Decimal64 / Decimal128 (or any other decimal composite)
+    // gets one impl per composite, keyed to that composite's ident.
+    for (sel, ty) in domain_types {
+        if ty != "rust_decimal::Decimal" {
+            continue;
+        }
+        let comp_name = match sel {
+            crate::ConversionSelector::NamedType(n) => n.as_str(),
+            _ => continue,
+        };
+        let Some(dec_composite) = elements.composites.iter().find(|c| c[0].name == comp_name)
+        else {
+            continue;
+        };
+        let dec_ident = syn::Ident::new(&to_pascal_case(comp_name), span);
         // Check if the schema's Decimal composite has a constant exponent.
         let exponent_is_constant = dec_composite
-            .and_then(|c| c.iter().find(|t| t.name == "exponent"))
+            .iter()
+            .find(|t| t.name == "exponent")
             .map(|t| t.encoding.presence == crate::ir::Presence::Constant)
             .unwrap_or(false);
         let dec_new_call: proc_macro2::TokenStream = if exponent_is_constant {
