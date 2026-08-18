@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="optional_domain" id="95" version="0"
+    byteOrder="littleEndian" headerType="messageHeader">
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <composite name="Decimal64">
+    <type name="mantissa" primitiveType="int64"/>
+    <type name="exponent" primitiveType="int8"/>
+  </composite>
+  <composite name="Decimal128">
+    <type name="mantissa" primitiveType="int64"/>
+    <type name="exponent" primitiveType="int8"/>
+  </composite>
+</types>
+<sbe:message name="Quote" id="1">
+  <field name="price64" id="1" type="Decimal64" presence="optional"/>
+  <field name="size64" id="2" type="Decimal64"/>
+  <field name="price128" id="3" type="Decimal128" presence="optional"/>
+  <field name="ts" id="4" type="uint64" semanticType="UTCTimestamp" presence="optional"/>
+</sbe:message>
+</sbe:messageSchema>

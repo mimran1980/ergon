@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [0.1.18] — 2026-08-18
+
+### Added
+- Reject unknown attributes on `<messageSchema>`, `<message>`, `<field>`,
+  `<group>`, and `<data>` at parse time, so an authoring typo (`presense`,
+  `semanticTpye`) is an error instead of being silently ignored. Namespaced
+  attributes (`xsi:*`, `xi:*`, and vendor namespaces such as Binance's
+  `mbx:*`) are outside the SBE grammar and still pass.
+- Multiple distinct decimal composites (`Decimal64`, `Decimal128`, …) can each
+  map to `rust_decimal::Decimal` via `with_domain_type`; each gets its own
+  `TryFromSbe`/`TryToSbe` impl.
+
+### Fixed
+- `validate_against_sbe_xsd` no longer rejects valid real-world schemas. It
+  dropped every namespaced vendor attribute check (`mbx:exponent`) on the
+  floor, and its allow-lists omitted `characterEncoding` on `<data>`, `unit`
+  on `<type>`, `jsonValue` on `<validValue>` / `<choice>`, and `package` on
+  `<types>` — enough to reject checked-in `l3-book` and `binance-spot`
+  schemas. Attribute allow-lists are now shared with the parser so the two
+  cannot drift apart.
+- Domain-typed optional fields no longer produce a type mismatch. An optional
+  `rust_decimal::Decimal` composite decodes to a plain `Decimal` (a composite
+  has no null image), an optional `chrono::DateTime<Utc>` decodes to
+  `Option<DateTime>`, and the encoder setters take the plain domain value.
+- A boolean enum mapped to `bool` via `with_domain_type` now emits its
+  `TryFromSbe`/`TryToSbe` impl once per shared module instead of in every
+  consumer, which caused a "conflicting implementation" across multi-schema
+  modules.
+
+### Changed
+- Fixed-only encoders now carry `FieldsState`: `as_bytes_with_header`,
+  `as_body_bytes`, `encoded_length*`, and `into_remaining_mut` exist only
+  after `fixed(&FixedFields)`, so a reused buffer cannot publish or pack
+  unwritten required fields.
+- Cluster bench gate uses the same literal `1.00` ceiling as SBE and requires
+  `--run-id` provenance (`just bench-cluster` stamps per-estimate run ids).
+- `check-public-api.sh` strips a leading `v` from `baseline_tag` before
+  passing `--baseline-version` to cargo-semver-checks.
+
+### Fixed
+- Schema `nullValue` / `minValue` / `maxValue` that do not fit the declared
+  primitive width are rejected at parse time (no more `256_u64 as u8`).
+  Signed enum `validValue`s are compared as signed, so `int8` `-1` is
+  accepted when `minValue="-5"` and `maxValue="5"`.
+- Maintained cluster decode benches wrap both arms at the body offset without
+  extra template/schema/version work on the sbe-tool side.
+- Docs-validation temp crates `cargo fetch` before `CARGO_NET_OFFLINE=true`,
+  so a clean CI runner is not missing optional transitive crates.
+
 ## [0.1.17] — 2026-08-14
 
 ### Changed

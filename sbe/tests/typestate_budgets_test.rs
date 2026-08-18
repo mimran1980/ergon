@@ -147,6 +147,88 @@ fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn generate_fixed_only(module: &str) -> Result<String, Box<dyn Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="fixedonly" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
+          <sbe:message name="KeepAlive" id="5" description="fixed-only 16-byte body">
+            <field name="leadershipTermId" id="1" type="int64"/>
+            <field name="clusterSessionId" id="2" type="int64"/>
+          </sbe:message>
+        </sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no generated module")?
+        .source
+        .clone();
+    Ok(src)
+}
+
+/// Fixed-only completion views must not be available before `fixed()`.
+/// Otherwise wrap + as_bytes_with_header publishes leftover buffer bytes.
+#[test]
+fn cf_fixed_only_as_bytes_requires_fixed() -> Result<(), Box<dyn Error>> {
+    let src = generate_fixed_only("ts_fixed_as_bytes")?;
+    compile_fails_with_diagnostics(
+        "ts_fixed_as_bytes",
+        &src,
+        r#"
+        let mut buf = [0xA5u8; KeepAliveEncoder::ENCODED_LENGTH];
+        let enc = KeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
+        let _ = enc.as_bytes_with_header();
+    "#,
+        &["no method named `as_bytes_with_header`"],
+    );
+    compile_fails_with_diagnostics(
+        "ts_fixed_encoded_length",
+        &src,
+        r#"
+        let mut buf = [0xA5u8; KeepAliveEncoder::ENCODED_LENGTH];
+        let enc = KeepAliveEncoder::wrap_and_apply_header(&mut buf, 0);
+        let _ = enc.encoded_length();
+        let _ = enc.encoded_length_with_header();
+        let _ = enc.into_remaining_mut();
+    "#,
+        &["no method named"],
+    );
+    Ok(())
+}
+
+/// After `fixed()`, the body is the required fields — not leftover 0xA5.
+#[test]
+fn fixed_only_fixed_then_as_bytes_writes_fields() -> Result<(), Box<dyn Error>> {
+    let src = generate_fixed_only("ts_fixed_writes")?;
+    compile_and_run(
+        "ts_fixed_writes",
+        &src,
+        r#"
+        let mut buf = [0xA5u8; KeepAliveEncoder::ENCODED_LENGTH];
+        let enc = KeepAliveEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&KeepAliveFixedFields {
+                leadership_term_id: 5,
+                cluster_session_id: 10,
+            });
+        let bytes = enc.as_bytes_with_header();
+        assert_eq!(bytes.len(), KeepAliveEncoder::ENCODED_LENGTH);
+        assert_ne!(&bytes[8..], &[0xA5u8; 16], "body must not stay stale");
+        assert_eq!(&bytes[8..16], &5i64.to_le_bytes());
+        assert_eq!(&bytes[16..24], &10i64.to_le_bytes());
+    "#,
+    );
+    Ok(())
+}
+
 /// Generated source-size budget for the default Full Car module (pinned noise band).
 #[test]
 fn car_full_generated_source_size_budget() -> Result<(), Box<dyn Error>> {

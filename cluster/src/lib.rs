@@ -106,9 +106,10 @@ pub mod cluster_codec_types {
         AdminRequestEncoder, AdminRequestFixedFields, AdminRequestType, AdminResponseCode, AdminResponseEncoder,
         AdminResponseFixedFields, AnyMessage, ChallengeDecoder, ChallengeEncoder, ChallengeFixedFields,
         ChallengeResponseEncoder, ChallengeResponseFixedFields, EventCode, NewLeaderEventDecoder,
-        NewLeaderEventEncoder, NewLeaderEventFixedFields, SessionCloseRequestEncoder, SessionConnectRequestEncoder,
-        SessionConnectRequestFixedFields, SessionEventDecoder, SessionEventEncoder, SessionEventFixedFields,
-        SessionKeepAliveEncoder, SessionMessageHeaderDecoder, SessionMessageHeaderEncoder,
+        NewLeaderEventEncoder, NewLeaderEventFixedFields, SessionCloseRequestEncoder, SessionCloseRequestFixedFields,
+        SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionEventDecoder, SessionEventEncoder,
+        SessionEventFixedFields, SessionKeepAliveEncoder, SessionKeepAliveFixedFields, SessionMessageHeaderDecoder,
+        SessionMessageHeaderEncoder, SessionMessageHeaderFixedFields,
     };
 }
 /// [`SessionBuilder`] configuration for connect.

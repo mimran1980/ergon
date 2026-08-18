@@ -3,7 +3,17 @@
 
 // ANCHOR: flyweight_access
 // Encode a sample car first (normally bytes come from the wire)
-let mut buf = [0u8; 512];
+let complete_len = CarEncoder::compute_length()
+    .fuel_figures_ragged(0, |_| Ok(()))?
+    .performance_figures_ragged(0, |_| Ok(()))?
+    .manufacturer(5)?
+    .model(5)?
+    .activation_code(3)?
+    .encoded_length_with_header();
+const PAD: usize = 256;
+assert!(complete_len <= PAD, "car length {complete_len} exceeds pad {PAD}");
+let mut storage = [0u8; PAD];
+let buf = &mut storage[..complete_len];
 let fields = CarFixedFields {
     serial_number: 1234,
     model_year: 2013,
@@ -14,7 +24,7 @@ let fields = CarFixedFields {
     extras: OptionalExtras::default(),
     engine: Engine::new(2000, 4, *b"123", 0i8, false.into(), Booster::new(BoostType::TURBO, 210)),
 };
-let n = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+let n = CarEncoder::try_wrap_and_apply_header(buf, 0)?
     .fixed(&fields)
     .fuel_figures(0, |_| Ok(()))?
     .performance_figures(0, |_| Ok(()))?
@@ -22,6 +32,7 @@ let n = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
     .model(b"Civic")?
     .activation_code(b"abc")?
     .encoded_length_with_header();
+assert_eq!(n, complete_len);
 // Now decode — read only the fields you need, no DTO allocation:
 let car = CarDecoder::try_from(&buf[..n])?;
 assert_eq!(car.serial_number(), 1234);

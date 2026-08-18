@@ -103,15 +103,21 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
-    let mut enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0);
-    enc.leadership_term_id(7)
-        .cluster_session_id(99)
-        .timestamp(42);
+    // fixed() writes the whole fixed block and is the only path to the
+    // tail stages — into_remaining_mut() exists only once it has been called.
+    let enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&SessionMessageHeaderFixedFields {
+            leadership_term_id: 7,
+            cluster_session_id: 99,
+            timestamp: 42,
+        });
 
     // into_remaining_mut() returns the unwritten region after this message
     SessionKeepAliveEncoder::wrap_and_apply_header(enc.into_remaining_mut(), 0)
-        .leadership_term_id(7)
-        .cluster_session_id(99);
+        .fixed(&SessionKeepAliveFixedFields {
+            leadership_term_id: 7,
+            cluster_session_id: 99,
+        });
 
     // Decode the first message
     let smh = SessionMessageHeaderDecoder::decode(&buf, 0)?;

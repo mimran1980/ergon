@@ -131,6 +131,38 @@ pub(crate) fn string_attr(node: Node<'_, '_>, name: &str, what: &str) -> Result<
         .ok_or_else(|| Fault::missing(node, what))
 }
 
+/// Reject attributes the SBE grammar does not define on `element`.
+///
+/// An unknown attribute is almost always an authoring typo (`presense`,
+/// `semanticTpye`, `primitivType`); accepting it silently drops the intent.
+/// Namespaced (`xsi:…`, `xi:…`) and `xmlns*` attributes are outside the SBE
+/// grammar and pass through untouched.
+pub(crate) fn reject_unknown_attrs(
+    node: Node<'_, '_>,
+    element: &str,
+    allowed: &[&str],
+) -> Result<(), Fault> {
+    for attr in node.attributes() {
+        // `name()` is the LOCAL name — a prefixed `xsi:schemaLocation` reads
+        // back as `schemaLocation`, so the namespace is what identifies it.
+        if attr.namespace().is_some() {
+            continue;
+        }
+        let name = attr.name();
+        if name.starts_with("xmlns") {
+            continue;
+        }
+        if !allowed.contains(&name) {
+            return Err(Fault::invalid(
+                node,
+                format!("<{element}> attribute (unknown)"),
+                name,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// SBE / Rust-friendly identifier: `[A-Za-z_][A-Za-z0-9_]*`.
 pub(crate) fn is_valid_sbe_name(name: &str) -> bool {
     let mut chars = name.chars();

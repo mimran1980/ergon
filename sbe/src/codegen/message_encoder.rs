@@ -148,13 +148,22 @@ pub(crate) fn generate_message_encoder(
     for (si, stage) in stage_idents.iter().enumerate() {
         let stage_name = stage.to_string();
         let stage_name_lit = syn::LitStr::new(&stage_name, span);
-        // First stage (message encoder) carries FieldsState so tails are
+        // Root encoder always carries FieldsState so `as_bytes*` / tails are
         // unavailable until `fixed(&FixedFields)`. Later stages are already
         // past fixed and only need HeaderState.
-        let is_root = si == 0 && total_tail > 0;
+        let is_root = si == 0;
         if is_root {
+            let root_doc = if total_tail > 0 {
+                quote::quote! {
+                    #[doc = concat!("Encoder stage `", #stage_name_lit, "` — call `fixed(&FixedFields)` before tails.")]
+                }
+            } else {
+                quote::quote! {
+                    #[doc = concat!("Encoder stage `", #stage_name_lit, "` — call `fixed(&FixedFields)` before `as_bytes_with_header` / `as_body_bytes`.")]
+                }
+            };
             ts.extend(quote::quote! {
-                #[doc = concat!("Encoder stage `", #stage_name_lit, "` — call `fixed(&FixedFields)` before tails.")]
+                #root_doc
                 #[must_use = "encoder must be consumed to write the message"]
                 pub struct #stage<'a, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent, F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed> {
                     buf: &'a mut [u8],
@@ -233,16 +242,18 @@ pub(crate) fn generate_message_encoder(
     // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
     let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
+    // Phase transitions (`fixed()` / `raw_fixed()`) — these must stay on the
+    // unfixed phase, unlike the individual setters, which are safe in either
+    // phase. Splitting them is what lets a conversion setter (`*_from`) reach
+    // a terminal method: it can run after `fixed()` has proven every required
+    // field written, instead of being stranded on an encoder that can never
+    // complete.
+    let mut phase_contents = proc_macro2::TokenStream::new();
     // Individual setters for `raw_fixed()` writer (body-relative offsets).
     let mut raw_impl_contents = proc_macro2::TokenStream::new();
-    // When the message has tails, the root encoder carries FieldsState and
-    // constructions must initialise `_fields`. Fixed-only messages omit it.
-    let fields_phantom = if total_tail > 0 {
-        quote::quote! { _fields: core::marker::PhantomData, }
-    } else {
-        quote::quote! {}
-    };
-    let root_has_fields = total_tail > 0;
+    // Root encoder always carries FieldsState so completion byte views (and
+    // tails) stay locked until `fixed(&FixedFields)` writes required fields.
+    let fields_phantom = quote::quote! { _fields: core::marker::PhantomData, };
 
     if is_fixed {
         impl_consts.extend(quote::quote! {
@@ -980,41 +991,27 @@ pub(crate) fn generate_message_encoder(
              composite members). Returns the encoder ready for ordered tail methods."
         );
         let fixed_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&fixed_doc);
-        // With tails: transition FieldsUnfixed → FieldsFixed so group/var methods unlock.
-        // Fixed-only messages: stay on Self (no FieldsState parameter).
-        if root_has_fields {
-            impl_contents.extend(quote::quote! {
-                #fixed_doc_tokens
-                // `inline(always)`, not `inline`: T-13 added a null-image `else`
-                // arm per optional field, which pushed this body past LLVM's
-                // inline threshold and got the hint declined. Measured on
-                // `ergo_historic/null_option/encode_fixed`: 2.33ns baseline →
-                // 4.28ns (hint declined) → 1.92ns (forced). Re-verify with
-                // `just bench-historic` before weakening this.
-                #[inline(always)]
-                #[must_use]
-                pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
-                    #write_stmts
-                    #name_encoder_ident {
-                        buf: self.buf,
-                        msg_offset: self.msg_offset,
-                        offset: self.offset,
-                        _header: core::marker::PhantomData,
-                        _fields: core::marker::PhantomData,
-                    }
+        phase_contents.extend(quote::quote! {
+            #fixed_doc_tokens
+            // `inline(always)`, not `inline`: T-13 added a null-image `else`
+            // arm per optional field, which pushed this body past LLVM's
+            // inline threshold and got the hint declined. Measured on
+            // `ergo_historic/null_option/encode_fixed`: 2.33ns baseline →
+            // 4.28ns (hint declined) → 1.92ns (forced). Re-verify with
+            // `just bench-historic` before weakening this.
+            #[inline(always)]
+            #[must_use]
+            pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
+                #write_stmts
+                #name_encoder_ident {
+                    buf: self.buf,
+                    msg_offset: self.msg_offset,
+                    offset: self.offset,
+                    _header: core::marker::PhantomData,
+                    _fields: core::marker::PhantomData,
                 }
-            });
-        } else {
-            impl_contents.extend(quote::quote! {
-                #fixed_doc_tokens
-                #[inline(always)]
-                #[must_use]
-                pub fn fixed(mut self, fixed: &#fixed_name) -> Self {
-                    #write_stmts
-                    self
-                }
-            });
-        }
+            }
+        });
     }
 
     {
@@ -1045,7 +1042,7 @@ pub(crate) fn generate_message_encoder(
                 #raw_impl_contents
             }
         });
-        impl_contents.extend(quote::quote! {
+        phase_contents.extend(quote::quote! {
             #raw_fixed_doc_tokens
             #[inline]
             #[must_use]
@@ -1066,39 +1063,38 @@ pub(crate) fn generate_message_encoder(
             #impl_consts
         }
     });
-    // Fixed-field setters + fixed() live on the unfixed phase (or any H when
-    // the message has no tails / no FieldsState parameter).
-    if root_has_fields {
-        ts.extend(quote::quote! {
-            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
-                #impl_contents
-            }
-        });
-    } else {
-        ts.extend(quote::quote! {
-            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
-                #impl_contents
-            }
-        });
-    }
+    // Unfixed phase: setters plus the phase transitions. Emitted as one
+    // concrete impl, exactly as before — these are the benchmarked hot paths
+    // (`encode_scalar_body_only`, `optional_enum_nullify`), and relocating
+    // them into a generic `impl<H, F>` measurably regressed both against
+    // sbe-tool. Keep this block concrete and unsplit.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
+            #impl_contents
+            #phase_contents
+        }
+    });
+    // Fixed phase: the same individual setters again, so a conversion setter
+    // (`*_from`) can run after `fixed()` and still reach a terminal method —
+    // `fixed()` takes wire values, so a domain-typed field has no other route
+    // to completion. Phase transitions are deliberately absent: `fixed()`
+    // stays one-way, so terminal methods remain locked until every required
+    // field is written.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
+            #impl_contents
+        }
+    });
 
     // ── Metadata facet ──────────────────────────────────────────────────
     let enc_metadata_ident = syn::Ident::new(&format!("{}EncoderMetadata", name), span);
     // Complete-sounding `as_bytes_with_header` only when there are no tails;
     // otherwise this stage is fixed-block only and must not look like a frame.
     let meta_bytes = if msg.is_fixed() {
-        quote::quote! {
-            /// Message body bytes written so far (header exclusive).
-            #[inline]
-            pub fn as_body_bytes(&self) -> &[u8] {
-                &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
-            }
-            /// Header-inclusive frame bytes (message is fixed-only — complete).
-            #[inline]
-            pub fn as_bytes_with_header(&self) -> &[u8] {
-                &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
-            }
-        }
+        // Complete-sounding byte views live on the FieldsFixed encoder, not
+        // on unfixed metadata — wrap + get_metadata().as_bytes_with_header()
+        // must not publish an unwritten body.
+        quote::quote! {}
     } else {
         quote::quote! {
             /// Fixed-block body bytes only (groups/var-data not yet written).
@@ -1117,57 +1113,101 @@ pub(crate) fn generate_message_encoder(
             }
         }
     };
-    ts.extend(quote::quote! {
-        /// Buffer-placement metadata. Holds a reference to the parent encoder
-        /// — zero-copy. Utility methods live here so no schema field can
-        /// collide with them.
-        #[derive(Clone, Copy)]
-        pub struct #enc_metadata_ident<'m, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
-            encoder_msg_offset: usize,
-            encoder_offset: usize,
-            encoder_buf: &'m [u8],
-            _h: core::marker::PhantomData<H>,
-        }
+    if msg.is_fixed() {
+        ts.extend(quote::quote! {
+            /// Buffer-placement metadata. Holds a reference to the parent encoder
+            /// — zero-copy. Utility methods live here so no schema field can
+            /// collide with them.
+            #[derive(Clone, Copy)]
+            pub struct #enc_metadata_ident<'m, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent, F: sbe_rt::FieldsState = sbe_rt::FieldsUnfixed> {
+                encoder_msg_offset: usize,
+                encoder_offset: usize,
+                encoder_buf: &'m [u8],
+                _h: core::marker::PhantomData<H>,
+                _f: core::marker::PhantomData<F>,
+            }
 
-        impl<'m, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, H> {
-            #meta_bytes
-            /// Absolute offset of this message within the original buffer
-            /// (the `msg_offset` argument passed to `wrap`).
-            #[inline]
-            pub const fn message_offset(&self) -> usize {
-                self.encoder_msg_offset
+            impl<'m, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #enc_metadata_ident<'m, H, F> {
+                /// Absolute offset of this message within the original buffer
+                /// (the `msg_offset` argument passed to `wrap`).
+                #[inline]
+                pub const fn message_offset(&self) -> usize {
+                    self.encoder_msg_offset
+                }
+                /// Absolute current write cursor within the original buffer.
+                #[inline]
+                pub const fn limit(&self) -> usize {
+                    self.encoder_offset
+                }
+                /// The complete original buffer this encoder wraps.
+                #[inline]
+                pub const fn buffer(&self) -> &[u8] {
+                    self.encoder_buf
+                }
             }
-            /// Absolute current write cursor within the original buffer.
-            #[inline]
-            pub const fn limit(&self) -> usize {
-                self.encoder_offset
-            }
-            /// The complete original buffer this encoder wraps.
-            #[inline]
-            pub const fn buffer(&self) -> &[u8] {
-                self.encoder_buf
-            }
-        }
-    });
 
-    // get_metadata on both unfixed and fixed phases (and fixed-only encoders).
-    if root_has_fields {
+            impl<'m, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, H, sbe_rt::FieldsFixed> {
+                /// Message body bytes (header exclusive). Only after `fixed()`.
+                #[inline]
+                pub fn as_body_bytes(&self) -> &[u8] {
+                    &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
+                }
+                /// Header-inclusive frame bytes. Only after `fixed()`.
+                #[inline]
+                pub fn as_bytes_with_header(&self) -> &[u8] {
+                    &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
+                }
+            }
+        });
         ts.extend(quote::quote! {
             impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
                 #[inline]
-                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
+                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H, F> {
                     #enc_metadata_ident {
                         encoder_msg_offset: self.msg_offset,
                         encoder_offset: self.offset,
                         encoder_buf: self.buf,
                         _h: core::marker::PhantomData,
+                        _f: core::marker::PhantomData,
                     }
                 }
             }
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+            /// Buffer-placement metadata. Holds a reference to the parent encoder
+            /// — zero-copy. Utility methods live here so no schema field can
+            /// collide with them.
+            #[derive(Clone, Copy)]
+            pub struct #enc_metadata_ident<'m, H: sbe_rt::HeaderState = sbe_rt::HeaderPresent> {
+                encoder_msg_offset: usize,
+                encoder_offset: usize,
+                encoder_buf: &'m [u8],
+                _h: core::marker::PhantomData<H>,
+            }
+
+            impl<'m, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, H> {
+                #meta_bytes
+                /// Absolute offset of this message within the original buffer
+                /// (the `msg_offset` argument passed to `wrap`).
+                #[inline]
+                pub const fn message_offset(&self) -> usize {
+                    self.encoder_msg_offset
+                }
+                /// Absolute current write cursor within the original buffer.
+                #[inline]
+                pub const fn limit(&self) -> usize {
+                    self.encoder_offset
+                }
+                /// The complete original buffer this encoder wraps.
+                #[inline]
+                pub const fn buffer(&self) -> &[u8] {
+                    self.encoder_buf
+                }
+            }
+        });
+        ts.extend(quote::quote! {
+            impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
                 #[inline]
                 pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
                     #enc_metadata_ident {
@@ -1529,39 +1569,40 @@ pub(crate) fn generate_message_encoder(
         });
     } else {
         ts.extend(quote::quote! {
-            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H> {
+            impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
                 /// SBE message body bytes (excluding the message header).
+                /// Only available after `fixed(&FixedFields)`.
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     let body_start = self.msg_offset + #header_size_lit;
                     &self.buf[body_start..self.offset]
                 }
                 /// SBE message body length (excluding the message header).
+                /// Only available after `fixed(&FixedFields)`.
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
                     self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
-                /// Pure arithmetic — available for body-only wraps too.
+                /// Only available after `fixed(&FixedFields)`.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.offset - self.msg_offset
                 }
                 /// Unwritten region after this message's write cursor to the end of
                 /// the original buffer. Use for multi-message packing, e.g.
-                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. This is **not**
-                /// the payload of the current message — for the absolute write
-                /// cursor while keeping the encoder alive, use
-                /// `get_metadata().limit()`.
+                /// `NextEncoder::wrap_and_apply_header(remaining, 0)`. Only available
+                /// after `fixed(&FixedFields)` so a reused buffer cannot pack the
+                /// next message while this body is still stale.
                 #[inline]
                 pub fn into_remaining_mut(self) -> &'a mut [u8] {
                     &mut self.buf[self.offset..]
                 }
             }
 
-            impl<'a> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-                /// Header-inclusive bytes. Only available when the encoder was
-                /// constructed via `wrap_and_apply_header` (not raw `wrap`).
+            impl<'a> #name_encoder_ident<'a, sbe_rt::HeaderPresent, sbe_rt::FieldsFixed> {
+                /// Header-inclusive bytes. Only available after
+                /// `wrap_and_apply_header` **and** `fixed(&FixedFields)`.
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
                     &self.buf[self.msg_offset..self.offset]
@@ -1570,41 +1611,45 @@ pub(crate) fn generate_message_encoder(
         });
     }
 
-    if msg.has_tails() {
-        ts.extend(quote::quote! {
-            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
+    // Every FieldsState / HeaderState combination is a generated message type.
+    // `fixed()` returns `Encoder<_, FieldsFixed>` — that must stay `SbeMessage`.
+    ts.extend(quote::quote! {
+        impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #sealed_path::Sealed
+            for #name_encoder_ident<'a, H, F>
+        {
+        }
 
-            impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
-                const TEMPLATE_ID: u16 = #msg_id_lit;
-                const BLOCK_LENGTH: usize = #block_length_lit;
-                const SCHEMA_ID: u16 = #schema_id_lit;
-                const SCHEMA_VERSION: u16 = #schema_version_lit;
-            }
-        });
-    } else {
-        ts.extend(quote::quote! {
-            impl<'a> #sealed_path::Sealed for #name_encoder_ident<'a> {}
-
-            impl<'a> sbe_rt::SbeMessage for #name_encoder_ident<'a> {
-                const TEMPLATE_ID: u16 = #msg_id_lit;
-                const BLOCK_LENGTH: usize = #block_length_lit;
-                const SCHEMA_ID: u16 = #schema_id_lit;
-                const SCHEMA_VERSION: u16 = #schema_version_lit;
-            }
-        });
-    }
+        impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> sbe_rt::SbeMessage
+            for #name_encoder_ident<'a, H, F>
+        {
+            const TEMPLATE_ID: u16 = #msg_id_lit;
+            const BLOCK_LENGTH: usize = #block_length_lit;
+            const SCHEMA_ID: u16 = #schema_id_lit;
+            const SCHEMA_VERSION: u16 = #schema_version_lit;
+        }
+    });
 
     // ── T-14: UnfixedEncoder names the pre-`fixed()` stage ──────────
-    if total_tail > 0 {
-        ts.extend(quote::quote! {
+    let unfixed_doc = if total_tail > 0 {
+        quote::quote! {
             /// Pre-`fixed()` root encoder stage. Individual fixed-field setters
             /// and [`fixed`](Self::fixed) live here; group/var-data tails are
             /// only available on the [`sbe_rt::FieldsFixed`] phase after
             /// `fixed(&FixedFields)`.
-            pub type #unfixed_encoder_ident<'a, H = sbe_rt::HeaderPresent> =
-                #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed>;
-        });
-    }
+        }
+    } else {
+        quote::quote! {
+            /// Pre-`fixed()` root encoder stage. Individual fixed-field setters
+            /// and [`fixed`](Self::fixed) live here; byte views are only
+            /// available on the [`sbe_rt::FieldsFixed`] phase after
+            /// `fixed(&FixedFields)`.
+        }
+    };
+    ts.extend(quote::quote! {
+        #unfixed_doc
+        pub type #unfixed_encoder_ident<'a, H = sbe_rt::HeaderPresent> =
+            #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed>;
+    });
 
     let mut group_buf = String::new();
     let enc_group_names: Vec<String> = msg

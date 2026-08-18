@@ -1,6 +1,14 @@
-# Public API baseline — machine-readable manifest of representative generated
-# surfaces. Each fixture is compiled, its public API extracted, and diffed
-# against the latest semver release by scripts/check-public-api.sh.
+# Public API baseline — inventory of representative generated surfaces and
+# the crates.io version cargo-semver-checks compares against.
+#
+# Enforced today: scripts/check-public-api.sh runs cargo-semver-checks on
+# ergo-sbe and ergo-aeron-cluster against [metadata].baseline_tag (a git
+# tag; the script strips a leading `v` before passing --baseline-version).
+#
+# Not enforced yet: compiling each fixture below, extracting its generated
+# public API, and diffing that against the baseline tag. That generated-API
+# freeze is future work for the 1.0 audit — this file is the fixture list,
+# not a claim that the diff already runs.
 
 [[fixtures]]
 name = "car_full"

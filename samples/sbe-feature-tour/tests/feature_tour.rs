@@ -21,6 +21,13 @@ fn heartbeat_and_any_message() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[test]
+fn bulk_add_acceleration_encodes() -> Result<(), Box<dyn std::error::Error>> {
+    let wire = sbe_feature_tour::demo_bulk_add()?;
+    assert!(!wire.is_empty());
+    Ok(())
+}
+
 /// `with_conversion(Decimal)` alone: generic `price_as` / `price_from`, not
 /// concrete `price() -> rust_decimal::Decimal` (that requires `with_domain_type`).
 #[test]

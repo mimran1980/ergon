@@ -1077,15 +1077,15 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         }
 
         impl #name_ident {
-            /// Wire discriminant. Not `#[inline]`: measured no-LTO decode
-            /// regression when forced.
+            /// Wire discriminant.
             #[must_use = "discarding this value is almost always a mistake"]
+            #[inline]
             pub fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
             /// Reconstruct from a wire discriminant (`NullVal` for unknown).
-            /// Not `#[inline]`: same measurement rationale as [`Self::raw`].
+            #[inline]
             pub const fn from_raw(val: #r_type_ty) -> Self {
                 match val {
                     #(#from_raw_arms,)*

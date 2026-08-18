@@ -1,24 +1,22 @@
 # Bulk Arrays
 
 For repeating groups with **fixed-size entries** (no var-data, no nested
-groups), generated encoders offer a `bulk_add(&[Entry])` path that avoids
-per-element closure overhead:
+groups), generated encoders offer a `bulk_add(&[Entry])` path that validates
+the destination region once and writes every entry.
+
+Car `fuelFigures` has var-data (`usageDescription`), so it is **not** eligible.
+The nested `acceleration` group is — each row is `mph` + `seconds` only:
 
 ```rust,no_run
-// Fixed-size entries only — not available when the group has var-data or nested groups.
-// See samples/l3-book for a schema with eligible fixed-size entries.
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_bulk_add}}
 ```
+*(From `samples/sbe-feature-tour` — compiled and run in that crate's tests.)*
 
-The feature-tour Car schema uses groups with var-data tails (`fuelFigures`,
-`performanceFigures`), so `bulk_add` isn't applicable there. Use the standard
-`add(|e| { ... })` closure pattern for variable-size group entries:
+`bids` / `asks` on the l3-book schema have a nested `orders` group, so those
+outer groups are not eligible either. Only a **leaf** group whose entries are
+a pure fixed block gets `bulk_add`.
 
-```rust,no_run
-{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:encode_sample_car}}
-```
-
-Constants and `MetaAttribute` expose schema metadata on every generated type:
-
-```rust,no_run
-{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_fixed_heartbeat}}
-```
+Constants and `MetaAttribute` expose schema metadata on every generated type
+(`HeartbeatDecoder::sequence_meta_attribute(MetaAttribute::Presence)` and
+friends). See the generated module after `cargo build` of the feature-tour
+sample.

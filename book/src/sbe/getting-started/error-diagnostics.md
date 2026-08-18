@@ -115,6 +115,22 @@ match parse_file("my-schema.xml") {
 }
 ```
 
+## Out-of-range null / min / max
+
+A present `nullValue`, `minValue`, or `maxValue` is parsed fail-closed against
+the declared primitive width. `nullValue="256"` on `uint8` is rejected (it is
+not a valid one-byte sentinel). Signed types accept the type's full range
+(`int8` `-1` is fine; `int8` `128` is not).
+
+```
+ergo_sbe::schema_parse::invalid
+
+  × invalid nullValue: '256' is out of range for UInt8
+```
+
+Without that check the generator used to emit `256_u64 as u8`, so `Some(0)`
+and `None` collided on the wire.
+
 ## Error variants
 
 | Variant | Error code | When |

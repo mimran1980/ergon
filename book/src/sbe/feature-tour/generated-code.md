@@ -118,8 +118,9 @@ pub struct CarDecoderMetadata<'m, 'a> {
 }
 ```
 
-Encoders have the same pattern. Fixed-only messages keep complete-sounding
-`as_body_bytes` / `as_bytes_with_header` on metadata; messages with tails use
+Encoders have the same pattern. Fixed-only messages expose
+`as_body_bytes` / `as_bytes_with_header` only after `fixed(&FixedFields)`
+(on the encoder and on `FieldsFixed` metadata). Messages with tails use
 `as_fixed_body_bytes` / `as_fixed_region_with_header` until the complete stage.
 
 ```rust,ignore

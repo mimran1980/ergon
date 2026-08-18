@@ -8,6 +8,27 @@
 //!
 //! Semantic IR rules (offsets, types, duplicates) still come from the main
 //! parser / resolver.
+//!
+//! # Relationship to [`crate::parse`]
+//!
+//! [`parse`](crate::parse) is **always on** and rejects malformed XML, a bad
+//! root, unexpected elements, and unknown attributes on its own. This module
+//! is an **opt-in, deliberately stricter** gate for schema authors; it is
+//! not a prerequisite for parsing.
+//!
+//! Attribute allow-lists are shared with the parser (one private
+//! `schema_attrs` module owns them) so the two cannot drift apart.
+//!
+//! Where the published XSD is stricter than sbe-tool itself, sbe-tool wins:
+//! the XSD marks `messageSchema/@version` `use="required"`, but upstream's own
+//! test resources omit it, so requiring it here would reject schemas the
+//! reference implementation accepts. Only `@id` is required.
+//!
+//! Vendor extensions the published XSD does not declare but sbe-tool accepts
+//! (`characterEncoding` on `<data>`, `unit` on `<type>`, `jsonValue` on
+//! `<validValue>` / `<choice>`, `package` on `<types>`) are permitted, as are
+//! all namespaced attributes (`xsi:*`, `xi:*`, and vendor namespaces such as
+//! Binance's `mbx:*`). Rejecting those would fail real-world schemas.
 
 use miette::Diagnostic;
 use thiserror::Error;
@@ -99,29 +120,19 @@ pub fn validate_against_sbe_xsd(xml: &str) -> Result<(), XsdValidationError> {
         });
     }
 
-    // XSD marks package/id/version as optional strings/ints, but practical SBE
-    // schemas always carry them; require id + version like the Real Logic
-    // parser effectively does for IR generation.
-    for attr in ["id", "version"] {
-        if root.attribute(attr).is_none() {
-            return Err(XsdValidationError::MissingAttribute { attr });
-        }
+    // `id` is required: without it there is no schema identity to encode.
+    //
+    // `version` is NOT required here even though the published XSD marks it
+    // `use="required"`. sbe-tool's own test resources ship schemas that omit
+    // it (e.g. `basic-schema.xml`, `new-order-single-schema.xml`), so the
+    // reference implementation does not enforce it either, and `parse`
+    // defaults it to 0. Enforcing it would reject upstream-mirrored fixtures
+    // — a validator stricter than both the parser and the reference tool only
+    // produces false positives.
+    if root.attribute("id").is_none() {
+        return Err(XsdValidationError::MissingAttribute { attr: "id" });
     }
-    check_attrs(
-        "messageSchema",
-        root,
-        &[
-            "package",
-            "id",
-            "version",
-            "semanticVersion",
-            "description",
-            "byteOrder",
-            "headerType",
-            "xmlns",
-            "xsi",
-        ],
-    )?;
+    check_attrs("messageSchema", root, crate::schema_attrs::MESSAGE_SCHEMA)?;
 
     for child in root.children().filter(|n| n.is_element()) {
         let name = local_name(child.tag_name().name());
@@ -147,17 +158,15 @@ fn check_attrs(
     allowed: &[&str],
 ) -> Result<(), XsdValidationError> {
     for attr in node.attributes() {
-        let name = local_name(attr.name());
-        // Allow xmlns:* and xsi:* freely.
-        if name.starts_with("xmlns")
-            || attr.namespace().is_some_and(|ns| {
-                ns.contains("XMLSchema-instance") || ns.contains("www.w3.org/2000/xmlns")
-            })
-        {
+        // Any namespaced attribute is outside the SBE grammar — `xsi:*`,
+        // `xi:*`, and vendor extensions alike (Binance ships `mbx:exponent`).
+        // Note `attr.name()` is the LOCAL name, so a `contains(':')` test
+        // never fires; the namespace is what identifies these.
+        if attr.namespace().is_some() {
             continue;
         }
-        if attr.name().contains(':') {
-            // Prefixed attrs (xsi:schemaLocation, etc.)
+        let name = local_name(attr.name());
+        if name.starts_with("xmlns") {
             continue;
         }
         if !allowed.contains(&name) {
@@ -171,7 +180,9 @@ fn check_attrs(
 }
 
 fn validate_types(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
-    check_attrs("types", node, &[])?;
+    // `package` on <types> is not in the published XSD but sbe-tool emits and
+    // accepts it (it scopes generated types for that block).
+    check_attrs("types", node, &["package"])?;
     for child in node.children().filter(|n| n.is_element()) {
         let name = local_name(child.tag_name().name());
         match name {
@@ -189,6 +200,8 @@ fn validate_types(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationErro
                     "characterEncoding",
                     "epoch",
                     "timeUnit",
+                    // `unit` is an sbe-tool extension carried by real schemas.
+                    "unit",
                     "semanticType",
                     "description",
                     "sinceVersion",
@@ -259,7 +272,14 @@ fn validate_enum(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError
             "validValue" => check_attrs(
                 "validValue",
                 child,
-                &["name", "description", "sinceVersion", "deprecated"],
+                // `jsonValue` is an sbe-tool extension used by real schemas.
+                &[
+                    "name",
+                    "description",
+                    "sinceVersion",
+                    "deprecated",
+                    "jsonValue",
+                ],
             )?,
             "description" | "comment" => {}
             other => {
@@ -292,7 +312,14 @@ fn validate_set(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError>
             "choice" => check_attrs(
                 "choice",
                 child,
-                &["name", "description", "sinceVersion", "deprecated"],
+                // `jsonValue` is an sbe-tool extension used by real schemas.
+                &[
+                    "name",
+                    "description",
+                    "sinceVersion",
+                    "deprecated",
+                    "jsonValue",
+                ],
             )?,
             "description" | "comment" => {}
             other => {
@@ -307,54 +334,13 @@ fn validate_set(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError>
 }
 
 fn validate_message(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
-    check_attrs(
-        "message",
-        node,
-        &[
-            "name",
-            "id",
-            "description",
-            "blockLength",
-            "semanticType",
-            "sinceVersion",
-            "deprecated",
-        ],
-    )?;
+    check_attrs("message", node, crate::schema_attrs::MESSAGE)?;
     for child in node.children().filter(|n| n.is_element()) {
         let name = local_name(child.tag_name().name());
         match name {
-            "field" => check_attrs(
-                "field",
-                child,
-                &[
-                    "name",
-                    "id",
-                    "type",
-                    "description",
-                    "offset",
-                    "presence",
-                    "valueRef",
-                    "semanticType",
-                    "sinceVersion",
-                    "deprecated",
-                    "epoch",
-                    "timeUnit",
-                ],
-            )?,
+            "field" => check_attrs("field", child, crate::schema_attrs::FIELD_LIKE)?,
             "group" => validate_group(child)?,
-            "data" => check_attrs(
-                "data",
-                child,
-                &[
-                    "name",
-                    "id",
-                    "type",
-                    "description",
-                    "semanticType",
-                    "sinceVersion",
-                    "deprecated",
-                ],
-            )?,
+            "data" => check_attrs("data", child, crate::schema_attrs::FIELD_LIKE)?,
             "description" | "comment" => {}
             other => {
                 return Err(XsdValidationError::UnexpectedElement {
@@ -368,20 +354,7 @@ fn validate_message(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationEr
 }
 
 fn validate_group(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
-    check_attrs(
-        "group",
-        node,
-        &[
-            "name",
-            "id",
-            "description",
-            "dimensionType",
-            "blockLength",
-            "semanticType",
-            "sinceVersion",
-            "deprecated",
-        ],
-    )?;
+    check_attrs("group", node, crate::schema_attrs::GROUP)?;
     for child in node.children().filter(|n| n.is_element()) {
         let name = local_name(child.tag_name().name());
         match name {

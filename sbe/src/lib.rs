@@ -197,6 +197,10 @@
 //! Optional CI gate: [`validate_against_sbe_xsd`] or [`parse_with_xsd_validation`].
 //! Official XSD text is embedded as [`SBE_XSD`].
 //!
+//! Note this is a *shape* check, not a full W3C engine, and it is opt-in.
+//! [`parse`] itself always rejects malformed XML, a bad root, unexpected
+//! elements, and unknown attributes.
+//!
 //! # Design
 //!
 //! - Wire-compatible with official SBE / sbe-tool baselines where tested
@@ -305,6 +309,7 @@ pub mod resolve;
 )]
 pub mod schema;
 /// Structured IR for codegen (internal).
+mod schema_attrs;
 #[allow(
     dead_code,
     unused_imports,

@@ -175,6 +175,23 @@ fn generated_message_types_still_implement_sbe_message() -> Result<(), Box<dyn s
         assert_eq!(template_id::<CarDecoder<'_>>(), CarDecoder::TEMPLATE_ID);
         assert_eq!(template_id::<CarEncoder<'_>>(), CarDecoder::TEMPLATE_ID);
         assert_eq!(schema_id::<CarDecoder<'_>>(), schema_id::<CarEncoder<'_>>());
+
+        // `fixed()` returns Encoder<_, FieldsFixed> — that must stay SbeMessage.
+        let mut buf = [0u8; 512];
+        let fixed = CarEncoder::wrap_and_apply_header(&mut buf, 0).fixed(&CarFixedFields {
+            serial_number: 7,
+            model_year: 2020,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1, 2, 3, 4],
+            vehicle_code: *b"ABCDEF",
+            extras: OptionalExtras::default(),
+            engine: Engine::new(1000, 3, [51, 0, 0], 0i8, BooleanType::F,
+                                Booster::new(BoostType::TURBO, 0)),
+        });
+        assert_eq!(template_id_of(&fixed), CarEncoder::TEMPLATE_ID);
+
+        fn template_id_of<T: sbe_rt::SbeMessage>(_: &T) -> u16 { T::TEMPLATE_ID }
         "#,
     );
     Ok(())

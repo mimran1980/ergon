@@ -31,6 +31,8 @@ build:
 policy:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
+    bash scripts/tests/test-repository-hygiene.sh
+    bash scripts/tests/test-public-api.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
@@ -59,6 +61,8 @@ preflight:
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
+    bash scripts/tests/test-repository-hygiene.sh
+    bash scripts/tests/test-public-api.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -445,6 +449,6 @@ bench-cluster:
     "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
     echo ""
     echo "=== Gate (LTO) ==="
-    ./scripts/check-bench-gate.sh "$lto_crit" 0.005 cluster
+    ./scripts/check-bench-gate.sh "$lto_crit" 0 cluster --run-id "$run_id"
     echo "=== Gate (no-LTO) ==="
-    ./scripts/check-bench-gate.sh "$no_lto_crit" 0.005 cluster
+    ./scripts/check-bench-gate.sh "$no_lto_crit" 0 cluster --run-id "$run_id"

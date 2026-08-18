@@ -9,8 +9,8 @@ use roxmltree::{Document, Node};
 use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
-    collect_description, element_children, opt_u16_attr, parse_byte_order, string_attr, u16_attr,
-    validate_sbe_name,
+    collect_description, element_children, opt_u16_attr, parse_byte_order, reject_unknown_attrs,
+    string_attr, u16_attr, validate_sbe_name,
 };
 use super::error::{Fault, FaultKind};
 use super::message::parse_message;
@@ -25,6 +25,7 @@ pub(crate) fn parse_schema(
     initial_registry: TypeRegistry,
     warn_state: &WarnState,
 ) -> Result<Ir, Fault> {
+    reject_unknown_attrs(root, "messageSchema", crate::schema_attrs::MESSAGE_SCHEMA)?;
     let package = string_attr(root, "package", "messageSchema @package")?;
     let id = u16_attr(root, "id", "messageSchema @id")?;
     let version = opt_u16_attr(root, "version", "messageSchema @version")?.unwrap_or(0);

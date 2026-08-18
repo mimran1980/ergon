@@ -75,8 +75,8 @@ regardless of magnitude.
 
 The executable policy is in `scripts/check-bench-gate.sh`:
 - SBE: zero tolerance (`1.00`)
-- Cluster: `0.005` tolerance (the cluster gate allows sub-1% measurement noise
-  on end-to-end dispatch paths)
+- Cluster: the same literal `1.00` ceiling; `just bench-cluster` passes
+  `--run-id` so stale Criterion trees cannot pass
 
 Do not copy point estimates into this file — a benchmark number is only
 evidence for the tree that produced it. The result of record is the artifact

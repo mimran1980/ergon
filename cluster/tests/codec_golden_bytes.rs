@@ -70,20 +70,25 @@ use ergo_aeron_cluster::cluster_codec_types::{
     ChallengeResponseFixedFields as ErgoChallengeResponseFixedFields, EventCode as ErgoEventCode,
     NewLeaderEventEncoder as ErgoNewLeaderEventEncoder, NewLeaderEventFixedFields as ErgoNewLeaderEventFixedFields,
     SessionCloseRequestEncoder as EsmSessionCloseRequestEncoder,
+    SessionCloseRequestFixedFields as EsmSessionCloseRequestFixedFields,
     SessionConnectRequestEncoder as ErgoSessionConnectRequestEncoder,
     SessionConnectRequestFixedFields as ErgoSessionConnectRequestFixedFields,
     SessionEventEncoder as ErgoSessionEventEncoder, SessionEventFixedFields as ErgoSessionEventFixedFields,
     SessionKeepAliveEncoder as EsmSessionKeepAliveEncoder,
+    SessionKeepAliveFixedFields as EsmSessionKeepAliveFixedFields,
     SessionMessageHeaderEncoder as EsmSessionMessageHeaderEncoder,
+    SessionMessageHeaderFixedFields as EsmSessionMessageHeaderFixedFields,
 };
 
 #[test]
 fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = [0u8; 64];
-    let mut e = EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0);
-    e.leadership_term_id(42);
-    e.cluster_session_id(99);
-    e.timestamp(1234567890);
+    let e =
+        EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionMessageHeaderFixedFields {
+            leadership_term_id: 42,
+            cluster_session_id: 99,
+            timestamp: 1234567890,
+        });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_MESSAGE_HEADER[..]);
 
     Ok(())
@@ -92,9 +97,10 @@ fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = [0u8; 64];
-    let mut e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0);
-    e.leadership_term_id(5);
-    e.cluster_session_id(10);
+    let e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionKeepAliveFixedFields {
+        leadership_term_id: 5,
+        cluster_session_id: 10,
+    });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
 
     Ok(())
@@ -103,9 +109,10 @@ fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = [0u8; 64];
-    let mut e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0);
-    e.leadership_term_id(7);
-    e.cluster_session_id(42);
+    let e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionCloseRequestFixedFields {
+        leadership_term_id: 7,
+        cluster_session_id: 42,
+    });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
 
     Ok(())

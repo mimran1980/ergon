@@ -31,8 +31,13 @@ fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
-        enc.id(42).price(10000).qty(10).side(Side::Buy);
+        let enc = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&FixedOnlyFixedFields {
+                id: 42,
+                price: 10000,
+                qty: 10,
+                side: Side::Buy,
+            });
         let encoded = enc.as_bytes_with_header();
 
         let dec = FixedOnlyDecoder::try_from(encoded)?;
@@ -597,21 +602,28 @@ fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>
         "conformance_raw_fixed",
         &src,
         r#"
+        let fields = FixedOnlyFixedFields {
+            id: 42,
+            price: 10000,
+            qty: 10,
+            side: Side::Buy,
+        };
         let mut buf1 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc1 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf1, 0)?;
-        enc1.id(42).price(10000).qty(10).side(Side::Buy);
+        let enc1 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf1, 0)?.fixed(&fields);
         let bytes1 = enc1.as_bytes_with_header();
 
         let mut buf2 = [0u8; FixedOnlyEncoder::ENCODED_LENGTH];
-        let mut enc2 = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf2, 0)?;
-        enc2.id(42).price(10000).qty(10).side(Side::Buy);
-        let bytes2 = enc2.as_bytes_with_header();
+        let mut w = FixedOnlyEncoder::try_wrap_and_apply_header(&mut buf2, 0)?.raw_fixed();
+        w.id(42).price(10000).qty(10).side(Side::Buy);
+        let bytes2 = &buf2[..FixedOnlyEncoder::ENCODED_LENGTH];
 
-        assert_eq!(bytes1, bytes2, "raw_fixed and chaining produce same bytes");
+        assert_eq!(bytes1, bytes2, "raw_fixed setters and fixed() produce same bytes");
 
         let d1 = FixedOnlyDecoder::try_from(bytes1)?;
         let d2 = FixedOnlyDecoder::try_from(bytes2)?;
         assert_eq!(d1.id(), d2.id());
+        assert_eq!(d1.price(), d2.price());
+        assert_eq!(d1.qty(), d2.qty());
         assert_eq!(d1.side(), d2.side());
 
         println!("PASS: conformance_fixed_raw_fixed_parity");

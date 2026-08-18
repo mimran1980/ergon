@@ -1,11 +1,11 @@
 # Benchmark Results
 
-> Methodology, gate rules, and fairness policy: [Benchmark Methodology](https://github.com/mimran1980/ergon/blob/main/sbe/benchmarks/methodology.md).
+> Methodology, gate rules, and fairness policy: [Benchmark Methodology](./benchmarks/methodology.md).
 
 ### SBE codec gate — `just bench`
 
 Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
-ceiling with zero tolerance** (SBE) or **0.005 tolerance** (cluster). The
+ceiling with zero tolerance** for both SBE and cluster. The
 executable policy is in `scripts/check-bench-gate.sh`.
 
 Do not copy point estimates into this file. Current results live in
@@ -110,22 +110,24 @@ Every gated ergon/sbe-tool pair uses the same header mode on both arms:
 | decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
 | decode full / batch 10k | body wrap + same fields | same | same |
 | cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
-| cluster decode | header+body parse | `wrap_and_apply_header` | MessageHeaderDecoder + body + equal checks |
+| cluster decode | extent wrap + same field reads | `wrap(buf, 0, block, version)` | `wrap(ReadBuf, 8, block, version)` — no header identity |
 
 Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
 throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
 
 ### Cluster codec gate — `just bench-cluster`
 
-All 5 maintained scenarios pass:
+Five maintained scenarios are gated at the same literal `1.00` ceiling, with
+`--run-id` provenance:
 
-| Scenario | Ratio | Status |
-|----------|-------|--------|
-| encode/session_message_header | 0.7464 | PASS |
-| encode/session_keep_alive | 0.6213 | PASS |
-| decode/session_message_header | 0.8968 | PASS |
-| decode/session_event | 0.8209 | PASS |
-| encode/claim_shaped_header_plus_app | 0.8288 | PASS |
+- encode/session_message_header
+- encode/session_keep_alive
+- decode/session_message_header
+- decode/session_event
+- encode/claim_shaped_header_plus_app
+
+Do not copy Criterion point estimates here. `just bench-cluster` stamps
+`target/criterion` / `target/bench-no-lto/criterion` and fails a stale tree.
 
 Cluster encode arms locally assert exact sbe-tool byte parity before timing,
 use identical exact message lengths, make both mutable buffer inputs opaque,

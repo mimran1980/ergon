@@ -9,11 +9,13 @@ use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 use super::attr::{
     collect_description, element_children, is_primitive_name, opt_u16_attr, opt_usize_attr,
     parse_deprecated_attr, parse_presence, parse_primitive_type, preceding_xml_comments,
-    string_attr, structural, u16_attr, validate_sbe_name,
+    reject_unknown_attrs, string_attr, structural, u16_attr, validate_sbe_name,
 };
 use super::error::Fault;
 use super::registry::{TypeRegistry, parse_u64_val, resolve_type_to_tokens};
 use super::warn::{WarnState, warn_once};
+
+use crate::schema_attrs;
 
 pub(crate) fn parse_message(
     node: Node<'_, '_>,
@@ -22,6 +24,7 @@ pub(crate) fn parse_message(
     tokens: &mut Vec<Token>,
     warn_state: &WarnState,
 ) -> Result<(), Fault> {
+    reject_unknown_attrs(node, "message", schema_attrs::MESSAGE)?;
     let name = string_attr(node, "name", "message @name")?;
     validate_sbe_name(node, &name, "message @name")?;
     let id = u16_attr(node, "id", "message @id")?;
@@ -160,6 +163,7 @@ pub(crate) fn parse_message_child(
 ) -> Result<(), Fault> {
     match node.tag_name().name() {
         "field" => {
+            reject_unknown_attrs(node, "field", schema_attrs::FIELD_LIKE)?;
             let field_name = string_attr(node, "name", "field @name")?;
             let type_name = string_attr(node, "type", "field @type")?;
             let id = u16_attr(node, "id", "field @id")?;
@@ -282,6 +286,7 @@ pub(crate) fn parse_message_child(
             }
         }
         "group" => {
+            reject_unknown_attrs(node, "group", schema_attrs::GROUP)?;
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
@@ -348,6 +353,7 @@ pub(crate) fn parse_message_child(
             ));
         }
         "data" => {
+            reject_unknown_attrs(node, "data", schema_attrs::FIELD_LIKE)?;
             let data_name = string_attr(node, "name", "data @name")?;
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);

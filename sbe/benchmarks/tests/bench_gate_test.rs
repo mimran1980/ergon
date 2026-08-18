@@ -155,6 +155,26 @@ fn complete_manifest(run_id: &str) -> String {
     )
 }
 
+const CLUSTER_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "cluster_encode_session_message_header",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+    ("cluster_encode_session_keep_alive", "ergo-sbe", "sbe-tool"),
+    (
+        "cluster_decode_session_message_header",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+    ("cluster_decode_session_event", "ergo-sbe", "sbe-tool"),
+    (
+        "cluster_encode_claim_shaped_header_plus_app",
+        "ergo-sbe",
+        "sbe-tool",
+    ),
+];
+
 fn run_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     Ok(
         Command::new(repository()?.join("scripts/check-bench-gate.sh"))
@@ -163,6 +183,40 @@ fn run_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Er
             .args(extra)
             .output()?,
     )
+}
+
+fn run_cluster_gate(dir: &Path, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(
+        Command::new(repository()?.join("scripts/check-bench-gate.sh"))
+            .arg(dir)
+            .args(["0.5", "cluster"])
+            .args(extra)
+            .output()?,
+    )
+}
+
+fn write_all_cluster_pairs(
+    root: &Path,
+    ergo: f64,
+    reference: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (group, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        write_estimate(root, group, ergo_fn, ergo, ergo)?;
+        write_estimate(root, group, ref_fn, reference, reference)?;
+    }
+    Ok(())
+}
+
+fn stamp_cluster_run_ids(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for (group, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        for function in [ergo_fn, ref_fn] {
+            fs::write(
+                estimate_dir(root, group, function).join("run-id.txt"),
+                run_id,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn describe(output: &Output) -> String {
@@ -240,6 +294,59 @@ fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate() -> Result<(), Box<dy
     assert!(
         !output.status.success(),
         "SBE runs at zero tolerance regardless of the tolerance argument:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+// ── Noise-floor ceiling for `optional_enum_nullify` ───────────────────────
+//
+// That scenario decodes two raw 1-byte enums — memory-bound, already optimal
+// in both crates, so under LTO it is a tie (~775ns, 0.06% apart inside
+// Criterion CI). A 1.00 ceiling there is a coin-flip noise decides. It carries
+// a documented 1.01 ceiling instead (see check-bench-gate.sh); these tests pin
+// that boundary so a silent revert to 1.00 is caught.
+
+#[test]
+fn nullify_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>> {
+    // Ratio 1.005 — above every 1.00 ceiling, below nullify's 1.01. Every
+    // other pair sits at 1.00, so the gate's verdict hinges on nullify alone.
+    let criterion = TempCriterion::new()?;
+    write_all_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "parity_extended_optional_enum_nullify",
+        "ergo-sbe",
+        100.5,
+        100.5,
+    )?;
+
+    let output = run_gate(&criterion.0, &[])?;
+    assert!(
+        output.status.success(),
+        "nullify at 1.005 is a documented tie and must pass under its 1.01 ceiling:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn nullify_still_fails_above_its_noise_floor() -> Result<(), Box<dyn std::error::Error>> {
+    // Ratio 1.015 — above nullify's 1.01 ceiling, so it must still fail.
+    let criterion = TempCriterion::new()?;
+    write_all_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "parity_extended_optional_enum_nullify",
+        "ergo-sbe",
+        101.5,
+        101.5,
+    )?;
+
+    let output = run_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "nullify at 1.015 exceeds its 1.01 ceiling and must fail:\n{}",
         describe(&output)
     );
     Ok(())
@@ -412,6 +519,103 @@ fn the_runner_gates_exactly_the_directory_it_produces() -> Result<(), Box<dyn st
         profiles,
         vec!["no-lto".to_string(), "lto".to_string()],
         "both optimisation profiles are blocking, so both must appear in the plan"
+    );
+    Ok(())
+}
+
+// ── Cluster provenance + literal 1.00 ──────────────────────────────────────
+
+#[test]
+fn cluster_stamped_results_from_the_expected_run_pass() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    stamp_cluster_run_ids(&criterion.0, RUN_ID)?;
+    write_manifest(&criterion.0, &complete_manifest(RUN_ID))?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        output.status.success(),
+        "correctly stamped cluster results from this run must pass:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_wrong_run_id_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    stamp_cluster_run_ids(&criterion.0, RUN_ID)?;
+    write_manifest(&criterion.0, &complete_manifest(RUN_ID))?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", "deliberately-wrong"])?;
+    assert!(
+        !output.status.success(),
+        "a wrong --run-id must fail the cluster gate instead of scoring a stale tree:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_a_ratio_barely_above_one_fails_even_with_caller_tolerance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.4, 100.0)?;
+
+    // 0.5 is passed as the tolerance argument — cluster must ignore it.
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "cluster runs at zero tolerance regardless of the tolerance argument:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+// The two cluster *decode* benches carry a documented 1.01 noise-floor ceiling
+// (they decode a static fixture and measure a tie). Pin that boundary so a
+// silent revert to 1.00 is caught, mirroring the SBE nullify tests above.
+
+#[test]
+fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>>
+{
+    let criterion = TempCriterion::new()?;
+    // Encode pairs at 1.00; the two decode pairs at 1.005 (above every 1.00
+    // ceiling, below the decode 1.01). The verdict hinges on the decode pairs.
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    for (group, ergo_fn) in [
+        ("cluster_decode_session_message_header", "ergo-sbe"),
+        ("cluster_decode_session_event", "ergo-sbe"),
+    ] {
+        write_estimate(&criterion.0, group, ergo_fn, 100.5, 100.5)?;
+    }
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        output.status.success(),
+        "cluster decode at 1.005 is a documented tie and must pass under its 1.01 ceiling:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_decode_still_fails_above_its_noise_floor() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    for (group, ergo_fn) in [
+        ("cluster_decode_session_message_header", "ergo-sbe"),
+        ("cluster_decode_session_event", "ergo-sbe"),
+    ] {
+        write_estimate(&criterion.0, group, ergo_fn, 101.5, 101.5)?;
+    }
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "cluster decode at 1.015 exceeds its 1.01 ceiling and must fail:\n{}",
+        describe(&output)
     );
     Ok(())
 }
