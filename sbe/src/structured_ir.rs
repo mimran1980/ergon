@@ -558,6 +558,11 @@ pub(crate) enum MemberType {
         length: Option<usize>,
         presence: Presence,
         constant_value: Option<String>,
+        /// Schema `nullValue` for a `presence="optional"` member (e.g. a
+        /// Decimal composite's `mantissa`). `None` when presence isn't
+        /// optional, or optional with no explicit nullValue (defaults to 0
+        /// at the point of use, matching top-level optional fields).
+        null_value: Option<u64>,
     },
     Composite {
         name: String,
@@ -677,6 +682,7 @@ pub(crate) fn parse_composite_members(tokens: &[Token]) -> Vec<CompositeMember> 
                     length,
                     presence,
                     constant_value,
+                    null_value: tokens[i].encoding.null_value,
                 }
             };
 

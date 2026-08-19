@@ -42,7 +42,7 @@ jobs:
   lint:
     needs: policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,6 +60,10 @@ jobs:
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
+      # Prebuilt binary — check-public-api.sh only `cargo install`s from source
+      # as a fallback if this isn't already on PATH. A from-source build took
+      # 4m32s alone and regularly blew the job's timeout (2026-08-19).
+      - uses: taiki-e/install-action@cargo-semver-checks
       - run: ./scripts/check-public-api.sh
 
       # Gates that previously lived ONLY inside `just release`. Because a full
@@ -84,7 +88,10 @@ jobs:
   test:
     needs: policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Was 45; the workspace suite grew from ~9m (2026-08-01) to 45m+ as
+    # sbe_tool_multi_schema_wire_parity_test.rs and friends landed, and the
+    # job was routinely cancelled mid-suite (2026-08-18) rather than failing.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
