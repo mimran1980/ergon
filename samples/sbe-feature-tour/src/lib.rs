@@ -16,6 +16,7 @@
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
+//! | [`demo_domain_type_manual_impl`] | **`with_domain_type(.., DomainImpl::Manual)`** — concrete `try_manual_price(...)?`, app-supplied impl |
 //! | [`demo_bulk_add`] | `bulk_add` on the fixed-stride nested `acceleration` group |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
@@ -60,7 +61,8 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let nanos: i64 = 1_720_000_000_000_000_000;
     // Buffer pre-sized via const compute_length_with_header; try_* still validates extent.
-    let written = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+    let written = HeartbeatEncoder::try_wrap_and_apply_header(&mut buf, 0)
+        .unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 7,
             timestamp: nanos as u64,
@@ -123,7 +125,8 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
     extras.cruise_control(true).sports_pack(true);
 
     // Buffer pre-sized from EncodedLength; try_* still validates extent.
-    let len = CarEncoder::try_wrap_and_apply_header(buf, 0).unwrap()
+    let len = CarEncoder::try_wrap_and_apply_header(buf, 0)
+        .unwrap()
         .fixed(&CarFixedFields {
             serial_number: 1234,
             model_year: 2013,
@@ -143,10 +146,12 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         })
         .fuel_figures(2, |g| {
             g.add(|mut e| {
-                e.speed(30).mpg(35.9); e.usage_description(b"Urban")
+                e.speed(30).mpg(35.9);
+                e.usage_description(b"Urban")
             })?;
             g.add(|mut e| {
-                e.speed(60).mpg(25.0); e.usage_description(b"Highway")
+                e.speed(60).mpg(25.0);
+                e.usage_description(b"Highway")
             })?;
             Ok(())
         })?
@@ -333,7 +338,8 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let mut hb = [0u8; HeartbeatEncoder::compute_length_with_header()];
     let hb_len = HeartbeatEncoder::compute_length_with_header();
     let nanos: u64 = 1_700_000_000_000_000_000;
-    let _hb_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0).unwrap()
+    let _hb_len = HeartbeatEncoder::try_wrap_and_apply_header(&mut hb, 0)
+        .unwrap()
         .fixed(&HeartbeatFixedFields {
             sequence: 1,
             timestamp: nanos,
@@ -417,12 +423,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let mut hdr_bytes = [0u8; 8];
     hdr_bytes.copy_from_slice(&valid_car[..8]);
     let hdr = MessageHeader(hdr_bytes);
-    let dec = CarDecoder::try_wrap(
-        valid_car,
-        0,
-        hdr.block_length() as usize,
-        hdr.version(),
-    )?;
+    let dec = CarDecoder::try_wrap(valid_car, 0, hdr.block_length() as usize, hdr.version())?;
     assert_eq!(dec.serial_number(), 1234);
     Ok(())
 }
@@ -593,6 +594,77 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 }
 // ANCHOR_END: demo_conversion_only
 
+// ─── 9. with_domain_type(.., DomainImpl::Manual): concrete signatures, own impl ──
+
+// App-supplied conversion for `ManualDecimal` (see build.rs). This is a
+// straight copy-paste of the doc comment on `try_manual_price` in the
+// generated module — DomainImpl::Manual gives you that snippet as a
+// starting point precisely so you don't have to write this from scratch.
+impl TryFromSbe<ManualDecimal> for Rd {
+    type Error = &'static str;
+
+    fn try_from_sbe(wire: ManualDecimal) -> Result<Self, Self::Error> {
+        let mantissa = wire.mantissa() as i128;
+        let exponent = wire.exponent() as i32;
+        let (mantissa, scale) = if exponent < 0 {
+            let scale = exponent.unsigned_abs();
+            (mantissa, scale)
+        } else {
+            let pow = 10i128
+                .checked_pow(exponent as u32)
+                .ok_or("Decimal exponent overflow")?;
+            let scaled = mantissa
+                .checked_mul(pow)
+                .ok_or("Decimal mantissa overflow")?;
+            (scaled, 0)
+        };
+        Rd::from_i128_with_scale(mantissa, scale)
+            .try_into()
+            .map_err(|_| "Decimal overflow")
+    }
+}
+
+impl TryToSbe<ManualDecimal> for Rd {
+    type Error = &'static str;
+
+    fn try_to_sbe(&self) -> Result<ManualDecimal, Self::Error> {
+        let mantissa: i64 = self
+            .mantissa()
+            .try_into()
+            .map_err(|_| "Decimal mantissa overflow i64")?;
+        Ok(ManualDecimal::new(mantissa, -(self.scale() as i8)))
+    }
+}
+
+/// `with_domain_type(ManualDecimal, "rust_decimal::Decimal", DomainImpl::Manual)`
+/// (see `build.rs`). Same concrete `try_manual_price(...)?` / `try_manual_price()?`
+/// signatures as `DomainImpl::Generated` gives `Decimal64`-style fields
+/// elsewhere — the difference is entirely in who writes the two `impl`
+/// blocks above.
+///
+/// | API on Quote | Present? |
+/// |--------------|----------|
+/// | `try_manual_price(rust_decimal::Decimal) -> Result<..>` | yes |
+/// | `try_manual_price() -> Result<rust_decimal::Decimal, ..>` | yes |
+/// | Auto-generated `impl TryFromSbe<ManualDecimal>` | **no** — that's the `impl` block above |
+// ANCHOR: demo_domain_type_manual_impl
+pub fn demo_domain_type_manual_impl() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
+
+    let price = Rd::new(12345, 2); // 123.45
+    let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
+    enc.price_from(&Rd::new(1, 0))?;
+    enc.size_from(&Rd::new(1, 0))?;
+    enc.try_manual_price(price)?;
+    let len = QuoteEncoder::compute_length_with_header();
+
+    let dec = QuoteDecoder::try_from(&buf[..len])?;
+    let decoded = dec.try_manual_price()?;
+    assert_eq!(decoded, price);
+    Ok(buf[..len].to_vec())
+}
+// ANCHOR_END: demo_domain_type_manual_impl
+
 // ─── Orchestrator ──────────────────────────────────────────────────────────
 
 /// Run every feature demo. Returns Ok when all assertions pass.
@@ -629,7 +701,11 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
     let _q = demo_conversion_only()?;
     println!("   ok\n");
 
-    println!("9) bulk_add on fixed-stride acceleration rows");
+    println!("9) with_domain_type(.., DomainImpl::Manual): concrete signatures, own impl");
+    let _mq = demo_domain_type_manual_impl()?;
+    println!("   ok\n");
+
+    println!("10) bulk_add on fixed-stride acceleration rows");
     let _bulk = demo_bulk_add()?;
     println!("   ok\n");
 
@@ -668,6 +744,18 @@ mod tests {
             .size_wire(Decimal::new(2, 0));
         let d2 = QuoteDecoder::try_from(buf.as_slice())?;
         assert_eq!(d2.price_value().mantissa(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn domain_type_manual_impl_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let wire = demo_domain_type_manual_impl()?;
+        let dec = QuoteDecoder::try_from(wire.as_slice())?;
+        assert_eq!(dec.try_manual_price()?, Rd::new(12345, 2));
+        // The raw wire composite is a plain ManualDecimal — no auto-impl,
+        // no hidden generated conversion beyond the app's own impl above.
+        assert_eq!(dec.manual_price_value().mantissa(), 12345);
+        assert_eq!(dec.manual_price_value().exponent(), -2);
         Ok(())
     }
 }

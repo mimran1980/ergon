@@ -825,6 +825,7 @@ fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::E
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",
+            ergo_sbe::DomainImpl::Generated,
         );
     let mut g = Generator::new(config);
     let modules = g.generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?;

@@ -1153,7 +1153,18 @@ impl Generator {
 
             // Converter seam: domain-type / with_conversion / auto_bool.
             if !conv_sels.is_empty() {
-                let converter_ts = generate_converter_impls(msg, &conv_sels, domain_types, multi);
+                let manual_impl_snippets = generate_manual_impl_snippets(
+                    &elements,
+                    domain_types,
+                    &self.config.manual_impl_selectors,
+                );
+                let converter_ts = generate_converter_impls(
+                    msg,
+                    &conv_sels,
+                    domain_types,
+                    &manual_impl_snippets,
+                    multi,
+                );
                 src.push_str(&converter_ts);
             }
             src.push('\n');
@@ -1170,8 +1181,12 @@ impl Generator {
         // identical impl ("conflicting implementation"). Every non-shared
         // module owns its own `sbe_rt`, so this still fires for each of them.
         if self.config.has_conversions() && emit_sbe_rt {
-            let impl_blocks =
-                generate_conversion_impl_blocks(&elements, &self.config.conversions, domain_types);
+            let impl_blocks = generate_conversion_impl_blocks(
+                &elements,
+                &self.config.conversions,
+                domain_types,
+                &self.config.manual_impl_selectors,
+            );
             src.push_str(&impl_blocks);
         }
 
@@ -1701,6 +1716,7 @@ mod tests {
         let config = crate::GenerationConfig::new("test_chrono").with_domain_type(
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
+            crate::DomainImpl::Generated,
         );
         let mut generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;

@@ -9,12 +9,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",
+            ergo_sbe::DomainImpl::Generated,
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
+            ergo_sbe::DomainImpl::Generated,
         )
-        .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
+        .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"))
+        // Same shape as Decimal, but the app supplies the impl itself — see
+        // demo_domain_type_manual_impl in src/lib.rs.
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("ManualDecimal"),
+            "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Manual,
+        );
 
     ergo_sbe::generate_to_dir("schemas/feature-tour.xml", config, &generated_dir)?;
     // ANCHOR_END: build_rs_example

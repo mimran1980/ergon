@@ -2825,6 +2825,181 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// `DomainImpl::Manual` gets the same concrete `try_price(...)?` /
+/// `try_price()?` signatures as `DomainImpl::Generated`, but ergo-sbe does
+/// not generate the `TryFromSbe`/`TryToSbe` impl for the built-in
+/// `rust_decimal` mapping — the caller supplies its own (deliberately
+/// different from the built-in: scaled by an extra factor of 10) to prove
+/// it's genuinely wired to the user's impl, not silently falling back to a
+/// hidden built-in one.
+#[test]
+fn domain_type_manual_impl_uses_callers_own_impl() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    // ANCHOR: with_domain_type_manual_impl_config
+    let (_schema, src) = generate_domain_with(&path, "manual_impl_dt", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Manual,
+        )
+    });
+    // ANCHOR_END: with_domain_type_manual_impl_config
+    compile_and_run_with_deps(
+        "manual_impl_dt",
+        &src,
+        r#"
+        // ANCHOR: with_domain_type_manual_impl_usage
+        use rust_decimal::Decimal;
+
+        // Caller-supplied impl: deliberately scales mantissa by 10 on the way
+        // in/out, so a value only round-trips correctly through THIS impl —
+        // proof ergo-sbe didn't quietly generate its own.
+        impl TryFromSbe<self::Decimal> for rust_decimal::Decimal {
+            type Error = &'static str;
+            fn try_from_sbe(wire: self::Decimal) -> Result<Self, Self::Error> {
+                Ok(rust_decimal::Decimal::new(wire.mantissa() / 10, (-wire.exponent()) as u32))
+            }
+        }
+        impl TryToSbe<self::Decimal> for rust_decimal::Decimal {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<self::Decimal, Self::Error> {
+                Ok(self::Decimal::new(self.mantissa() as i64 * 10, -(self.scale() as i8)))
+            }
+        }
+
+        let mut buf = [0u8; 256];
+        let mut enc = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields { price: self::Decimal::new(0, 0), size: self::Decimal::new(0, 0) });
+        enc.try_price(Decimal::new(12345, 2))?;
+        enc.try_size(Decimal::new(100, 0))?;
+        let encoded = enc.as_bytes_with_header().to_vec();
+
+        let dec = OrderDecoder::try_decode(&encoded, 0)?;
+        assert_eq!(dec.try_price()?, Decimal::new(12345, 2));
+        assert_eq!(dec.try_size()?, Decimal::new(100, 0));
+        // ANCHOR_END: with_domain_type_manual_impl_usage
+        "#,
+        "rust_decimal = \"1\"\n",
+    );
+    Ok(())
+}
+
+/// A `DomainImpl::Manual` field on one of the three built-in type paths
+/// (here `rust_decimal::Decimal`) gets a doc comment on its generated
+/// `try_*` accessor containing the exact impl `DomainImpl::Generated` would
+/// have written — a ready-to-paste starting point (see
+/// `conversion_traits.rs::generate_manual_impl_snippets`). A non-built-in
+/// `rust_type` gets no snippet — there is no generated-impl template to
+/// offer for a caller-invented type.
+#[test]
+fn domain_type_manual_impl_doc_comment_has_generated_snippet()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "manual_impl_doc", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Manual,
+        )
+    });
+    assert_source_ok(
+        &src,
+        &[
+            "DomainImpl::Manual",
+            "impl TryFromSbe<Decimal> for rust_decimal::Decimal",
+            "impl TryToSbe<Decimal> for rust_decimal::Decimal",
+        ],
+    );
+    Ok(())
+}
+
+/// `DomainImpl::Manual` without a caller-supplied impl fails closed with a
+/// named diagnostic (`#[diagnostic::on_unimplemented]`), not the default
+/// "the trait bound `i64: TryFromSbe<Decimal>` is not satisfied" — see
+/// `conversion_traits.rs::emit_conversion_traits`.
+#[test]
+fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dyn std::error::Error>>
+{
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/decimal-converter-schema.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "manual_impl_missing", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal"),
+            "i64",
+            ergo_sbe::DomainImpl::Manual,
+        )
+    });
+    // `i64: TryFromSbe<Decimal>` is never implemented, so the generated
+    // module itself fails to compile — the test body doesn't need to call
+    // anything.
+    compile_fails_with_diagnostics(
+        "manual_impl_missing",
+        &src,
+        "let _ = 0;",
+        &[
+            "`i64` has no `TryFromSbe<Decimal>` impl",
+            "`i64` has no `TryToSbe<Decimal>` impl",
+            "DomainImpl::Manual",
+        ],
+    );
+    Ok(())
+}
+
+/// `DomainImpl::Manual` doc-comment snippets for the other two built-ins —
+/// `bool` (an enum-backed selector, not a composite one like Decimal) and
+/// `chrono::DateTime<Utc>` (a single global impl, not per-selector like
+/// Decimal). Companion to
+/// `domain_type_manual_impl_doc_comment_has_generated_snippet` above, which
+/// covers the composite case.
+#[test]
+fn domain_type_manual_impl_doc_comment_covers_bool_and_chrono()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate_domain_with(&Paths::example_schema(), "manual_impl_bool", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("BooleanType"),
+            "bool",
+            ergo_sbe::DomainImpl::Manual,
+        )
+    });
+    assert_source_ok(
+        &src,
+        &[
+            "DomainImpl::Manual",
+            "impl TryFromSbe<BooleanType> for bool",
+            "impl TryToSbe<BooleanType> for bool",
+        ],
+    );
+
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/optional-domain-types.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "manual_impl_chrono", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+            ergo_sbe::DomainImpl::Manual,
+        )
+    });
+    assert_source_ok(
+        &src,
+        &[
+            "DomainImpl::Manual",
+            "impl TryFromSbe<u64> for chrono::DateTime<chrono::Utc>",
+            "impl TryToSbe<u64> for chrono::DateTime<chrono::Utc>",
+        ],
+    );
+    Ok(())
+}
+
 /// Domain types (`rust_decimal::Decimal`, `chrono::DateTime`) must round-trip
 /// through **optional** fields. A composite decimal has no null image, so its
 /// `try_*` accessor is a plain `Result<Decimal>`; an optional primitive
@@ -2841,14 +3016,17 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
         c.with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal64"),
             "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Generated,
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal128"),
             "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Generated,
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
+            ergo_sbe::DomainImpl::Generated,
         )
     });
     compile_and_run_with_deps(
@@ -2904,6 +3082,7 @@ fn optional_composite_member_null_image_roundtrip() -> Result<(), Box<dyn std::e
         c.with_domain_type(
             ergo_sbe::ConversionSelector::named_type("PriceNull9"),
             "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Generated,
         )
     });
     compile_and_run_with_deps(

@@ -238,6 +238,30 @@ pub(crate) fn find_domain_type<'a>(
     })
 }
 
+/// Same match as [`find_domain_type`], but returns the matched selector
+/// itself (to look up a per-selector value, e.g. a manual-impl snippet)
+/// rather than the mapped type path.
+pub(crate) fn find_domain_selector<'a>(
+    field: &MessageField,
+    domain_types: &'a [(crate::ConversionSelector, String)],
+) -> Option<&'a crate::ConversionSelector> {
+    let type_name = match &field.field_type {
+        FieldType::Composite { name, .. } => name.clone(),
+        FieldType::Enum { name, .. } => name.clone(),
+        FieldType::Set { name, .. } => name.clone(),
+        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
+    };
+    domain_types.iter().find_map(|(sel, _)| match sel {
+        crate::ConversionSelector::NamedType(n) if n == &type_name => Some(sel),
+        crate::ConversionSelector::SemanticType(st)
+            if field.semantic_type.as_deref() == Some(st.as_str()) =>
+        {
+            Some(sel)
+        }
+        _ => None,
+    })
+}
+
 /// Encoder setter name used by domain DTOs.
 ///
 /// - Conversion-only (no domain type): flyweight is `*_wire`.

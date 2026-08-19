@@ -80,6 +80,12 @@
             <type name="mantissa" primitiveType="int64"/>
             <type name="exponent" primitiveType="int8"/>
         </composite>
+        <!-- Same shape as Decimal, but mapped via with_domain_type(...,
+             DomainImpl::Manual) — see build.rs / lib.rs demo_domain_type_manual_impl. -->
+        <composite name="ManualDecimal" description="mantissa * 10^exponent">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8"/>
+        </composite>
     </types>
 
     <!-- Fixed-only: size with ENCODED_LENGTH, no EncodedLength builder needed. -->
@@ -126,5 +132,8 @@
     <sbe:message name="Quote" id="4" description="Price/size with conversion-only Decimal accessors.">
         <field name="price" id="1" type="Decimal" semanticType="Price"/>
         <field name="size" id="2" type="Decimal" semanticType="Qty"/>
+        <!-- with_domain_type(ManualDecimal, "rust_decimal::Decimal", DomainImpl::Manual):
+             concrete try_manualPrice(...)? signatures, app-supplied impl. -->
+        <field name="manualPrice" id="3" type="ManualDecimal"/>
     </sbe:message>
 </sbe:messageSchema>

@@ -154,7 +154,7 @@
 //! | [`GenerationConfig::with_domain_type`] | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
 //!
 //! ```rust
-//! use ergo_sbe::{ConversionSelector, GenerationConfig};
+//! use ergo_sbe::{ConversionSelector, DomainImpl, GenerationConfig};
 //!
 //! // A — pluggable: you implement TryFromSbe / TryToSbe
 //! let _a = GenerationConfig::new("msgs")
@@ -165,6 +165,7 @@
 //!     .with_domain_type(
 //!         ConversionSelector::named_type("Decimal"),
 //!         "rust_decimal::Decimal",
+//!         DomainImpl::Generated,
 //!     );
 //! ```
 //!
@@ -359,7 +360,7 @@ pub use build::{
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
-    ConversionSelector, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig,
+    ConversionSelector, DomainImpl, DomainVarData, EnumVariantInfo, FieldInfo, GenerationConfig,
     GenerationProfile, ItemContext, ItemKind, SetChoiceInfo,
 };
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};

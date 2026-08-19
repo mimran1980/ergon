@@ -137,16 +137,18 @@ the Unix epoch). The `chrono` feature adds converter functions and enables
 ### Build-time config
 
 ```rust,ignore
-use ergo_sbe::{GenerationConfig, ConversionSelector};
+use ergo_sbe::{GenerationConfig, ConversionSelector, DomainImpl};
 
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
+        DomainImpl::Generated,
     )
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestampMicros"),
         "chrono::NaiveDateTime",
+        DomainImpl::Generated,
     );
 ```
 
@@ -161,6 +163,11 @@ let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
 enc.try_created_at(chrono::Utc::now())?;
 enc.try_updated_at(chrono::DateTime::from_timestamp(1_720_000_000, 0).unwrap().naive_utc())?;
 ```
+
+Registering `semantic_type("UTCTimestamp")` **once** covers every field in
+the schema carrying that `semanticType`, not just `created_at` — see
+[One selector, many fields](../recipes/timestamps.md#one-selector-many-fields)
+for a worked multi-field example.
 
 ### Direct converters
 
@@ -213,5 +220,6 @@ let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
+        DomainImpl::Generated,
     );
 ```

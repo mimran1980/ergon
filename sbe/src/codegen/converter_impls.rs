@@ -1,7 +1,9 @@
 //! `*_as` / `*_from` / domain-type conversion method codegen for message
 //! decoders and encoders (including nested group entries).
 
-use super::conversion_helpers::{field_has_conversion_free, find_domain_type};
+use super::conversion_helpers::{
+    field_has_conversion_free, find_domain_selector, find_domain_type,
+};
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::structured_ir::{FieldType, MessageGroup, MessageStructure, rust_type};
 
@@ -12,6 +14,7 @@ pub(crate) fn generate_converter_impls(
     msg: &MessageStructure,
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
+    manual_impl_snippets: &[(crate::ConversionSelector, String)],
     _multi_message: bool,
 ) -> String {
     let span = proc_macro2::Span::call_site();
@@ -74,8 +77,24 @@ pub(crate) fn generate_converter_impls(
             let is_optional = f.since_version > 0
                 || (f.presence == crate::ir::Presence::Optional
                     && !matches!(f.field_type, FieldType::Composite { .. }));
+            // DomainImpl::Manual doc comment: a ready-to-paste starting point,
+            // shown on both the decoder and encoder accessor (IDE hover /
+            // `cargo doc`) so a missing-impl compile error has somewhere to
+            // point the caller.
+            let manual_impl_doc = find_domain_selector(f, domain_types)
+                .and_then(|sel| manual_impl_snippets.iter().find(|(s, _)| s == sel))
+                .map(|(_, snippet)| {
+                    let doc = format!(
+                        "This field uses `DomainImpl::Manual` — provide these impls \
+                         yourself (starting point, copy-paste and adjust):\n\n\
+                         ```rust,ignore\n{snippet}```"
+                    );
+                    quote::quote! { #[doc = #doc] }
+                })
+                .unwrap_or_default();
             if is_optional {
                 decoder_methods.extend(quote::quote! {
+                    #manual_impl_doc
                     #[inline]
                     pub fn #try_ident(
                         &self,
@@ -88,6 +107,7 @@ pub(crate) fn generate_converter_impls(
                 });
             } else {
                 decoder_methods.extend(quote::quote! {
+                    #manual_impl_doc
                     #[inline]
                     pub fn #try_ident(
                         &self,
@@ -107,6 +127,7 @@ pub(crate) fn generate_converter_impls(
             // primitives (`self.ts_wire(Option<u64>)` against `ts_wire(u64)`).
             // Absence is expressed on the raw path, not the domain setter.
             encoder_methods.extend(quote::quote! {
+                #manual_impl_doc
                 #[inline]
                 pub fn #try_ident(
                     &mut self,

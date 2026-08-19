@@ -3,13 +3,14 @@
 //! Compiled against the tour_codec by the book-fence test.
 
 // ANCHOR: timestamp_config
-use ergo_sbe::{GenerationConfig, ConversionSelector};
+use ergo_sbe::{GenerationConfig, ConversionSelector, DomainImpl};
 // Register converters in build.rs — nanos uses the built-in converter,
 // micros and millis get custom TryFromSbe impls wired via field_path:
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
+        DomainImpl::Generated,
     );
 // ANCHOR_END: timestamp_config
 

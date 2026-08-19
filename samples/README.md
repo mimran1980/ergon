@@ -8,7 +8,7 @@ implementations — they move with experimental APIs on purpose.
 
 | Step | Sample | Why |
 |------|--------|-----|
-| **1** | [`sbe-feature-tour/`](sbe-feature-tour/) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, both conversion styles |
+| **1** | [`sbe-feature-tour/`](sbe-feature-tour/) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, all three conversion styles |
 | **2a** | [`l3-book/`](l3-book/) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
 | **2b** | [`exchange-example/`](exchange-example/) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [`sbe-codegen-examples/`](sbe-codegen-examples/) | Generator **as a library** (no `build.rs`) |
@@ -45,7 +45,7 @@ library at runtime.
 
 | Sample | Pattern | Purpose | External requirements |
 |---|---|---|---|
-| [`sbe-feature-tour/`](sbe-feature-tour/) | **Build only** | **Teaching / feature map** — EncodedLength, stages, DTO, AnyMessage, **both** conversion styles | None |
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **Build only** | **Teaching / feature map** — EncodedLength, stages, DTO, AnyMessage, **all three** conversion styles | None |
 | [`l3-book/`](l3-book/) | **Build only** | Nested/ragged L3 books; **`with_domain_type` only** | None for local tests |
 | [`exchange-example/`](exchange-example/) | **Build only** | Multi-schema + **`with_conversion` only** + Aeron IPC | Network only for live exchange paths |
 | [`cluster-rfq/`](cluster-rfq/) | **Build only** | RFQ / auction protocol codecs + cluster examples | Java harness for live examples |
@@ -137,7 +137,7 @@ cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 |--------|--------|-------------------------|
 | [`l3-book/`](l3-book/) | **`with_domain_type` only** | `dec.try_price()?` → `Decimal`; `enc.try_price(d)?` |
 | [`exchange-example/`](exchange-example/) | **`with_conversion` only** | `dec.price_as::<T>()?`; `enc.price_from(&t)?` (+ app `TryFromSbe`) |
-| [`sbe-feature-tour/`](sbe-feature-tour/) | **Both** (different selectors) | bool/timestamp concrete; Decimal generic (`demo_conversion_only`) |
+| [`sbe-feature-tour/`](sbe-feature-tour/) | **All three** (different selectors) | bool/timestamp concrete (`Generated`); Decimal generic (`demo_conversion_only`); ManualDecimal concrete + app impl (`demo_domain_type_manual_impl`) |
 
 Rule: **one style per selector**. `with_domain_type` already enables conversion;
 do not stack `with_conversion` on the same selector.
@@ -146,7 +146,7 @@ do not stack `with_conversion` on the same selector.
 // A — pluggable
 .with_conversion(ConversionSelector::named_type("Decimal"))
 // B — concrete (implies conversion)
-.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
+.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal", DomainImpl::Generated)
 ```
 
 ## Rules

@@ -77,6 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("l2book_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Generated,
+        
         ),
     )?;
 
@@ -93,6 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("converters_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
+            ergo_sbe::DomainImpl::Generated,
+        
         ),
     )?;
 
