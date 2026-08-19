@@ -1299,6 +1299,25 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
 /// On little-endian hosts, `from_le_bytes` is effectively a plain load; this is
 /// the safe equivalent of “overlay a struct on the buffer” without padding or
 /// unaligned UB. See README “Composite layout & little-endian”.
+/// Null-sentinel comparison for a `presence="optional"` composite member
+/// (e.g. a Decimal composite's `mantissa`). Mirrors the top-level optional
+/// primitive field check in `message_decoder.rs`: any IEEE NaN is null for
+/// float/double (matches sbe-tool's `is_nan()`), otherwise wire equality
+/// against the schema `nullValue` (default 0, matching top-level optionals).
+fn composite_member_null_check(
+    prim: PrimitiveType,
+    null_value: Option<u64>,
+) -> proc_macro2::TokenStream {
+    if prim == PrimitiveType::Float || prim == PrimitiveType::Double {
+        quote::quote! { val.is_nan() }
+    } else {
+        let null_val = null_value.unwrap_or(0);
+        let null_lit = syn::LitInt::new(&format!("{null_val}_u64"), proc_macro2::Span::call_site());
+        let r_type_ty: syn::Type = syn::parse_str(rust_type(prim)).unwrap();
+        quote::quote! { val == #null_lit as #r_type_ty }
+    }
+}
+
 pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order: ByteOrder) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
@@ -1357,6 +1376,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 length,
                 presence,
                 constant_value,
+                null_value,
             } => {
                 let r_type_str = rust_type(*prim);
                 let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
@@ -1438,13 +1458,25 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 } else {
                     ctor_params.push(quote::quote! { #field_ident: #r_type_ty });
 
-                    getters.extend(quote::quote! {
-                        #[must_use = "discarding this value is almost always a mistake"]
-                        #[inline]
-                        pub fn #field_ident(&self) -> #r_type_ty {
-                            #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
-                        }
-                    });
+                    if *presence == Presence::Optional {
+                        let null_check = composite_member_null_check(*prim, *null_value);
+                        getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
+                            #[inline]
+                            pub fn #field_ident(&self) -> Option<#r_type_ty> {
+                                let val = #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit));
+                                if #null_check { None } else { Some(val) }
+                            }
+                        });
+                    } else {
+                        getters.extend(quote::quote! {
+                            #[must_use = "discarding this value is almost always a mistake"]
+                            #[inline]
+                            pub fn #field_ident(&self) -> #r_type_ty {
+                                #r_type_ty::#from_method(read_bytes::<#prim_size_lit>(&self.0, #offset_lit))
+                            }
+                        });
+                    }
 
                     ctor_body.extend(quote::quote! {
                         let val_bytes = #field_ident.#to_method();
@@ -1682,6 +1714,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 length,
                 presence,
                 constant_value,
+                null_value,
             } => {
                 let r_type_str = rust_type(*prim);
                 let r_type_ty: syn::Type = syn::parse_str(r_type_str).unwrap();
@@ -1745,6 +1778,16 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                             }
                         });
                     }
+                } else if *presence == Presence::Optional {
+                    let null_check = composite_member_null_check(*prim, *null_value);
+                    decoder_getters.extend(quote::quote! {
+                        #[must_use = "discarding this value is almost always a mistake"]
+                        #[inline]
+                        pub fn #field_ident(&self) -> Option<#r_type_ty> {
+                            let val = #r_type_ty::#from_method(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) });
+                            if #null_check { None } else { Some(val) }
+                        }
+                    });
                 } else {
                     decoder_getters.extend(quote::quote! {
                         #[must_use = "discarding this value is almost always a mistake"]

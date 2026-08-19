@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="opt_decimal_composite" id="96" version="0"
+    byteOrder="littleEndian" headerType="messageHeader">
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <!-- Genuine null image: mantissa has presence="optional" + nullValue, so
+       the composite itself CAN represent "no value" on the wire. -->
+  <composite name="PriceNull9">
+    <type name="mantissa" primitiveType="int64" presence="optional" nullValue="9223372036854775807"/>
+    <type name="exponent" primitiveType="int8" presence="constant">-9</type>
+  </composite>
+</types>
+<sbe:message name="Quote" id="1">
+  <!-- presence="optional" with NO sinceVersion: the only signal that this
+       field can be absent is the composite's own null image. -->
+  <field name="price" id="1" type="PriceNull9" presence="optional"/>
+  <field name="qty" id="2" type="uint32"/>
+</sbe:message>
+</sbe:messageSchema>
