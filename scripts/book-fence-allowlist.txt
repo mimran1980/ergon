@@ -57,6 +57,7 @@ book/src/sbe/getting-started/multi-schema.md:114 — deliberate; see page contex
 book/src/sbe/recipes.md:23 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:10 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:39 — deliberate; see page context
+book/src/sbe/recipes/app-types-composites.md:32 — deliberate; snippet references generated codec types (QuoteEncoder etc.) that don't exist in the book harness
 book/src/sbe/recipes/display-debug.md:18 — deliberate; see page context
 book/src/sbe/recipes/domain-dtos.md:27 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context

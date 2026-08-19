@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-08-19
+
+### Fixed
+- A composite member with `presence="optional"` and a schema `nullValue`
+  (e.g. a `PriceNull9`-style Decimal's `mantissa`) now decodes as `Option<T>`,
+  checked against the wire null sentinel, instead of silently misreading the
+  null image as a real value. `with_domain_type` mappings onto such a
+  composite (e.g. `rust_decimal::Decimal`) now fail closed with a typed error
+  on the null image rather than decoding the sentinel as a huge/wrong number.
+
 ## [0.1.18] — 2026-08-18
 
 ### Added

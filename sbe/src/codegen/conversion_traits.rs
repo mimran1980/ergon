@@ -98,12 +98,26 @@ pub(crate) fn generate_conversion_impl_blocks(
         } else {
             quote::quote! { #dec_ident::new(mantissa, -(self.scale() as i8)) }
         };
+        // A mantissa with presence="optional" (and a schema nullValue) has a
+        // genuine null image — `mantissa()` decodes it as `Option<i64>`. The
+        // wire null sentinel is not a valid Decimal, so it fails closed as a
+        // typed error rather than silently decoding as a huge/wrong number.
+        let mantissa_is_optional = dec_composite
+            .iter()
+            .find(|t| t.name == "mantissa")
+            .map(|t| t.encoding.presence == crate::ir::Presence::Optional)
+            .unwrap_or(false);
+        let mantissa_expr: proc_macro2::TokenStream = if mantissa_is_optional {
+            quote::quote! { wire.mantissa().ok_or("null Decimal mantissa")? as i128 }
+        } else {
+            quote::quote! { wire.mantissa() as i128 }
+        };
         let ts = quote::quote! {
             impl TryFromSbe<#dec_ident> for rust_decimal::Decimal {
                 type Error = &'static str;
                 #[inline]
                 fn try_from_sbe(wire: #dec_ident) -> Result<Self, Self::Error> {
-                    let mantissa = wire.mantissa() as i128;
+                    let mantissa = #mantissa_expr;
                     let exponent = wire.exponent() as i32;
                     // SBE Decimal: negative exponent = fractional places (e.g.
                     // -2 → scale 2). Positive exponent = magnitude (mantissa ×

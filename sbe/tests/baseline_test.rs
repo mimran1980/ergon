@@ -2888,6 +2888,56 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// A composite member with `presence="optional"` AND a schema `nullValue`
+/// (e.g. a `PriceNull9`-style Decimal's `mantissa`) DOES have a genuine null
+/// image, unlike `optional_decimal_and_timestamp_domain_types_roundtrip`'s
+/// `Decimal64`/`Decimal128` above. The member accessor decodes it as
+/// `Option<i64>`; decoding the null image as a `Decimal` fails closed as a
+/// typed error rather than silently misreading the sentinel as a huge value.
+#[test]
+fn optional_composite_member_null_image_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/optional-decimal-composite-field.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "opt_dec_composite", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("PriceNull9"),
+            "rust_decimal::Decimal",
+        )
+    });
+    compile_and_run_with_deps(
+        "opt_dec_composite",
+        &src,
+        r#"
+        // ANCHOR: optional_composite_null_image
+        use rust_decimal::Decimal;
+
+        // `price: None` writes the schema null image (mantissa = nullValue).
+        let mut buf = [0u8; 64];
+        let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&QuoteFixedFields { price: None, qty: 7 })
+            .encoded_length_with_header();
+
+        let dec = QuoteDecoder::try_decode(&buf[..len], 0)?;
+        assert_eq!(dec.price_value().mantissa(), None);
+        assert!(dec.try_price().is_err(), "null mantissa is not a valid Decimal");
+
+        // A real price round-trips through the null-aware member accessor.
+        let len2 = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&QuoteFixedFields { price: None, qty: 7 })
+            .try_price(Decimal::new(12345, 9))?
+            .encoded_length_with_header();
+        let dec2 = QuoteDecoder::try_decode(&buf[..len2], 0)?;
+        assert_eq!(dec2.price_value().mantissa(), Some(12345));
+        assert_eq!(dec2.try_price()?, Decimal::new(12345, 9));
+        // ANCHOR_END: optional_composite_null_image
+        "#,
+        "rust_decimal = \"1\"\n",
+    );
+    Ok(())
+}
+
 /// When converter mode is enabled, Decimal-backed fields emit both raw
 /// `*_wire` accessors and generic converted methods.
 #[test]
