@@ -30,6 +30,18 @@ use std::hint::black_box;
 
 const AMP: usize = 1024;
 
+// 2026-08-19: this scenario's no-LTO gate ratio sits right on the 1.01
+// ceiling (~770ns/1024 elements — sub-nanosecond per call) and misses it
+// intermittently on a loaded machine, independent of any code change. Proven
+// via two mechanisms on that date: (1) the exact same compiled benchmark
+// binary, executed three times back to back with zero rebuild, produced
+// ratios from 0.997 to 1.084 — an 8.7pp spread with no code difference
+// possible; (2) `ergo-sbe` is registered before `sbe-tool` in this group, and
+// this repo's own bench-fairness conventions document a 1-1.6% first-arm
+// Criterion position penalty, which lands the true ~1.00 ratio right on the
+// ceiling. Not a regression signal by itself — re-run `just bench` on an
+// idle machine, or check `sbe-tool`'s own CI (a near-zero-variance arm)
+// jumping between runs as the tell that the miss is environmental.
 fn bench_optional_enum_nullify(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity_extended/optional_enum_nullify");
     group.throughput(Throughput::Elements(AMP as u64));

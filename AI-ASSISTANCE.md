@@ -58,25 +58,25 @@ whether you continue evaluating the crate:
 ## Cumulative token usage (since 2026-06-28)
 
 Per-model high-water mark reconstructed from every `ccusage` snapshot committed
-to this file — 2026-08-03, 2026-08-07, 2026-08-13, and 2026-08-15. Claude Code
-and Codex agent usage only.
+to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, and 2026-08-19.
+Claude Code and Codex agent usage only.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
 | claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
 | claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 26,585 | 1,391,558 | 9,868,899 | 820,771,590 | — | 832,058,632 | $534.94 |
+| claude-opus-5 | 1,266,953 | 1,826,314 | 13,404,583 | 1,015,376,093 | — | 1,031,873,943 | $683.07 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 30,556 | 328,854 | 6,177,826 | 218,888,413 | — | 225,425,649 | $71.84 |
+| claude-sonnet-5 | 30,556 | 554,512 | 6,974,859 | 364,664,072 | — | 372,216,535 | $106.42 |
 | deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $19.28 |
 | deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $71.89 |
 | glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
 | glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
 | gpt-5.6-luna | 1,552,433 | 172,891 | 0 | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
-| gpt-5.6-sol | 38,397,426 | 3,623,277 | 0 | 1,087,179,264 | 1,754,000 | 1,130,953,967 | $851.29 |
-| **Total** | **177,175,732** | **36,809,308** | **32,296,539** | **19,758,947,980** | **1,883,663** | **20,007,113,222** | **$3,176.69** |
+| gpt-5.6-sol | 43,575,714 | 4,014,321 | 0 | 1,209,778,944 | 1,968,275 | 1,259,337,254 | $950.21 |
+| **Total** | **183,594,388** | **37,860,766** | **36,629,256** | **20,221,927,822** | **2,097,938** | **20,482,102,706** | **$3,458.33** |
 
 **Notes:**
 
@@ -88,17 +88,25 @@ and Codex agent usage only.
   2026-08-03 — usage did not fall; visibility did. Because the tool can only ever
   under-report, the per-model maximum across all committed snapshots is the best
   available lower bound. Git history is the real ledger here: it preserves
-  **4.54B tokens** that `ccusage` can no longer see — the 2026-08-15 run reported
-  15.46B (14.31B Claude + 1.15B Codex) against a reconstructed 20.01B.
+  **4.54B tokens** that `ccusage` could no longer see as of 2026-08-15 — that run
+  reported 15.46B (14.31B Claude + 1.15B Codex) against a reconstructed 20.01B.
+- The 2026-08-19 run reinforced the same pattern on a different model:
+  `gpt-5.6-luna` fell from a reconstructed 48.7M tokens to 236K in this one
+  snapshot — a >99% apparent drop from retention pruning, not reduced usage.
+  Its transcripts are gone from this machine; the high-water figure is the only
+  surviving record and is kept unchanged in the merged row above. This also
+  falsifies the earlier note that "Codex keeps its own session logs under a
+  different policy" and only Claude-Code-hosted models lose history — Codex
+  transcripts expire too, just on their own schedule per model/session.
 - Two models exist in only one snapshot, and would be lost by any single run:
   `claude-haiku-4-5-20251001` (2.36M tokens, 2026-08-03 only — its transcripts
-  have since been deleted) and `gpt-5.6-luna` (48.7M, first appears 2026-08-13).
+  have since been deleted) and `gpt-5.6-luna` (48.7M high-water, per above).
 - Corroborating evidence for the retention theory: `gpt-5.5` is byte-identical in
-  every snapshot, and `gpt-5.6-sol` grows monotonically (837M → 1,009M → 1,074M
-  → 1,131M). Codex keeps its own session logs under a different policy, so only the
-  Claude-Code-hosted models (fable, DeepSeek, GLM) lost history.
+  every snapshot including 2026-08-19, and `gpt-5.6-sol` grows monotonically
+  (837M → 1,009M → 1,074M → 1,131M → 1,259M).
 - Retention has since been raised to `cleanupPeriodDays: 90`, so future snapshots
-  should degrade more slowly — but the fix is not retroactive.
+  should degrade more slowly — but the fix is not retroactive, and evidently
+  does not (or did not yet) apply uniformly across Codex model sessions.
 - Columns are maximised independently, so a row may combine values from different
   snapshots. Every column is monotonic in reality, so this stays a lower bound.
 - Extraction is scoped to this section. The file carries a second per-model table
@@ -108,13 +116,19 @@ and Codex agent usage only.
   committed one, the merge is wrong — investigate, do not publish.
 - Grok usage is not included — `ccusage` does not currently track xAI/Grok API calls.
 - Antigravity / Gemini CLI usage is not included: the `observer` tool that
-  reports it was not installed on the machine that ran this snapshot.
+  reports it was not installed on the machine that ran the 2026-08-19 snapshot
+  (nor any prior one — no Antigravity data has ever been captured in this table).
 - All costs are at enterprise/pay-as-you-go API rates observed by ccusage.
   Subscription fees (Claude $20/mo, OpenAI $20/mo, Grok $30/mo) are not included.
 - "Reasoning Output" applies to GPT models only (Codex agent); ccusage reports
   reasoning tokens separately from visible output for these models.
 - DeepSeek models show $0 cache create because DeepSeek's API does not charge
   separately for cache writes — they use a single cache-hit/miss model.
+- Codex's per-model cost is not directly reported by `ccusage --json`; days with
+  a single active model attribute their whole day-cost to it exactly, and
+  multi-model days split the day's `costUSD` proportionally by each model's
+  token share. `gpt-5.5`'s cost stayed exact (single-model days only); the
+  `gpt-5.6-sol` update above uses this proportional method.
 
 ## What-if: all tokens through a single provider
 
