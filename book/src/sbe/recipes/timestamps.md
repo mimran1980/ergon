@@ -20,18 +20,16 @@ chrono = "0.4"
 Then register the converters by `semanticType` in `build.rs`:
 
 ```rust,ignore
-use ergo_sbe::{ConversionSelector, DomainImpl, GenerationConfig};
+use ergo_sbe::{ConversionSelector, GenerationConfig};
 
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Generated,
     )
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestampMicros"),
         "chrono::NaiveDateTime",
-        DomainImpl::Generated,
     );
 ```
 
@@ -77,7 +75,6 @@ let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Generated,
     );
 ```
 
@@ -127,27 +124,24 @@ even though the wire shape is identical):
 <field name="deletedAt" id="3" type="TimestampMillis"/>
 ```
 
-One `with_domain_type(.., DomainImpl::Manual)` call per composite — same
+One `with_manual_domain_type(selector, path)` call per composite — same
 target type, `rust_decimal`-style — in `build.rs`:
 
 ```rust,ignore
-use ergo_sbe::{ConversionSelector, DomainImpl, GenerationConfig};
+use ergo_sbe::{ConversionSelector, GenerationConfig};
 
 let config = GenerationConfig::new("msgs")
-    .with_domain_type(
+    .with_manual_domain_type(
         ConversionSelector::named_type("TimestampNanos"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Manual,
     )
-    .with_domain_type(
+    .with_manual_domain_type(
         ConversionSelector::named_type("TimestampMicros"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Manual,
     )
-    .with_domain_type(
+    .with_manual_domain_type(
         ConversionSelector::named_type("TimestampMillis"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Manual,
     );
 ```
 

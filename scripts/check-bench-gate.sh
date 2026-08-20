@@ -207,8 +207,7 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     fi
 
     # (group|ergo_fn|sbe_fn|ceiling). Every maintained pair is literal 1.00.
-    # Cluster decode timing is a memory-bound tie; the blocking mechanism
-    # check is the matching instruction/branch probe, not a 1.01 allowance.
+    # Do not restore a 1.01 allowance for memory-bound cluster decode.
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool|1.00"
         "cluster_encode_session_keep_alive|ergo-sbe|sbe-tool|1.00"

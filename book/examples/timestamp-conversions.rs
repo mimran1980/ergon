@@ -3,7 +3,7 @@
 //! Compiled against the tour_codec by the book-fence test.
 
 // ANCHOR: timestamp_config
-use ergo_sbe::{GenerationConfig, ConversionSelector, DomainImpl};
+use ergo_sbe::{GenerationConfig, ConversionSelector};
 // Register converters in build.rs — nanos uses the built-in converter,
 // micros and millis get custom TryFromSbe impls wired via field_path:
 let config = GenerationConfig::new("msgs")

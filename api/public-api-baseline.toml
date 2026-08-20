@@ -35,6 +35,7 @@ profile = "Full"
 generated_module = "common_types"
 shared_schema = "sbe/tests/fixtures/schemas/multi-schema-b.xml"
 shared_topology = "shared-first"
+consumer_module = "market_data"
 snapshot = "api/generated/multi_schema_shared.txt"
 
 [metadata]

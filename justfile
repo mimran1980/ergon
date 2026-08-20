@@ -67,6 +67,7 @@ preflight:
     bash scripts/tests/test-repository-hygiene.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-generated-public-api.sh
+    bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -409,7 +410,7 @@ bench-cold:
 # Mechanism-level evidence: raw Callgrind instruction/branch counts plus
 # disassembly for the named perf-probe symbols, in both optimisation profiles.
 # Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
-# than degrading to a timing harness (a PERF claim needs this, not Criterion).
+# than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 

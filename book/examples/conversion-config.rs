@@ -4,7 +4,7 @@
 //! this full file is what the book-fence test compiles to keep the examples
 //! in sync with the real API.
 
-use ergo_sbe::{parse, ConversionSelector, DomainImpl, GenerationConfig, Generator, Schema};
+use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, parse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -- setup: parse a minimal schema that has a Decimal composite ---------
@@ -37,11 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ANCHOR_END: with_conversion
 
     // ANCHOR: with_domain_type
-    use ergo_sbe::{ConversionSelector, DomainImpl, GenerationConfig};
+    use ergo_sbe::{ConversionSelector, GenerationConfig};
     // B — concrete mapping: one Rust type per wire type (already enables conversion)
     let _cfg = GenerationConfig::new("msgs").with_domain_type(
         ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal");
+        "rust_decimal::Decimal",
+    );
     // ANCHOR_END: with_domain_type
 
     // Prove both configs generate successfully.
@@ -51,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .generate(&schema)?;
     let _ = Generator::new(GenerationConfig::new("msgs_b").with_domain_type(
         ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal"))
+        "rust_decimal::Decimal",
+    ))
     .generate(&schema)?;
     Ok(())
 }

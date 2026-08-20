@@ -31,9 +31,9 @@ use std::hint::black_box;
 const AMP: usize = 1024;
 
 // Timing for this pair is a memory-bound two-byte-enum load. The gate is
-// literal 1.00; the blocking mechanism check is the matching instruction
-// probe (`ergo_probe_optional_enum_nullify`). Re-run `just bench` on an idle
-// machine if wall-clock flips.
+// literal 1.00. Instruction-probe Ir/op (`just bench-instructions`) is a
+// Linux-only mechanism check, not a substitute for this ceiling. Re-run
+// `just bench` on an idle machine if wall-clock flips.
 fn bench_optional_enum_nullify(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity_extended/optional_enum_nullify");
     group.throughput(Throughput::Elements(AMP as u64));

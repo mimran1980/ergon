@@ -86,6 +86,8 @@ struct Fixture {
     snapshot: PathBuf,
     domain_objects: Option<DomainVarData>,
     shared_schema: Option<PathBuf>,
+    shared_topology: Option<String>,
+    consumer_module: Option<String>,
 }
 
 fn workspace() -> PathBuf {
@@ -145,6 +147,17 @@ fn fixtures_from_manifest() -> Result<Vec<Fixture>, Box<dyn Error>> {
             .get("shared_schema")
             .and_then(|v| v.as_str())
             .map(|p| workspace().join(p));
+        let shared_topology = row
+            .get("shared_topology")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let consumer_module = row
+            .get("consumer_module")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        if shared_schema.is_some() && shared_topology.is_none() {
+            return Err(format!("fixture {name}: shared_schema requires shared_topology").into());
+        }
         out.push(Fixture {
             name,
             schema,
@@ -153,6 +166,8 @@ fn fixtures_from_manifest() -> Result<Vec<Fixture>, Box<dyn Error>> {
             snapshot,
             domain_objects,
             shared_schema,
+            shared_topology,
+            consumer_module,
         });
     }
     Ok(out)
@@ -171,6 +186,22 @@ fn config_for(fix: &Fixture) -> GenerationConfig {
 
 fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
     if let Some(shared) = &fix.shared_schema {
+        match fix.shared_topology.as_deref() {
+            Some("shared-first") => {}
+            other => {
+                return Err(format!(
+                    "fixture {}: unsupported shared_topology {other:?}",
+                    fix.name
+                )
+                .into());
+            }
+        }
+        let consumer = fix.consumer_module.as_deref().ok_or_else(|| {
+            format!(
+                "fixture {}: shared_schema requires consumer_module",
+                fix.name
+            )
+        })?;
         let a = parse_file(&fix.schema)?;
         let b = parse_file(shared)?;
         let schema_a = Schema::from_ir(a);
@@ -178,7 +209,7 @@ fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
         let (modules, _) = Generator::new(config_for(fix))
             .generate_multi(&[
                 (&schema_a, fix.generated_module.as_str()),
-                (&schema_b, "market_data"),
+                (&schema_b, consumer),
             ])?
             .into_parts();
         let mut combined = String::new();

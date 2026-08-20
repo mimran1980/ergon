@@ -137,18 +137,16 @@ the Unix epoch). The `chrono` feature adds converter functions and enables
 ### Build-time config
 
 ```rust,ignore
-use ergo_sbe::{GenerationConfig, ConversionSelector, DomainImpl};
+use ergo_sbe::{GenerationConfig, ConversionSelector};
 
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Generated,
     )
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestampMicros"),
         "chrono::NaiveDateTime",
-        DomainImpl::Generated,
     );
 ```
 
@@ -220,6 +218,5 @@ let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
         "chrono::DateTime<chrono::Utc>",
-        DomainImpl::Generated,
     );
 ```

@@ -3093,7 +3093,7 @@ fn optional_composite_member_null_image_roundtrip() -> Result<(), Box<dyn std::e
         use rust_decimal::Decimal;
 
         // `price: None` writes the schema null image (mantissa = nullValue).
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
         let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&QuoteFixedFields { price: None, qty: 7 })
             .encoded_length_with_header();
