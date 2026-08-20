@@ -87,7 +87,7 @@ pub(crate) fn generate_converter_impls(
                     let doc = format!(
                         "This field uses `DomainImpl::Manual` — provide these impls \
                          yourself (starting point, copy-paste and adjust):\n\n\
-                         ```rust,ignore\n{snippet}```"
+                         ```text\n{snippet}```"
                     );
                     quote::quote! { #[doc = #doc] }
                 })
