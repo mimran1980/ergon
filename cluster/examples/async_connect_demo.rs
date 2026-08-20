@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster::TestCluster::single_node();
 
     let builder = SessionBuilder::default()
-        .ingress_channel(cluster.ingress_channel.clone()?)
-        .egress_channel(cluster.egress_channel.clone()?)
+        .ingress_channel(cluster.ingress_channel.clone())?
+        .egress_channel(cluster.egress_channel.clone())?
         .message_timeout(Duration::from_secs(5))?;
 
     // 1. Poll-driven async connect
