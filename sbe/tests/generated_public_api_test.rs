@@ -26,19 +26,23 @@ const fn is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 
+fn is_cfg_gated(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("cfg"))
+}
+
 fn collect(prefix: &str, items: &[syn::Item], out: &mut Vec<String>) {
     for item in items {
         match item {
-            syn::Item::Struct(s) if is_public(&s.vis) => {
+            syn::Item::Struct(s) if is_public(&s.vis) && !is_cfg_gated(&s.attrs) => {
                 out.push(format!("{prefix}struct {}", s.ident));
             }
-            syn::Item::Enum(e) if is_public(&e.vis) => {
+            syn::Item::Enum(e) if is_public(&e.vis) && !is_cfg_gated(&e.attrs) => {
                 out.push(format!("{prefix}enum {}", e.ident));
                 for v in &e.variants {
                     out.push(format!("{prefix}enum {}::{}", e.ident, v.ident));
                 }
             }
-            syn::Item::Fn(f) if is_public(&f.vis) => {
+            syn::Item::Fn(f) if is_public(&f.vis) && !is_cfg_gated(&f.attrs) => {
                 out.push(format!("{prefix}fn {}", f.sig.ident));
             }
             syn::Item::Const(c) if is_public(&c.vis) => {
@@ -62,6 +66,7 @@ fn collect(prefix: &str, items: &[syn::Item], out: &mut Vec<String>) {
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(f) = ii
                         && is_public(&f.vis)
+                        && !is_cfg_gated(&f.attrs)
                     {
                         out.push(format!("{prefix}{ty}::{}", f.sig.ident));
                     }
