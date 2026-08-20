@@ -299,54 +299,33 @@ fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate() -> Result<(), Box<dy
     Ok(())
 }
 
-// ── Noise-floor ceiling for `optional_enum_nullify` ───────────────────────
-//
-// That scenario decodes two raw 1-byte enums — memory-bound, already optimal
-// in both crates, so under LTO it is a tie (~775ns, 0.06% apart inside
-// Criterion CI). A 1.00 ceiling there is a coin-flip noise decides. It carries
-// a documented 1.01 ceiling instead (see check-bench-gate.sh); these tests pin
-// that boundary so a silent revert to 1.00 is caught.
-
 #[test]
-fn nullify_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>> {
-    // Ratio 1.005 — above every 1.00 ceiling, below nullify's 1.01. Every
-    // other pair sits at 1.00, so the gate's verdict hinges on nullify alone.
-    let criterion = TempCriterion::new()?;
-    write_all_pairs(&criterion.0, 100.0, 100.0)?;
-    write_estimate(
-        &criterion.0,
-        "parity_extended_optional_enum_nullify",
-        "ergo-sbe",
-        100.5,
-        100.5,
-    )?;
-
-    let output = run_gate(&criterion.0, &[])?;
-    assert!(
-        output.status.success(),
-        "nullify at 1.005 is a documented tie and must pass under its 1.01 ceiling:\n{}",
-        describe(&output)
-    );
-    Ok(())
+fn no_maintained_ceiling_exceeds_one() {
+    let script = include_str!("../../../scripts/check-bench-gate.sh");
+    for forbidden in ["|1.01", "|1.02", "|1.05", "|1.10"] {
+        assert!(
+            !script.contains(forbidden),
+            "maintained gate must not encode a ceiling above 1.00 ({forbidden})"
+        );
+    }
 }
 
 #[test]
-fn nullify_still_fails_above_its_noise_floor() -> Result<(), Box<dyn std::error::Error>> {
-    // Ratio 1.015 — above nullify's 1.01 ceiling, so it must still fail.
+fn nullify_ratio_barely_above_one_fails() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = TempCriterion::new()?;
     write_all_pairs(&criterion.0, 100.0, 100.0)?;
     write_estimate(
         &criterion.0,
         "parity_extended_optional_enum_nullify",
         "ergo-sbe",
-        101.5,
-        101.5,
+        100.5,
+        100.5,
     )?;
 
     let output = run_gate(&criterion.0, &[])?;
     assert!(
         !output.status.success(),
-        "nullify at 1.015 exceeds its 1.01 ceiling and must fail:\n{}",
+        "nullify at 1.005 must fail the literal 1.00 ceiling:\n{}",
         describe(&output)
     );
     Ok(())
@@ -573,16 +552,9 @@ fn cluster_a_ratio_barely_above_one_fails_even_with_caller_tolerance()
     Ok(())
 }
 
-// The two cluster *decode* benches carry a documented 1.01 noise-floor ceiling
-// (they decode a static fixture and measure a tie). Pin that boundary so a
-// silent revert to 1.00 is caught, mirroring the SBE nullify tests above.
-
 #[test]
-fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn std::error::Error>>
-{
+fn cluster_decode_ratio_barely_above_one_fails() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = TempCriterion::new()?;
-    // Encode pairs at 1.00; the two decode pairs at 1.005 (above every 1.00
-    // ceiling, below the decode 1.01). The verdict hinges on the decode pairs.
     write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
     for (group, ergo_fn) in [
         ("cluster_decode_session_message_header", "ergo-sbe"),
@@ -593,28 +565,8 @@ fn cluster_decode_tie_passes_at_one_percent_but_no_more() -> Result<(), Box<dyn 
 
     let output = run_cluster_gate(&criterion.0, &[])?;
     assert!(
-        output.status.success(),
-        "cluster decode at 1.005 is a documented tie and must pass under its 1.01 ceiling:\n{}",
-        describe(&output)
-    );
-    Ok(())
-}
-
-#[test]
-fn cluster_decode_still_fails_above_its_noise_floor() -> Result<(), Box<dyn std::error::Error>> {
-    let criterion = TempCriterion::new()?;
-    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
-    for (group, ergo_fn) in [
-        ("cluster_decode_session_message_header", "ergo-sbe"),
-        ("cluster_decode_session_event", "ergo-sbe"),
-    ] {
-        write_estimate(&criterion.0, group, ergo_fn, 101.5, 101.5)?;
-    }
-
-    let output = run_cluster_gate(&criterion.0, &[])?;
-    assert!(
         !output.status.success(),
-        "cluster decode at 1.015 exceeds its 1.01 ceiling and must fail:\n{}",
+        "cluster decode at 1.005 must fail the literal 1.00 ceiling:\n{}",
         describe(&output)
     );
     Ok(())

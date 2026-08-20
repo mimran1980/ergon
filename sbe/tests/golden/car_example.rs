@@ -11,30 +11,94 @@
 #[allow(clippy::eq_op)]
 #[allow(clippy::manual_range_contains)]
 pub mod sbe_rt {
+    ///Generated public API.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DecodeError {
         /// Buffer shorter than needed for `field` (`needed` vs `available` bytes).
-        BufferTooShort { field: &'static str, needed: usize, available: usize },
+        BufferTooShort {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            needed: usize,
+            ///Generated public API.
+            available: usize,
+        },
         /// Wire `schemaId` does not match this codec (`expected` name/id vs `actual`).
-        WrongSchema { expected: u16, actual: u16, expected_name: &'static str },
+        WrongSchema {
+            ///Generated public API.
+            expected: u16,
+            ///Generated public API.
+            actual: u16,
+            ///Generated public API.
+            expected_name: &'static str,
+        },
         /// Wire `templateId` does not match this message (`expected` name/id vs `actual`).
-        WrongTemplate { expected: u16, actual: u16, expected_name: &'static str },
+        WrongTemplate {
+            ///Generated public API.
+            expected: u16,
+            ///Generated public API.
+            actual: u16,
+            ///Generated public API.
+            expected_name: &'static str,
+        },
         /// Multi-template stream saw an id with no registered length/decoder.
-        UnknownTemplateLength { template_id: u16 },
+        UnknownTemplateLength {
+            ///Generated public API.
+            template_id: u16,
+        },
         /// Header field value exceeds the supported maximum for this platform.
-        InvalidHeaderValue { field: &'static str, value: u64, maximum: u64 },
+        InvalidHeaderValue {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            value: u64,
+            ///Generated public API.
+            maximum: u64,
+        },
         /// Length-prefix for var-data exceeds schema max or platform size.
-        InvalidVarDataLength { field: &'static str, length: u64, max_length: u64 },
+        InvalidVarDataLength {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            length: u64,
+            ///Generated public API.
+            max_length: u64,
+        },
         /// Field/group/data was added in a schema version later than the wire message.
-        FieldNotInVersion { field: &'static str, wire_version: u16, since_version: u16 },
+        FieldNotInVersion {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            wire_version: u16,
+            ///Generated public API.
+            since_version: u16,
+        },
         /// Text var-data is not valid UTF-8.
-        InvalidUtf8 { field: &'static str, error: core::str::Utf8Error },
+        InvalidUtf8 {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            error: core::str::Utf8Error,
+        },
         /// Text var-data is not valid ASCII.
-        InvalidAscii { field: &'static str },
+        InvalidAscii {
+            ///Generated public API.
+            field: &'static str,
+        },
         /// Boolean wire enum was `NullVal` or an unknown discriminant.
-        InvalidBoolean { field: &'static str, discriminant: u64 },
+        InvalidBoolean {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            discriminant: u64,
+        },
         /// Domain `try_*` conversion failed.
-        DomainConversionFailed { field: &'static str, reason: &'static str },
+        DomainConversionFailed {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            reason: &'static str,
+        },
     }
     impl core::fmt::Display for DecodeError {
         #[cold]
@@ -111,30 +175,94 @@ pub mod sbe_rt {
             }
         }
     }
+    ///Generated public API.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
         /// Encode buffer shorter than needed for `field` (`needed` vs `available`).
-        BufferTooShort { field: &'static str, needed: usize, available: usize },
+        BufferTooShort {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            needed: usize,
+            ///Generated public API.
+            available: usize,
+        },
         /// Claim buffer length does not match ENCODED_LENGTH.
-        ClaimLengthMismatch { expected: usize, actual: usize },
+        ClaimLengthMismatch {
+            ///Generated public API.
+            expected: usize,
+            ///Generated public API.
+            actual: usize,
+        },
         /// Var-data payload longer than the schema max for `field`.
-        VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
+        VarDataTooLong {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            max_length: usize,
+            ///Generated public API.
+            actual: usize,
+        },
         /// Fixed char/byte array source longer than the schema length.
-        FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
+        FixedArrayTooLong {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            max_length: usize,
+            ///Generated public API.
+            actual: usize,
+        },
+        /// ASCII fixed-array `*_str` received a non-ASCII `&str`.
+        InvalidAscii {
+            ///Generated public API.
+            field: &'static str,
+        },
         /// Domain/DTO value outside the schema min/max range.
-        ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
+        ValueOutOfRange {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            min: i128,
+            ///Generated public API.
+            max: i128,
+            ///Generated public API.
+            actual: i128,
+        },
         /// Tried to write more group entries than the declared count.
-        GroupFull { declared: u32, attempted: u32 },
+        GroupFull {
+            ///Generated public API.
+            declared: u32,
+            ///Generated public API.
+            attempted: u32,
+        },
         /// Known-size group closure returned without adding enough entries.
-        GroupCountMismatch { declared: u32, actual: u32 },
+        GroupCountMismatch {
+            ///Generated public API.
+            declared: u32,
+            ///Generated public API.
+            actual: u32,
+        },
         /// Unknown-size group entry count does not fit in `numInGroup`.
-        GroupCountOverflow { maximum: u32, actual: u32 },
+        GroupCountOverflow {
+            ///Generated public API.
+            maximum: u32,
+            ///Generated public API.
+            actual: u32,
+        },
         /// Checked arithmetic overflow in encoded length computation.
         EncodedLengthOverflow,
         /// Domain `try_*` conversion failed.
-        DomainConversionFailed { field: &'static str, reason: &'static str },
+        DomainConversionFailed {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            reason: &'static str,
+        },
         /// Nested decode failure during encode/verify paths.
-        Decode(DecodeError),
+        Decode(
+            ///Generated public API.
+            DecodeError,
+        ),
     }
     impl core::fmt::Display for EncodeError {
         #[cold]
@@ -163,6 +291,9 @@ pub mod sbe_rt {
                         f, "fixed array too long for field {}: max {}, actual {}", field,
                         max_length, actual
                     )
+                }
+                Self::InvalidAscii { field } => {
+                    write!(f, "field '{}': invalid ASCII", field)
                 }
                 Self::ValueOutOfRange { field, min, max, actual } => {
                     write!(
@@ -220,20 +351,46 @@ pub mod sbe_rt {
         /// Field presence: `"required"`, `"optional"`, or `"constant"`.
         Presence,
     }
+    ///Generated public API.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum VerifyError {
         /// Buffer shorter than the message header.
         HeaderTooShort,
         /// Wire block length below the minimum readable for this version.
-        InvalidBlockLength { expected_min: usize, actual: usize },
+        InvalidBlockLength {
+            ///Generated public API.
+            expected_min: usize,
+            ///Generated public API.
+            actual: usize,
+        },
         /// Group dimension header for `field` lies past the buffer end.
-        GroupDimOutOfBounds { field: &'static str, offset: usize },
+        GroupDimOutOfBounds {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            offset: usize,
+        },
         /// Var-data region for `field` lies past the buffer end.
-        VarDataOutOfBounds { field: &'static str, offset: usize, length: u64 },
+        VarDataOutOfBounds {
+            ///Generated public API.
+            field: &'static str,
+            ///Generated public API.
+            offset: usize,
+            ///Generated public API.
+            length: u64,
+        },
         /// Full message (header + tails) longer than available bytes.
-        MessageTooShort { needed: usize, available: usize },
+        MessageTooShort {
+            ///Generated public API.
+            needed: usize,
+            ///Generated public API.
+            available: usize,
+        },
         /// Nested decode error while verifying.
-        DecodeError(DecodeError),
+        DecodeError(
+            ///Generated public API.
+            DecodeError,
+        ),
     }
     impl core::fmt::Display for VerifyError {
         #[cold]
@@ -363,9 +520,13 @@ pub mod sbe_rt {
         note = "SbeMessage is a sealed trait — only types generated by `ergo_sbe::Generator` can implement it. Import the generated module and use the provided decoder/encoder types directly."
     )]
     pub trait SbeMessage: super::__sbe_message_sealed::Sealed {
+        ///Generated public API.
         const TEMPLATE_ID: u16;
+        ///Generated public API.
         const BLOCK_LENGTH: usize;
+        ///Generated public API.
         const SCHEMA_ID: u16;
+        ///Generated public API.
         const SCHEMA_VERSION: u16;
     }
     mod private {
@@ -394,10 +555,13 @@ pub mod sbe_rt {
     pub struct Attached(());
     impl private::Sealed for Attached {}
     impl GroupContext for Attached {}
+    ///Generated public API.
     pub trait HeaderState: private::Sealed {}
+    ///Generated public API.
     pub struct HeaderPresent;
     impl private::Sealed for HeaderPresent {}
     impl HeaderState for HeaderPresent {}
+    ///Generated public API.
     pub struct HeaderAbsent;
     impl private::Sealed for HeaderAbsent {}
     impl HeaderState for HeaderAbsent {}
@@ -416,7 +580,9 @@ pub mod sbe_rt {
     /// Return type for group closures (`add`, `bids`, …).
     /// Closures return `Result<(), EncodeError>`; `?` just works.
     pub type GroupResult = Result<(), EncodeError>;
+    ///Generated public API.
     pub trait IntoGroupResult {
+        ///Generated public API.
         fn into_group_result(self) -> GroupResult;
     }
     impl IntoGroupResult for () {
@@ -466,6 +632,7 @@ impl BooleanType {
         }
     }
     /// Map [`Self::NullVal`] → [`None`], any other variant → [`Some`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
@@ -475,6 +642,7 @@ impl BooleanType {
     /// discriminant — the SBE boolean wire type is tri-state
     /// (F, T, null). Prefer this (or `TryFrom`) over treating the
     /// raw discriminant as a Rust `bool`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn as_bool(self) -> Option<bool> {
         match self {
@@ -533,8 +701,11 @@ impl TryFrom<BooleanType> for bool {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Model {
+    ///Generated public API.
     A = b'A',
+    ///Generated public API.
     B = b'B',
+    ///Generated public API.
     C = b'C',
     /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal = 0,
@@ -557,6 +728,7 @@ impl Model {
         }
     }
     /// Map [`Self::NullVal`] → [`None`], any other variant → [`Some`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
@@ -600,9 +772,13 @@ impl core::str::FromStr for Model {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BoostType {
+    ///Generated public API.
     TURBO = b'T',
+    ///Generated public API.
     SUPERCHARGER = b'S',
+    ///Generated public API.
     NITROUS = b'N',
+    ///Generated public API.
     KERS = b'K',
     /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal = 0,
@@ -626,6 +802,7 @@ impl BoostType {
         }
     }
     /// Map [`Self::NullVal`] → [`None`], any other variant → [`Some`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
@@ -670,22 +847,29 @@ impl core::str::FromStr for BoostType {
 /// SBE bitset `OptionalExtras` — wire type u8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[repr(transparent)]
-pub struct OptionalExtras(pub u8);
+pub struct OptionalExtras(
+    ///Generated public API.
+    pub u8,
+);
 impl OptionalExtras {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn raw(self) -> u8 {
         self.0
     }
+    ///Generated public API.
     #[inline]
     pub const fn default() -> Self {
         Self(0)
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_sun_roof(self) -> bool {
         (self.0 & (1 << 0)) != 0
     }
+    ///Generated public API.
     #[inline]
     pub fn sun_roof(&mut self, val: bool) -> &mut Self {
         if val {
@@ -695,11 +879,13 @@ impl OptionalExtras {
         }
         self
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_sports_pack(self) -> bool {
         (self.0 & (1 << 1)) != 0
     }
+    ///Generated public API.
     #[inline]
     pub fn sports_pack(&mut self, val: bool) -> &mut Self {
         if val {
@@ -709,11 +895,13 @@ impl OptionalExtras {
         }
         self
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn is_cruise_control(self) -> bool {
         (self.0 & (1 << 2)) != 0
     }
+    ///Generated public API.
     #[inline]
     pub fn cruise_control(&mut self, val: bool) -> &mut Self {
         if val {
@@ -795,7 +983,10 @@ impl core::str::FromStr for OptionalExtras {
 ///Message identifiers and length of message root.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct MessageHeader(pub [u8; 8]);
+pub struct MessageHeader(
+    ///Generated public API.
+    pub [u8; 8],
+);
 impl core::fmt::Debug for MessageHeader {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(MessageHeader))
@@ -807,26 +998,31 @@ impl core::fmt::Debug for MessageHeader {
     }
 }
 impl MessageHeader {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn template_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn schema_id(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 4))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn version(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 6))
     }
+    ///Generated public API.
     #[inline]
     pub fn new(
         block_length: u16,
@@ -853,7 +1049,9 @@ pub const MESSAGE_HEADER_ENCODED_LENGTH: usize = 8;
 /// Named fields prevent silent transposition of the two `u16` values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PeekedHeader {
+    ///Generated public API.
     pub template_id: u16,
+    ///Generated public API.
     pub schema_id: u16,
 }
 impl MessageHeader {
@@ -909,6 +1107,7 @@ pub struct MessageHeaderDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> MessageHeaderDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
@@ -916,6 +1115,7 @@ impl<'a> MessageHeaderDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn template_id(&self) -> u16 {
@@ -923,6 +1123,7 @@ impl<'a> MessageHeaderDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 2)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn schema_id(&self) -> u16 {
@@ -930,6 +1131,7 @@ impl<'a> MessageHeaderDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 4)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn version(&self) -> u16 {
@@ -941,7 +1143,10 @@ impl<'a> MessageHeaderDecoder<'a> {
 ///Repeating group dimensions.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct GroupSizeEncoding(pub [u8; 4]);
+pub struct GroupSizeEncoding(
+    ///Generated public API.
+    pub [u8; 4],
+);
 impl core::fmt::Debug for GroupSizeEncoding {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(GroupSizeEncoding))
@@ -951,16 +1156,19 @@ impl core::fmt::Debug for GroupSizeEncoding {
     }
 }
 impl GroupSizeEncoding {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_in_group(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 2))
     }
+    ///Generated public API.
     #[inline]
     pub fn new(block_length: u16, num_in_group: u16) -> Self {
         let mut bytes = [0u8; 4];
@@ -980,6 +1188,7 @@ pub struct GroupSizeEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> GroupSizeEncodingDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn block_length(&self) -> u16 {
@@ -987,6 +1196,7 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_in_group(&self) -> u16 {
@@ -998,7 +1208,10 @@ impl<'a> GroupSizeEncodingDecoder<'a> {
 ///Variable length UTF-8 String.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct VarStringEncoding(pub [u8; 4]);
+pub struct VarStringEncoding(
+    ///Generated public API.
+    pub [u8; 4],
+);
 impl core::fmt::Debug for VarStringEncoding {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(VarStringEncoding))
@@ -1008,16 +1221,19 @@ impl core::fmt::Debug for VarStringEncoding {
     }
 }
 impl VarStringEncoding {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    ///Generated public API.
     #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
@@ -1035,6 +1251,7 @@ pub struct VarStringEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarStringEncodingDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1042,6 +1259,7 @@ impl<'a> VarStringEncodingDecoder<'a> {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -1051,7 +1269,10 @@ impl<'a> VarStringEncodingDecoder<'a> {
 ///Variable length ASCII String.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct VarAsciiEncoding(pub [u8; 4]);
+pub struct VarAsciiEncoding(
+    ///Generated public API.
+    pub [u8; 4],
+);
 impl core::fmt::Debug for VarAsciiEncoding {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(VarAsciiEncoding))
@@ -1061,16 +1282,19 @@ impl core::fmt::Debug for VarAsciiEncoding {
     }
 }
 impl VarAsciiEncoding {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    ///Generated public API.
     #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
@@ -1088,6 +1312,7 @@ pub struct VarAsciiEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarAsciiEncodingDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1095,6 +1320,7 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -1104,7 +1330,10 @@ impl<'a> VarAsciiEncodingDecoder<'a> {
 ///Variable length binary blob.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct VarDataEncoding(pub [u8; 4]);
+pub struct VarDataEncoding(
+    ///Generated public API.
+    pub [u8; 4],
+);
 impl core::fmt::Debug for VarDataEncoding {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(VarDataEncoding))
@@ -1114,16 +1343,19 @@ impl core::fmt::Debug for VarDataEncoding {
     }
 }
 impl VarDataEncoding {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
         u32::from_le_bytes(read_bytes::<4>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
         []
     }
+    ///Generated public API.
     #[inline]
     pub fn new(length: u32, var_data: [u8; 0]) -> Self {
         let mut bytes = [0u8; 4];
@@ -1141,6 +1373,7 @@ pub struct VarDataEncodingDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> VarDataEncodingDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1148,6 +1381,7 @@ impl<'a> VarDataEncodingDecoder<'a> {
             read_bytes_unchecked::<4>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn var_data(&self) -> [u8; 0] {
@@ -1157,7 +1391,10 @@ impl<'a> VarDataEncodingDecoder<'a> {
 /// SBE composite `Booster` — 2 byte wire image.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Booster(pub [u8; 2]);
+pub struct Booster(
+    ///Generated public API.
+    pub [u8; 2],
+);
 impl core::fmt::Debug for Booster {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(Booster))
@@ -1167,6 +1404,7 @@ impl core::fmt::Debug for Booster {
     }
 }
 impl Booster {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn boost_type(&self) -> BoostType {
@@ -1178,11 +1416,13 @@ impl Booster {
     pub fn raw_boost_type(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn horse_power(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 1))
     }
+    ///Generated public API.
     #[inline]
     pub fn new(boost_type: BoostType, horse_power: u8) -> Self {
         let mut bytes = [0u8; 2];
@@ -1202,6 +1442,7 @@ pub struct BoosterDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> BoosterDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn boost_type(&self) -> BoostType {
@@ -1211,6 +1452,7 @@ impl<'a> BoosterDecoder<'a> {
             }),
         )
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn horse_power(&self) -> u8 {
@@ -1222,7 +1464,10 @@ impl<'a> BoosterDecoder<'a> {
 /// SBE composite `Engine` — 10 byte wire image.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Engine(pub [u8; 10]);
+pub struct Engine(
+    ///Generated public API.
+    pub [u8; 10],
+);
 impl core::fmt::Debug for Engine {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(stringify!(Engine))
@@ -1238,21 +1483,25 @@ impl core::fmt::Debug for Engine {
     }
 }
 impl Engine {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn capacity(&self) -> u16 {
         u16::from_le_bytes(read_bytes::<2>(&self.0, 0))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 2))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
         9000
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn manufacturer_code(&self) -> [u8; 3] {
@@ -1265,16 +1514,19 @@ impl Engine {
         }
         res
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn efficiency(&self) -> i8 {
         i8::from_le_bytes(read_bytes::<1>(&self.0, 6))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
@@ -1286,11 +1538,13 @@ impl Engine {
     pub fn raw_booster_enabled(&self) -> u8 {
         u8::from_le_bytes(read_bytes::<1>(&self.0, 7))
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster(&self) -> Booster {
         Booster(read_bytes::<2>(&self.0, 8))
     }
+    ///Generated public API.
     #[inline]
     pub fn new(
         capacity: u16,
@@ -1328,6 +1582,7 @@ pub struct EngineDecoder<'a> {
     pub(crate) offset: usize,
 }
 impl<'a> EngineDecoder<'a> {
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn capacity(&self) -> u16 {
@@ -1335,6 +1590,7 @@ impl<'a> EngineDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn num_cylinders(&self) -> u8 {
@@ -1342,11 +1598,13 @@ impl<'a> EngineDecoder<'a> {
             read_bytes_unchecked::<1>(self.buf, self.offset + 2)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn max_rpm(&self) -> u16 {
         9000
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn manufacturer_code(&self) -> [u8; 3] {
@@ -1360,11 +1618,13 @@ impl<'a> EngineDecoder<'a> {
         }
         res
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn fuel(&self) -> &'static str {
         "Petrol"
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn efficiency(&self) -> i8 {
@@ -1372,6 +1632,7 @@ impl<'a> EngineDecoder<'a> {
             read_bytes_unchecked::<1>(self.buf, self.offset + 6)
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster_enabled(&self) -> BooleanType {
@@ -1381,6 +1642,7 @@ impl<'a> EngineDecoder<'a> {
             }),
         )
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn booster(&self) -> Booster {
@@ -1393,10 +1655,15 @@ impl<'a> EngineDecoder<'a> {
 )]
 pub struct CarSchema;
 impl CarSchema {
+    ///Generated public API.
     pub const SCHEMA_ID: u16 = 1;
+    ///Generated public API.
     pub const SCHEMA_VERSION: u16 = 0;
+    ///Generated public API.
     pub const TEMPLATE_ID: u16 = 1;
+    ///Generated public API.
     pub const BLOCK_LENGTH: usize = 45;
+    ///Generated public API.
     pub const HEADER_LENGTH: usize = 8;
     /// Full structural verification of a buffer: validates header,
     /// block-length extent, group dimension headers, entry strides,
@@ -1521,9 +1788,13 @@ impl<'a> CarDecoder<'a> {
             decoder: self,
         }
     }
+    ///Generated public API.
     pub const SCHEMA_ID: u16 = 1;
+    ///Generated public API.
     pub const SCHEMA_VERSION: u16 = 0;
+    ///Generated public API.
     pub const TEMPLATE_ID: u16 = 1;
+    ///Generated public API.
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
@@ -1804,6 +2075,7 @@ impl<'a> CarDecoder<'a> {
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline(always)]
     pub fn serial_number(&self) -> u64 {
@@ -1811,10 +2083,15 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<8>(self.buf, self.offset + 0)
         })
     }
+    ///Generated public API.
     pub const SERIAL_NUMBER_ID: u16 = 1;
+    ///Generated public API.
     pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
+    ///Generated public API.
     pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
+    ///Generated public API.
     #[inline]
     pub const fn serial_number_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -1826,9 +2103,13 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+    ///Generated public API.
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+    ///Generated public API.
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline(always)]
     pub fn model_year(&self) -> u16 {
@@ -1836,10 +2117,15 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 8)
         })
     }
+    ///Generated public API.
     pub const MODEL_YEAR_ID: u16 = 2;
+    ///Generated public API.
     pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
+    ///Generated public API.
     pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
+    ///Generated public API.
     #[inline]
     pub const fn model_year_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -1851,9 +2137,13 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
+    ///Generated public API.
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
+    ///Generated public API.
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn available(&self) -> BooleanType {
@@ -1884,10 +2174,15 @@ impl<'a> CarDecoder<'a> {
                 discriminant: self.raw_available() as u64,
             })
     }
+    ///Generated public API.
     pub const AVAILABLE_ID: u16 = 3;
+    ///Generated public API.
     pub const AVAILABLE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
+    ///Generated public API.
     pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn available_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -1899,7 +2194,9 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn code(&self) -> Model {
@@ -1918,10 +2215,15 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<1>(self.buf, self.offset + 11)
         })
     }
+    ///Generated public API.
     pub const CODE_ID: u16 = 4;
+    ///Generated public API.
     pub const CODE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const CODE_ENCODING_OFFSET: usize = 11;
+    ///Generated public API.
     pub const CODE_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn code_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -1933,7 +2235,9 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const CODE_NULL: Model = Model::NullVal;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn some_numbers(&self) -> [u32; 4] {
@@ -1950,10 +2254,15 @@ impl<'a> CarDecoder<'a> {
             u32::from_le_bytes([all[12usize], all[13usize], all[14usize], all[15usize]]),
         ]
     }
+    ///Generated public API.
     pub const SOME_NUMBERS_ID: u16 = 5;
+    ///Generated public API.
     pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
+    ///Generated public API.
     pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
+    ///Generated public API.
     #[inline]
     pub const fn some_numbers_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -1965,9 +2274,13 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
+    ///Generated public API.
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
+    ///Generated public API.
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn vehicle_code(&self) -> [u8; 6] {
@@ -1977,15 +2290,9 @@ impl<'a> CarDecoder<'a> {
         let all: [u8; 6] = unsafe {
             read_bytes_unchecked::<6>(self.buf, self.offset + 28)
         };
-        [
-            u8::from_le_bytes([all[0usize]]),
-            u8::from_le_bytes([all[1usize]]),
-            u8::from_le_bytes([all[2usize]]),
-            u8::from_le_bytes([all[3usize]]),
-            u8::from_le_bytes([all[4usize]]),
-            u8::from_le_bytes([all[5usize]]),
-        ]
+        all
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn copy_vehicle_code(&self, dst: &mut [u8]) -> usize {
@@ -1998,10 +2305,15 @@ impl<'a> CarDecoder<'a> {
         }
         n
     }
+    ///Generated public API.
     pub const VEHICLE_CODE_ID: u16 = 6;
+    ///Generated public API.
     pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
+    ///Generated public API.
     pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
+    ///Generated public API.
     #[inline]
     pub const fn vehicle_code_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -2013,9 +2325,13 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
+    ///Generated public API.
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
+    ///Generated public API.
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn extras(&self) -> OptionalExtras {
@@ -2025,10 +2341,15 @@ impl<'a> CarDecoder<'a> {
             }),
         )
     }
+    ///Generated public API.
     pub const EXTRAS_ID: u16 = 7;
+    ///Generated public API.
     pub const EXTRAS_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const EXTRAS_ENCODING_OFFSET: usize = 34;
+    ///Generated public API.
     pub const EXTRAS_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn extras_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -2040,15 +2361,21 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
+    ///Generated public API.
     pub const DISCOUNTED_MODEL_ID: u16 = 8;
+    ///Generated public API.
     pub const DISCOUNTED_MODEL_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const DISCOUNTED_MODEL_ENCODING_OFFSET: usize = 35;
+    ///Generated public API.
     pub const DISCOUNTED_MODEL_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn discounted_model_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -2060,7 +2387,9 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("constant"),
         }
     }
+    ///Generated public API.
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn engine(&self) -> EngineDecoder<'_> {
@@ -2069,15 +2398,21 @@ impl<'a> CarDecoder<'a> {
             offset: self.offset + 35,
         }
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn engine_value(&self) -> Engine {
         Engine(unsafe { read_bytes_unchecked::<10>(self.buf, self.offset + 35) })
     }
+    ///Generated public API.
     pub const ENGINE_ID: u16 = 9;
+    ///Generated public API.
     pub const ENGINE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const ENGINE_ENCODING_OFFSET: usize = 35;
+    ///Generated public API.
     pub const ENGINE_ENCODING_LENGTH: usize = 10;
+    ///Generated public API.
     #[inline]
     pub const fn engine_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -2230,6 +2565,7 @@ impl<'a> CarDecoder<'a> {
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
+    ///Generated public API.
     #[inline]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2()?;
@@ -2284,6 +2620,7 @@ impl<'a> CarDecoder<'a> {
         let bytes = self.manufacturer()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
+    ///Generated public API.
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3()?;
@@ -2336,6 +2673,7 @@ impl<'a> CarDecoder<'a> {
         let bytes = self.model()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
+    ///Generated public API.
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4()?;
@@ -2398,18 +2736,21 @@ impl<'a> CarDecoder<'a> {
     pub fn rewind(self) -> Self {
         self
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         let end = self.tail_offset_5()?;
         Ok(end - self.byte_offset())
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
         let len = self.encoded_length()?;
         Ok(len + 8)
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2417,6 +2758,7 @@ impl<'a> CarDecoder<'a> {
         let start = self.byte_offset();
         Ok(&self.buf[start..end])
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2424,6 +2766,7 @@ impl<'a> CarDecoder<'a> {
         let start = self.byte_offset().saturating_sub(Self::HEADER_LENGTH);
         Ok(&self.buf[start..end])
     }
+    ///Generated public API.
     #[inline]
     pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
         if buf.len() < 8 {
@@ -2764,6 +3107,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -2771,6 +3115,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     }
 }
 impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -2890,6 +3235,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -2930,6 +3276,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn scan_entry_at(
         &self,
@@ -3052,6 +3399,7 @@ pub struct FuelFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator has proven extents.
     ///
@@ -3073,16 +3421,22 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             tail_end: core::cell::Cell::new(None),
         }
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn speed(&self) -> u16 {
         let offset = self.offset + 0;
         u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
     }
+    ///Generated public API.
     pub const SPEED_ID: u16 = 11;
+    ///Generated public API.
     pub const SPEED_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SPEED_ENCODING_OFFSET: usize = 0;
+    ///Generated public API.
     pub const SPEED_ENCODING_LENGTH: usize = 2;
+    ///Generated public API.
     #[inline]
     pub const fn speed_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -3094,19 +3448,28 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SPEED_NULL: u16 = 65535_u16;
+    ///Generated public API.
     pub const SPEED_MIN: u16 = 0_u16;
+    ///Generated public API.
     pub const SPEED_MAX: u16 = 65534_u16;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn mpg(&self) -> f32 {
         let offset = self.offset + 2;
         f32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
     }
+    ///Generated public API.
     pub const MPG_ID: u16 = 12;
+    ///Generated public API.
     pub const MPG_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const MPG_ENCODING_OFFSET: usize = 2;
+    ///Generated public API.
     pub const MPG_ENCODING_LENGTH: usize = 4;
+    ///Generated public API.
     #[inline]
     pub const fn mpg_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -3118,8 +3481,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const MPG_NULL: f32 = f32::from_bits(2143289344u32);
+    ///Generated public API.
     pub const MPG_MIN: f32 = f32::from_bits(4286578687u32);
+    ///Generated public API.
     pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -3154,6 +3520,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         )?;
         Ok(data_end)
     }
+    ///Generated public API.
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
@@ -3183,6 +3550,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         )?;
         Ok(&self.buf[data_start..data_end])
     }
+    ///Generated public API.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
@@ -3192,6 +3560,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         self.tail_end.set(Some(end));
         Ok(end - self.offset)
     }
+    ///Generated public API.
     #[inline]
     pub fn skip(
         buf: &'a [u8],
@@ -3422,28 +3791,33 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
 impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     /// Body bytes (excluding the message header; for entries this is the
     /// complete entry bytes).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.offset..self.tail_start]
     }
     /// Complete SBE frame (header + body) for message stages.
     /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> &'a [u8] {
         &self.buf[self.offset - 0..self.tail_start]
     }
     /// Body length (excluding header).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 0
     }
     /// Bytes after this message/entry.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
@@ -3538,6 +3912,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -3545,6 +3920,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     }
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -3664,6 +4040,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -3710,6 +4087,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn scan_entry_at(
         &self,
@@ -3838,6 +4216,7 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group iterator has proven extents.
     ///
@@ -3859,16 +4238,22 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             tail_end: core::cell::Cell::new(None),
         }
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn octane_rating(&self) -> u8 {
         let offset = self.offset + 0;
         u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
     }
+    ///Generated public API.
     pub const OCTANE_RATING_ID: u16 = 14;
+    ///Generated public API.
     pub const OCTANE_RATING_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const OCTANE_RATING_ENCODING_OFFSET: usize = 0;
+    ///Generated public API.
     pub const OCTANE_RATING_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn octane_rating_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -3880,8 +4265,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
+    ///Generated public API.
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
+    ///Generated public API.
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -3921,6 +4309,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         Ok(offset)
     }
+    ///Generated public API.
     #[inline]
     pub fn acceleration(
         &self,
@@ -3955,6 +4344,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             self.acting_version,
         )
     }
+    ///Generated public API.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
@@ -3964,6 +4354,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         self.tail_end.set(Some(end));
         Ok(end - self.offset)
     }
+    ///Generated public API.
     #[inline]
     pub fn skip(
         buf: &'a [u8],
@@ -4097,6 +4488,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -4104,6 +4496,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Detached> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -4216,6 +4609,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
@@ -4285,6 +4679,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     }
 }
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
+    ///Generated public API.
     #[inline]
     pub fn entry_at(
         &self,
@@ -4368,6 +4763,7 @@ pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator (or equivalent)
     /// has proven the acting fixed block is in-bounds at `offset`.
@@ -4390,16 +4786,22 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             acting_block_length,
         }
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn mph(&self) -> u16 {
         let offset = self.offset + 0;
         u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
     }
+    ///Generated public API.
     pub const MPH_ID: u16 = 16;
+    ///Generated public API.
     pub const MPH_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const MPH_ENCODING_OFFSET: usize = 0;
+    ///Generated public API.
     pub const MPH_ENCODING_LENGTH: usize = 2;
+    ///Generated public API.
     #[inline]
     pub const fn mph_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -4411,19 +4813,28 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const MPH_NULL: u16 = 65535_u16;
+    ///Generated public API.
     pub const MPH_MIN: u16 = 0_u16;
+    ///Generated public API.
     pub const MPH_MAX: u16 = 65534_u16;
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn seconds(&self) -> f32 {
         let offset = self.offset + 2;
         f32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
     }
+    ///Generated public API.
     pub const SECONDS_ID: u16 = 17;
+    ///Generated public API.
     pub const SECONDS_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SECONDS_ENCODING_OFFSET: usize = 2;
+    ///Generated public API.
     pub const SECONDS_ENCODING_LENGTH: usize = 4;
+    ///Generated public API.
     #[inline]
     pub const fn seconds_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -4435,8 +4846,11 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SECONDS_NULL: f32 = f32::from_bits(2143289344u32);
+    ///Generated public API.
     pub const SECONDS_MIN: f32 = f32::from_bits(4286578687u32);
+    ///Generated public API.
     pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -4449,11 +4863,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         }
         Ok(self.offset + self.acting_block_length)
     }
+    ///Generated public API.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.acting_block_length
     }
+    ///Generated public API.
     #[inline]
     pub fn skip(
         buf: &'a [u8],
@@ -4578,28 +4994,33 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
 impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     /// Body bytes (excluding the message header; for entries this is the
     /// complete entry bytes).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.offset..self.tail_start]
     }
     /// Complete SBE frame (header + body) for message stages.
     /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> &'a [u8] {
         &self.buf[self.offset - 0..self.tail_start]
     }
     /// Body length (excluding header).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 0
     }
     /// Bytes after this message/entry.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
@@ -5328,28 +5749,33 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
 impl<'a> CarDecoderComplete<'a> {
     /// Body bytes (excluding the message header; for entries this is the
     /// complete entry bytes).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> &'a [u8] {
         &self.buf[self.offset..self.tail_start]
     }
     /// Complete SBE frame (header + body) for message stages.
     /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> &'a [u8] {
         &self.buf[self.offset - 8..self.tail_start]
     }
     /// Body length (excluding header).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 8
     }
     /// Bytes after this message/entry.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
@@ -5364,8 +5790,11 @@ impl<'a> CarDecoderComplete<'a> {
 /// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarFuelFiguresEntryDomain {
+    ///Generated public API.
     pub speed: u16,
+    ///Generated public API.
     pub mpg: f32,
+    ///Generated public API.
     pub usage_description: Vec<u8>,
 }
 impl CarFuelFiguresEntryDomain {
@@ -5440,7 +5869,9 @@ impl CarFuelFiguresEntryDomain {
 /// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarPerformanceFiguresEntryAccelerationEntryDomain {
+    ///Generated public API.
     pub mph: u16,
+    ///Generated public API.
     pub seconds: f32,
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
@@ -5459,6 +5890,7 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     }
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
+    ///Generated public API.
     #[inline]
     pub fn encode_into<'a>(
         &self,
@@ -5535,7 +5967,9 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
 /// infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarPerformanceFiguresEntryDomain {
+    ///Generated public API.
     pub octane_rating: u8,
+    ///Generated public API.
     pub acceleration: Vec<CarPerformanceFiguresEntryAccelerationEntryDomain>,
 }
 impl CarPerformanceFiguresEntryDomain {
@@ -5616,18 +6050,31 @@ impl CarPerformanceFiguresEntryDomain {
 /// sources, and conversion is never infallible (groups, var-data, converters).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CarDomain {
+    ///Generated public API.
     pub serial_number: u64,
+    ///Generated public API.
     pub model_year: u16,
+    ///Generated public API.
     pub available: bool,
+    ///Generated public API.
     pub code: Model,
+    ///Generated public API.
     pub some_numbers: [u32; 4],
+    ///Generated public API.
     pub vehicle_code: [u8; 6],
+    ///Generated public API.
     pub extras: OptionalExtras,
+    ///Generated public API.
     pub engine: Engine,
+    ///Generated public API.
     pub fuel_figures: Vec<CarFuelFiguresEntryDomain>,
+    ///Generated public API.
     pub performance_figures: Vec<CarPerformanceFiguresEntryDomain>,
+    ///Generated public API.
     pub manufacturer: Vec<u8>,
+    ///Generated public API.
     pub model: Vec<u8>,
+    ///Generated public API.
     pub activation_code: Vec<u8>,
 }
 impl CarDomain {
@@ -5699,6 +6146,7 @@ impl CarDomain {
     }
 }
 impl CarDomain {
+    ///Generated public API.
     #[inline]
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
@@ -6057,13 +6505,21 @@ impl<'a, H: sbe_rt::HeaderState> core::fmt::Debug for CarComplete<'a, H> {
 /// changes surface as compile errors rather than silent defaults.
 #[derive(Debug, Clone)]
 pub struct CarFixedFields {
+    ///Generated public API.
     pub serial_number: u64,
+    ///Generated public API.
     pub model_year: u16,
+    ///Generated public API.
     pub available: BooleanType,
+    ///Generated public API.
     pub code: Model,
+    ///Generated public API.
     pub some_numbers: [u32; 4],
+    ///Generated public API.
     pub vehicle_code: [u8; 6],
+    ///Generated public API.
     pub extras: OptionalExtras,
+    ///Generated public API.
     pub engine: Engine,
 }
 ///Raw fixed-field writer. Individual field setters are available only on this writer. When done, embed the fields in a [`CarFixedFields`] and call the encoder's `fixed()`.
@@ -6074,6 +6530,7 @@ pub struct CarRawFixedWriter<'a> {
     offset: usize,
 }
 impl<'a> CarRawFixedWriter<'a> {
+    ///Generated public API.
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.msg_offset + 0;
@@ -6084,6 +6541,7 @@ impl<'a> CarRawFixedWriter<'a> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.msg_offset + 8;
@@ -6094,23 +6552,27 @@ impl<'a> CarRawFixedWriter<'a> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 10;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 10] = val as u8;
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 11;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = self.msg_offset + 12;
@@ -6125,10 +6587,12 @@ impl<'a> CarRawFixedWriter<'a> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
         self.some_numbers([v0, v1, v2, v3])
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         let offset = self.msg_offset + 28;
@@ -6139,11 +6603,17 @@ impl<'a> CarRawFixedWriter<'a> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code_str(
         &mut self,
         src: &str,
     ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if !src.is_ascii() {
+            return Err(sbe_rt::EncodeError::InvalidAscii {
+                field: "vehicleCode",
+            });
+        }
         if src.len() > 6 {
             return Err(sbe_rt::EncodeError::FixedArrayTooLong {
                 field: "vehicleCode",
@@ -6160,6 +6630,7 @@ impl<'a> CarRawFixedWriter<'a> {
         }
         Ok(self.vehicle_code(tmp))
     }
+    ///Generated public API.
     #[inline]
     pub fn put_vehicle_code(
         &mut self,
@@ -6172,12 +6643,14 @@ impl<'a> CarRawFixedWriter<'a> {
     ) -> &mut Self {
         self.vehicle_code([v0, v1, v2, v3, v4, v5])
     }
+    ///Generated public API.
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 34;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 35;
@@ -6186,15 +6659,21 @@ impl<'a> CarRawFixedWriter<'a> {
     }
 }
 impl<'a> CarEncoder<'a> {
+    ///Generated public API.
     pub const SCHEMA_ID: u16 = 1;
+    ///Generated public API.
     pub const SCHEMA_VERSION: u16 = 0;
+    ///Generated public API.
     pub const TEMPLATE_ID: u16 = 1;
+    ///Generated public API.
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
     pub const HEADER_LENGTH: usize = 8;
+    ///Generated public API.
     pub const HEADER_TEMPLATE: [u8; 8] = [45, 0, 1, 0, 1, 0, 0, 0];
     const _HEADER_TEMPLATE_LEN: () = assert!(Self::HEADER_TEMPLATE.len() == 8);
+    ///Generated public API.
     #[inline]
     pub const fn compute_length() -> CarEncodedLength {
         CarEncodedLength::new()
@@ -6325,10 +6804,15 @@ impl<'a> CarEncoder<'a> {
             _fields: core::marker::PhantomData,
         }
     }
+    ///Generated public API.
     pub const SERIAL_NUMBER_ID: u16 = 1;
+    ///Generated public API.
     pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
+    ///Generated public API.
     pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
+    ///Generated public API.
     #[inline]
     pub const fn serial_number_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6340,13 +6824,21 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
+    ///Generated public API.
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
+    ///Generated public API.
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
+    ///Generated public API.
     pub const MODEL_YEAR_ID: u16 = 2;
+    ///Generated public API.
     pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
+    ///Generated public API.
     pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
+    ///Generated public API.
     #[inline]
     pub const fn model_year_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6358,13 +6850,21 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
+    ///Generated public API.
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
+    ///Generated public API.
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
+    ///Generated public API.
     pub const AVAILABLE_ID: u16 = 3;
+    ///Generated public API.
     pub const AVAILABLE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
+    ///Generated public API.
     pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn available_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6376,11 +6876,17 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
+    ///Generated public API.
     pub const CODE_ID: u16 = 4;
+    ///Generated public API.
     pub const CODE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const CODE_ENCODING_OFFSET: usize = 11;
+    ///Generated public API.
     pub const CODE_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn code_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6392,11 +6898,17 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const CODE_NULL: Model = Model::NullVal;
+    ///Generated public API.
     pub const SOME_NUMBERS_ID: u16 = 5;
+    ///Generated public API.
     pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
+    ///Generated public API.
     pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
+    ///Generated public API.
     #[inline]
     pub const fn some_numbers_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6408,13 +6920,21 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
+    ///Generated public API.
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
+    ///Generated public API.
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
+    ///Generated public API.
     pub const VEHICLE_CODE_ID: u16 = 6;
+    ///Generated public API.
     pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
+    ///Generated public API.
     pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
+    ///Generated public API.
     #[inline]
     pub const fn vehicle_code_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6426,13 +6946,21 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
+    ///Generated public API.
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
+    ///Generated public API.
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
+    ///Generated public API.
     pub const EXTRAS_ID: u16 = 7;
+    ///Generated public API.
     pub const EXTRAS_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const EXTRAS_ENCODING_OFFSET: usize = 34;
+    ///Generated public API.
     pub const EXTRAS_ENCODING_LENGTH: usize = 1;
+    ///Generated public API.
     #[inline]
     pub const fn extras_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6444,10 +6972,15 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
+    ///Generated public API.
     pub const ENGINE_ID: u16 = 9;
+    ///Generated public API.
     pub const ENGINE_SINCE_VERSION: u16 = 0;
+    ///Generated public API.
     pub const ENGINE_ENCODING_OFFSET: usize = 35;
+    ///Generated public API.
     pub const ENGINE_ENCODING_LENGTH: usize = 10;
+    ///Generated public API.
     #[inline]
     pub const fn engine_meta_attribute(
         attr: sbe_rt::MetaAttribute,
@@ -6461,6 +6994,7 @@ impl<'a> CarEncoder<'a> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
+    ///Generated public API.
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.msg_offset + 8;
@@ -6471,6 +7005,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.msg_offset + 16;
@@ -6481,23 +7016,27 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 18] = val as u8;
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = self.msg_offset + 20;
@@ -6512,10 +7051,12 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
         self.some_numbers([v0, v1, v2, v3])
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         let offset = self.msg_offset + 36;
@@ -6526,11 +7067,17 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code_str(
         &mut self,
         src: &str,
     ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if !src.is_ascii() {
+            return Err(sbe_rt::EncodeError::InvalidAscii {
+                field: "vehicleCode",
+            });
+        }
         if src.len() > 6 {
             return Err(sbe_rt::EncodeError::FixedArrayTooLong {
                 field: "vehicleCode",
@@ -6547,6 +7094,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
         }
         Ok(self.vehicle_code(tmp))
     }
+    ///Generated public API.
     #[inline]
     pub fn put_vehicle_code(
         &mut self,
@@ -6559,12 +7107,14 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     ) -> &mut Self {
         self.vehicle_code([v0, v1, v2, v3, v4, v5])
     }
+    ///Generated public API.
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 43;
@@ -6609,6 +7159,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
+    ///Generated public API.
     #[inline]
     pub fn serial_number(&mut self, val: u64) -> &mut Self {
         let offset = self.msg_offset + 8;
@@ -6619,6 +7170,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn model_year(&mut self, val: u16) -> &mut Self {
         let offset = self.msg_offset + 16;
@@ -6629,23 +7181,27 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 18;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 18] = val as u8;
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 19;
         self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn some_numbers(&mut self, val: [u32; 4]) -> &mut Self {
         let offset = self.msg_offset + 20;
@@ -6660,10 +7216,12 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn put_some_numbers(&mut self, v0: u32, v1: u32, v2: u32, v3: u32) -> &mut Self {
         self.some_numbers([v0, v1, v2, v3])
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code(&mut self, val: [u8; 6]) -> &mut Self {
         let offset = self.msg_offset + 36;
@@ -6674,11 +7232,17 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         }
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn vehicle_code_str(
         &mut self,
         src: &str,
     ) -> Result<&mut Self, sbe_rt::EncodeError> {
+        if !src.is_ascii() {
+            return Err(sbe_rt::EncodeError::InvalidAscii {
+                field: "vehicleCode",
+            });
+        }
         if src.len() > 6 {
             return Err(sbe_rt::EncodeError::FixedArrayTooLong {
                 field: "vehicleCode",
@@ -6695,6 +7259,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         }
         Ok(self.vehicle_code(tmp))
     }
+    ///Generated public API.
     #[inline]
     pub fn put_vehicle_code(
         &mut self,
@@ -6707,12 +7272,14 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     ) -> &mut Self {
         self.vehicle_code([v0, v1, v2, v3, v4, v5])
     }
+    ///Generated public API.
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 42;
         self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 43;
@@ -6734,6 +7301,7 @@ impl<'m, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, H> {
     /// Fixed-block body bytes only (groups/var-data not yet written).
     /// For a complete frame use the terminal stage's
     /// `as_bytes_with_header`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_body_bytes(&self) -> &[u8] {
         &self.encoder_buf[self.encoder_msg_offset + 8..self.encoder_offset]
@@ -6741,28 +7309,34 @@ impl<'m, H: sbe_rt::HeaderState> CarEncoderMetadata<'m, H> {
     /// Header + fixed block only — **not** a complete SBE message when
     /// groups or var-data remain. Prefer the complete stage's
     /// `as_bytes_with_header`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_fixed_region_with_header(&self) -> &[u8] {
         &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
     }
     /// Absolute offset of this message within the original buffer
     /// (the `msg_offset` argument passed to `wrap`).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn message_offset(&self) -> usize {
         self.encoder_msg_offset
     }
     /// Absolute current write cursor within the original buffer.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn limit(&self) -> usize {
         self.encoder_offset
     }
     /// The complete original buffer this encoder wraps.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn buffer(&self) -> &[u8] {
         self.encoder_buf
     }
 }
 impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> CarEncoder<'a, H, F> {
+    ///Generated public API.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn get_metadata(&self) -> CarEncoderMetadata<'_, H> {
         CarEncoderMetadata {
@@ -6962,6 +7536,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn manufacturer(
@@ -7002,6 +7577,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn manufacturer_unchecked(
@@ -7107,6 +7683,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn model(
@@ -7147,6 +7724,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn model_unchecked(
@@ -7252,6 +7830,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn activation_code(
@@ -7292,6 +7871,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn activation_code_unchecked(
@@ -7398,18 +7978,21 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
 }
 impl<'a, H: sbe_rt::HeaderState> CarComplete<'a, H> {
     /// SBE message body bytes (excluding the message header).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> &[u8] {
         let body_start = self.msg_offset + 8;
         &self.buf[body_start..self.offset]
     }
     /// SBE message body length (excluding the message header).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> usize {
         self.offset - self.msg_offset - 8
     }
     /// Total SBE message length including the header region.
     /// Pure arithmetic — available for body-only wraps too.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length_with_header(&self) -> usize {
         self.offset - self.msg_offset
@@ -7428,6 +8011,7 @@ impl<'a, H: sbe_rt::HeaderState> CarComplete<'a, H> {
 impl<'a> CarComplete<'a, sbe_rt::HeaderPresent> {
     /// Header-inclusive bytes. Only available when the encoder was
     /// constructed via `wrap_and_apply_header` (not raw `wrap`).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> &[u8] {
         &self.buf[self.msg_offset..self.offset]
@@ -7463,9 +8047,12 @@ pub struct FuelFiguresEncoder<'a> {
     written: u16,
 }
 impl<'a> FuelFiguresEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    ///Generated public API.
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
+    ///Generated public API.
     #[inline]
     pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
@@ -7518,6 +8105,7 @@ impl<'a> FuelFiguresEncoder<'a> {
         Ok(())
     }
     /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn written(&self) -> u16 {
         self.written
@@ -7547,6 +8135,7 @@ pub struct FuelFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> FuelFiguresEntryEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -7562,18 +8151,21 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             offset: offset + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    ///Generated public API.
     #[inline]
     pub fn speed(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn mpg(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
         self.buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn usage_description(
@@ -7627,9 +8219,12 @@ pub struct PerformanceFiguresEncoder<'a> {
     written: u16,
 }
 impl<'a> PerformanceFiguresEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
+    ///Generated public API.
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [1, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
+    ///Generated public API.
     #[inline]
     pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
@@ -7684,6 +8279,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         Ok(())
     }
     /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn written(&self) -> u16 {
         self.written
@@ -7714,6 +8310,7 @@ pub struct PerformanceFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresEntryEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -7729,11 +8326,13 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             offset: offset + Self::ENTRY_BLOCK_LENGTH,
         }
     }
+    ///Generated public API.
     #[inline]
     pub fn octane_rating(&mut self, val: u8) -> &mut Self {
         self.buf[self.entry_start + 0] = val as u8;
         self
     }
+    ///Generated public API.
     #[inline]
     #[must_use]
     pub fn acceleration<F>(
@@ -7839,9 +8438,12 @@ pub struct PerformanceFiguresAccelerationEncoder<'a> {
     written: u16,
 }
 impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
+    ///Generated public API.
     pub const GROUP_DIM_TEMPLATE: [u8; 4] = [6, 0, 0, 0];
     const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == 4);
+    ///Generated public API.
     #[inline]
     pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
@@ -7975,6 +8577,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         })
     }
     /// Number of entries written so far (for `_unknown_size` back-patch).
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn written(&self) -> u16 {
         self.written
@@ -7983,7 +8586,9 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
 /// Value struct for this group's entries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PerformanceFiguresAccelerationEntry {
+    ///Generated public API.
     pub mph: u16,
+    ///Generated public API.
     pub seconds: f32,
 }
 impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
@@ -8109,6 +8714,7 @@ pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
+    ///Generated public API.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -8135,12 +8741,14 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
             offset: self.offset,
         }
     }
+    ///Generated public API.
     #[inline]
     pub fn mph(&mut self, val: u16) -> &mut Self {
         let offset = self.entry_start + 0;
         self.buf[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
         self
     }
+    ///Generated public API.
     #[inline]
     pub fn seconds(&mut self, val: f32) -> &mut Self {
         let offset = self.entry_start + 2;
@@ -8154,7 +8762,9 @@ pub struct CarEncodedLength {
     state: EncodedLengthAccumulator,
 }
 impl CarEncodedLength {
+    ///Generated public API.
     pub const BLOCK_LENGTH: usize = 45;
+    ///Generated public API.
     pub const HEADER_LENGTH: usize = 8;
     /// Start computing the encoded length.
     #[inline]
@@ -8165,11 +8775,17 @@ impl CarEncodedLength {
     }
 }
 impl CarEncodedLength {
+    ///Generated public API.
     pub const FUELFIGURES_USAGEDESCRIPTION_PREFIX: usize = 4;
+    ///Generated public API.
     pub const PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM: usize = 4;
+    ///Generated public API.
     pub const PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK: usize = 6;
+    ///Generated public API.
     pub const MANUFACTURER_PREFIX: usize = 4;
+    ///Generated public API.
     pub const MODEL_PREFIX: usize = 4;
+    ///Generated public API.
     pub const ACTIVATIONCODE_PREFIX: usize = 4;
 }
 /// Schema-specific ragged entry builder — field-named methods bake in
@@ -8303,6 +8919,7 @@ pub struct CarFuelFiguresUniformEncodedLength {
     declared_count: u32,
 }
 impl CarFuelFiguresUniformEncodedLength {
+    ///Generated public API.
     #[inline]
     pub const fn usage_description(
         mut self,
@@ -8467,6 +9084,7 @@ pub struct CarPerformanceFiguresUniformEncodedLength {
     declared_count: u32,
 }
 impl CarPerformanceFiguresUniformEncodedLength {
+    ///Generated public API.
     #[inline]
     pub const fn acceleration(
         mut self,
@@ -8612,6 +9230,7 @@ impl CarEncodedLengthAfterFuelFigures {
     }
 }
 impl CarEncodedLengthAfterPerformanceFigures {
+    ///Generated public API.
     #[inline]
     pub const fn manufacturer(
         self,
@@ -8642,6 +9261,7 @@ impl CarEncodedLengthAfterPerformanceFigures {
     }
 }
 impl CarEncodedLengthAfterManufacturer {
+    ///Generated public API.
     #[inline]
     pub const fn model(
         self,
@@ -8672,6 +9292,7 @@ impl CarEncodedLengthAfterManufacturer {
     }
 }
 impl CarEncodedLengthAfterModel {
+    ///Generated public API.
     #[inline]
     pub const fn activation_code(
         self,
@@ -8702,27 +9323,43 @@ impl CarEncodedLengthAfterModel {
     }
 }
 impl CarEncodedLengthComplete {
+    ///Generated public API.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn encoded_length(&self) -> usize {
         self.state.len
     }
+    ///Generated public API.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn encoded_length_with_header(&self) -> usize {
         self.state.len + 8 as usize
     }
 }
+///Generated public API.
 pub mod car_field_meta {
+    ///Generated public API.
     pub struct FieldInfo {
+        ///Generated public API.
         pub name: &'static str,
+        ///Generated public API.
         pub id: u16,
+        ///Generated public API.
         pub offset: usize,
+        ///Generated public API.
         pub since_version: u16,
+        ///Generated public API.
         pub field_type: &'static str,
+        ///Generated public API.
         pub presence: &'static str,
+        ///Generated public API.
         pub null_value: Option<&'static str>,
+        ///Generated public API.
         pub semantic_type: Option<&'static str>,
+        ///Generated public API.
         pub description: Option<&'static str>,
     }
+    ///Generated public API.
     pub const FIELDS: &[FieldInfo] = &[
         FieldInfo {
             name: "serialNumber",
@@ -8937,6 +9574,7 @@ pub struct RaggedEntryBuilder {
     state: EncodedLengthAccumulator,
     parent_multiplier: usize,
     entry_block_length: usize,
+    ///Generated public API.
     pub written: usize,
 }
 impl RaggedEntryBuilder {
@@ -9037,20 +9675,29 @@ impl RaggedEntryBuilder {
         Ok(())
     }
 }
+///Generated public API.
 pub const SEMANTIC_VERSION: &str = "5.2";
+///Generated public API.
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
+///Generated public API.
 pub const SCHEMA_SHA256: [u8; 32] = [
     0x78, 0x48, 0x97, 0x0c, 0x36, 0x8e, 0x7a, 0xf4, 0x8e, 0xdd, 0xc0, 0x8e, 0x75, 0xef,
     0x6d, 0x66, 0xa4, 0xf5, 0xc3, 0x03, 0x4d, 0xc7, 0x4d, 0x37, 0xed, 0x93, 0x11, 0xb0,
     0xf9, 0x87, 0xa2, 0x51,
 ];
+///Generated public API.
 pub const SCHEMA_SHA256_HEX: &str = "7848970c368e7af48eddc08e75ef6d66a4f5c3034dc74d37ed9311b0f987a251";
+///Generated public API.
 pub const SCHEMA_ID: u16 = 1;
+///Generated public API.
 pub const SCHEMA_VERSION: u16 = 0;
+///Generated public API.
 pub mod prelude {
+    ///Generated public API.
     pub use super::sbe_rt::{
         DecodeError, EncodeError, VerifyError, MetaAttribute, SbeMessage,
     };
+    ///Generated public API.
     pub use super::{
         AnyMessage, DecodedFrame, FrameCursor, FramingPolicy, MessageVisitor,
         MessageHeader, MessageHeaderDecoder, GroupSizeEncoding, GroupSizeEncodingDecoder,
@@ -9068,6 +9715,7 @@ pub mod prelude {
 pub fn read_bytes<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
     buf[offset..offset + N].try_into().expect("read_bytes: buffer too short")
 }
+///Generated public API.
 #[inline]
 pub fn write_bytes<const N: usize>(buf: &mut [u8], offset: usize, bytes: &[u8; N]) {
     buf[offset..offset + N].copy_from_slice(bytes);
@@ -9098,6 +9746,8 @@ unsafe fn write_bytes_unchecked<const N: usize>(
         core::ptr::write_unaligned(buf.as_mut_ptr().add(offset) as *mut [u8; N], *bytes)
     }
 }
+/// Read `schemaId` from a message header at the start of `buf`.
+/// Returns [`None`] if `buf` is shorter than the header field.
 #[inline]
 pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {
@@ -9111,8 +9761,14 @@ pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
 /// then `match` to access the typed decoder.
 #[non_exhaustive]
 pub enum AnyMessage<'a> {
-    Car(CarDecoder<'a>),
+    ///Generated public API.
+    Car(
+        ///Generated public API.
+        CarDecoder<'a>,
+    ),
+    ///Generated public API.
     Unknown {
+        ///Generated public API.
         header: MessageHeader,
         /// The complete frame: schema-declared message header
         /// followed by the unparsed body. Not the body alone.
@@ -9121,16 +9777,25 @@ pub enum AnyMessage<'a> {
 }
 /// One decoded message with its buffer range and length.
 pub struct DecodedFrame<'a> {
+    ///Generated public API.
     pub message: AnyMessage<'a>,
+    ///Generated public API.
     pub range: core::ops::Range<usize>,
+    ///Generated public API.
     pub len: usize,
 }
 /// How frames are delimited in a stream: length-prefixed or fixed-size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FramingPolicy {
+    ///Generated public API.
     LengthPrefixU32Le,
+    ///Generated public API.
     LengthPrefixU16Le,
-    Fixed(usize),
+    ///Generated public API.
+    Fixed(
+        ///Generated public API.
+        usize,
+    ),
 }
 /// Iterator that yields [`DecodedFrame`]s from a byte buffer according
 /// to a [`FramingPolicy`].
@@ -9140,6 +9805,7 @@ pub struct FrameCursor<'a> {
     framing: FramingPolicy,
 }
 impl<'a> FrameCursor<'a> {
+    ///Generated public API.
     #[inline]
     pub const fn new(buf: &'a [u8], framing: FramingPolicy) -> Self {
         Self { buf, offset: 0, framing }
@@ -9301,6 +9967,7 @@ impl<'a> AnyMessage<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
+    ///Generated public API.
     #[inline]
     pub fn decode_frame(
         buf: &'a [u8],
@@ -9379,6 +10046,8 @@ impl<'a> AnyMessage<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
+    /// Header-inclusive encoded length of this variant.
+    /// [`Self::Unknown`] reports the matched frame length.
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
         match self {
@@ -9400,6 +10069,8 @@ impl<'a> AnyMessage<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
+    /// Copy this message's header-inclusive frame into `buf`.
+    /// Unknown templates copy the matched frame bytes.
     #[inline]
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         match self {
@@ -9430,8 +10101,11 @@ impl<'a> AnyMessage<'a> {
         }
     }
 }
+///Generated public API.
 pub trait MessageVisitor {
+    ///Generated public API.
     type Output;
+    ///Generated public API.
     fn visit_car(&mut self, decoder: &CarDecoder<'_>) -> Self::Output;
     /// Called for unknown template IDs (not in this schema).
     ///
@@ -9443,6 +10117,7 @@ pub trait MessageVisitor {
     fn visit_unknown(&mut self, header: &MessageHeader, frame: &[u8]) -> Self::Output;
 }
 impl<'a> AnyMessage<'a> {
+    ///Generated public API.
     #[inline]
     pub fn visit<V: MessageVisitor>(&self, visitor: &mut V) -> V::Output {
         match self {

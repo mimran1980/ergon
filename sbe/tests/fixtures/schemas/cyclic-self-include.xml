@@ -4,7 +4,7 @@
                    package="cyclic"
                    id="99"
                    version="0"
-                   description="Self-including schema — detects cycle via canonical path in seen set"
+                   description="Self-including schema — detects cycle via the in-flight include stack"
                    byteOrder="littleEndian">
     <xi:include href="cyclic-self-include.xml"/>
     <types>

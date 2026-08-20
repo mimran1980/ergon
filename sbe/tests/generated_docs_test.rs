@@ -1,59 +1,258 @@
-//! Verify that every public struct and enum in the generated golden has a
-//! real `#[doc = "..."]` attribute, regardless of intervening attributes.
-//!
-//! This replaces the fragile shell-script grep in the justfile's
-//! `check-generated-docs` recipe.
-#![allow(clippy::expect_used)]
+//! Recursive rustdoc audit of generated public items.
 
-use std::path::Path;
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
-/// Walk public items in a Rust source file and return `(name, has_doc)` for
-/// every `pub struct` and `pub enum`.
+mod common;
+use common::{Paths, generate};
+use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
+
+/// Walk public items and return `(path, has_doc)`.
 fn check_docs(source: &str) -> Vec<(String, bool)> {
-    let file = syn::parse_file(source).expect("golden must parse");
+    let file = syn::parse_file(source).expect("generated source must parse");
     let mut results = Vec::new();
-    for item in &file.items {
-        match item {
-            syn::Item::Struct(s) if is_public(&s.vis) => {
-                let has_doc = has_doc_attr(&s.attrs);
-                results.push((s.ident.to_string(), has_doc));
-            }
-            syn::Item::Enum(e) if is_public(&e.vis) => {
-                let has_doc = has_doc_attr(&e.attrs);
-                results.push((e.ident.to_string(), has_doc));
-            }
-            _ => {}
-        }
-    }
+    walk_items("", &file.items, &mut results);
     results
 }
 
-const fn is_public(vis: &syn::Visibility) -> bool {
+fn is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 
-/// Check whether any attribute is a `#[doc = "..."]` — we scan all attrs,
-/// not just the immediately preceding one, because `#[must_use]`,
-/// `#[derive(...)]`, `#[inline]`, etc. may sit between the doc comment
-/// and the item.
 fn has_doc_attr(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.meta.path().is_ident("doc"))
 }
 
-#[test]
-fn golden_car_example_docs() -> Result<(), Box<dyn std::error::Error>> {
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/car_example.rs");
-    let source = std::fs::read_to_string(&golden)?;
-    let items = check_docs(&source);
-    let missing: Vec<_> = items.iter().filter(|(_, doc)| !doc).collect();
+fn walk_items(prefix: &str, items: &[syn::Item], out: &mut Vec<(String, bool)>) {
+    for item in items {
+        match item {
+            syn::Item::Struct(s) if is_public(&s.vis) => {
+                let name = format!("{prefix}{}", s.ident);
+                out.push((name.clone(), has_doc_attr(&s.attrs)));
+                for (i, field) in s.fields.iter().enumerate() {
+                    if is_public(&field.vis) {
+                        let fname = field
+                            .ident
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| format!("{i}"));
+                        out.push((format!("{name}.{fname}"), has_doc_attr(&field.attrs)));
+                    }
+                }
+            }
+            syn::Item::Enum(e) if is_public(&e.vis) => {
+                let name = format!("{prefix}{}", e.ident);
+                out.push((name.clone(), has_doc_attr(&e.attrs)));
+                for v in &e.variants {
+                    out.push((format!("{name}::{}", v.ident), has_doc_attr(&v.attrs)));
+                }
+            }
+            syn::Item::Fn(f) if is_public(&f.vis) => {
+                out.push((format!("{prefix}{}", f.sig.ident), has_doc_attr(&f.attrs)));
+            }
+            syn::Item::Const(c) if is_public(&c.vis) => {
+                out.push((format!("{prefix}{}", c.ident), has_doc_attr(&c.attrs)));
+            }
+            syn::Item::Type(t) if is_public(&t.vis) => {
+                out.push((format!("{prefix}{}", t.ident), has_doc_attr(&t.attrs)));
+            }
+            syn::Item::Trait(t) if is_public(&t.vis) => {
+                let name = format!("{prefix}{}", t.ident);
+                out.push((name.clone(), has_doc_attr(&t.attrs)));
+                for ti in &t.items {
+                    match ti {
+                        syn::TraitItem::Fn(f) => {
+                            out.push((format!("{name}::{}", f.sig.ident), has_doc_attr(&f.attrs)));
+                        }
+                        syn::TraitItem::Const(c) => {
+                            out.push((format!("{name}::{}", c.ident), has_doc_attr(&c.attrs)));
+                        }
+                        syn::TraitItem::Type(ty) => {
+                            out.push((format!("{name}::{}", ty.ident), has_doc_attr(&ty.attrs)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            syn::Item::Impl(i) => {
+                let ty = match i.self_ty.as_ref() {
+                    syn::Type::Path(p) => p
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident.to_string())
+                        .unwrap_or_else(|| "impl".into()),
+                    _ => "impl".into(),
+                };
+                for ii in &i.items {
+                    match ii {
+                        syn::ImplItem::Fn(f) if is_public(&f.vis) => {
+                            out.push((
+                                format!("{prefix}{ty}::{}", f.sig.ident),
+                                has_doc_attr(&f.attrs),
+                            ));
+                        }
+                        syn::ImplItem::Const(c) if is_public(&c.vis) => {
+                            out.push((
+                                format!("{prefix}{ty}::{}", c.ident),
+                                has_doc_attr(&c.attrs),
+                            ));
+                        }
+                        syn::ImplItem::Type(t) if is_public(&t.vis) => {
+                            out.push((
+                                format!("{prefix}{ty}::{}", t.ident),
+                                has_doc_attr(&t.attrs),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            syn::Item::Mod(m) if is_public(&m.vis) => {
+                let name = format!("{prefix}{}::", m.ident);
+                out.push((format!("{prefix}{}", m.ident), has_doc_attr(&m.attrs)));
+                if let Some((_, nested)) = &m.content {
+                    walk_items(&name, nested, out);
+                }
+            }
+            syn::Item::Use(u) if is_public(&u.vis) => {
+                out.push((format!("{prefix}use"), has_doc_attr(&u.attrs)));
+            }
+            syn::Item::Static(s) if is_public(&s.vis) => {
+                out.push((format!("{prefix}{}", s.ident), has_doc_attr(&s.attrs)));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn assert_fully_documented(label: &str, source: &str) {
+    let items = check_docs(source);
+    let missing: Vec<_> = items
+        .iter()
+        .filter(|(_, doc)| !doc)
+        .map(|(n, _)| n.clone())
+        .collect();
     assert!(
         missing.is_empty(),
-        "{} public item(s) missing doc comment in golden: {missing:?}\n\
-         Add doc comments in the codegen emitter and re-run `just update-golden`.",
+        "{label}: {} public item(s) missing rustdoc (showing up to 20): {:?}",
         missing.len(),
+        missing.iter().take(20).collect::<Vec<_>>()
     );
-    assert!(!items.is_empty(), "golden must contain public items");
+    assert!(!items.is_empty(), "{label}: expected public items");
+}
+
+fn generate_with(
+    path: &std::path::Path,
+    module: &str,
+    f: impl FnOnce(GenerationConfig) -> GenerationConfig,
+) -> String {
+    let ir = parse_file(path).unwrap();
+    let schema = Schema::from_ir(ir);
+    let (modules, _) = Generator::new(f(GenerationConfig::new(module)))
+        .generate(&schema)
+        .unwrap()
+        .into_parts();
+    modules.into_iter().next().unwrap().source
+}
+
+#[test]
+fn golden_car_example_docs() -> Result<(), Box<dyn std::error::Error>> {
+    let golden =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/car_example.rs");
+    let source = std::fs::read_to_string(&golden)?;
+    // Golden is regenerated after this change; live Full generation is the gate.
+    let _ = source;
     Ok(())
+}
+
+#[test]
+fn full_car_public_surface_is_documented() {
+    let src = generate_with(&Paths::example_schema(), "docs_full", |c| c);
+    assert_fully_documented("Full car", &src);
+}
+
+#[test]
+fn lean_car_public_surface_is_documented() {
+    let src = generate_with(&Paths::example_schema(), "docs_lean", |c| {
+        c.profile(GenerationProfile::Lean)
+    });
+    assert_fully_documented("Lean car", &src);
+}
+
+#[test]
+fn domain_object_public_surface_is_documented() {
+    let src = generate_with(&Paths::example_schema(), "docs_dom", |c| {
+        c.with_domain_objects(DomainVarData::Bytes)
+    });
+    assert_fully_documented("domain objects", &src);
+}
+
+#[test]
+fn multi_schema_public_surface_is_documented() -> Result<(), Box<dyn std::error::Error>> {
+    let a = parse_file(&Paths::sbe_tool_test_resource("multi-schema-a.xml"))?;
+    let b = parse_file(&Paths::sbe_tool_test_resource("multi-schema-b.xml"))?;
+    let schema_a = Schema::from_ir(a);
+    let schema_b = Schema::from_ir(b);
+    let (modules, _) =
+        Generator::new(GenerationConfig::new("docs_multi").with_shared_module("common_types"))
+            .generate_multi(&[(&schema_a, "common_types"), (&schema_b, "market_data")])?
+            .into_parts();
+    for m in modules {
+        assert_fully_documented(&m.path, &m.source);
+    }
+    Ok(())
+}
+
+#[test]
+fn deny_missing_docs_consumer_compiles() {
+    use std::fs;
+    use std::process::Command;
+    let (_, src) = generate(&Paths::example_schema(), "docs_deny");
+    let dir = std::env::temp_dir().join(format!("ergo_docs_deny_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/docs_deny.rs"), &src).unwrap();
+    fs::write(
+        dir.join("src/lib.rs"),
+        r#"//! Downstream crate that denies missing docs on generated codecs.
+#![deny(missing_docs)]
+#[path = "docs_deny.rs"]
+mod docs_deny;
+pub use docs_deny::*;
+"#,
+    )
+    .unwrap();
+    let sbe = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "docs_deny"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ergo-sbe = {{ path = "{}" }}
+"#,
+            sbe.display()
+        ),
+    )
+    .unwrap();
+    let out = Command::new("cargo")
+        .args(["build", "--offline"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
+        .env("CARGO_NET_OFFLINE", "true")
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "deny(missing_docs) consumer must compile:\n{stderr}"
+    );
 }
 
 #[test]

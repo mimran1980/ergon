@@ -355,8 +355,8 @@ pub mod xml;
 pub mod xsd;
 
 pub use build::{
-    BuildError, generate_str_to_dir, generate_str_to_out_dir, generate_to_dir, generate_to_out_dir,
-    out_dir,
+    BuildError, SchemaFile, generate_multi_to_dir, generate_multi_to_out_dir, generate_str_to_dir,
+    generate_str_to_out_dir, generate_to_dir, generate_to_out_dir, out_dir,
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
@@ -367,7 +367,7 @@ pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
 pub use xml::{
-    ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
+    IncludeCause, ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
     parse_with_xsd_validation,
 };
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};

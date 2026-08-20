@@ -5,6 +5,141 @@ use crate::ir::{Presence, PrimitiveType};
 use crate::structured_ir::{FieldType, MessageField, SchemaElements, rust_type};
 use crate::{GenerationConfig, Schema};
 
+/// Semantic text kind for a 1-byte fixed array. `None` means no `*_str`.
+///
+/// sbe-tool emits `*_zero_padded(&[u8])` for every 1-byte array, including
+/// unencoded `uint8`/`int8` and GB18030. Ergon's `*_str` is the text
+/// convenience: only default-ASCII `char` and explicit ASCII/UTF-8 encodings.
+/// Explicit ASCII/UTF-8 on `uint8` is text (sbe-tool also emits a padded
+/// helper for those); unencoded numeric arrays and GB18030 stay raw-only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FixedArrayTextKind {
+    Ascii,
+    Utf8,
+}
+
+pub(crate) fn fixed_array_text_kind(
+    prim: PrimitiveType,
+    character_encoding: Option<&str>,
+) -> Option<FixedArrayTextKind> {
+    if prim.size() != 1 {
+        return None;
+    }
+    let normalized = character_encoding.map(|s| s.trim().to_ascii_lowercase());
+    match (prim, normalized.as_deref()) {
+        (PrimitiveType::Char, None) => Some(FixedArrayTextKind::Ascii),
+        (PrimitiveType::Char | PrimitiveType::UInt8, Some("ascii" | "us-ascii")) => {
+            Some(FixedArrayTextKind::Ascii)
+        }
+        (PrimitiveType::Char | PrimitiveType::UInt8, Some("utf-8" | "utf8")) => {
+            Some(FixedArrayTextKind::Utf8)
+        }
+        _ => None,
+    }
+}
+
+/// Reconstruct `[T; N]` from a bulk-read `[u8; N * size_of::<T>()]` named `all`.
+///
+/// One-byte primitives have no endianness: return `all` for `u8`/`char` and
+/// a byte cast for `i8`. Wider types keep unrolled `from_{le,be}_bytes`.
+pub(crate) fn fixed_array_from_bulk_bytes(
+    rust_ty: &syn::Type,
+    prim: PrimitiveType,
+    prim_size: usize,
+    len: usize,
+    order_fn: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    if prim_size == 1 {
+        match prim {
+            PrimitiveType::Char | PrimitiveType::UInt8 => return quote::quote! { all },
+            PrimitiveType::Int8 => {
+                let casts: Vec<proc_macro2::TokenStream> =
+                    (0..len).map(|i| quote::quote! { all[#i] as i8 }).collect();
+                return quote::quote! { [#(#casts),*] };
+            }
+            _ => {}
+        }
+    }
+    let mut elements = Vec::with_capacity(len);
+    for i in 0..len {
+        let start = i * prim_size;
+        let end = start + prim_size;
+        let byte_indices: Vec<proc_macro2::TokenStream> = (start..end)
+            .map(|idx| quote::quote! { all[#idx] })
+            .collect();
+        elements.push(quote::quote! {
+            #rust_ty::#order_fn([#(#byte_indices),*])
+        });
+    }
+    quote::quote! { [#(#elements),*] }
+}
+
+#[cfg(test)]
+mod fixed_array_from_bulk_bytes_tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn one_byte_unsigned_is_the_bulk_array() {
+        let ty: syn::Type = syn::parse_str("u8").unwrap();
+        let order = quote::format_ident!("from_le_bytes");
+        let tokens = fixed_array_from_bulk_bytes(&ty, PrimitiveType::Char, 1, 9, &order);
+        assert_eq!(tokens.to_string().replace(' ', ""), "all");
+    }
+
+    #[test]
+    fn wider_primitives_keep_endian_conversion() {
+        let ty: syn::Type = syn::parse_str("u32").unwrap();
+        let order = quote::format_ident!("from_le_bytes");
+        let tokens = fixed_array_from_bulk_bytes(&ty, PrimitiveType::UInt32, 4, 2, &order);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("from_le_bytes"));
+        assert!(rendered.contains("all [0usize]"));
+    }
+}
+
+mod fixed_array_text_kind_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_char_and_encoded_uint8_only() {
+        use PrimitiveType::{Char, Int8, UInt8};
+        assert_eq!(
+            fixed_array_text_kind(Char, None),
+            Some(FixedArrayTextKind::Ascii)
+        );
+        assert_eq!(
+            fixed_array_text_kind(Char, Some("ASCII")),
+            Some(FixedArrayTextKind::Ascii)
+        );
+        assert_eq!(
+            fixed_array_text_kind(Char, Some("us-ascii")),
+            Some(FixedArrayTextKind::Ascii)
+        );
+        assert_eq!(
+            fixed_array_text_kind(Char, Some("UTF-8")),
+            Some(FixedArrayTextKind::Utf8)
+        );
+        assert_eq!(
+            fixed_array_text_kind(Char, Some("utf8")),
+            Some(FixedArrayTextKind::Utf8)
+        );
+        assert_eq!(fixed_array_text_kind(Char, Some("GB18030")), None);
+        assert_eq!(fixed_array_text_kind(UInt8, None), None);
+        assert_eq!(
+            fixed_array_text_kind(UInt8, Some("US-ASCII")),
+            Some(FixedArrayTextKind::Ascii)
+        );
+        assert_eq!(
+            fixed_array_text_kind(UInt8, Some("UTF-8")),
+            Some(FixedArrayTextKind::Utf8)
+        );
+        assert_eq!(fixed_array_text_kind(UInt8, Some("GB18030")), None);
+        assert_eq!(fixed_array_text_kind(Int8, None), None);
+        assert_eq!(fixed_array_text_kind(Int8, Some("UTF-8")), None);
+    }
+}
+
 /// Extract [`crate::FieldInfo`] entries from message fields (constant fields
 /// excluded). Used by context builders and hook dispatch.
 pub(crate) fn message_field_infos(

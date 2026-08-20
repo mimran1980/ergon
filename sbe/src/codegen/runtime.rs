@@ -75,6 +75,8 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 VarDataTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// Fixed char/byte array source longer than the schema length.
                 FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
+                /// ASCII fixed-array `*_str` received a non-ASCII `&str`.
+                InvalidAscii { field: &'static str },
                 /// Domain/DTO value outside the schema min/max range.
                 ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
                 /// Tried to write more group entries than the declared count.
@@ -99,6 +101,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::ClaimLengthMismatch { expected, actual } => write!(f, "claim buffer length mismatch: expected {}, got {}", expected, actual),
                         Self::VarDataTooLong { field, max_length, actual } => write!(f, "var data too long for field {}: max {}, actual {}", field, max_length, actual),
                         Self::FixedArrayTooLong { field, max_length, actual } => write!(f, "fixed array too long for field {}: max {}, actual {}", field, max_length, actual),
+                        Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
                         Self::ValueOutOfRange { field, min, max, actual } => write!(f, "value out of range for field {}: min {}, max {}, actual {}", field, min, max, actual),
                         Self::GroupFull { declared, attempted } => write!(f, "group full: declared count {}, attempted to write {}", declared, attempted),
                         Self::GroupCountMismatch { declared, actual } => write!(f, "group count mismatch: declared {declared}, wrote {actual}"),
@@ -994,6 +997,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             /// discriminant — the SBE boolean wire type is tri-state
             /// (F, T, null). Prefer this (or `TryFrom`) over treating the
             /// raw discriminant as a Rust `bool`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn as_bool(self) -> Option<bool> {
                 match self {
@@ -1094,6 +1098,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             }
 
             /// Map [`Self::NullVal`] → [`None`], any other variant → [`Some`].
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn as_option(self) -> Option<Self> {
                 if matches!(self, Self::NullVal) { None } else { Some(self) }
@@ -1992,7 +1997,10 @@ pub(crate) fn generate_schema_id_from_header(
     )) = schema_id
     else {
         src.push_str(
-            "#[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
+            "/// Read `schemaId` from a message header at the start of `buf`.\n\
+             /// Returns [`None`] when the header composite has no `schemaId` field\n\
+             /// or `buf` is shorter than the header.\n\
+             #[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
         );
         return;
     };
@@ -2000,7 +2008,10 @@ pub(crate) fn generate_schema_id_from_header(
     if schema_id_presence == Presence::Constant {
         let Some(value) = schema_id_constant else {
             src.push_str(
-                "#[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
+                "/// Read `schemaId` from a message header at the start of `buf`.\n\
+                 /// Returns [`None`] when `schemaId` is constant but has no value,\n\
+                 /// or `buf` is shorter than the header.\n\
+                 #[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
             );
             return;
         };
@@ -2011,6 +2022,9 @@ pub(crate) fn generate_schema_id_from_header(
             syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
         let ts = quote::quote! {
             #[inline]
+            /// Read `schemaId` from a standard 8-byte SBE message header at
+            /// the start of `buf`. Returns [`None`] if the buffer is shorter
+            /// than the header.
             pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
                 if buf.len() < #header_size {
                     return None;
@@ -2037,6 +2051,8 @@ pub(crate) fn generate_schema_id_from_header(
         proc_macro2::Span::call_site(),
     );
     let ts = quote::quote! {
+        /// Read `schemaId` from a message header at the start of `buf`.
+        /// Returns [`None`] if `buf` is shorter than the header field.
         #[inline]
         pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
             if buf.len() < #sid + #sid_size {
@@ -2474,6 +2490,8 @@ pub(crate) fn generate_any_message(
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Header-inclusive encoded length of this variant.
+                /// [`Self::Unknown`] reports the matched frame length.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::DecodeError> {
                     match self {
@@ -2536,6 +2554,8 @@ pub(crate) fn generate_any_message(
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Copy this message's header-inclusive frame into `buf`.
+                /// Unknown templates copy the matched frame bytes.
                 #[inline]
                 pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
                     match self {

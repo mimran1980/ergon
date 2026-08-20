@@ -63,11 +63,13 @@ preflight:
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
     bash scripts/tests/test-public-api.sh
+    bash scripts/tests/test-generated-public-api.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
+    ./scripts/check-generated-public-api.sh
     @echo "=== checked-in generated artifacts still match their source ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check

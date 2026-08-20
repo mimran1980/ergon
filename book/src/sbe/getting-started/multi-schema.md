@@ -81,30 +81,28 @@ The shared `Ir` path does **not** recover bare top-level `<type>` typedefs
 (those are inlined during parsing and dropped from the token stream). Reference
 them through a `<composite>` / `<enum>` / `<set>` in the shared schema instead.
 
-### Full `build.rs` — parse → share → generate
+### Full `build.rs` — one helper call
 
-```rust,ignore
+Module names are supplied, not derived from file stems, so a hyphenated
+`common-types.xml` can emit `common_types.rs`. The helper parses the shared
+schema first, resolves consumers against it, validates the whole set, then
+writes. A late consumer failure leaves no partial files. Cargo watches every
+root and every resolved include.
+
+```rust,no_run
 // build.rs
-fn main() -> miette::Result<()> {
-    let common = ergo_sbe::parse_file("schemas/common-types.xml")?;
-    let orders = ergo_sbe::parse_file_with_shared("schemas/orders.xml", &common)?;
-    let fills  = ergo_sbe::parse_file_with_shared("schemas/fills.xml", &common)?;
+use std::path::Path;
+use ergo_sbe::{GenerationConfig, SchemaFile, generate_multi_to_out_dir};
 
-    let generator = ergo_sbe::Generator::new(
-        ergo_sbe::GenerationConfig::new("common_types")
-            .with_shared_module("common_types"),
-    );
-    let modules = generator.generate_multi(&[
-        (&ergo_sbe::Schema::from_ir(common), "common_types"),
-        (&ergo_sbe::Schema::from_ir(orders), "orders"),
-        (&ergo_sbe::Schema::from_ir(fills),  "fills"),
-    ])?;
-
-    for m in modules.modules() {
-        let out = std::path::Path::new(&std::env::var("OUT_DIR")?).join(&m.path);
-        std::fs::write(&out, &m.source)?;
-        println!("cargo::rerun-if-changed=schemas/{}", m.path.replace(".rs", ".xml"));
-    }
+fn main() -> ergo_sbe::miette::Result<()> {
+    generate_multi_to_out_dir(
+        SchemaFile::new(Path::new("schemas/common-types.xml"), "common_types"),
+        &[
+            SchemaFile::new(Path::new("schemas/orders.xml"), "orders"),
+            SchemaFile::new(Path::new("schemas/fills.xml"), "fills"),
+        ],
+        GenerationConfig::new("common_types"),
+    )?;
     Ok(())
 }
 ```

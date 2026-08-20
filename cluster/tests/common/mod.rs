@@ -55,11 +55,11 @@ pub fn connect_own_driver(
             reason: format!("egress URI utf8: {e}"),
         })?;
     let builder = SessionBuilder::default()
-        .ingress_channel(cluster_ingress)
-        .egress_channel(egress_uri)
+        .ingress_channel(cluster_ingress)?
+        .egress_channel(egress_uri)?
         .ingress_stream_id(101)
         .egress_stream_id(102)
-        .message_timeout(Duration::from_secs(10));
+        .message_timeout(Duration::from_secs(10))?;
     AeronCluster::connect(&builder, aeron_dir)
 }
 

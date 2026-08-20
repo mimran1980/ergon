@@ -20,6 +20,7 @@
 //! ergo_sbe::sbe_mod!(messages);
 //! ```
 
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,7 +28,7 @@ use std::path::{Path, PathBuf};
 use crate::codegen::{GenerateError, GeneratedModuleSet, Generator};
 use crate::config::GenerationConfig;
 use crate::schema::Schema;
-use crate::xml::{ParseError, parse, parse_file};
+use crate::xml::{ParseError, parse, parse_file_with_deps, parse_file_with_shared_deps};
 
 /// Errors from [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
 ///
@@ -53,6 +54,26 @@ pub enum BuildError {
     /// Generator produced no modules.
     #[error("schema generated no modules")]
     Empty,
+}
+
+/// One schema file in a multi-schema generation set.
+///
+/// `module_name` is the generated Rust module (`orders` → `orders.rs`), not
+/// derived from the file stem — so `common-types.xml` can emit `common_types.rs`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchemaFile<'a> {
+    /// Path to the schema XML file.
+    pub path: &'a Path,
+    /// Generated module identifier (no `.rs` suffix).
+    pub module_name: &'a str,
+}
+
+impl<'a> SchemaFile<'a> {
+    /// Construct a [`SchemaFile`].
+    #[must_use]
+    pub fn new(path: &'a Path, module_name: &'a str) -> Self {
+        Self { path, module_name }
+    }
 }
 
 /// Parse a schema **file**, generate codecs, write every module under `OUT_DIR`.
@@ -94,7 +115,8 @@ pub fn generate_to_out_dir(
 /// go-to-definition works on real `.rs` files. Do **not** commit those files —
 /// they are large and change whenever the generator does.
 ///
-/// Prints `cargo::rerun-if-changed=<schema_path>` and generation warnings.
+/// Prints `cargo::rerun-if-changed` for the root schema and every resolved
+/// include, plus generation warnings.
 ///
 /// # Errors
 ///
@@ -130,9 +152,11 @@ pub fn generate_to_dir(
     let schema_path = schema_path.as_ref();
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)?;
-    let ir = parse_file(schema_path)?;
-    let modules = write_generated(Schema::from_ir(ir), config, out_dir)?;
-    println!("cargo::rerun-if-changed={}", schema_path.display());
+    let parsed = parse_file_with_deps(schema_path)?;
+    let modules = write_generated(Schema::from_ir(parsed.ir), config, out_dir)?;
+    for watched in schema_watch_paths(schema_path, &parsed.dependencies) {
+        println!("cargo::rerun-if-changed={}", watched.display());
+    }
     // Point at stable IDE paths (e.g. src/generated). Skip for hashed OUT_DIR —
     // that would spam every product/sample build that only uses generate_to_out_dir.
     let is_cargo_out = env::var_os("OUT_DIR")
@@ -182,6 +206,96 @@ pub fn generate_str_to_dir(
     write_generated(Schema::from_ir(ir), config, out_dir)
 }
 
+/// Generate a shared schema plus consumers into `OUT_DIR`.
+///
+/// Parses `shared` first, then each consumer with [`crate::parse_file_with_shared`],
+/// validates the complete set, then writes. A late consumer failure leaves no
+/// files. Watches every root and resolved include.
+///
+/// # Errors
+///
+/// Parse, generate, missing `OUT_DIR`, I/O, or a `with_shared_module` name
+/// that does not match [`SchemaFile::module_name`] on `shared`.
+pub fn generate_multi_to_out_dir(
+    shared: SchemaFile<'_>,
+    consumers: &[SchemaFile<'_>],
+    config: GenerationConfig,
+) -> Result<GeneratedModuleSet, BuildError> {
+    generate_multi_to_dir(shared, consumers, config, &out_dir()?)
+}
+
+/// [`generate_multi_to_out_dir`] with an explicit output directory.
+///
+/// # Errors
+///
+/// Same as [`generate_multi_to_out_dir`] except `OUT_DIR` is not required.
+///
+/// ```rust,no_run
+/// use std::path::Path;
+/// use ergo_sbe::{GenerationConfig, SchemaFile, generate_multi_to_dir};
+///
+/// fn main() -> ergo_sbe::miette::Result<()> {
+///     let common = Path::new("schemas/common-types.xml");
+///     let orders = Path::new("schemas/orders.xml");
+///     generate_multi_to_dir(
+///         SchemaFile::new(common, "common_types"),
+///         &[SchemaFile::new(orders, "orders")],
+///         GenerationConfig::new("common_types"),
+///         Path::new("src/generated"),
+///     )?;
+///     Ok(())
+/// }
+/// ```
+pub fn generate_multi_to_dir(
+    shared: SchemaFile<'_>,
+    consumers: &[SchemaFile<'_>],
+    mut config: GenerationConfig,
+    out_dir: impl AsRef<Path>,
+) -> Result<GeneratedModuleSet, BuildError> {
+    if let Some(ref name) = config.shared_module {
+        if name != shared.module_name {
+            return Err(BuildError::Generate(GenerateError::InvalidConfiguration {
+                option: "shared_module".into(),
+                value: name.clone(),
+                reason: format!("must match shared.module_name {:?}", shared.module_name),
+            }));
+        }
+    } else {
+        config = config.with_shared_module(shared.module_name);
+    }
+
+    let shared_parsed = parse_file_with_deps(shared.path)?;
+    let shared_ir = shared_parsed.ir;
+    let mut watch = schema_watch_paths(shared.path, &shared_parsed.dependencies);
+    let mut consumer_irs = Vec::with_capacity(consumers.len());
+    for consumer in consumers {
+        let parsed = parse_file_with_shared_deps(consumer.path, &shared_ir)?;
+        watch.extend(schema_watch_paths(consumer.path, &parsed.dependencies));
+        consumer_irs.push((
+            Schema::from_ir(ir_with_shared_type_tokens(parsed.ir, &shared_ir)),
+            consumer.module_name,
+        ));
+    }
+    let shared_schema = Schema::from_ir(shared_ir);
+
+    let mut schemas: Vec<(&Schema, &str)> = Vec::with_capacity(1 + consumer_irs.len());
+    schemas.push((&shared_schema, shared.module_name));
+    for (schema, name) in &consumer_irs {
+        schemas.push((schema, name));
+    }
+
+    let modules = Generator::new(config).generate_multi(&schemas)?;
+    write_module_set(&modules, out_dir.as_ref())?;
+    let mut seen = HashSet::new();
+    for path in watch {
+        let key = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if seen.insert(key) {
+            println!("cargo::rerun-if-changed={}", path.display());
+        }
+    }
+    Ok(modules)
+}
+
 /// Absolute path to Cargo's `OUT_DIR` (build scripts only).
 ///
 /// # Errors
@@ -193,15 +307,62 @@ pub fn out_dir() -> Result<PathBuf, BuildError> {
         .ok_or(BuildError::MissingOutDir)
 }
 
+/// Root schema first (the path Cargo was given), then remaining unique
+/// resolved includes in sorted order.
+pub(crate) fn schema_watch_paths(root: &Path, dependencies: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut push = |p: &Path| {
+        let key = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        if seen.insert(key) {
+            out.push(p.to_path_buf());
+        }
+    };
+    push(root);
+    let mut rest: Vec<&PathBuf> = dependencies.iter().collect();
+    rest.sort();
+    for path in rest {
+        push(path);
+    }
+    out
+}
+
+/// Copy shared type tokens (not messages) onto a consumer IR so codegen can
+/// resolve `headerType` and shared composites after `parse_file_with_shared`.
+fn ir_with_shared_type_tokens(mut consumer: crate::Ir, shared: &crate::Ir) -> crate::Ir {
+    let mut extra = Vec::new();
+    let mut i = 0;
+    while i < shared.tokens.len() {
+        if shared.tokens[i].signal == crate::Signal::BeginMessage {
+            while i < shared.tokens.len() && shared.tokens[i].signal != crate::Signal::EndMessage {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        extra.push(shared.tokens[i].clone());
+        i += 1;
+    }
+    extra.append(&mut consumer.tokens);
+    consumer.tokens = extra;
+    consumer
+}
+
 fn write_generated(
     schema: Schema,
     config: GenerationConfig,
     out: &Path,
 ) -> Result<GeneratedModuleSet, BuildError> {
     let modules = Generator::new(config).generate(&schema)?;
+    write_module_set(&modules, out)?;
+    Ok(modules)
+}
+
+fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), BuildError> {
     if modules.modules().len() == 0 {
         return Err(BuildError::Empty);
     }
+    fs::create_dir_all(out)?;
     for m in modules.modules() {
         // Defense in depth: reject paths with directory components.
         // Generated module paths must be simple basenames like "car.rs".
@@ -224,7 +385,7 @@ fn write_generated(
     for w in modules.warnings() {
         println!("cargo::warning={w}");
     }
-    Ok(modules)
+    Ok(())
 }
 
 /// Include a module written by [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
@@ -346,6 +507,7 @@ macro_rules! sbe_mod {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn minimal_schema() -> &'static str {
         r#"<?xml version="1.0"?>
@@ -427,6 +589,312 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn schema_watch_paths_are_root_then_sorted_unique_includes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        let root = dir.join("root.xml");
+        let leaf = dir.join("leaf.xml");
+        let mid = dir.join("mid.xml");
+        fs::write(&root, "root")?;
+        fs::write(&leaf, "leaf")?;
+        fs::write(&mid, "mid")?;
+        let root_canon = root.canonicalize()?;
+        let leaf_canon = leaf.canonicalize()?;
+        let mid_canon = mid.canonicalize()?;
+        let watched = schema_watch_paths(
+            &root,
+            &[
+                mid_canon.clone(),
+                leaf_canon.clone(),
+                root_canon.clone(),
+                leaf_canon.clone(),
+            ],
+        );
+        assert_eq!(watched.first(), Some(&root));
+        assert_eq!(watched.len(), 3, "{watched:?}");
+        let rest: Vec<_> = watched.iter().skip(1).cloned().collect();
+        let mut expected_rest = vec![leaf_canon, mid_canon];
+        expected_rest.sort();
+        assert_eq!(rest, expected_rest);
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_to_dir_rebuilds_after_include_only_edit() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile_dir()?;
+        let types = dir.join("types.xml");
+        fs::write(
+            &types,
+            r#"<?xml version="1.0"?>
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <type name="Seq" primitiveType="uint32"/>
+</types>
+"#,
+        )?;
+        let schema_path = dir.join("root.xml");
+        fs::write(
+            &schema_path,
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+  <include href="types.xml"/>
+  <types/>
+  <message name="Ping" id="1">
+    <field name="seq" id="1" type="Seq"/>
+  </message>
+</messageSchema>
+"#,
+        )?;
+        let parsed = crate::xml::parse_file_with_deps(&schema_path)?;
+        let watched = schema_watch_paths(&schema_path, &parsed.dependencies);
+        assert!(
+            watched.iter().any(|p| p.file_name() == types.file_name()),
+            "include must be watched: {watched:?}"
+        );
+
+        let out = dir.join("out");
+        generate_to_dir(&schema_path, GenerationConfig::new("ping"), &out)?;
+        let first = fs::read_to_string(out.join("ping.rs"))?;
+        assert!(
+            first.contains("u32") || first.contains("uint32"),
+            "first generate must encode Seq as uint32:\n{first}"
+        );
+
+        fs::write(
+            &types,
+            r#"<?xml version="1.0"?>
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <type name="Seq" primitiveType="uint64"/>
+</types>
+"#,
+        )?;
+        generate_to_dir(&schema_path, GenerationConfig::new("ping"), &out)?;
+        let second = fs::read_to_string(out.join("ping.rs"))?;
+        assert!(
+            second.contains("u64") || second.contains("uint64"),
+            "include-only edit must regenerate Seq as uint64:\n{second}"
+        );
+        assert_ne!(first, second, "generated source must change");
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    fn write_multi_schemas(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::write(
+            dir.join("common-types.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="Price">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+  </types>
+</messageSchema>
+"#,
+        )?;
+        fs::write(
+            dir.join("orders.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="orders" id="1" version="1" byteOrder="littleEndian">
+  <message name="NewOrder" id="1">
+    <field name="price" id="1" type="Price"/>
+  </message>
+</messageSchema>
+"#,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_multi_to_dir_uses_supplied_module_names() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let out = dir.join("out");
+        let set = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types"),
+            &out,
+        )?;
+        let names: Vec<_> = set.modules().map(|m| m.path.as_str()).collect();
+        assert_eq!(names, ["common_types.rs", "orders.rs"]);
+        assert!(out.join("common_types.rs").is_file());
+        assert!(out.join("orders.rs").is_file());
+        let orders = fs::read_to_string(out.join("orders.rs"))?;
+        assert!(
+            orders.contains("price") || orders.contains("NewOrder"),
+            "shared Price must resolve in the consumer"
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_multi_rejects_mismatched_shared_module() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types").with_shared_module("other"),
+            dir.join("out"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("shared_module") || msg.contains("other"),
+            "{msg}"
+        );
+        assert!(!dir.join("out/common_types.rs").exists());
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_multi_rejects_duplicate_module_names() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "dup"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "dup")],
+            GenerationConfig::new("dup"),
+            dir.join("out"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("duplicate") || msg.contains("dup"), "{msg}");
+        assert!(!dir.join("out/dup.rs").exists());
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_multi_late_consumer_failure_writes_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        fs::write(
+            dir.join("bad.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="bad" id="2" version="1" byteOrder="littleEndian">
+  <message name="Bad" id="1">
+    <field name="x" id="1" type="NotAType"/>
+  </message>
+</messageSchema>
+"#,
+        )?;
+        let out = dir.join("out");
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[
+                SchemaFile::new(&dir.join("orders.xml"), "orders"),
+                SchemaFile::new(&dir.join("bad.xml"), "bad"),
+            ],
+            GenerationConfig::new("common_types"),
+            &out,
+        )
+        .unwrap_err();
+        assert!(matches!(err, BuildError::Parse(_)), "{err:?}");
+        assert!(
+            !out.join("common_types.rs").exists() && !out.join("orders.rs").exists(),
+            "late consumer failure must not write earlier modules"
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generate_multi_watches_transitive_includes() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        let nested = dir.join("nested");
+        fs::create_dir_all(&nested)?;
+        fs::write(
+            dir.join("leaf.xml"),
+            r#"<?xml version="1.0"?>
+<types>
+  <composite name="Price">
+    <type name="mantissa" primitiveType="int64"/>
+    <type name="exponent" primitiveType="int8"/>
+  </composite>
+</types>
+"#,
+        )?;
+        fs::write(
+            nested.join("mid.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="mid" id="9" version="0">
+  <include href="../leaf.xml"/>
+  <types/>
+</messageSchema>
+"#,
+        )?;
+        fs::write(
+            dir.join("common-types.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
+  <include href="nested/mid.xml"/>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+</messageSchema>
+"#,
+        )?;
+        fs::write(
+            dir.join("orders.xml"),
+            r#"<?xml version="1.0"?>
+<messageSchema package="orders" id="1" version="1" byteOrder="littleEndian">
+  <message name="NewOrder" id="1">
+    <field name="price" id="1" type="Price"/>
+  </message>
+</messageSchema>
+"#,
+        )?;
+        let parsed = crate::xml::parse_file_with_deps(dir.join("common-types.xml"))?;
+        let names: Vec<String> = parsed
+            .dependencies
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"leaf.xml".into()), "{names:?}");
+        let out = dir.join("out");
+        generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types"),
+            &out,
+        )?;
+        assert!(out.join("orders.rs").is_file());
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
     /// Proves `BuildError::Parse` forwards the inner `ParseError`'s source +
     /// span through `#[diagnostic(transparent)]` — the wrapped error still
     /// renders a real snippet, not just the outer `{}`/`{:?}` message. This is
@@ -464,9 +932,11 @@ mod tests {
     }
 
     fn tempfile_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        static N: AtomicU64 = AtomicU64::new(0);
         let dir = env::temp_dir().join(format!(
-            "ergo_sbe_build_test_{}_{}",
+            "ergo_sbe_build_test_{}_{}_{}",
             std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()

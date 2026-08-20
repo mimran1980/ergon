@@ -709,10 +709,14 @@ impl GenerationConfig {
     /// `YourType::from(String)`. This means (1) your error type must implement
     /// `From<String>`, and (2) field-level error details (e.g.
     /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
-    /// the conversion. If you need typed error matching, implement
-    /// `From<EncodeError>` / `From<DecodeError>` on your error type directly
-    /// instead.
+    /// the conversion. Implement `From<generated::sbe_rt::EncodeError>` and
+    /// `From<generated::sbe_rt::DecodeError>` on your error type so those
+    /// fields survive. Removal is scheduled for 1.0.
     #[must_use]
+    #[deprecated(
+        since = "0.1.19",
+        note = "implement From<generated::sbe_rt::EncodeError> and From<generated::sbe_rt::DecodeError> on your error type so wire fields (needed/available) are preserved; this helper formats through String and will be removed in 1.0"
+    )]
     pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
         self
@@ -1126,6 +1130,7 @@ mod tests {
             ConversionSelector::FieldPath("Order.price".to_string())
         );
 
+        #[allow(deprecated)]
         let config = GenerationConfig::new("m")
             .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")

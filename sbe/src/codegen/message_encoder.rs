@@ -12,7 +12,10 @@
 use crate::ir::{ByteOrder, Presence};
 use crate::structured_ir::*;
 
-use super::conversion_helpers::{ENCODER_RESERVED, field_has_conversion_free, resolve_field_ident};
+use super::conversion_helpers::{
+    ENCODER_RESERVED, FixedArrayTextKind, field_has_conversion_free, fixed_array_text_kind,
+    resolve_field_ident,
+};
 use super::encoded_length;
 use super::field_type::field_type_ident;
 use super::group_encoder::generate_group_encoder;
@@ -606,49 +609,45 @@ pub(crate) fn generate_message_encoder(
                                 self
                             }
                         });
-                        // Zero-padded string write (Java vehicleCode(String) parity).
-                        let str_ident = syn::Ident::new(&format!("{method_name}_str"), span);
-                        let field_lit = syn::LitStr::new(&f.name, span);
-                        impl_contents.extend(quote::quote! {
-                            #[inline]
-                            pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
-                                if src.len() > #len_lit {
-                                    return Err(sbe_rt::EncodeError::FixedArrayTooLong {
-                                        field: #field_lit,
-                                        max_length: #len_lit,
-                                        actual: src.len(),
-                                    });
+                        if let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                        {
+                            let str_ident = syn::Ident::new(&format!("{method_name}_str"), span);
+                            let field_lit = syn::LitStr::new(&f.name, span);
+                            let ascii_check = match kind {
+                                FixedArrayTextKind::Ascii => quote::quote! {
+                                    if !src.is_ascii() {
+                                        return Err(sbe_rt::EncodeError::InvalidAscii {
+                                            field: #field_lit,
+                                        });
+                                    }
+                                },
+                                FixedArrayTextKind::Utf8 => quote::quote! {},
+                            };
+                            let str_fn = quote::quote! {
+                                #[inline]
+                                pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
+                                    #ascii_check
+                                    if src.len() > #len_lit {
+                                        return Err(sbe_rt::EncodeError::FixedArrayTooLong {
+                                            field: #field_lit,
+                                            max_length: #len_lit,
+                                            actual: src.len(),
+                                        });
+                                    }
+                                    let mut tmp = [0 as #r_type; #len_lit];
+                                    let bytes = src.as_bytes();
+                                    let mut i = 0usize;
+                                    while i < bytes.len() {
+                                        tmp[i] = bytes[i] as #r_type;
+                                        i += 1;
+                                    }
+                                    Ok(self.#f_ident(tmp))
                                 }
-                                let mut tmp = [0 as #r_type; #len_lit];
-                                let bytes = src.as_bytes();
-                                let mut i = 0usize;
-                                while i < bytes.len() {
-                                    tmp[i] = bytes[i] as #r_type;
-                                    i += 1;
-                                }
-                                Ok(self.#f_ident(tmp))
-                            }
-                        });
-                        raw_impl_contents.extend(quote::quote! {
-                            #[inline]
-                            pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
-                                if src.len() > #len_lit {
-                                    return Err(sbe_rt::EncodeError::FixedArrayTooLong {
-                                        field: #field_lit,
-                                        max_length: #len_lit,
-                                        actual: src.len(),
-                                    });
-                                }
-                                let mut tmp = [0 as #r_type; #len_lit];
-                                let bytes = src.as_bytes();
-                                let mut i = 0usize;
-                                while i < bytes.len() {
-                                    tmp[i] = bytes[i] as #r_type;
-                                    i += 1;
-                                }
-                                Ok(self.#f_ident(tmp))
-                            }
-                        });
+                            };
+                            impl_contents.extend(str_fn.clone());
+                            raw_impl_contents.extend(str_fn);
+                        }
                     } else {
                         impl_contents.extend(quote::quote! {
                             #field_doc
@@ -1100,6 +1099,7 @@ pub(crate) fn generate_message_encoder(
             /// Fixed-block body bytes only (groups/var-data not yet written).
             /// For a complete frame use the terminal stage's
             /// `as_bytes_with_header`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn as_fixed_body_bytes(&self) -> &[u8] {
                 &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
@@ -1107,6 +1107,7 @@ pub(crate) fn generate_message_encoder(
             /// Header + fixed block only — **not** a complete SBE message when
             /// groups or var-data remain. Prefer the complete stage's
             /// `as_bytes_with_header`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn as_fixed_region_with_header(&self) -> &[u8] {
                 &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
@@ -1130,16 +1131,19 @@ pub(crate) fn generate_message_encoder(
             impl<'m, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #enc_metadata_ident<'m, H, F> {
                 /// Absolute offset of this message within the original buffer
                 /// (the `msg_offset` argument passed to `wrap`).
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn message_offset(&self) -> usize {
                     self.encoder_msg_offset
                 }
                 /// Absolute current write cursor within the original buffer.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn limit(&self) -> usize {
                     self.encoder_offset
                 }
                 /// The complete original buffer this encoder wraps.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn buffer(&self) -> &[u8] {
                     self.encoder_buf
@@ -1148,11 +1152,13 @@ pub(crate) fn generate_message_encoder(
 
             impl<'m, H: sbe_rt::HeaderState> #enc_metadata_ident<'m, H, sbe_rt::FieldsFixed> {
                 /// Message body bytes (header exclusive). Only after `fixed()`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     &self.encoder_buf[self.encoder_msg_offset + #header_size_lit..self.encoder_offset]
                 }
                 /// Header-inclusive frame bytes. Only after `fixed()`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
                     &self.encoder_buf[self.encoder_msg_offset..self.encoder_offset]
@@ -1161,6 +1167,7 @@ pub(crate) fn generate_message_encoder(
         });
         ts.extend(quote::quote! {
             impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H, F> {
                     #enc_metadata_ident {
@@ -1190,16 +1197,19 @@ pub(crate) fn generate_message_encoder(
                 #meta_bytes
                 /// Absolute offset of this message within the original buffer
                 /// (the `msg_offset` argument passed to `wrap`).
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn message_offset(&self) -> usize {
                     self.encoder_msg_offset
                 }
                 /// Absolute current write cursor within the original buffer.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn limit(&self) -> usize {
                     self.encoder_offset
                 }
                 /// The complete original buffer this encoder wraps.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub const fn buffer(&self) -> &[u8] {
                     self.encoder_buf
@@ -1208,6 +1218,7 @@ pub(crate) fn generate_message_encoder(
         });
         ts.extend(quote::quote! {
             impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
                     #enc_metadata_ident {
@@ -1530,18 +1541,21 @@ pub(crate) fn generate_message_encoder(
         ts.extend(quote::quote! {
             impl<'a, H: sbe_rt::HeaderState> #complete_ident<'a, H> {
                 /// SBE message body bytes (excluding the message header).
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     let body_start = self.msg_offset + #header_size_lit;
                     &self.buf[body_start..self.offset]
                 }
                 /// SBE message body length (excluding the message header).
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
                     self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Pure arithmetic — available for body-only wraps too.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.offset - self.msg_offset
@@ -1561,6 +1575,7 @@ pub(crate) fn generate_message_encoder(
             impl<'a> #complete_ident<'a, sbe_rt::HeaderPresent> {
                 /// Header-inclusive bytes. Only available when the encoder was
                 /// constructed via `wrap_and_apply_header` (not raw `wrap`).
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
                     &self.buf[self.msg_offset..self.offset]
@@ -1572,6 +1587,7 @@ pub(crate) fn generate_message_encoder(
             impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
                 /// SBE message body bytes (excluding the message header).
                 /// Only available after `fixed(&FixedFields)`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_body_bytes(&self) -> &[u8] {
                     let body_start = self.msg_offset + #header_size_lit;
@@ -1579,12 +1595,14 @@ pub(crate) fn generate_message_encoder(
                 }
                 /// SBE message body length (excluding the message header).
                 /// Only available after `fixed(&FixedFields)`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn encoded_length(&self) -> usize {
                     self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Only available after `fixed(&FixedFields)`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> usize {
                     self.offset - self.msg_offset
@@ -1603,6 +1621,7 @@ pub(crate) fn generate_message_encoder(
             impl<'a> #name_encoder_ident<'a, sbe_rt::HeaderPresent, sbe_rt::FieldsFixed> {
                 /// Header-inclusive bytes. Only available after
                 /// `wrap_and_apply_header` **and** `fixed(&FixedFields)`.
+                #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
                 pub fn as_bytes_with_header(&self) -> &[u8] {
                     &self.buf[self.msg_offset..self.offset]

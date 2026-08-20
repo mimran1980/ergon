@@ -267,6 +267,8 @@ fn is_top_level_item_snippet(body: &str) -> bool {
         || first.starts_with("fn ")
         || first.starts_with("pub mod ")
         || first.starts_with("mod ")
+        || first.starts_with("pub enum ")
+        || first.starts_with("enum ")
         || first.starts_with("impl ")
         || first.starts_with("#[path")
         || first.starts_with("#[allow")

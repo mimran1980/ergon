@@ -28,8 +28,8 @@ use crate::{ClusterError, CredentialsSupplier};
 ///
 /// fn connect(aeron_dir: &str) -> Result<AeronCluster, ClusterError> {
 ///     let builder = SessionBuilder::default()
-///         .ingress_channel("aeron:udp?endpoint=localhost:9002")
-///         .egress_channel("aeron:udp?endpoint=localhost:19002");
+///         .ingress_channel("aeron:udp?endpoint=localhost:9002")?
+///         .egress_channel("aeron:udp?endpoint=localhost:19002")?;
 ///     AeronCluster::connect(&builder, aeron_dir)
 /// }
 /// ```
@@ -38,24 +38,14 @@ use crate::{ClusterError, CredentialsSupplier};
 pub struct SessionBuilder {
     /// Normalized ingress channel (C string for rusteron).
     ingress_c: Option<CString>,
-    /// If the ingress channel parse failed, the error (surfaced at connect).
-    ingress_err: Option<ClusterError>,
     /// Normalized egress channel (C string for rusteron).
     egress_c: Option<CString>,
-    /// If the egress channel parse failed, the error (surfaced at connect).
-    egress_err: Option<ClusterError>,
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
     /// Deadline (ms) for awaiting a NewLeaderEvent before the session is
     /// deemed dead. Mirrors Java `Context.newLeaderTimeoutNs` (default 5s).
     pub(crate) new_leader_timeout_ms: u64,
-    /// Deferred error for [`Self::message_timeout`] (surfaced at validate/connect).
-    message_timeout_err: Option<ClusterError>,
-    /// Deferred error for [`Self::new_leader_timeout`] (surfaced at validate/connect).
-    /// Independent of `message_timeout_err` so fixing one phase cannot clear
-    /// a still-invalid sibling.
-    new_leader_timeout_err: Option<ClusterError>,
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
@@ -91,15 +81,11 @@ impl Default for SessionBuilder {
     fn default() -> Self {
         Self {
             ingress_c: None,
-            ingress_err: None,
             egress_c: None,
-            egress_err: None,
             ingress_stream_id: 101,
             egress_stream_id: 102,
             message_timeout_ms: 5_000,
             new_leader_timeout_ms: 5_000,
-            message_timeout_err: None,
-            new_leader_timeout_err: None,
             credentials: None,
             ingress_endpoints: None,
             is_ingress_exclusive: true,
@@ -157,37 +143,24 @@ impl core::fmt::Debug for SessionBuilder {
 
 impl SessionBuilder {
     /// Set the ingress channel URI (validated + stored as `CString`).
-    /// Malformed URIs are stored and surfaced at connect time instead of
-    /// being silently replaced with a "missing field" error.
-    pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Self {
-        match uri::channel_cstr(channel.as_ref()) {
-            Ok(c) => {
-                self.ingress_c = Some(c);
-                self.ingress_err = None; // clear stale error from previous call
-            }
-            Err(e) => {
-                self.ingress_c = None; // clear stale value from previous call
-                self.ingress_err = Some(e);
-            }
-        }
-        self
+    ///
+    /// # Errors
+    ///
+    /// Malformed URIs fail immediately. A later successful call replaces the
+    /// previous value; there is no deferred error slot.
+    pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Result<Self, ClusterError> {
+        self.ingress_c = Some(uri::channel_cstr(channel.as_ref())?);
+        Ok(self)
     }
 
     /// Set the egress channel URI (validated + stored as `CString`).
-    /// Malformed URIs are stored and surfaced at connect time instead of
-    /// being silently replaced with a "missing field" error.
-    pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Self {
-        match uri::channel_cstr(channel.as_ref()) {
-            Ok(c) => {
-                self.egress_c = Some(c);
-                self.egress_err = None; // clear stale error from previous call
-            }
-            Err(e) => {
-                self.egress_c = None; // clear stale value from previous call
-                self.egress_err = Some(e);
-            }
-        }
-        self
+    ///
+    /// # Errors
+    ///
+    /// Malformed URIs fail immediately.
+    pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Result<Self, ClusterError> {
+        self.egress_c = Some(uri::channel_cstr(channel.as_ref())?);
+        Ok(self)
     }
 
     /// Override the ingress stream id (default: cluster-configured).
@@ -203,55 +176,27 @@ impl SessionBuilder {
     }
 
     /// Deadline for the connect sequence, keep-alives, and re-offers.
-    /// Default: 5 seconds. Rejects zero, sub-millisecond, or overflow —
-    /// the error is deferred and surfaced by [`Self::validate`] / connect.
+    /// Default: 5 seconds.
     ///
-    /// Invalid timeouts for each phase are tracked independently: fixing one
-    /// does not clear a still-invalid sibling phase.
-    pub fn message_timeout(mut self, timeout: Duration) -> Self {
-        match checked_timeout_ms(timeout, "message_timeout") {
-            Ok(ms) => {
-                self.message_timeout_ms = ms;
-                self.message_timeout_err = None;
-            }
-            Err(e) => self.message_timeout_err = Some(e),
-        }
-        self
+    /// # Errors
+    ///
+    /// Zero, sub-millisecond, or overflow durations fail immediately.
+    pub fn message_timeout(mut self, timeout: Duration) -> Result<Self, ClusterError> {
+        self.message_timeout_ms = checked_timeout_ms(timeout, "message_timeout")?;
+        Ok(self)
     }
 
     /// Deadline for awaiting a `NewLeaderEvent` after the current leader is
     /// lost (mirrors Java `Context.newLeaderTimeoutNs`; default 5s). When it
     /// elapses, [`crate::AeronCluster::poll_state_changes`] transitions the
     /// session to [`crate::ClusterError::Disconnected`].
-    /// Rejects zero, sub-millisecond, or overflow — deferred to validate/connect.
     ///
-    /// Invalid timeouts for each phase are tracked independently: fixing one
-    /// does not clear a still-invalid sibling phase.
-    pub fn new_leader_timeout(mut self, timeout: Duration) -> Self {
-        match checked_timeout_ms(timeout, "new_leader_timeout") {
-            Ok(ms) => {
-                self.new_leader_timeout_ms = ms;
-                self.new_leader_timeout_err = None;
-            }
-            Err(e) => self.new_leader_timeout_err = Some(e),
-        }
-        self
-    }
-
-    /// Ingress publication mode (Java `Context.isIngressExclusive`). Deferred to
-    /// a future release — shared ingress (`false`) is not yet supported;
-    /// [`Self::validate`] rejects it. Keep the default (`true`).
-    pub fn is_ingress_exclusive(mut self, v: bool) -> Self {
-        self.is_ingress_exclusive = v;
-        self
-    }
-
-    /// Owns the Aeron client (Java `Context.ownsAeronClient`). Deferred to a
-    /// future release — external-Aeron injection (`false`) is not yet supported;
-    /// [`Self::validate`] rejects it. Keep the default (`true`).
-    pub fn owns_aeron(mut self, v: bool) -> Self {
-        self.owns_aeron = v;
-        self
+    /// # Errors
+    ///
+    /// Zero, sub-millisecond, or overflow durations fail immediately.
+    pub fn new_leader_timeout(mut self, timeout: Duration) -> Result<Self, ClusterError> {
+        self.new_leader_timeout_ms = checked_timeout_ms(timeout, "new_leader_timeout")?;
+        Ok(self)
     }
 
     /// Idle strategy for the connect retry loop (Java `Context.idleStrategy`).
@@ -305,25 +250,6 @@ impl SessionBuilder {
 
     /// Validate required fields and that channel URIs are valid.
     pub fn validate(&self) -> Result<(), ClusterError> {
-        // Surface deferred timeout errors first (programmer config mistakes).
-        // Per-phase slots: both may be invalid; report message_timeout first.
-        if let Some(ref err) = self.message_timeout_err {
-            return Err(err.clone());
-        }
-        if let Some(ref err) = self.new_leader_timeout_err {
-            return Err(err.clone());
-        }
-        // Surface channel parse errors — they are the real cause.
-        if self.ingress_c.is_none()
-            && let Some(ref err) = self.ingress_err
-        {
-            return Err(err.clone());
-        }
-        if self.egress_c.is_none()
-            && let Some(ref err) = self.egress_err
-        {
-            return Err(err.clone());
-        }
         let has_ingress = self.ingress_c.is_some();
         let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
         if !has_ingress && !has_endpoints {
@@ -337,24 +263,11 @@ impl SessionBuilder {
         if has_endpoints {
             let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
         }
-        if !self.is_ingress_exclusive {
-            return Err(ClusterError::connect(
-                "shared ingress (is_ingress_exclusive = false) is not yet supported",
-            ));
-        }
-        if !self.owns_aeron {
-            return Err(ClusterError::connect(
-                "external Aeron injection (owns_aeron = false) is not yet supported",
-            ));
-        }
         Ok(())
     }
 
     /// FFI form of egress channel (cached).
     pub(crate) fn egress_for_aeron(&self) -> Result<&CString, ClusterError> {
-        if let Some(ref err) = self.egress_err {
-            return Err(err.clone());
-        }
         self.egress_c
             .as_ref()
             .ok_or_else(|| ClusterError::connect("egress channel missing (call validate first)"))
@@ -362,9 +275,6 @@ impl SessionBuilder {
 
     /// FFI form of the initial ingress channel for connect.
     pub(crate) fn resolve_initial_ingress_for_aeron(&self) -> Result<CString, ClusterError> {
-        if let Some(ref err) = self.ingress_err {
-            return Err(err.clone());
-        }
         if let Some(c) = self.ingress_c.as_ref() {
             return Ok(c.clone());
         }
@@ -402,8 +312,8 @@ mod tests {
     #[test]
     fn test_validate_accepts_configured_channels() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:9020");
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:9020")?;
         b.validate()?;
         assert!(b.ingress_channel_c_str().is_some());
         assert!(b.egress_channel_c_str().is_some());
@@ -413,8 +323,8 @@ mod tests {
     #[test]
     fn cstr_accessors_borrow_cached_storage() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
-            .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)
-            .egress_channel(uri::AERON_IPC_STREAM.to_str()?);
+            .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)?
+            .egress_channel(uri::AERON_IPC_STREAM.to_str()?)?;
         b.validate()?;
         let a = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();
         let a2 = b.ingress_channel_c_str().ok_or("missing")?.as_ptr();
@@ -426,7 +336,7 @@ mod tests {
     fn test_validate_endpoints_without_ingress_channel() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
             .ingress_endpoints("0=localhost:9002,1=localhost:9102")
-            .egress_channel("aeron:udp?endpoint=localhost:19002");
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?;
         b.validate()?;
         let c = b.resolve_initial_ingress_for_aeron()?;
         let s = c.to_str()?;
@@ -436,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_missing_ingress() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default().egress_channel("aeron:udp?endpoint=localhost:19002");
+        let b = SessionBuilder::default().egress_channel("aeron:udp?endpoint=localhost:19002")?;
         let err = b.validate().unwrap_err();
         assert!(err.to_string().contains("ingress"), "{err}");
         Ok(())
@@ -444,42 +354,20 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_missing_egress() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default().ingress_channel("aeron:udp?endpoint=localhost:9010");
+        let b = SessionBuilder::default().ingress_channel("aeron:udp?endpoint=localhost:9010")?;
         let err = b.validate().unwrap_err();
         assert!(err.to_string().contains("egress"), "{err}");
         Ok(())
     }
 
     #[test]
-    fn test_validate_rejects_shared_ingress() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .is_ingress_exclusive(false);
-        let err = b.validate().unwrap_err();
-        assert!(err.to_string().contains("shared ingress"), "{err}");
-        Ok(())
-    }
-
-    #[test]
-    fn test_validate_rejects_external_aeron_injection() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .owns_aeron(false);
-        let err = b.validate().unwrap_err();
-        assert!(err.to_string().contains("external Aeron"), "{err}");
-        Ok(())
-    }
-
-    #[test]
     fn timeout_rejects_zero_and_sub_millisecond() -> Result<(), Box<dyn std::error::Error>> {
         for d in [Duration::ZERO, Duration::from_nanos(1), Duration::from_nanos(999_999)] {
-            let b = SessionBuilder::default()
-                .ingress_channel("aeron:udp?endpoint=localhost:9010")
-                .egress_channel("aeron:udp?endpoint=localhost:19002")
-                .message_timeout(d);
-            let err = b.validate().expect_err("zero/sub-ms must fail");
+            let err = SessionBuilder::default()
+                .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+                .egress_channel("aeron:udp?endpoint=localhost:19002")?
+                .message_timeout(d)
+                .expect_err("zero/sub-ms must fail at the setter");
             assert!(
                 matches!(
                     err,
@@ -497,10 +385,10 @@ mod tests {
     #[test]
     fn timeout_accepts_one_millisecond() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .message_timeout(Duration::from_millis(1))
-            .new_leader_timeout(Duration::from_millis(1));
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
+            .message_timeout(Duration::from_millis(1))?
+            .new_leader_timeout(Duration::from_millis(1))?;
         b.validate()?;
         assert_eq!(b.message_timeout_ms, 1);
         assert_eq!(b.new_leader_timeout_ms, 1);
@@ -509,11 +397,11 @@ mod tests {
 
     #[test]
     fn timeout_rejects_duration_max() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .message_timeout(Duration::MAX);
-        let err = b.validate().expect_err("Duration::MAX must fail");
+        let err = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
+            .message_timeout(Duration::MAX)
+            .expect_err("Duration::MAX must fail at the setter");
         assert!(
             matches!(
                 err,
@@ -528,36 +416,34 @@ mod tests {
     }
 
     #[test]
-    fn timeout_phases_tracked_independently() -> Result<(), Box<dyn std::error::Error>> {
-        // Invalid message_timeout, then invalid new_leader, then repair only
-        // new_leader — message_timeout must still fail validate().
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
+    fn replacing_a_timeout_cannot_retain_a_stale_error() -> Result<(), Box<dyn std::error::Error>> {
+        let err = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
             .message_timeout(Duration::ZERO)
-            .new_leader_timeout(Duration::from_nanos(1))
-            .new_leader_timeout(Duration::from_secs(5));
-        let err = b.validate().expect_err("message_timeout still invalid");
-        assert!(
-            matches!(
-                err,
-                ClusterError::InvalidTimeout {
-                    phase: "message_timeout",
-                    ..
-                }
-            ),
-            "got {err:?}"
-        );
+            .expect_err("zero must fail immediately");
+        assert!(matches!(
+            err,
+            ClusterError::InvalidTimeout {
+                phase: "message_timeout",
+                ..
+            }
+        ));
+        let b = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
+            .message_timeout(Duration::from_secs(5))?;
+        b.validate()?;
         Ok(())
     }
 
     #[test]
     fn new_leader_timeout_same_validation() -> Result<(), Box<dyn std::error::Error>> {
-        let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
-            .new_leader_timeout(Duration::from_nanos(1));
-        let err = b.validate().expect_err("sub-ms new_leader must fail");
+        let err = SessionBuilder::default()
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
+            .new_leader_timeout(Duration::from_nanos(1))
+            .expect_err("sub-ms new_leader must fail at the setter");
         assert!(
             matches!(
                 err,
@@ -572,11 +458,20 @@ mod tests {
     }
 
     #[test]
+    fn malformed_channel_fails_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
+        let err = SessionBuilder::default()
+            .ingress_channel("not a uri")
+            .expect_err("malformed URI must fail at the setter");
+        assert!(!err.to_string().is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn debug_redacts_credentials_and_idle() -> Result<(), Box<dyn std::error::Error>> {
         let secret = b"super-secret-password-xyz";
         let b = SessionBuilder::default()
-            .ingress_channel("aeron:udp?endpoint=localhost:9010")
-            .egress_channel("aeron:udp?endpoint=localhost:19002")
+            .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
             .credentials(std::sync::Arc::new(crate::StaticCredentials::new(secret.to_vec())));
         let dbg = format!("{b:?}");
         assert!(

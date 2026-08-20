@@ -536,28 +536,33 @@ pub(crate) fn generate_owner_consuming_stages(
         impl<'a> #complete_ident<'a> {
             /// Body bytes (excluding the message header; for entries this is the
             /// complete entry bytes).
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn as_body_bytes(&self) -> &'a [u8] {
                 &self.buf[self.offset..self.tail_start]
             }
             /// Complete SBE frame (header + body) for message stages.
             /// For entry stages (`HEADER_LENGTH == 0`) this equals [`Self::as_body_bytes`].
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn as_bytes_with_header(&self) -> &'a [u8] {
                 &self.buf[self.offset - #header_size_lit..self.tail_start]
             }
             /// Body length (excluding header).
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn encoded_length(&self) -> usize {
                 self.tail_start - self.offset
             }
             /// Total message length including the schema-declared header.
             /// Pure arithmetic: body length + `HEADER_LENGTH`.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn encoded_length_with_header(&self) -> usize {
                 self.tail_start - self.offset + #header_size_lit
             }
             /// Bytes after this message/entry.
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn remaining(&self) -> &'a [u8] {
                 &self.buf[self.tail_start..]

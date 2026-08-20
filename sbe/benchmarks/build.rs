@@ -78,7 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
             ergo_sbe::DomainImpl::Generated,
-        
         ),
     )?;
 
@@ -96,7 +95,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
             ergo_sbe::DomainImpl::Generated,
-        
         ),
     )?;
 

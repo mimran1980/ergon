@@ -52,8 +52,8 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
     let builder = SessionBuilder::default()
-        .ingress_channel(&cluster.ingress_channel)
-        .egress_channel(&cluster.egress_channel);
+        .ingress_channel(&cluster.ingress_channel)?
+        .egress_channel(&cluster.egress_channel)?;
 
     let listener = Rec {
         admin_cid: Mutex::new(None),

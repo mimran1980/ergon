@@ -71,7 +71,9 @@ exists, not at runtime.
 
 Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
 ceiling with zero tolerance**. The gate fails on any ratio above 1.00,
-regardless of magnitude.
+regardless of magnitude. A `1.01` timing allowance is not literal parity —
+memory-bound ties are also checked by named instruction/branch probes in
+`sbe/benchmarks/src/bin/perf_probe.rs` / `probes.tsv`.
 
 The executable policy is in `scripts/check-bench-gate.sh`:
 - SBE: zero tolerance (`1.00`)

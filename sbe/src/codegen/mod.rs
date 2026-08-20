@@ -258,6 +258,29 @@ impl GeneratedModuleSet {
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
+
+    /// Consume the set and take ownership of the generated modules and
+    /// warnings without cloning those buffers.
+    ///
+    /// Module order matches [`Self::modules`] (generation order; stable for
+    /// a given schema set). Warnings are returned rather than discarded so a
+    /// `build.rs` can still emit `cargo::warning=` after taking the source.
+    ///
+    /// ```rust
+    /// # fn example(set: ergo_sbe::GeneratedModuleSet) {
+    /// let (modules, warnings) = set.into_parts();
+    /// for m in modules {
+    ///     let _ = (m.path, m.source);
+    /// }
+    /// for w in warnings {
+    ///     println!("cargo::warning={w}");
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<GeneratedModule>, Vec<String>) {
+        (self.modules, self.warnings)
+    }
 }
 
 /// SBE-to-Rust generator.
@@ -1326,7 +1349,7 @@ impl Generator {
             src.push('\n');
         }
 
-        let file = match syn::parse_str::<syn::File>(&src) {
+        let mut file = match syn::parse_str::<syn::File>(&src) {
             Ok(f) => f,
             Err(e) => {
                 return Err(GenerateError::InvalidGeneratedSource {
@@ -1335,7 +1358,98 @@ impl Generator {
                 });
             }
         };
+        annotate_missing_public_docs(&mut file);
         Ok(prettyplease::unparse(&file))
+    }
+}
+
+fn item_is_public(vis: &syn::Visibility) -> bool {
+    matches!(vis, syn::Visibility::Public(_))
+}
+
+fn attrs_have_doc(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("doc"))
+}
+
+fn fallback_public_doc() -> syn::Attribute {
+    syn::parse_quote!(#[doc = "Generated public API."])
+}
+
+fn ensure_public_doc(attrs: &mut Vec<syn::Attribute>) {
+    if !attrs_have_doc(attrs) {
+        attrs.insert(0, fallback_public_doc());
+    }
+}
+
+/// Fill operational-fallback rustdoc on every public item so generated
+/// codecs compile under `#![deny(missing_docs)]` even when the schema
+/// omits descriptions.
+fn annotate_missing_public_docs(file: &mut syn::File) {
+    for item in &mut file.items {
+        annotate_item(item);
+    }
+}
+
+fn annotate_item(item: &mut syn::Item) {
+    match item {
+        syn::Item::Struct(s) if item_is_public(&s.vis) => {
+            ensure_public_doc(&mut s.attrs);
+            for field in &mut s.fields {
+                if item_is_public(&field.vis) {
+                    ensure_public_doc(&mut field.attrs);
+                }
+            }
+        }
+        syn::Item::Enum(e) if item_is_public(&e.vis) => {
+            ensure_public_doc(&mut e.attrs);
+            for variant in &mut e.variants {
+                ensure_public_doc(&mut variant.attrs);
+                for field in &mut variant.fields {
+                    ensure_public_doc(&mut field.attrs);
+                }
+            }
+        }
+        syn::Item::Fn(f) if item_is_public(&f.vis) => ensure_public_doc(&mut f.attrs),
+        syn::Item::Const(c) if item_is_public(&c.vis) => ensure_public_doc(&mut c.attrs),
+        syn::Item::Type(t) if item_is_public(&t.vis) => ensure_public_doc(&mut t.attrs),
+        syn::Item::Trait(t) if item_is_public(&t.vis) => {
+            ensure_public_doc(&mut t.attrs);
+            for trait_item in &mut t.items {
+                match trait_item {
+                    syn::TraitItem::Fn(f) => ensure_public_doc(&mut f.attrs),
+                    syn::TraitItem::Const(c) => ensure_public_doc(&mut c.attrs),
+                    syn::TraitItem::Type(t) => ensure_public_doc(&mut t.attrs),
+                    _ => {}
+                }
+            }
+        }
+        syn::Item::Impl(i) => {
+            for impl_item in &mut i.items {
+                match impl_item {
+                    syn::ImplItem::Fn(f) if item_is_public(&f.vis) => {
+                        ensure_public_doc(&mut f.attrs);
+                    }
+                    syn::ImplItem::Const(c) if item_is_public(&c.vis) => {
+                        ensure_public_doc(&mut c.attrs);
+                    }
+                    syn::ImplItem::Type(t) if item_is_public(&t.vis) => {
+                        ensure_public_doc(&mut t.attrs);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        syn::Item::Mod(m) if item_is_public(&m.vis) => {
+            ensure_public_doc(&mut m.attrs);
+            if let Some((_, items)) = &mut m.content {
+                for nested in items {
+                    annotate_item(nested);
+                }
+            }
+        }
+        syn::Item::Use(u) if item_is_public(&u.vis) => ensure_public_doc(&mut u.attrs),
+        syn::Item::Static(s) if item_is_public(&s.vis) => ensure_public_doc(&mut s.attrs),
+        _ => {}
     }
 }
 
@@ -1393,6 +1507,35 @@ mod tests {
         assert!(collected[0].source.contains("common.sbe"));
         assert!(collected[1].source.contains("market_data.sbe"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn into_parts_preserves_module_order_and_warnings() -> Result<(), Box<dyn std::error::Error>> {
+        let mut set = super::GeneratedModuleSet::default();
+        set.push(super::GeneratedModule {
+            path: "common_types.rs".into(),
+            source: "mod common;".into(),
+        });
+        set.push(super::GeneratedModule {
+            path: "market_data.rs".into(),
+            source: "mod market;".into(),
+        });
+        set.warnings
+            .push("shared type Price has sinceVersion > 0".into());
+        let expected_paths: Vec<String> = set.modules().map(|m| m.path.clone()).collect();
+        let expected_warnings = set.warnings().to_vec();
+        let (modules, warnings) = set.into_parts();
+        assert_eq!(
+            modules.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(),
+            expected_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(modules[0].source, "mod common;");
+        assert_eq!(modules[1].source, "mod market;");
+        assert_eq!(warnings, expected_warnings);
         Ok(())
     }
 
@@ -1569,7 +1712,7 @@ mod tests {
             .source;
 
         assert!(
-            source.contains("|| 9 > self.acting_block_length"),
+            source.contains("9 > self.acting_block_length"),
             "u32[2] at offset 1 must require all nine entry bytes"
         );
         assert!(

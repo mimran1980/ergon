@@ -155,17 +155,10 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         "throughput_batch_10k|throughput/batch_10k|ergo-sbe|sbe-tool|1.00"
         "wire_parity_encode_full|wire_parity/encode_full|ergo-sbe|sbe-tool|1.00"
         # Criterion group is "parity_extended/…"; the gate prefixes "parity_".
-        # `optional_enum_nullify` has a noise-floor ceiling, not a parity one:
-        # it decodes two raw 1-byte enums (`u8` load + 2-arm `from_raw` match),
-        # which is memory-bound and already optimal in both crates — under LTO
-        # ergon and sbe-tool compile to the same assembly and measure ~775ns
-        # (0.06% apart, inside Criterion's ±0.13% CI). There is no algorithmic
-        # headroom, so a 1.00 ceiling is a coin-flip that noise decides
-        # (observed 1.0006 / 1.0016 across idle runs). This is a tie, not an
-        # ergon loss: no-LTO ergon is 28% *faster* (550ns vs 765ns) because
-        # sbe-tool's ReadBuf indirection does not inline cross-crate there.
-        # 1.01 admits that tie while still catching any real regression >1%.
-        "extended_optional_enum_nullify|extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.01"
+        # Timing for `optional_enum_nullify` is a memory-bound tie; the blocking
+        # mechanism check is the matching instruction/branch probe. The timing
+        # ceiling is still literal 1.00 — never a 1.01 allowance.
+        "extended_optional_enum_nullify|extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.00"
         "extended_group_with_data|extended/group_with_data|ergo-sbe|sbe-tool|1.00"
     )
 
@@ -213,17 +206,14 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
         verify_manifest "$CRITERION_DIR" "$EXPECTED_RUN_ID" || failures=$((failures + 1))
     fi
 
-    # (group|ergo_fn|sbe_fn|ceiling). The two decode benches decode 3 fixed
-    # u64 fields (header) and fixed+var-data (event) from a static fixture —
-    # memory-bound, already optimal in both crates, so they measure a tie
-    # (~1.0001–1.0021, sub-nanosecond per-iteration differences inside
-    # Criterion's CI). A literal 1.00 ceiling there is a coin-flip noise
-    # decides; 1.01 admits the tie while still catching any real regression.
+    # (group|ergo_fn|sbe_fn|ceiling). Every maintained pair is literal 1.00.
+    # Cluster decode timing is a memory-bound tie; the blocking mechanism
+    # check is the matching instruction/branch probe, not a 1.01 allowance.
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool|1.00"
         "cluster_encode_session_keep_alive|ergo-sbe|sbe-tool|1.00"
-        "cluster_decode_session_message_header|ergo-sbe|sbe-tool|1.01"
-        "cluster_decode_session_event|ergo-sbe|sbe-tool|1.01"
+        "cluster_decode_session_message_header|ergo-sbe|sbe-tool|1.00"
+        "cluster_decode_session_event|ergo-sbe|sbe-tool|1.00"
         "cluster_encode_claim_shaped_header_plus_app|ergo-sbe|sbe-tool|1.00"
     )
 

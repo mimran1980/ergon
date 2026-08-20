@@ -158,6 +158,98 @@ fn discarded_observer_fails_under_deny_unused_must_use() -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// Category table: each named observer class carries `#[must_use]`.
+#[test]
+fn must_use_category_table() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "must_use_cats");
+    let categories: &[(&str, &[&str])] = &[
+        ("enum as_option/as_bool", &["as_option", "as_bool"]),
+        (
+            "completed-tail views/lengths",
+            &[
+                "as_body_bytes",
+                "as_bytes_with_header",
+                "encoded_length",
+                "encoded_length_with_header",
+            ],
+        ),
+        (
+            "encoder metadata/terminal queries",
+            &[
+                "get_metadata",
+                "as_fixed_body_bytes",
+                "message_offset",
+                "limit",
+                "buffer",
+            ],
+        ),
+        ("group written", &["written"]),
+        (
+            "exact-length terminals",
+            &["encoded_length", "encoded_length_with_header"],
+        ),
+        (
+            "getter/set-predicate/raw",
+            &["serial_number", "is_sun_roof", "raw"],
+        ),
+    ];
+    for (category, methods) in categories {
+        for method in *methods {
+            assert_method_has_must_use(&src, method);
+        }
+        let _ = category;
+    }
+    Ok(())
+}
+
+/// Downstream `deny(unused_must_use)` fails for one method in every named
+/// category. Functions take the generated types so the discarded calls are
+/// the real public methods.
+#[test]
+fn discarded_observers_fail_in_every_named_category() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "must_use_cats_deny");
+    compile_fails_with_diagnostics(
+        "must_use_cats_deny",
+        &src,
+        r#"
+        #[deny(unused_must_use)]
+        fn drop_enum(v: BooleanType) {
+            v.as_option();
+            v.as_bool();
+        }
+        #[deny(unused_must_use)]
+        fn drop_complete(c: FuelFiguresEntryDecoderComplete<'_>) {
+            c.as_body_bytes();
+            c.encoded_length();
+        }
+        #[deny(unused_must_use)]
+        fn drop_meta(m: CarEncoderMetadata<'_>) {
+            m.message_offset();
+            m.as_fixed_body_bytes();
+        }
+        #[deny(unused_must_use)]
+        fn drop_written(g: FuelFiguresEncoder<'_>) {
+            g.written();
+        }
+        #[deny(unused_must_use)]
+        fn drop_len(c: CarEncodedLengthComplete) {
+            c.encoded_length();
+            c.encoded_length_with_header();
+        }
+        fn main_body() {}
+        "#,
+        &[
+            "unused_must_use",
+            "as_option",
+            "as_bool",
+            "as_body_bytes",
+            "written",
+            "encoded_length",
+        ],
+    );
+    Ok(())
+}
+
 /// Positive control: using the observer value compiles cleanly.
 #[test]
 fn used_observer_compiles_under_deny_unused_must_use() -> Result<(), Box<dyn std::error::Error>> {

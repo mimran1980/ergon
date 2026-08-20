@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+- `GeneratedModuleSet::into_parts` consumes the set and returns owned modules
+  and warnings without cloning generated source.
+- `SchemaFile` plus `generate_multi_to_dir` / `generate_multi_to_out_dir`
+  generate a shared schema and its consumers in one transaction, using
+  supplied module names and watching every resolved include.
+- `EncodeError::InvalidAscii { field }` for ASCII fixed-array `*_str` writes.
+- Generated public-API snapshots under `api/generated/` and
+  `scripts/check-generated-public-api.sh`, invoked from `just preflight`.
+
+### Changed
+- **Breaking:** `ParseError` is `#[non_exhaustive]`. Root file reads are
+  `Io { path, source }`. Include failures are `Include { href, attempted,
+  cause }` with typed `IncludeCause` (`Cycle` / `Io` / `NotFound`).
+- **Breaking:** `SessionBuilder::ingress_channel`, `egress_channel`,
+  `message_timeout`, and `new_leader_timeout` return `Result` and store only
+  validated values. `is_ingress_exclusive` and `owns_aeron` setters are
+  removed.
+- Generated `*_str` exists only for default-ASCII `char` and encodings
+  `ASCII` / `US-ASCII` / `UTF-8` / `UTF8`. Unencoded numeric arrays and
+  encodings such as GB18030 keep the raw array setter only.
+- Side-effect-free generated observers (`as_option` / `as_bool`, completed
+  tail views/lengths, encoder metadata, group `written`, exact-length
+  terminals) carry message-bearing `#[must_use]`.
+
+### Fixed
+- One-byte fixed-array getters (`char` / `uint8`) return the bulk-read
+  `[u8; N]` instead of reconstructing each element with `from_le_bytes`.
+- `parse_with_xsd_validation` accepts schema-declared enum `nullValue`
+  (signed and unsigned) and still rejects unknown non-namespaced enum
+  attributes.
+- `generate_to_dir` emits `cargo::rerun-if-changed` for the root schema and
+  every nested or transitive include, so an include-only edit rebuilds.
+- Unresolved-type diagnostics name the containing field as well as the
+  invalid type.
+
+### Deprecated
+- `GenerationConfig::with_error_from_impls` — it converts generated encode/decode
+  errors through `format!` and `From<String>`, dropping fields such as `needed`
+  and `available`. Implement `From<generated::sbe_rt::EncodeError>` /
+  `From<generated::sbe_rt::DecodeError>` instead. Removal is scheduled for 1.0.
+
 ## [0.1.19] — 2026-08-19
 
 ### Fixed

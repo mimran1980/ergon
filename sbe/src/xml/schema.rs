@@ -12,18 +12,60 @@ use super::attr::{
     collect_description, element_children, opt_u16_attr, parse_byte_order, reject_unknown_attrs,
     string_attr, u16_attr, validate_sbe_name,
 };
-use super::error::{Fault, FaultKind};
+use super::error::{Fault, FaultKind, IncludeCause};
 use super::message::parse_message;
 use super::registry::{TypeRegistry, compute_type_size};
 use super::types::parse_types_node;
 use super::warn::{WarnState, warn_once};
 
+/// DFS include graph: the stack is the in-flight visit path; `finished` files
+/// are skipped (diamond/shared includes), not treated as cycles.
+pub(crate) struct IncludeWalk {
+    stack: Vec<PathBuf>,
+    finished: HashSet<PathBuf>,
+}
+
+impl IncludeWalk {
+    pub(crate) fn new() -> Self {
+        Self {
+            stack: Vec::new(),
+            finished: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn with_root(root: PathBuf) -> Self {
+        Self {
+            stack: vec![root],
+            finished: HashSet::new(),
+        }
+    }
+
+    /// `Ok(true)` load, `Ok(false)` already ingested, `Err` cycle.
+    fn classify(&self, canon: &Path) -> Result<bool, IncludeCause> {
+        if self.stack.iter().any(|p| p == canon) {
+            let mut chain = self.stack.clone();
+            chain.push(canon.to_path_buf());
+            return Err(IncludeCause::Cycle { chain });
+        }
+        if self.finished.contains(canon) {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+}
+
+enum IncludeHit {
+    Loaded(PathBuf, String),
+    Skip,
+}
+
 pub(crate) fn parse_schema(
     root: Node<'_, '_>,
     base_dir: Option<&Path>,
-    seen: &mut HashSet<PathBuf>,
+    walk: &mut IncludeWalk,
     initial_registry: TypeRegistry,
     warn_state: &WarnState,
+    dependencies: &mut Vec<PathBuf>,
 ) -> Result<Ir, Fault> {
     reject_unknown_attrs(root, "messageSchema", crate::schema_attrs::MESSAGE_SCHEMA)?;
     let package = string_attr(root, "package", "messageSchema @package")?;
@@ -49,33 +91,16 @@ pub(crate) fn parse_schema(
     for child in element_children(root) {
         if child.tag_name().name() == "include" {
             if let Some(href) = child.attribute("href") {
-                match read_include_file(href, base_dir, seen) {
-                    Ok(included_content) => {
-                        let included_doc = Document::parse(&included_content).map_err(|e| {
-                            Fault::include_error(format!(
-                                "failed to parse included file {href}: {e}"
-                            ))
-                        })?;
-                        let included_root = included_doc.root().children().find(Node::is_element);
-                        if let Some(inc_node) = included_root {
-                            if inc_node.tag_name().name() == "types" {
-                                parse_types_node(inc_node, &mut registry, &mut tokens, warn_state)?;
-                            } else {
-                                for sub_child in element_children(inc_node) {
-                                    if sub_child.tag_name().name() == "types" {
-                                        parse_types_node(
-                                            sub_child,
-                                            &mut registry,
-                                            &mut tokens,
-                                            warn_state,
-                                        )?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(fault) => return Err(fault),
-                }
+                ingest_include(
+                    href,
+                    Some(child.range()),
+                    base_dir,
+                    walk,
+                    &mut registry,
+                    &mut tokens,
+                    warn_state,
+                    dependencies,
+                )?;
             }
         } else if child.tag_name().name() == "types" {
             parse_types_node(child, &mut registry, &mut tokens, warn_state)?;
@@ -207,6 +232,95 @@ pub(crate) fn validate_header_type(
     Ok(())
 }
 
+/// Load one included document (and any includes it itself declares).
+fn ingest_include(
+    href: &str,
+    span: Option<std::ops::Range<usize>>,
+    base_dir: Option<&Path>,
+    walk: &mut IncludeWalk,
+    registry: &mut TypeRegistry,
+    tokens: &mut Vec<Token>,
+    warn_state: &WarnState,
+    dependencies: &mut Vec<PathBuf>,
+) -> Result<(), Fault> {
+    let (resolved, included_content) = match read_include_file(href, base_dir, walk) {
+        Ok(IncludeHit::Skip) => return Ok(()),
+        Ok(IncludeHit::Loaded(path, content)) => (path, content),
+        Err(mut fault) => {
+            if fault.span.is_none() {
+                fault.span = span.clone();
+            }
+            return Err(fault);
+        }
+    };
+    if !dependencies.iter().any(|p| p == &resolved) {
+        dependencies.push(resolved.clone());
+    }
+    walk.stack.push(resolved.clone());
+    let result = ingest_included_document(
+        href,
+        span,
+        resolved.parent(),
+        &included_content,
+        walk,
+        registry,
+        tokens,
+        warn_state,
+        dependencies,
+    );
+    walk.stack.pop();
+    walk.finished.insert(resolved);
+    result
+}
+
+fn ingest_included_document(
+    href: &str,
+    span: Option<std::ops::Range<usize>>,
+    inc_base: Option<&Path>,
+    included_content: &str,
+    walk: &mut IncludeWalk,
+    registry: &mut TypeRegistry,
+    tokens: &mut Vec<Token>,
+    warn_state: &WarnState,
+    dependencies: &mut Vec<PathBuf>,
+) -> Result<(), Fault> {
+    let included_doc = Document::parse(included_content).map_err(|e| Fault {
+        kind: FaultKind::Invalid {
+            what: format!("included file {href}"),
+            value: e.to_string(),
+        },
+        span: span.clone(),
+    })?;
+    let Some(inc_node) = included_doc.root().children().find(Node::is_element) else {
+        return Ok(());
+    };
+    if inc_node.tag_name().name() == "types" {
+        parse_types_node(inc_node, registry, tokens, warn_state)?;
+        return Ok(());
+    }
+    for sub_child in element_children(inc_node) {
+        match sub_child.tag_name().name() {
+            "include" => {
+                if let Some(nested) = sub_child.attribute("href") {
+                    ingest_include(
+                        nested,
+                        Some(sub_child.range()),
+                        inc_base,
+                        walk,
+                        registry,
+                        tokens,
+                        warn_state,
+                        dependencies,
+                    )?;
+                }
+            }
+            "types" => parse_types_node(sub_child, registry, tokens, warn_state)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Resolve an included schema file path.
 ///
 /// Resolution order:
@@ -214,68 +328,85 @@ pub(crate) fn validate_header_type(
 /// 2. Direct path (CWD-relative)
 /// 3. Well-known submodule paths for the ergon repo layout
 ///
-/// Returns `Ok(Some(content))` on success, `Ok(None)` if the file cannot be
-/// found (fails silently), or `Err(Fault)` if a cycle is detected.
-pub(crate) fn read_include_file(
+/// Returns the resolved path and file contents, or `Err(Fault)` if a cycle
+/// is detected or the file cannot be found. A file already fully ingested
+/// in this walk is [`IncludeHit::Skip`] (shared/diamond include).
+fn read_include_file(
     href: &str,
     base_dir: Option<&Path>,
-    seen: &mut HashSet<PathBuf>,
-) -> Result<String, Fault> {
-    // Helper: try reading a path, record canonical form in `seen`.
-    // Returns Ok(content) on success, Err on failure (file not found, read error, or cycle).
-    fn try_read(href: &str, seen: &mut HashSet<PathBuf>) -> Result<String, Fault> {
-        let p = Path::new(href);
-        if let Ok(canon) = p.canonicalize() {
-            if !seen.insert(canon.clone()) {
-                return Err(Fault::include_error(format!(
-                    "cyclic include detected: {}",
-                    canon.display()
-                )));
+    walk: &IncludeWalk,
+) -> Result<IncludeHit, Fault> {
+    fn is_not_found(f: &Fault) -> bool {
+        matches!(
+            &f.kind,
+            FaultKind::Include {
+                cause: IncludeCause::NotFound,
+                ..
             }
-            std::fs::read_to_string(&canon)
-                .map_err(|e| Fault::include_error(format!("cannot read {}: {e}", canon.display())))
-        } else {
-            std::fs::read_to_string(p)
-                .map_err(|e| Fault::include_error(format!("cannot read {href}: {e}")))
-        }
+        )
+    }
+    fn is_cycle(f: &Fault) -> bool {
+        matches!(
+            &f.kind,
+            FaultKind::Include {
+                cause: IncludeCause::Cycle { .. },
+                ..
+            }
+        )
     }
 
-    // Helper: propagate cycle errors immediately, retry on other errors.
-    // Ponytail: checks the message field; a dedicated error variant would be cleaner
-    // but this is a single-use helper in a 200-line function.
-    fn is_cycle(f: &Fault) -> bool {
-        match &f.kind {
-            FaultKind::IncludeError { message } => message.contains("cyclic"),
-            _ => false,
+    let mut attempted = Vec::new();
+    let mut try_one = |raw: PathBuf| -> Result<IncludeHit, Fault> {
+        attempted.push(raw.clone());
+        match raw.canonicalize() {
+            Ok(canon) => match walk.classify(&canon) {
+                Err(cause) => Err(Fault::include(href, attempted.clone(), cause)),
+                Ok(false) => Ok(IncludeHit::Skip),
+                Ok(true) => match std::fs::read_to_string(&canon) {
+                    Ok(content) => Ok(IncludeHit::Loaded(canon, content)),
+                    Err(source) => Err(Fault::include(
+                        href,
+                        attempted.clone(),
+                        IncludeCause::Io {
+                            path: canon,
+                            source,
+                        },
+                    )),
+                },
+            },
+            Err(_) => match std::fs::read_to_string(&raw) {
+                Ok(content) => Ok(IncludeHit::Loaded(raw, content)),
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => Err(
+                    Fault::include(href, attempted.clone(), IncludeCause::NotFound),
+                ),
+                Err(source) => Err(Fault::include(
+                    href,
+                    attempted.clone(),
+                    IncludeCause::Io { path: raw, source },
+                )),
+            },
         }
-    }
+    };
 
     macro_rules! try_include {
-        ($expr:expr) => {
-            match $expr {
-                Ok(content) => return Ok(content),
+        ($path:expr) => {
+            match try_one($path) {
+                Ok(ok) => return Ok(ok),
                 Err(f) if is_cycle(&f) => return Err(f),
-                Err(_) => {} // file not found or read error → try next path
+                Err(f) if is_not_found(&f) => {}
+                Err(f) => return Err(f),
             }
         };
     }
 
     if let Some(dir) = base_dir {
-        let candidate = dir.join(href).to_string_lossy().to_string();
-        try_include!(try_read(&candidate, seen));
+        try_include!(dir.join(href));
     }
+    try_include!(PathBuf::from(href));
+    try_include!(PathBuf::from(format!("sbe/tests/fixtures/schemas/{href}")));
+    try_include!(PathBuf::from(format!(
+        "../sbe/tests/fixtures/schemas/{href}"
+    )));
 
-    try_include!(try_read(href, seen));
-
-    let paths = [
-        format!("sbe/tests/fixtures/schemas/{}", href),
-        format!("../sbe/tests/fixtures/schemas/{}", href),
-    ];
-    for p in &paths {
-        try_include!(try_read(p, seen));
-    }
-
-    Err(Fault::include_error(format!(
-        "include file not found: {href}"
-    )))
+    Err(Fault::include(href, attempted, IncludeCause::NotFound))
 }

@@ -46,7 +46,6 @@ book/src/sbe/feature-tour/generated-code.md:156 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:177 — deliberate; see page context
 book/src/sbe/getting-started/encode-decode.md:54 — deliberate; see page context
 book/src/sbe/getting-started/error-diagnostics.md:85 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
-book/src/sbe/getting-started/error-diagnostics.md:101 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
 book/src/sbe/getting-started/from-sbe-tool.md:18 — deliberate; see page context
 book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
@@ -54,8 +53,8 @@ book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:86 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:114 — deliberate; see page context
+
+book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:10 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:39 — deliberate; see page context

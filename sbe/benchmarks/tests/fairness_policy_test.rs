@@ -1,6 +1,7 @@
 //! Mechanical guardrails for maintained head-to-head benchmark sources.
 
 const PERF_PARITY: &str = include_str!("../benches/perf_parity_bench.rs");
+const PERF_PARITY_EXTENDED: &str = include_str!("../benches/perf_parity_extended_bench.rs");
 const GROUP_ENCODE: &str = include_str!("../benches/group_encode_bench.rs");
 const GROUP_DECIMAL: &str = include_str!("../benches/group_encode_decimal_bench.rs");
 const CLUSTER_CODEC: &str = include_str!("../../../cluster/benches/cluster_codec_bench.rs");
@@ -8,6 +9,7 @@ const README: &str = include_str!("../README.md");
 
 const MAINTAINED: &[(&str, &str)] = &[
     ("perf_parity_bench.rs", PERF_PARITY),
+    ("perf_parity_extended_bench.rs", PERF_PARITY_EXTENDED),
     ("group_encode_bench.rs", GROUP_ENCODE),
     ("group_encode_decimal_bench.rs", GROUP_DECIMAL),
     ("cluster_codec_bench.rs", CLUSTER_CODEC),
@@ -407,4 +409,37 @@ fn diagnostic_benches_are_not_mixed_sbe_tool_ratios() {
         "{name}: diagnostic suite gained an sbe-tool arm — register it in \
          encode_parity_arms_do_not_mix_header_writes with an explicit mode"
     );
+}
+
+#[test]
+fn group_with_data_timed_arms_both_read_entry_fields_and_var_data()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = get_source(PERF_PARITY_EXTENDED, "bench_group_with_data")?;
+    let ergo = timed_arm_body(source, "ergo-sbe").ok_or("missing ergo group-with-data arm")?;
+    let tool = timed_arm_body(source, "sbe-tool").ok_or("missing sbe-tool group-with-data arm")?;
+    assert!(
+        PERF_PARITY_EXTENDED.contains("assert_group_with_data_value_parity"),
+        "group-with-data must assert decoded value/bytes parity before timing"
+    );
+    assert!(
+        ergo.contains("decode_group_with_data_ergon"),
+        "ergon timed arm must enter the group/var-data decoder"
+    );
+    assert!(
+        tool.contains("decode_group_with_data_tool"),
+        "sbe-tool timed arm must enter the group/var-data decoder"
+    );
+    let ergo_dec = get_source(PERF_PARITY_EXTENDED, "decode_group_with_data_ergon")?;
+    let tool_dec = get_source(PERF_PARITY_EXTENDED, "decode_group_with_data_tool")?;
+    for (label, body) in [("ergon", ergo_dec), ("sbe-tool", tool_dec)] {
+        assert!(
+            body.contains("var_data_field"),
+            "{label} group-with-data decode must read var-data bytes"
+        );
+        assert!(
+            body.contains("tag_group"),
+            "{label} group-with-data decode must read fixed entry fields"
+        );
+    }
+    Ok(())
 }

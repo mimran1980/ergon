@@ -15,8 +15,8 @@ fn generate_with(
     let ir = ergo_sbe::parse_file(path)?;
     let schema = Schema::from_ir(ir);
     let config = f(GenerationConfig::new(module));
-    let modules = Generator::new(config).generate(&schema)?;
-    Ok(modules.modules().next().ok_or("no module")?.source.clone())
+    let (modules, _warnings) = Generator::new(config).generate(&schema)?.into_parts();
+    Ok(modules.into_iter().next().ok_or("no module")?.source)
 }
 
 #[test]
@@ -198,6 +198,7 @@ fn with_module_name_renames_the_generated_module() -> Result<(), Box<dyn Error>>
 /// `with_error_from_impls` emits `From<EncodeError>` / `From<DecodeError>` for
 /// the caller's error type.
 #[test]
+#[allow(deprecated)]
 fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
     let src = generate_with(&Paths::example_schema(), "cfg_errfrom", |c| {
         c.with_error_from_impls("crate::MyError")
@@ -216,6 +217,7 @@ fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
 /// A malformed error path is rejected at generation time rather than emitting
 /// source that cannot compile.
 #[test]
+#[allow(deprecated)]
 fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>> {
     let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
     let schema = Schema::from_ir(ir);
@@ -228,6 +230,108 @@ fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>>
     assert!(
         msg.contains("error-from path") || msg.contains("error_from_path"),
         "error must name the offending option, got: {msg}"
+    );
+    Ok(())
+}
+
+/// Field-preserving `From<EncodeError>` / `From<DecodeError>` compiles against
+/// the generated `sbe_rt` types (the 1.0 replacement for the lossy bridge).
+#[test]
+fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>> {
+    let src = generate_with(&Paths::example_schema(), "cfg_errtyped", |c| c)?;
+    let src = format!(
+        "{src}\n\
+         #[derive(Debug)]\n\
+         pub enum AppError {{\n\
+             Encode(sbe_rt::EncodeError),\n\
+             Decode(sbe_rt::DecodeError),\n\
+         }}\n\
+         impl From<sbe_rt::EncodeError> for AppError {{\n\
+             fn from(error: sbe_rt::EncodeError) -> Self {{\n\
+                 Self::Encode(error)\n\
+             }}\n\
+         }}\n\
+         impl From<sbe_rt::DecodeError> for AppError {{\n\
+             fn from(error: sbe_rt::DecodeError) -> Self {{\n\
+                 Self::Decode(error)\n\
+             }}\n\
+         }}\n"
+    );
+    compile_and_run(
+        "cfg_errtyped",
+        &src,
+        r#"
+        use cfg_errtyped::sbe_rt;
+        let err: AppError = sbe_rt::EncodeError::BufferTooShort {
+            field: "seq",
+            needed: 8,
+            available: 2,
+        }
+        .into();
+        match err {
+            AppError::Encode(sbe_rt::EncodeError::BufferTooShort { needed, available, .. }) => {
+                assert_eq!(needed, 8);
+                assert_eq!(available, 2);
+            }
+            other => panic!("fields lost: {other:?}"),
+        }
+        "#,
+    );
+    Ok(())
+}
+
+/// Callers that `#![deny(deprecated)]` must migrate off `with_error_from_impls`.
+#[test]
+fn with_error_from_impls_deprecation_fires() -> Result<(), Box<dyn Error>> {
+    use std::fs;
+    use std::process::Command;
+
+    let sbe_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ergo_sbe_errfrom_deprecated_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "errfrom_deprecated"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ergo-sbe = {{ path = "{}" }}
+"#,
+            sbe_dir.display()
+        ),
+    )?;
+    fs::write(
+        dir.join("src/main.rs"),
+        r#"#![deny(deprecated)]
+fn main() {
+    let _ = ergo_sbe::GenerationConfig::new("x").with_error_from_impls("crate::E");
+}
+"#,
+    )?;
+    let out = Command::new("cargo")
+        .args(["build", "--offline"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
+        .env("CARGO_NET_OFFLINE", "true")
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "deny(deprecated) must fail, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("deprecated") && stderr.contains("with_error_from_impls"),
+        "expected deprecation diagnostic, stderr:\n{stderr}"
     );
     Ok(())
 }
