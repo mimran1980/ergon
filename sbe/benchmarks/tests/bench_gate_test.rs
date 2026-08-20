@@ -299,14 +299,52 @@ fn a_caller_supplied_tolerance_cannot_loosen_the_sbe_gate() -> Result<(), Box<dy
     Ok(())
 }
 
+/// Pair-table rows are quoted `"…|ceiling"` strings. The last `|` field is
+/// the numeric ceiling.
+fn parse_maintained_ceilings(script: &str) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for line in script.lines() {
+        let trimmed = line.trim().trim_end_matches(',').trim();
+        if !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+            continue;
+        }
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let Some((head, ceil)) = inner.rsplit_once('|') else {
+            continue;
+        };
+        let Ok(value) = ceil.parse::<f64>() else {
+            continue;
+        };
+        let label = head.split('|').next().unwrap_or(head);
+        out.push((label.to_string(), value));
+    }
+    out
+}
+
+#[test]
+fn a_fixture_script_containing_one_thousandth_over_one_is_detected() {
+    let snippet = r#"
+    pairs=(
+        "decode_scalar|decode_scalar|ergo-sbe|sbe-tool|1.001"
+    )
+    "#;
+    let ceilings = parse_maintained_ceilings(snippet);
+    assert!(
+        ceilings.iter().any(|(_, c)| *c > 1.00),
+        "parser must treat |1.001 as above 1.00, got {ceilings:?}"
+    );
+}
+
 #[test]
 fn no_maintained_ceiling_exceeds_one() {
     let script = include_str!("../../../scripts/check-bench-gate.sh");
-    for forbidden in ["|1.01", "|1.02", "|1.05", "|1.10"] {
-        assert!(
-            !script.contains(forbidden),
-            "maintained gate must not encode a ceiling above 1.00 ({forbidden})"
-        );
+    let ceilings = parse_maintained_ceilings(script);
+    assert!(
+        !ceilings.is_empty(),
+        "maintained pair tables must declare numeric ceilings"
+    );
+    for (label, ceiling) in &ceilings {
+        assert!(*ceiling <= 1.00, "{label} ceiling {ceiling} exceeds 1.00");
     }
 }
 

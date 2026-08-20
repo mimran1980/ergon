@@ -1371,13 +1371,39 @@ fn attrs_have_doc(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("doc"))
 }
 
-fn fallback_public_doc() -> syn::Attribute {
-    syn::parse_quote!(#[doc = "Generated public API."])
+fn fallback_public_doc(kind: &str, name: &str) -> syn::Attribute {
+    let text = format!("Generated {kind} `{name}`.");
+    syn::parse_quote!(#[doc = #text])
 }
 
-fn ensure_public_doc(attrs: &mut Vec<syn::Attribute>) {
+fn doc_is_placeholder(attr: &syn::Attribute) -> bool {
+    if !attr.path().is_ident("doc") {
+        return false;
+    }
+    let syn::Meta::NameValue(nv) = &attr.meta else {
+        return false;
+    };
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(s),
+        ..
+    }) = &nv.value
+    else {
+        return false;
+    };
+    s.value().trim() == "Generated public API."
+}
+
+fn ensure_public_doc(attrs: &mut Vec<syn::Attribute>, kind: &str, name: &str) {
+    if attrs.iter().any(doc_is_placeholder)
+        && attrs
+            .iter()
+            .filter(|a| a.path().is_ident("doc"))
+            .all(doc_is_placeholder)
+    {
+        attrs.retain(|a| !doc_is_placeholder(a));
+    }
     if !attrs_have_doc(attrs) {
-        attrs.insert(0, fallback_public_doc());
+        attrs.insert(0, fallback_public_doc(kind, name));
     }
 }
 
@@ -1393,32 +1419,56 @@ fn annotate_missing_public_docs(file: &mut syn::File) {
 fn annotate_item(item: &mut syn::Item) {
     match item {
         syn::Item::Struct(s) if item_is_public(&s.vis) => {
-            ensure_public_doc(&mut s.attrs);
+            let name = s.ident.to_string();
+            ensure_public_doc(&mut s.attrs, "struct", &name);
             for field in &mut s.fields {
-                if item_is_public(&field.vis) {
-                    ensure_public_doc(&mut field.attrs);
+                if !item_is_public(&field.vis) {
+                    continue;
+                }
+                match &field.ident {
+                    Some(ident) => ensure_public_doc(&mut field.attrs, "field", &ident.to_string()),
+                    None => {
+                        // Keep `pub struct Engine(pub [u8; N])` on one line;
+                        // the struct rustdoc covers the wire image.
+                    }
                 }
             }
         }
         syn::Item::Enum(e) if item_is_public(&e.vis) => {
-            ensure_public_doc(&mut e.attrs);
+            let name = e.ident.to_string();
+            ensure_public_doc(&mut e.attrs, "enum", &name);
             for variant in &mut e.variants {
-                ensure_public_doc(&mut variant.attrs);
+                ensure_public_doc(&mut variant.attrs, "variant", &variant.ident.to_string());
                 for field in &mut variant.fields {
-                    ensure_public_doc(&mut field.attrs);
+                    if let Some(ident) = &field.ident {
+                        ensure_public_doc(&mut field.attrs, "field", &ident.to_string());
+                    }
                 }
             }
         }
-        syn::Item::Fn(f) if item_is_public(&f.vis) => ensure_public_doc(&mut f.attrs),
-        syn::Item::Const(c) if item_is_public(&c.vis) => ensure_public_doc(&mut c.attrs),
-        syn::Item::Type(t) if item_is_public(&t.vis) => ensure_public_doc(&mut t.attrs),
+        syn::Item::Fn(f) if item_is_public(&f.vis) => {
+            ensure_public_doc(&mut f.attrs, "function", &f.sig.ident.to_string());
+        }
+        syn::Item::Const(c) if item_is_public(&c.vis) => {
+            ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
+        }
+        syn::Item::Type(t) if item_is_public(&t.vis) => {
+            ensure_public_doc(&mut t.attrs, "type", &t.ident.to_string());
+        }
         syn::Item::Trait(t) if item_is_public(&t.vis) => {
-            ensure_public_doc(&mut t.attrs);
+            let name = t.ident.to_string();
+            ensure_public_doc(&mut t.attrs, "trait", &name);
             for trait_item in &mut t.items {
                 match trait_item {
-                    syn::TraitItem::Fn(f) => ensure_public_doc(&mut f.attrs),
-                    syn::TraitItem::Const(c) => ensure_public_doc(&mut c.attrs),
-                    syn::TraitItem::Type(t) => ensure_public_doc(&mut t.attrs),
+                    syn::TraitItem::Fn(f) => {
+                        ensure_public_doc(&mut f.attrs, "method", &f.sig.ident.to_string());
+                    }
+                    syn::TraitItem::Const(c) => {
+                        ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
+                    }
+                    syn::TraitItem::Type(ty) => {
+                        ensure_public_doc(&mut ty.attrs, "type", &ty.ident.to_string());
+                    }
                     _ => {}
                 }
             }
@@ -1427,28 +1477,32 @@ fn annotate_item(item: &mut syn::Item) {
             for impl_item in &mut i.items {
                 match impl_item {
                     syn::ImplItem::Fn(f) if item_is_public(&f.vis) => {
-                        ensure_public_doc(&mut f.attrs);
+                        ensure_public_doc(&mut f.attrs, "method", &f.sig.ident.to_string());
                     }
                     syn::ImplItem::Const(c) if item_is_public(&c.vis) => {
-                        ensure_public_doc(&mut c.attrs);
+                        ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
                     }
                     syn::ImplItem::Type(t) if item_is_public(&t.vis) => {
-                        ensure_public_doc(&mut t.attrs);
+                        ensure_public_doc(&mut t.attrs, "type", &t.ident.to_string());
                     }
                     _ => {}
                 }
             }
         }
         syn::Item::Mod(m) if item_is_public(&m.vis) => {
-            ensure_public_doc(&mut m.attrs);
+            ensure_public_doc(&mut m.attrs, "module", &m.ident.to_string());
             if let Some((_, items)) = &mut m.content {
                 for nested in items {
                     annotate_item(nested);
                 }
             }
         }
-        syn::Item::Use(u) if item_is_public(&u.vis) => ensure_public_doc(&mut u.attrs),
-        syn::Item::Static(s) if item_is_public(&s.vis) => ensure_public_doc(&mut s.attrs),
+        syn::Item::Use(u) if item_is_public(&u.vis) => {
+            ensure_public_doc(&mut u.attrs, "import", "use");
+        }
+        syn::Item::Static(s) if item_is_public(&s.vis) => {
+            ensure_public_doc(&mut s.attrs, "static", &s.ident.to_string());
+        }
         _ => {}
     }
 }
@@ -1859,7 +1913,6 @@ mod tests {
         let config = crate::GenerationConfig::new("test_chrono").with_domain_type(
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
-            crate::DomainImpl::Generated,
         );
         let mut generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;

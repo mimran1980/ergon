@@ -255,9 +255,60 @@ print(f\"  Ir/op={r['instructions_per_operation']:.2f}  \"
 done
 
 echo ""
+echo "=== paired Ir/op (ergon vs sbe-tool) ==="
+if ! python3 - "$OUT_ROOT" "$MANIFEST" <<'PY'
+import json, sys
+from collections import defaultdict
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifest = Path(sys.argv[2])
+registered = defaultdict(dict)
+for line in manifest.read_text().splitlines()[1:]:
+    if not line.strip():
+        continue
+    symbol, arm, pair, _topic, _ops = line.split("\t")
+    registered[pair][arm] = symbol
+
+measured = defaultdict(dict)
+for summary in root.glob("*/*.summary.json"):
+    rec = json.loads(summary.read_text())
+    measured[(rec["pair"], rec["profile"])][rec["arm"]] = rec
+
+failed = False
+two_arm = {pair: arms for pair, arms in registered.items() if "ergon" in arms and "sbe-tool" in arms}
+if not two_arm:
+    print("FAIL: manifest has no registered ergon/sbe-tool pairs", file=sys.stderr)
+    sys.exit(1)
+profiles = sorted({profile for pair, profile in measured})
+if not profiles:
+    print("FAIL: no probe summaries to pair", file=sys.stderr)
+    sys.exit(1)
+for profile in profiles:
+    for pair, arms in sorted(two_arm.items()):
+        recs = measured.get((pair, profile), {})
+        ergo = recs.get("ergon")
+        tool = recs.get("sbe-tool")
+        if ergo is None or tool is None:
+            print(f"FAIL {profile}/{pair}: missing arm (ergon={ergo is not None} sbe-tool={tool is not None})")
+            failed = True
+            continue
+        print(
+            f"  {profile}/{pair}: ergon Ir/op={ergo['instructions_per_operation']:.2f}  "
+            f"sbe-tool Ir/op={tool['instructions_per_operation']:.2f}"
+        )
+if failed:
+    sys.exit(1)
+print("paired comparison ok")
+PY
+then
+    failures=$((failures + 1))
+fi
+
+echo ""
 echo "artifacts: $OUT_ROOT"
 if [ "$failures" -gt 0 ]; then
     echo "FAIL: $failures probe(s) could not be measured"
     exit 1
 fi
-echo "PASS: every selected probe produced raw Callgrind output and disassembly"
+echo "PASS: every selected probe produced raw Callgrind output, disassembly, and paired Ir/op"

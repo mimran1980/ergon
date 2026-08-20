@@ -17,10 +17,10 @@ no `sbe_mod!` needed. See [Build Patterns](./build-patterns.md).
 
 | Selector | Config | Decode API | Encode API | Who writes the impl? |
 |----------|--------|------------|------------|-----------------------|
-| `BooleanType` | `with_domain_type(.., "bool", DomainImpl::Generated)` | `dec.try_available()?` | `enc.try_available(true)?` | ergo-sbe |
-| `UTCTimestamp` | `with_domain_type(.., chrono, DomainImpl::Generated)` | `dec.try_timestamp()?` | `enc.try_timestamp(t)?` | ergo-sbe |
+| `BooleanType` | `with_domain_type(.., "bool")` | `dec.try_available()?` | `enc.try_available(true)?` | ergo-sbe |
+| `UTCTimestamp` | `with_domain_type(.., chrono)` | `dec.try_timestamp()?` | `enc.try_timestamp(t)?` | ergo-sbe |
 | `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` | app (generic, any `T`) |
-| `ManualDecimal` (Quote) | `with_domain_type(.., rust_decimal, DomainImpl::Manual)` | `dec.try_manual_price()?` | `enc.try_manual_price(v)?` | app (one concrete type) |
+| `ManualDecimal` (Quote) | `with_manual_domain_type(.., rust_decimal)` | `dec.try_manual_price()?` | `enc.try_manual_price(v)?` | app (one concrete type) |
 
 Runnable proof for the `Decimal` row: **`demo_conversion_only`** in
 `src/lib.rs` (uses both `rust_decimal` and a tiny `FixedPrice`
@@ -33,9 +33,9 @@ copy-paste of the doc comment ergo-sbe put on the generated method (see
 
 ### Quick rule
 
-- One fixed app type, ergo-sbe writes the impl → `with_domain_type(.., DomainImpl::Generated)`
+- One fixed app type, ergo-sbe writes the impl → `with_domain_type(selector, path)`
 - One fixed app type, **you** write the impl (custom rounding/validation, or
-  overriding the three built-ins) → `with_domain_type(.., DomainImpl::Manual)`
+  overriding the three built-ins) → `with_manual_domain_type(selector, path)`
 - Pluggable / no forced dep → `with_conversion`
 - Never call more than one of these for the **same** selector
 
@@ -59,7 +59,7 @@ Other samples:
 | Checked decode / wrap / verify | `demo_try_vs_trusted` |
 | Display / Debug | `demo_display_debug` |
 | **`with_conversion` only** | **`demo_conversion_only`** |
-| **`with_domain_type(.., DomainImpl::Manual)`** | **`demo_domain_type_manual_impl`** |
+| **`with_manual_domain_type`** | **`demo_domain_type_manual_impl`** |
 | All of the above | `run_all` |
 
 ## Run

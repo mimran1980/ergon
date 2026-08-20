@@ -18,8 +18,29 @@ fn is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 
-fn has_doc_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| a.meta.path().is_ident("doc"))
+fn has_operational_doc(attrs: &[syn::Attribute]) -> bool {
+    let mut saw_doc = false;
+    let mut only_placeholder = true;
+    for attr in attrs {
+        if !attr.meta.path().is_ident("doc") {
+            continue;
+        }
+        saw_doc = true;
+        if let syn::Meta::NameValue(nv) = &attr.meta
+            && let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) = &nv.value
+        {
+            if s.value().trim() != "Generated public API." {
+                only_placeholder = false;
+            }
+        } else {
+            // `#[doc = concat!(...)]` and other non-literal docs are operational.
+            only_placeholder = false;
+        }
+    }
+    saw_doc && !only_placeholder
 }
 
 fn walk_items(prefix: &str, items: &[syn::Item], out: &mut Vec<(String, bool)>) {
@@ -27,47 +48,72 @@ fn walk_items(prefix: &str, items: &[syn::Item], out: &mut Vec<(String, bool)>) 
         match item {
             syn::Item::Struct(s) if is_public(&s.vis) => {
                 let name = format!("{prefix}{}", s.ident);
-                out.push((name.clone(), has_doc_attr(&s.attrs)));
+                out.push((name.clone(), has_operational_doc(&s.attrs)));
                 for (i, field) in s.fields.iter().enumerate() {
                     if is_public(&field.vis) {
+                        if field.ident.is_none() {
+                            // Unnamed tuple fields inherit the struct rustdoc.
+                            continue;
+                        }
                         let fname = field
                             .ident
                             .as_ref()
                             .map(ToString::to_string)
                             .unwrap_or_else(|| format!("{i}"));
-                        out.push((format!("{name}.{fname}"), has_doc_attr(&field.attrs)));
+                        out.push((format!("{name}.{fname}"), has_operational_doc(&field.attrs)));
                     }
                 }
             }
             syn::Item::Enum(e) if is_public(&e.vis) => {
                 let name = format!("{prefix}{}", e.ident);
-                out.push((name.clone(), has_doc_attr(&e.attrs)));
+                out.push((name.clone(), has_operational_doc(&e.attrs)));
                 for v in &e.variants {
-                    out.push((format!("{name}::{}", v.ident), has_doc_attr(&v.attrs)));
+                    out.push((
+                        format!("{name}::{}", v.ident),
+                        has_operational_doc(&v.attrs),
+                    ));
                 }
             }
             syn::Item::Fn(f) if is_public(&f.vis) => {
-                out.push((format!("{prefix}{}", f.sig.ident), has_doc_attr(&f.attrs)));
+                out.push((
+                    format!("{prefix}{}", f.sig.ident),
+                    has_operational_doc(&f.attrs),
+                ));
             }
             syn::Item::Const(c) if is_public(&c.vis) => {
-                out.push((format!("{prefix}{}", c.ident), has_doc_attr(&c.attrs)));
+                out.push((
+                    format!("{prefix}{}", c.ident),
+                    has_operational_doc(&c.attrs),
+                ));
             }
             syn::Item::Type(t) if is_public(&t.vis) => {
-                out.push((format!("{prefix}{}", t.ident), has_doc_attr(&t.attrs)));
+                out.push((
+                    format!("{prefix}{}", t.ident),
+                    has_operational_doc(&t.attrs),
+                ));
             }
             syn::Item::Trait(t) if is_public(&t.vis) => {
                 let name = format!("{prefix}{}", t.ident);
-                out.push((name.clone(), has_doc_attr(&t.attrs)));
+                out.push((name.clone(), has_operational_doc(&t.attrs)));
                 for ti in &t.items {
                     match ti {
                         syn::TraitItem::Fn(f) => {
-                            out.push((format!("{name}::{}", f.sig.ident), has_doc_attr(&f.attrs)));
+                            out.push((
+                                format!("{name}::{}", f.sig.ident),
+                                has_operational_doc(&f.attrs),
+                            ));
                         }
                         syn::TraitItem::Const(c) => {
-                            out.push((format!("{name}::{}", c.ident), has_doc_attr(&c.attrs)));
+                            out.push((
+                                format!("{name}::{}", c.ident),
+                                has_operational_doc(&c.attrs),
+                            ));
                         }
                         syn::TraitItem::Type(ty) => {
-                            out.push((format!("{name}::{}", ty.ident), has_doc_attr(&ty.attrs)));
+                            out.push((
+                                format!("{name}::{}", ty.ident),
+                                has_operational_doc(&ty.attrs),
+                            ));
                         }
                         _ => {}
                     }
@@ -88,19 +134,19 @@ fn walk_items(prefix: &str, items: &[syn::Item], out: &mut Vec<(String, bool)>) 
                         syn::ImplItem::Fn(f) if is_public(&f.vis) => {
                             out.push((
                                 format!("{prefix}{ty}::{}", f.sig.ident),
-                                has_doc_attr(&f.attrs),
+                                has_operational_doc(&f.attrs),
                             ));
                         }
                         syn::ImplItem::Const(c) if is_public(&c.vis) => {
                             out.push((
                                 format!("{prefix}{ty}::{}", c.ident),
-                                has_doc_attr(&c.attrs),
+                                has_operational_doc(&c.attrs),
                             ));
                         }
                         syn::ImplItem::Type(t) if is_public(&t.vis) => {
                             out.push((
                                 format!("{prefix}{ty}::{}", t.ident),
-                                has_doc_attr(&t.attrs),
+                                has_operational_doc(&t.attrs),
                             ));
                         }
                         _ => {}
@@ -109,16 +155,22 @@ fn walk_items(prefix: &str, items: &[syn::Item], out: &mut Vec<(String, bool)>) 
             }
             syn::Item::Mod(m) if is_public(&m.vis) => {
                 let name = format!("{prefix}{}::", m.ident);
-                out.push((format!("{prefix}{}", m.ident), has_doc_attr(&m.attrs)));
+                out.push((
+                    format!("{prefix}{}", m.ident),
+                    has_operational_doc(&m.attrs),
+                ));
                 if let Some((_, nested)) = &m.content {
                     walk_items(&name, nested, out);
                 }
             }
             syn::Item::Use(u) if is_public(&u.vis) => {
-                out.push((format!("{prefix}use"), has_doc_attr(&u.attrs)));
+                out.push((format!("{prefix}use"), has_operational_doc(&u.attrs)));
             }
             syn::Item::Static(s) if is_public(&s.vis) => {
-                out.push((format!("{prefix}{}", s.ident), has_doc_attr(&s.attrs)));
+                out.push((
+                    format!("{prefix}{}", s.ident),
+                    has_operational_doc(&s.attrs),
+                ));
             }
             _ => {}
         }
@@ -272,6 +324,19 @@ fn fixture_documented_passes() {
         items.iter().all(|(_, doc)| *doc),
         "documented struct should pass"
     );
+}
+
+#[test]
+fn fixture_placeholder_only_doc_fails() {
+    let src = "/// Generated public API.\npub struct Placeholder;";
+    let items = check_docs(src);
+    let missing: Vec<_> = items.iter().filter(|(_, doc)| !doc).collect();
+    assert_eq!(
+        missing.len(),
+        1,
+        "placeholder-only rustdoc must not count as documented, got {items:?}"
+    );
+    assert_eq!(missing[0].0, "Placeholder");
 }
 
 #[test]

@@ -58,6 +58,9 @@ preflight:
     @echo "=== formatting ==="
     cargo fmt --all --check
     cd samples/exchange-example && cargo fmt --check
+    @echo "=== clippy (same workspace set as CI) ==="
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh

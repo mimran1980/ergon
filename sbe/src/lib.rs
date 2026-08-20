@@ -154,7 +154,7 @@
 //! | [`GenerationConfig::with_domain_type`] | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
 //!
 //! ```rust
-//! use ergo_sbe::{ConversionSelector, DomainImpl, GenerationConfig};
+//! use ergo_sbe::{ConversionSelector, GenerationConfig};
 //!
 //! // A — pluggable: you implement TryFromSbe / TryToSbe
 //! let _a = GenerationConfig::new("msgs")
@@ -165,7 +165,6 @@
 //!     .with_domain_type(
 //!         ConversionSelector::named_type("Decimal"),
 //!         "rust_decimal::Decimal",
-//!         DomainImpl::Generated,
 //!     );
 //! ```
 //!

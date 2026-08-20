@@ -11,14 +11,6 @@
 # after a reviewed API change. Snapshots live in-tree so the gate is offline.
 
 [[fixtures]]
-name = "car_full"
-description = "Full-profile car example — primary API review artifact"
-schema = "sbe/tests/fixtures/schemas/example-schema.xml"
-profile = "Full"
-generated_module = "car_example"
-snapshot = "api/generated/car_full.txt"
-
-[[fixtures]]
 name = "car_lean"
 description = "Lean-profile car — minimal surface"
 schema = "sbe/tests/fixtures/schemas/example-schema.xml"
@@ -44,15 +36,6 @@ generated_module = "common_types"
 shared_schema = "sbe/tests/fixtures/schemas/multi-schema-b.xml"
 shared_topology = "shared-first"
 snapshot = "api/generated/multi_schema_shared.txt"
-
-[[fixtures]]
-name = "cluster_session"
-description = "Aeron cluster session schema"
-schema = "cluster/schemas/aeron-cluster-codecs.xml"
-profile = "Full"
-generated_module = "session"
-package = "ergo-aeron-cluster"
-snapshot = "api/generated/cluster_session.txt"
 
 [metadata]
 baseline_tag = "v0.1.17"

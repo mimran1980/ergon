@@ -346,3 +346,28 @@ fn conversion_selector_field_path_constructor() {
         "field_path must construct the FieldPath variant"
     );
 }
+
+#[test]
+fn changelog_names_manual_domain_mapping() {
+    let log = include_str!("../../CHANGELOG.md");
+    assert!(
+        log.contains("with_manual_domain_type"),
+        "CHANGELOG must record additive Manual domain mapping"
+    );
+}
+
+#[test]
+fn two_argument_domain_mapping_is_repeatable() -> Result<(), Box<dyn Error>> {
+    use ergo_sbe::ConversionSelector;
+    let src_a = generate_with(&Paths::example_schema(), "dom_a", |c| {
+        c.with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+    })?;
+    let src_b = generate_with(&Paths::example_schema(), "dom_a", |c| {
+        c.with_domain_type(ConversionSelector::named_type("BooleanType"), "bool")
+    })?;
+    assert_eq!(
+        src_a, src_b,
+        "two-argument with_domain_type must be deterministic"
+    );
+    Ok(())
+}

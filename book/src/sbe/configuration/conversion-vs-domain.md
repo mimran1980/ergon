@@ -49,14 +49,13 @@ Both styles on different fields:
 
 ### Option B, manual impl — concrete signatures, your own conversion logic
 
-`with_domain_type` takes a third argument, [`DomainImpl`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.DomainImpl.html)
-(mirrors [`DomainVarData`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.DomainVarData.html)'s style).
-`DomainImpl::Generated` (the common case) also generates the `TryFromSbe`/
-`TryToSbe` impl for `bool` / `rust_decimal::Decimal` / `chrono::DateTime<Utc>`.
-If you need different conversion behaviour for one of those exact three types
-— a custom rounding rule, stricter validation, different null handling — pass
-`DomainImpl::Manual` instead: same generated `try_price(...)?` /
-`try_price()?` signatures, but you write the impl:
+`with_domain_type(selector, path)` is the common case: ergo-sbe also generates
+the `TryFromSbe`/`TryToSbe` impl for `bool` / `rust_decimal::Decimal` /
+`chrono::DateTime<Utc>`. If you need different conversion behaviour for one of
+those exact three types — a custom rounding rule, stricter validation,
+different null handling — call additive [`with_manual_domain_type`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.GenerationConfig.html#method.with_manual_domain_type)
+instead: same generated `try_price(...)?` / `try_price()?` signatures, but you
+write the impl:
 
 ```rust,ignore
 {{#include ../../../../sbe/tests/baseline_test.rs:with_domain_type_manual_impl_config}}

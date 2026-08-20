@@ -41,9 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // B — concrete mapping: one Rust type per wire type (already enables conversion)
     let _cfg = GenerationConfig::new("msgs").with_domain_type(
         ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal",
-        DomainImpl::Generated,
-    );
+        "rust_decimal::Decimal");
     // ANCHOR_END: with_domain_type
 
     // Prove both configs generate successfully.
@@ -53,9 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .generate(&schema)?;
     let _ = Generator::new(GenerationConfig::new("msgs_b").with_domain_type(
         ConversionSelector::named_type("Decimal"),
-        "rust_decimal::Decimal",
-        DomainImpl::Generated,
-    ))
+        "rust_decimal::Decimal"))
     .generate(&schema)?;
     Ok(())
 }

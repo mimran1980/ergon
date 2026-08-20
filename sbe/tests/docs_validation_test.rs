@@ -98,18 +98,15 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",
-                ergo_sbe::DomainImpl::Generated,
             )
             .with_domain_type(
                 ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
                 "chrono::DateTime<chrono::Utc>",
-                ergo_sbe::DomainImpl::Generated,
             )
             .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"))
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("Decimal"),
                 "rust_decimal::Decimal",
-                ergo_sbe::DomainImpl::Generated,
             ),
     )
     .generate(&schema)?

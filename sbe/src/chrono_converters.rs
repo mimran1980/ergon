@@ -9,18 +9,16 @@
 //!
 //! ```rust,no_run
 //! # // This compiles only with --features chrono; no_run lets it pass doc-tests.
-//! use ergo_sbe::{GenerationConfig, ConversionSelector, DomainImpl};
+//! use ergo_sbe::{GenerationConfig, ConversionSelector};
 //!
 //! let config = GenerationConfig::new("msgs")
 //!     .with_domain_type(
 //!         ConversionSelector::semantic_type("UTCTimestamp"),
 //!         "chrono::DateTime<chrono::Utc>",
-//!         DomainImpl::Generated,
 //!     )
 //!     .with_domain_type(
 //!         ConversionSelector::semantic_type("UTCTimestampMicros"),
 //!         "chrono::NaiveDateTime",
-//!         DomainImpl::Generated,
 //!     );
 //! ```
 //!

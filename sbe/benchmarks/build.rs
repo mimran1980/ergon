@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+/// Generate the codecs the Criterion benches compile against.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sbe_root = manifest
@@ -77,7 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("l2book_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Generated,
         ),
     )?;
 
@@ -94,7 +94,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::GenerationConfig::new("converters_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Generated,
         ),
     )?;
 

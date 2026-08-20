@@ -146,7 +146,7 @@ do not stack `with_conversion` on the same selector.
 // A — pluggable
 .with_conversion(ConversionSelector::named_type("Decimal"))
 // B — concrete (implies conversion)
-.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal", DomainImpl::Generated)
+.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
 ```
 
 ## Rules

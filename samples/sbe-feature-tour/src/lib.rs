@@ -16,7 +16,7 @@
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
-//! | [`demo_domain_type_manual_impl`] | **`with_domain_type(.., DomainImpl::Manual)`** — concrete `try_manual_price(...)?`, app-supplied impl |
+//! | [`demo_domain_type_manual_impl`] | **`with_manual_domain_type(..)`** — concrete `try_manual_price(...)?`, app-supplied impl |
 //! | [`demo_bulk_add`] | `bulk_add` on the fixed-stride nested `acceleration` group |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
@@ -594,7 +594,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 }
 // ANCHOR_END: demo_conversion_only
 
-// ─── 9. with_domain_type(.., DomainImpl::Manual): concrete signatures, own impl ──
+// ─── 9. with_manual_domain_type(..): concrete signatures, own impl ──
 
 // App-supplied conversion for `ManualDecimal` (see build.rs). This is a
 // straight copy-paste of the doc comment on `try_manual_price` in the
@@ -636,7 +636,7 @@ impl TryToSbe<ManualDecimal> for Rd {
     }
 }
 
-/// `with_domain_type(ManualDecimal, "rust_decimal::Decimal", DomainImpl::Manual)`
+/// `with_manual_domain_type(ManualDecimal, "rust_decimal::Decimal")`
 /// (see `build.rs`). Same concrete `try_manual_price(...)?` / `try_manual_price()?`
 /// signatures as `DomainImpl::Generated` gives `Decimal64`-style fields
 /// elsewhere — the difference is entirely in who writes the two `impl`
@@ -701,7 +701,7 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
     let _q = demo_conversion_only()?;
     println!("   ok\n");
 
-    println!("9) with_domain_type(.., DomainImpl::Manual): concrete signatures, own impl");
+    println!("9) with_manual_domain_type(..): concrete signatures, own impl");
     let _mq = demo_domain_type_manual_impl()?;
     println!("   ok\n");
 

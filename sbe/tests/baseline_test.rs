@@ -1306,8 +1306,8 @@ fn composite_ref_members_generated() -> Result<(), Box<dyn std::error::Error>> {
     // Engine: capacity(2)+numCylinders(1)+manufacturerCode(3)+efficiency(1)
     // +boosterEnabled(1)+booster(2) = 10 (constants maxRpm/fuel not on wire).
     assert!(
-        src.contains("struct Engine") && src.contains("[u8; 10]"),
-        "Engine should be [u8; 10] with expanded <ref> + nested BoostType, got:\n{}",
+        src.contains("pub struct Engine(pub [u8; 10])"),
+        "Engine should be the exact generated tuple form pub struct Engine(pub [u8; 10]), got:\n{}",
         src.lines()
             .find(|l| l.contains("struct Engine"))
             .unwrap_or("<missing Engine>")
@@ -2852,10 +2852,9 @@ fn domain_type_manual_impl_uses_callers_own_impl() -> Result<(), Box<dyn std::er
     ));
     // ANCHOR: with_domain_type_manual_impl_config
     let (_schema, src) = generate_domain_with(&path, "manual_impl_dt", |c| {
-        c.with_domain_type(
+        c.with_manual_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Manual,
         )
     });
     // ANCHOR_END: with_domain_type_manual_impl_config
@@ -2914,10 +2913,9 @@ fn domain_type_manual_impl_doc_comment_has_generated_snippet()
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
     let (_schema, src) = generate_domain_with(&path, "manual_impl_doc", |c| {
-        c.with_domain_type(
+        c.with_manual_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Manual,
         )
     });
     assert_source_ok(
@@ -2943,11 +2941,7 @@ fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dy
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
     let (_schema, src) = generate_domain_with(&path, "manual_impl_missing", |c| {
-        c.with_domain_type(
-            ergo_sbe::ConversionSelector::named_type("Decimal"),
-            "i64",
-            ergo_sbe::DomainImpl::Manual,
-        )
+        c.with_manual_domain_type(ergo_sbe::ConversionSelector::named_type("Decimal"), "i64")
     });
     // `i64: TryFromSbe<Decimal>` is never implemented, so the generated
     // module itself fails to compile — the test body doesn't need to call
@@ -2975,10 +2969,9 @@ fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dy
 fn domain_type_manual_impl_doc_comment_covers_bool_and_chrono()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate_domain_with(&Paths::example_schema(), "manual_impl_bool", |c| {
-        c.with_domain_type(
+        c.with_manual_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
             "bool",
-            ergo_sbe::DomainImpl::Manual,
         )
     });
     assert_source_ok(
@@ -2995,10 +2988,9 @@ fn domain_type_manual_impl_doc_comment_covers_bool_and_chrono()
         "/tests/fixtures/schemas/optional-domain-types.xml"
     ));
     let (_schema, src) = generate_domain_with(&path, "manual_impl_chrono", |c| {
-        c.with_domain_type(
+        c.with_manual_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
-            ergo_sbe::DomainImpl::Manual,
         )
     });
     assert_source_ok(
@@ -3028,17 +3020,14 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
         c.with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal64"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Generated,
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal128"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Generated,
         )
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
-            ergo_sbe::DomainImpl::Generated,
         )
     });
     compile_and_run_with_deps(
@@ -3094,7 +3083,6 @@ fn optional_composite_member_null_image_roundtrip() -> Result<(), Box<dyn std::e
         c.with_domain_type(
             ergo_sbe::ConversionSelector::named_type("PriceNull9"),
             "rust_decimal::Decimal",
-            ergo_sbe::DomainImpl::Generated,
         )
     });
     compile_and_run_with_deps(

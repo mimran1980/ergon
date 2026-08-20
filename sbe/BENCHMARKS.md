@@ -71,9 +71,11 @@ exists, not at runtime.
 
 Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
 ceiling with zero tolerance**. The gate fails on any ratio above 1.00,
-regardless of magnitude. A `1.01` timing allowance is not literal parity —
-memory-bound ties are also checked by named instruction/branch probes in
-`sbe/benchmarks/src/bin/perf_probe.rs` / `probes.tsv`.
+regardless of magnitude. A `1.01` timing allowance is not literal parity.
+On Linux, `scripts/run-sbe-instruction-probes.sh` compares paired ergon /
+sbe-tool Callgrind Ir/op for every registered two-arm pair. On hosts
+without Valgrind, llvm-objdump, or Linux the lane fail-closes (exit 3)
+and is not a silent pass.
 
 The executable policy is in `scripts/check-bench-gate.sh`:
 - SBE: zero tolerance (`1.00`)

@@ -9,10 +9,16 @@
   generate a shared schema and its consumers in one transaction, using
   supplied module names and watching every resolved include.
 - `EncodeError::InvalidAscii { field }` for ASCII fixed-array `*_str` writes.
-- Generated public-API snapshots under `api/generated/` and
+- Generated public-API snapshots under `api/generated/` (`car_lean`,
+  `car_domain`, `multi_schema_shared`) and
   `scripts/check-generated-public-api.sh`, invoked from `just preflight`.
+- `GenerationConfig::with_manual_domain_type` for additive Manual
+  `TryFromSbe`/`TryToSbe` mappings. `with_domain_type(selector, path)` is
+  the two-argument Generated path.
 
 ### Changed
+- **Breaking:** `GenerationConfig::with_domain_type` takes `(selector, path)`
+  only. Use [`with_manual_domain_type`] for additive Manual impls.
 - **Breaking:** `ParseError` is `#[non_exhaustive]`. Root file reads are
   `Io { path, source }`. Include failures are `Include { href, attempted,
   cause }` with typed `IncludeCause` (`Cycle` / `Io` / `NotFound`).
