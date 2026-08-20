@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.20] — 2026-08-20
+
 ### Added
 - `GeneratedModuleSet::into_parts` consumes the set and returns owned modules
   and warnings without cloning generated source.

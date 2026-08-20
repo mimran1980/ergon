@@ -58,8 +58,8 @@ whether you continue evaluating the crate:
 ## Cumulative token usage (since 2026-06-28)
 
 Per-model high-water mark reconstructed from every `ccusage` snapshot committed
-to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, and 2026-08-19.
-Claude Code and Codex agent usage only.
+to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19, and
+2026-08-20. Claude Code and Codex agent usage only.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -90,6 +90,11 @@ Claude Code and Codex agent usage only.
   available lower bound. Git history is the real ledger here: it preserves
   **4.54B tokens** that `ccusage` could no longer see as of 2026-08-15 — that run
   reported 15.46B (14.31B Claude + 1.15B Codex) against a reconstructed 20.01B.
+- The 2026-08-20 run reported ~15.09B Claude Code tokens and ~1.28B Codex
+  tokens against this reconstructed **20.48B** total — still retention, not a
+  real decrease. No per-model column exceeded the existing high-water mark, so
+  the table is unchanged. `observer` was not installed on this machine, same as
+  2026-08-19.
 - The 2026-08-19 run reinforced the same pattern on a different model:
   `gpt-5.6-luna` fell from a reconstructed 48.7M tokens to 236K in this one
   snapshot — a >99% apparent drop from retention pruning, not reduced usage.
