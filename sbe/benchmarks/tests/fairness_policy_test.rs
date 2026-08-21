@@ -122,6 +122,30 @@ fn composite_decode_streams_equal_fields_from_equal_message_offsets()
 }
 
 #[test]
+fn decode_scalar_clobber_is_symmetric_across_arms() -> Result<(), Box<dyn std::error::Error>> {
+    // decode_scalar opaques the decoder *inside* the micro-batch loop (a
+    // per-iteration memory clobber) rather than once outside it, so the
+    // getter isn't drowned under pointer store/reload traffic. That shape
+    // only stays fair if both arms — and the throwaway `warmup` arm that
+    // absorbs the first-arm position penalty — pay the clobber the same
+    // number of times per iteration.
+    let source = get_source(PERF_PARITY, "bench_decode_scalar")?;
+    let warmup = timed_arm_body(source, "warmup").ok_or("missing warmup arm")?;
+    let ergo = timed_arm_body(source, "ergo-sbe").ok_or("missing Ergo scalar arm")?;
+    let tool = timed_arm_body(source, "sbe-tool").ok_or("missing sbe-tool scalar arm")?;
+
+    for (label, arm) in [("warmup", warmup), ("Ergo", ergo), ("sbe-tool", tool)] {
+        assert_eq!(
+            arm.matches("clobber_memory();").count(),
+            1,
+            "{label} decode_scalar arm must call clobber_memory() exactly once per loop body"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn full_message_wire_parity_is_checked_before_criterion_runs()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = get_source(PERF_PARITY, "bench_wire_parity_encode_full_message")?;

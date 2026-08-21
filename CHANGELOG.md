@@ -19,8 +19,9 @@
   the two-argument Generated path.
 
 ### Changed
-- **Breaking:** `GenerationConfig::with_domain_type` takes `(selector, path)`
-  only. Use [`with_manual_domain_type`] for additive Manual impls.
+- `GenerationConfig::with_domain_type` stays the two-argument
+  `(selector, path)` Generated path it has always been. Use
+  [`with_manual_domain_type`] for additive Manual impls.
 - **Breaking:** `ParseError` is `#[non_exhaustive]`. Root file reads are
   `Io { path, source }`. Include failures are `Include { href, attempted,
   cause }` with typed `IncludeCause` (`Cycle` / `Io` / `NotFound`).
@@ -28,9 +29,17 @@
   `message_timeout`, and `new_leader_timeout` return `Result` and store only
   validated values. `is_ingress_exclusive` and `owns_aeron` setters are
   removed.
-- Generated `*_str` exists only for default-ASCII `char` and encodings
-  `ASCII` / `US-ASCII` / `UTF-8` / `UTF8`. Unencoded numeric arrays and
-  encodings such as GB18030 keep the raw array setter only.
+- **Breaking:** generated `*_str` exists only for default-ASCII `char` and
+  encodings `ASCII` / `US-ASCII` / `UTF-8` / `UTF8`. Unencoded numeric arrays
+  and encodings such as GB18030 keep the raw array setter only — schemas
+  relying on the old setter for those types need the raw accessor instead.
+- Optional var-data accessors (`into_*_as_compact_str`, `into_*_as_smol_str`,
+  `into_*_as_bytes`) are always emitted and gated on the *consumer's*
+  `compact_str` / `smol_str` / `bytes` feature, not the generator's. Fixes a
+  feature leak where the generator's own feature flags decided what a
+  consumer crate could see, independent of that crate's own Cargo features.
+- Generated rustdoc snippets referencing a `DomainImpl::Manual` field render
+  as plain text instead of an ignored `rust,ignore` fence.
 - Side-effect-free generated observers (`as_option` / `as_bool`, completed
   tail views/lengths, encoder metadata, group `written`, exact-length
   terminals) carry message-bearing `#[must_use]`.

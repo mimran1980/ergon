@@ -53,7 +53,6 @@ book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
-
 book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:10 — deliberate; see page context

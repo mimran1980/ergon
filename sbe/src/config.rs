@@ -728,7 +728,7 @@ impl GenerationConfig {
     /// fields survive. Removal is scheduled for 1.0.
     #[must_use]
     #[deprecated(
-        since = "0.1.19",
+        since = "0.1.20",
         note = "implement From<generated::sbe_rt::EncodeError> and From<generated::sbe_rt::DecodeError> on your error type so wire fields (needed/available) are preserved; this helper formats through String and will be removed in 1.0"
     )]
     pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {

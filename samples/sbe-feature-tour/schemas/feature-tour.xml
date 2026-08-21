@@ -132,7 +132,7 @@
     <sbe:message name="Quote" id="4" description="Price/size with conversion-only Decimal accessors.">
         <field name="price" id="1" type="Decimal" semanticType="Price"/>
         <field name="size" id="2" type="Decimal" semanticType="Qty"/>
-        <!-- with_domain_type(ManualDecimal, "rust_decimal::Decimal", DomainImpl::Manual):
+        <!-- with_manual_domain_type(ManualDecimal, "rust_decimal::Decimal"):
              concrete try_manualPrice(...)? signatures, app-supplied impl. -->
         <field name="manualPrice" id="3" type="ManualDecimal"/>
     </sbe:message>
