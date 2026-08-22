@@ -315,8 +315,9 @@ measured, and records commit, rustc, target, Valgrind version, profile, run id,
 symbol, operation count, and checksum.
 
 The lane needs Linux plus Valgrind and `llvm-objdump`, and fails closed
-elsewhere rather than substituting a timing harness. There is no
-`iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
+elsewhere rather than substituting a timing harness. After measurement it
+fails if any registered two-arm pair has ergon Ir/op above sbe-tool. There is
+no `iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
 
 ### Warmed latency distributions
 

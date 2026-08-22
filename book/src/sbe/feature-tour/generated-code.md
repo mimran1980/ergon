@@ -183,7 +183,12 @@ GenerationConfig::new("msgs")
 ```
 
 A default single-message schema with these knobs off produces minimal output.
-All knobs default to `true` — lean output is opt-in with `with_*(false)`.
+
+`GenerationConfig::new` enables display/debug, metadata, and dispatch, and
+disables domain objects, deprecated attributes, blanket enum options, and
+automatic bool mapping. `GenerationProfile::Lean` turns off the three
+output-heavy conveniences (display/debug, metadata, dispatch). See the
+[canonical option table](../configuration/generation-config.md).
 
 ## Real example
 

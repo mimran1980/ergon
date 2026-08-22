@@ -228,13 +228,38 @@ fn bench_decode_scalar(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity/decode/scalar");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
-    group.bench_function("ergo-sbe", |b| {
+    // Keep the 1024 field loads in the loop. A single `black_box` outside lets
+    // LLVM rewrite the batch as `(serial_number + model_year) << 10`. Opaque
+    // the decoder *inside* the batch (decode_array's shape) instead drowns
+    // the getter under 1024 pointer store/reloads — LTO then ties (~1.004)
+    // because sbe-tool's never-taken bounds checks hide in that traffic.
+    // Empty asm is a memory clobber without that extra stack round-trip.
+    #[inline(always)]
+    fn clobber_memory() {
+        unsafe { core::arch::asm!("", options(nostack, preserves_flags)) };
+    }
+
+    // First arm in a group pays a position penalty (same class as encode/scalar
+    // `warmup_body_only`). Throwaway; the gate matches `ergo-sbe` / `sbe-tool`.
+    group.bench_function("warmup", |b| {
         b.iter(|| {
-            // Opaque once per Criterion iteration so the micro-batch measures
-            // field loads, not black_box overhead on a large decoder ref.
             let car = black_box(&car);
             let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
+                clobber_memory();
+                acc = acc.wrapping_add(car.serial_number());
+                acc = acc.wrapping_add(u64::from(car.model_year()));
+            }
+            black_box(acc);
+        });
+    });
+
+    group.bench_function("ergo-sbe", |b| {
+        b.iter(|| {
+            let car = black_box(&car);
+            let mut acc = 0u64;
+            for _ in 0..MICRO_BATCH_SIZE {
+                clobber_memory();
                 acc = acc.wrapping_add(car.serial_number());
                 acc = acc.wrapping_add(u64::from(car.model_year()));
             }
@@ -247,6 +272,7 @@ fn bench_decode_scalar(c: &mut Criterion) {
             let sbe_tool_car = black_box(&sbe_tool_car);
             let mut acc = 0u64;
             for _ in 0..MICRO_BATCH_SIZE {
+                clobber_memory();
                 acc = acc.wrapping_add(sbe_tool_car.serial_number());
                 acc = acc.wrapping_add(u64::from(sbe_tool_car.model_year()));
             }

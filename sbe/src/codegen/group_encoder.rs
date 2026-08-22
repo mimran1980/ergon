@@ -300,6 +300,7 @@ pub(crate) fn generate_group_encoder(
             #add_fn
             #fixed_stride_methods
             /// Number of entries written so far (for `_unknown_size` back-patch).
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn written(&self) -> #count_ty {
                 self.written

@@ -282,7 +282,11 @@ pub(crate) fn parse_message_child(
                 }
                 tokens.extend(inlined);
             } else {
-                return Err(Fault::invalid(node, "primitive type", &type_name));
+                return Err(Fault::invalid(
+                    node,
+                    format!("type for field '{field_name}'"),
+                    &type_name,
+                ));
             }
         }
         "group" => {

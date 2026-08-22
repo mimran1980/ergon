@@ -162,6 +162,11 @@ enc.try_created_at(chrono::Utc::now())?;
 enc.try_updated_at(chrono::DateTime::from_timestamp(1_720_000_000, 0).unwrap().naive_utc())?;
 ```
 
+Registering `semantic_type("UTCTimestamp")` **once** covers every field in
+the schema carrying that `semanticType`, not just `created_at` — see
+[One selector, many fields](../recipes/timestamps.md#one-selector-many-fields)
+for a worked multi-field example.
+
 ### Direct converters
 
 ```rust,ignore

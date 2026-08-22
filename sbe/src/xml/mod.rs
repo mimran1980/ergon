@@ -40,10 +40,11 @@ mod warn;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use entry::{ParsedFile, parse_file_with_deps, parse_file_with_shared_deps};
 pub use entry::{
     parse, parse_file, parse_file_with_shared, parse_with_shared, parse_with_xsd_validation,
 };
-pub use error::ParseError;
+pub use error::{IncludeCause, ParseError};
 
 // Test-visible re-exports of parse internals (xml is already #[doc(hidden)]).
 #[cfg(test)]

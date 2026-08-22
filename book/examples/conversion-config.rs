@@ -4,7 +4,7 @@
 //! this full file is what the book-fence test compiles to keep the examples
 //! in sync with the real API.
 
-use ergo_sbe::{parse, Schema, Generator, GenerationConfig, ConversionSelector};
+use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, parse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -- setup: parse a minimal schema that has a Decimal composite ---------
@@ -30,31 +30,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema = Schema::from_ir(ir);
 
     // ANCHOR: with_conversion
-    use ergo_sbe::{GenerationConfig, ConversionSelector};
+    use ergo_sbe::{ConversionSelector, GenerationConfig};
     // A — generic converter: one wire type, many app types
-    let _cfg = GenerationConfig::new("msgs")
-        .with_conversion(ConversionSelector::named_type("Decimal"));
+    let _cfg =
+        GenerationConfig::new("msgs").with_conversion(ConversionSelector::named_type("Decimal"));
     // ANCHOR_END: with_conversion
 
     // ANCHOR: with_domain_type
-    use ergo_sbe::{GenerationConfig, ConversionSelector};
+    use ergo_sbe::{ConversionSelector, GenerationConfig};
     // B — concrete mapping: one Rust type per wire type (already enables conversion)
-    let _cfg = GenerationConfig::new("msgs")
-        .with_domain_type(
-            ConversionSelector::named_type("Decimal"),
-            "rust_decimal::Decimal",
-        );
+    let _cfg = GenerationConfig::new("msgs").with_domain_type(
+        ConversionSelector::named_type("Decimal"),
+        "rust_decimal::Decimal",
+    );
     // ANCHOR_END: with_domain_type
 
     // Prove both configs generate successfully.
     let _ = Generator::new(
-        GenerationConfig::new("msgs_a").with_conversion(ConversionSelector::named_type("Decimal"))
-    ).generate(&schema)?;
-    let _ = Generator::new(
-        GenerationConfig::new("msgs_b").with_domain_type(
-            ConversionSelector::named_type("Decimal"),
-            "rust_decimal::Decimal",
-        )
-    ).generate(&schema)?;
+        GenerationConfig::new("msgs_a").with_conversion(ConversionSelector::named_type("Decimal")),
+    )
+    .generate(&schema)?;
+    let _ = Generator::new(GenerationConfig::new("msgs_b").with_domain_type(
+        ConversionSelector::named_type("Decimal"),
+        "rust_decimal::Decimal",
+    ))
+    .generate(&schema)?;
     Ok(())
 }

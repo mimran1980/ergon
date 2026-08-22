@@ -121,8 +121,8 @@ mod harness {
         let dir = cformat!("{}", cluster.aeron_dir().display());
 
         let builder = SessionBuilder::default()
-            .ingress_channel(&cluster.ingress_channel)
-            .egress_channel(&cluster.egress_channel);
+            .ingress_channel(&cluster.ingress_channel)?
+            .egress_channel(&cluster.egress_channel)?;
 
         let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
         assert!(client.cluster_session_id() >= 0, "session not established");
@@ -160,8 +160,8 @@ mod harness {
         let dir = cformat!("{}", cluster.aeron_dir().display());
 
         let builder = SessionBuilder::default()
-            .ingress_channel(&cluster.ingress_channel)
-            .egress_channel(&cluster.egress_channel);
+            .ingress_channel(&cluster.ingress_channel)?
+            .egress_channel(&cluster.egress_channel)?;
 
         let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
         assert!(client.cluster_session_id() >= 0);

@@ -142,7 +142,7 @@ fn composite_elements_types_exist() -> Result<(), Box<dyn std::error::Error>> {
     assert_tool_schema(
         "comp_el",
         "composite-elements-schema.xml",
-        &["Outer(pub", "MsgDecoder", "MsgEncoder"],
+        &["struct Outer", "MsgDecoder", "MsgEncoder"],
     );
 
     Ok(())

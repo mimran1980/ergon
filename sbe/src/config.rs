@@ -17,7 +17,7 @@
 //! let _a = GenerationConfig::new("msgs")
 //!     .with_conversion(ConversionSelector::named_type("Decimal"));
 //!
-//! // B — concrete Rust type
+//! // B — concrete Rust type (Generated impl is the default)
 //! let _b = GenerationConfig::new("msgs")
 //!     .with_domain_type(
 //!         ConversionSelector::named_type("Decimal"),
@@ -112,6 +112,25 @@ pub enum DomainVarData {
     /// Zero-copy shared buffer (`bytes::Bytes`). Requires feature `bytes`.
     #[cfg(feature = "bytes")]
     BytesCrate,
+}
+
+/// Who writes the `TryFromSbe`/`TryToSbe` impl for a built-in
+/// [`GenerationConfig::with_domain_type`] mapping (`bool` /
+/// `rust_decimal::Decimal` / `chrono::DateTime<Utc>`).
+///
+/// Only matters for those three well-known type paths — any other
+/// `rust_type` never gets an auto-generated impl regardless of this setting,
+/// since ergo-sbe has no built-in conversion logic to offer for it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum DomainImpl {
+    /// ergo-sbe writes the impl for you (default).
+    #[default]
+    Generated,
+    /// You write `impl TryFromSbe<Wire>` / `impl TryToSbe<Wire>` yourself —
+    /// e.g. a custom rounding rule, or null/validation behaviour the
+    /// built-in impl doesn't match. ergo-sbe still generates the concrete
+    /// `try_price(...)?` / `try_price()?` signatures that call it.
+    Manual,
 }
 
 /// Generated-code surface presets.
@@ -358,6 +377,12 @@ pub struct GenerationConfig {
     /// Domain-type mappings: `(selector, rust_type_path)`.
     /// Implicitly enables conversion for the same selector.
     pub(crate) domain_types: Vec<(ConversionSelector, String)>,
+    /// Selectors passed to [`Self::with_manual_domain_type`]:
+    /// get the same concrete `try_*` signatures as any other `domain_types`
+    /// entry, but the built-in `TryFromSbe`/`TryToSbe` impl (for `bool` /
+    /// `rust_decimal::Decimal` / `chrono::DateTime<Utc>`) is not generated —
+    /// the caller supplies it.
+    pub(crate) manual_impl_selectors: Vec<ConversionSelector>,
     /// When set, emit `pub use <path> as sbe_rt;` instead of inlining runtime.
     pub(crate) external_sbe_rt_path: Option<String>,
     /// Emit `From<EncodeError/DecodeError>` for this error type path.
@@ -399,6 +424,7 @@ impl std::fmt::Debug for GenerationConfig {
             .field("domain_var_data", &self.domain_var_data)
             .field("conversions", &self.conversions)
             .field("domain_types", &self.domain_types)
+            .field("manual_impl_selectors", &self.manual_impl_selectors)
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
             .field("error_from_path", &self.error_from_path)
             .field("null_as_option", &self.null_as_option)
@@ -431,6 +457,7 @@ impl GenerationConfig {
             domain_var_data: DomainVarData::Bytes,
             conversions: Vec::new(),
             domain_types: Vec::new(),
+            manual_impl_selectors: Vec::new(),
             external_sbe_rt_path: None,
             error_from_path: None,
             keyword_append_token: "_".into(),
@@ -591,9 +618,13 @@ impl GenerationConfig {
 
     /// Map matching fields to a **concrete** Rust type path.
     ///
-    /// Implies [`Self::with_conversion`] for the same selector. Also emits
-    /// well-known `TryFromSbe` impls for `bool`, `rust_decimal::Decimal`, and
-    /// `chrono::DateTime<Utc>` when those paths are used.
+    /// Implies [`Self::with_conversion`] for the same selector and emits
+    /// well-known `TryFromSbe`/`TryToSbe` impls for `bool`,
+    /// `rust_decimal::Decimal`, and `chrono::DateTime<Utc>` when those paths
+    /// are used. For any other `rust_type`, no impl is auto-generated.
+    ///
+    /// To skip the built-in impl and supply your own, use
+    /// [`Self::with_manual_domain_type`].
     ///
     /// # Generated API
     ///
@@ -615,14 +646,62 @@ impl GenerationConfig {
     /// Do **not** also call [`Self::with_conversion`] for the same selector.
     #[must_use]
     pub fn with_domain_type(
+        self,
+        selector: ConversionSelector,
+        rust_type: impl Into<String>,
+    ) -> Self {
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+    }
+
+    /// Like [`Self::with_domain_type`], but you write `impl TryFromSbe<Wire>`
+    /// / `impl TryToSbe<Wire>` yourself — e.g. a custom rounding rule, or
+    /// null/validation behaviour the built-in impl does not match.
+    ///
+    /// ergo-sbe still generates the concrete `try_price(...)?` / `try_price()?`
+    /// signatures that call those impls. A missing impl fails closed with a
+    /// named compile error, and for the three built-ins the generated
+    /// accessor's rustdoc carries the exact impl `Generated` would have
+    /// written, ready to copy and adjust.
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ConversionSelector};
+    ///
+    /// let config = GenerationConfig::new("msgs")
+    ///     .with_manual_domain_type(
+    ///         ConversionSelector::named_type("Decimal"),
+    ///         "rust_decimal::Decimal",
+    ///     );
+    /// // Application code must provide:
+    /// //   impl TryFromSbe<Decimal> for rust_decimal::Decimal { ... }
+    /// //   impl TryToSbe<Decimal> for rust_decimal::Decimal { ... }
+    /// ```
+    #[must_use]
+    pub fn with_manual_domain_type(
+        self,
+        selector: ConversionSelector,
+        rust_type: impl Into<String>,
+    ) -> Self {
+        self.apply_domain_type(selector, rust_type, DomainImpl::Manual)
+    }
+
+    fn apply_domain_type(
         mut self,
         selector: ConversionSelector,
         rust_type: impl Into<String>,
+        impl_kind: DomainImpl,
     ) -> Self {
         let sel = selector;
         let ty = rust_type.into();
         if !self.conversions.contains(&sel) {
             self.conversions.push(sel.clone());
+        }
+        match impl_kind {
+            DomainImpl::Generated => self.manual_impl_selectors.retain(|s| s != &sel),
+            DomainImpl::Manual => {
+                if !self.manual_impl_selectors.contains(&sel) {
+                    self.manual_impl_selectors.push(sel.clone());
+                }
+            }
         }
         // Last-write-wins: calling with_domain_type(sel, "B") after
         // with_domain_type(sel, "A") replaces the mapping.
@@ -644,10 +723,14 @@ impl GenerationConfig {
     /// `YourType::from(String)`. This means (1) your error type must implement
     /// `From<String>`, and (2) field-level error details (e.g.
     /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
-    /// the conversion. If you need typed error matching, implement
-    /// `From<EncodeError>` / `From<DecodeError>` on your error type directly
-    /// instead.
+    /// the conversion. Implement `From<generated::sbe_rt::EncodeError>` and
+    /// `From<generated::sbe_rt::DecodeError>` on your error type so those
+    /// fields survive. Removal is scheduled for 1.0.
     #[must_use]
+    #[deprecated(
+        since = "0.1.20",
+        note = "implement From<generated::sbe_rt::EncodeError> and From<generated::sbe_rt::DecodeError> on your error type so wire fields (needed/available) are preserved; this helper formats through String and will be removed in 1.0"
+    )]
     pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
         self.error_from_path = Some(path.into());
         self
@@ -982,6 +1065,28 @@ mod tests {
         assert!(config.has_conversions());
         assert_eq!(config.conversions.len(), 1);
         assert_eq!(config.domain_types.len(), 1);
+        assert!(config.manual_impl_selectors.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn with_domain_type_two_argument_calls_agree() -> Result<(), Box<dyn std::error::Error>> {
+        let sel = ConversionSelector::named_type("Decimal");
+        let a =
+            GenerationConfig::new("msgs").with_domain_type(sel.clone(), "rust_decimal::Decimal");
+        let b = GenerationConfig::new("msgs").with_domain_type(sel, "rust_decimal::Decimal");
+        assert_eq!(a.domain_types, b.domain_types);
+        assert_eq!(a.manual_impl_selectors, b.manual_impl_selectors);
+        Ok(())
+    }
+
+    #[test]
+    fn with_manual_domain_type_is_additive() -> Result<(), Box<dyn std::error::Error>> {
+        let sel = ConversionSelector::named_type("Decimal");
+        let config = GenerationConfig::new("msgs")
+            .with_manual_domain_type(sel.clone(), "rust_decimal::Decimal");
+        assert_eq!(config.domain_types.len(), 1);
+        assert_eq!(config.manual_impl_selectors, vec![sel]);
         Ok(())
     }
 
@@ -1055,6 +1160,7 @@ mod tests {
             ConversionSelector::FieldPath("Order.price".to_string())
         );
 
+        #[allow(deprecated)]
         let config = GenerationConfig::new("m")
             .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")

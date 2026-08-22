@@ -1,12 +1,46 @@
 //! Parse errors and internal fault staging.
 
 use std::ops::Range;
+use std::path::PathBuf;
 
 use roxmltree::Node;
+
+/// Why an `xi:include` failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum IncludeCause {
+    /// The include graph contains a cycle.
+    #[error("cyclic include: {}", cycle_display(chain))]
+    Cycle {
+        /// Canonical paths in visit order, ending at the repeated file.
+        chain: Vec<PathBuf>,
+    },
+    /// A candidate path existed but could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    Io {
+        /// Path that failed to read.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// No candidate path existed.
+    #[error("include file not found")]
+    NotFound,
+}
+
+fn cycle_display(chain: &[PathBuf]) -> String {
+    chain
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
 
 /// Errors raised while parsing an SBE schema. Carries a [`miette`] source span
 /// so the offending XML element is highlighted in the rendered diagnostic.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
 pub enum ParseError {
     /// The XML document itself was malformed.
     #[error("malformed XML: {message}")]
@@ -66,16 +100,31 @@ pub enum ParseError {
         #[source]
         error: Box<crate::resolve::ResolveError>,
     },
-    /// An include (xi:include) resolution error occurred.
-    #[error("include error: {message}")]
+    /// Root schema file could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    #[diagnostic(code(ergo_sbe::schema_parse::io))]
+    Io {
+        /// Path that failed to read.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// An include (`xi:include`) resolution error occurred.
+    #[error("include error for '{href}': {cause}")]
     #[diagnostic(code(ergo_sbe::schema_parse::include))]
-    IncludeError {
-        /// What went wrong.
-        message: String,
+    Include {
+        /// The `href` attribute from the include element.
+        href: String,
+        /// Candidate paths that were tried, in order.
+        attempted: Vec<PathBuf>,
+        /// Machine-readable failure kind.
+        #[source]
+        cause: IncludeCause,
         /// The source document, for span rendering.
         #[source_code]
         source_code: miette::NamedSource<String>,
-        /// The offending location.
+        /// The offending include element, when available.
         #[label("include error here")]
         span: Option<miette::SourceSpan>,
     },
@@ -87,6 +136,13 @@ impl ParseError {
             message: message.into(),
             source_code: named_source(name, xml),
             span: None,
+        }
+    }
+
+    pub(crate) fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Io {
+            path: path.into(),
+            source,
         }
     }
 
@@ -107,8 +163,14 @@ impl ParseError {
                 source_code,
                 span,
             },
-            FaultKind::IncludeError { message } => Self::IncludeError {
-                message,
+            FaultKind::Include {
+                href,
+                attempted,
+                cause,
+            } => Self::Include {
+                href,
+                attempted,
+                cause,
                 source_code,
                 span,
             },
@@ -149,9 +211,18 @@ pub(crate) struct Fault {
 
 #[derive(Debug)]
 pub(crate) enum FaultKind {
-    Missing { what: String },
-    Invalid { what: String, value: String },
-    IncludeError { message: String },
+    Missing {
+        what: String,
+    },
+    Invalid {
+        what: String,
+        value: String,
+    },
+    Include {
+        href: String,
+        attempted: Vec<PathBuf>,
+        cause: IncludeCause,
+    },
 }
 
 impl Fault {
@@ -182,10 +253,16 @@ impl Fault {
         }
     }
 
-    pub(crate) fn include_error(message: impl Into<String>) -> Self {
+    pub(crate) fn include(
+        href: impl Into<String>,
+        attempted: Vec<PathBuf>,
+        cause: IncludeCause,
+    ) -> Self {
         Self {
-            kind: FaultKind::IncludeError {
-                message: message.into(),
+            kind: FaultKind::Include {
+                href: href.into(),
+                attempted,
+                cause,
             },
             span: None,
         }

@@ -114,6 +114,34 @@ const PROBES: &[Probe] = &[
         run: run_tool_decode_full_message,
     },
     Probe {
+        symbol: "ergo_probe_optional_enum_nullify",
+        arm: Arm::Ergon,
+        pair: "extended_optional_enum_nullify",
+        topic: "extended",
+        run: run_ergo_optional_enum_nullify,
+    },
+    Probe {
+        symbol: "tool_probe_optional_enum_nullify",
+        arm: Arm::SbeTool,
+        pair: "extended_optional_enum_nullify",
+        topic: "extended",
+        run: run_tool_optional_enum_nullify,
+    },
+    Probe {
+        symbol: "ergo_probe_group_with_data",
+        arm: Arm::Ergon,
+        pair: "extended_group_with_data",
+        topic: "extended",
+        run: run_ergo_group_with_data,
+    },
+    Probe {
+        symbol: "tool_probe_group_with_data",
+        arm: Arm::SbeTool,
+        pair: "extended_group_with_data",
+        topic: "extended",
+        run: run_tool_group_with_data,
+    },
+    Probe {
         symbol: "ergo_probe_encode_scalar_header_and_body",
         arm: Arm::Ergon,
         pair: "encode_scalar_header_and_body",
@@ -695,6 +723,153 @@ fn print_manifest() {
             probe.topic
         );
     }
+}
+
+fn encode_optional_enum_fixture() -> ([u8; ergo_sbe_benchmarks::parity_optional_enum_nullify::OptionalEnumNullifyEncoder::ENCODED_LENGTH], usize)
+{
+    use ergo_sbe_benchmarks::parity_optional_enum_nullify::{
+        EnumType, OptionalComposite, OptionalEncodingEnumType, OptionalEnumNullifyEncoder,
+        OptionalEnumNullifyFixedFields,
+    };
+    let mut buf = [0u8; OptionalEnumNullifyEncoder::ENCODED_LENGTH];
+    let len = OptionalEnumNullifyEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&OptionalEnumNullifyFixedFields {
+            optional_enum: Some(EnumType::One),
+            required_enum_from_optional_type: OptionalEncodingEnumType::Alpha,
+            optional_composite: OptionalComposite::new(42u16),
+        })
+        .encoded_length_with_header();
+    (buf, len)
+}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_optional_enum_nullify(buf: &[u8], block_length: usize, version: u16) -> u64 {
+    use ergo_sbe_benchmarks::parity_optional_enum_nullify::OptionalEnumNullifyDecoder;
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        let dec = unsafe {
+            OptionalEnumNullifyDecoder::wrap_unchecked(black_box(buf), 0, block_length, version)
+        };
+        checksum = checksum.wrapping_add(dec.optional_enum() as u64);
+        checksum = checksum.wrapping_add(dec.required_enum_from_optional_type() as u64);
+    }
+    black_box(checksum)
+}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn tool_probe_optional_enum_nullify(buf: &[u8], block_length: u16, version: u16) -> u64 {
+    use sbe_tool_optional_enum_nullify::{
+        ReadBuf, optional_enum_nullify_codec::decoder::OptionalEnumNullifyDecoder as StDecoder,
+    };
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        let dec = StDecoder::default().wrap(ReadBuf::new(black_box(buf)), 8, block_length, version);
+        checksum = checksum.wrapping_add(dec.optional_enum() as u64);
+        checksum = checksum.wrapping_add(dec.required_enum_from_optional_type() as u64);
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_optional_enum_nullify() -> u64 {
+    use ergo_sbe_benchmarks::parity_optional_enum_nullify::MessageHeader;
+    let (buf, len) = encode_optional_enum_fixture();
+    let encoded = &buf[..len];
+    let header = MessageHeader(read_bytes::<8>(encoded, 0));
+    ergo_probe_optional_enum_nullify(encoded, header.block_length() as usize, header.version())
+}
+
+fn run_tool_optional_enum_nullify() -> u64 {
+    use ergo_sbe_benchmarks::parity_optional_enum_nullify::{
+        MessageHeader, OptionalEnumNullifyDecoder,
+    };
+    let (buf, len) = encode_optional_enum_fixture();
+    let encoded = &buf[..len];
+    let header = MessageHeader(read_bytes::<8>(encoded, 0));
+    tool_probe_optional_enum_nullify(
+        encoded,
+        OptionalEnumNullifyDecoder::BLOCK_LENGTH as u16,
+        header.version(),
+    )
+}
+
+fn encode_group_with_data_fixture() -> (Vec<u8>, usize) {
+    use ergo_sbe_benchmarks::parity_group_with_data::{
+        TestMessage1Encoder, TestMessage1FixedFields,
+    };
+    let var = b"test";
+    let len = TestMessage1Encoder::compute_length()
+        .entries(1)
+        .var_data_field(var.len())
+        .unwrap()
+        .encoded_length_with_header();
+    let mut buf = vec![0u8; len];
+    let actual = TestMessage1Encoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&TestMessage1FixedFields { tag1: 42u32 })
+        .entries(1, |g| {
+            g.add(|mut e| {
+                e.tag_group1(*b"ABCDEFGHI").tag_group2(7);
+                e.var_data_field(var)
+            })?;
+            Ok(())
+        })
+        .unwrap()
+        .encoded_length_with_header();
+    (buf, actual)
+}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_group_with_data(buf: &[u8], block_length: usize, version: u16) -> u64 {
+    use ergo_sbe_benchmarks::parity_group_with_data::TestMessage1Decoder;
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        let dec = unsafe {
+            TestMessage1Decoder::wrap_unchecked(black_box(buf), 0, block_length, version)
+        };
+        checksum = checksum.wrapping_add(u64::from(dec.tag1()));
+        let mut entries = dec.into_entries().expect("entries");
+        let entry = entries.next().expect("one entry").expect("entry");
+        checksum = checksum.wrapping_add(entry.tag_group2() as u64);
+        checksum = checksum.wrapping_add(entry.var_data_field().expect("var").len() as u64);
+    }
+    black_box(checksum)
+}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn tool_probe_group_with_data(buf: &[u8], block_length: u16, version: u16) -> u64 {
+    use sbe_tool_group_with_data::{
+        ReadBuf, test_message_1_codec::decoder::TestMessage1Decoder as StDecoder,
+    };
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        let dec = StDecoder::default().wrap(ReadBuf::new(black_box(buf)), 8, block_length, version);
+        checksum = checksum.wrapping_add(u64::from(dec.tag_1()));
+        let mut entries = dec.entries_decoder();
+        assert!(entries.advance().expect("advance").is_some());
+        checksum = checksum.wrapping_add(entries.tag_group_2() as u64);
+        let coords = entries.var_data_field_decoder();
+        checksum = checksum.wrapping_add(entries.var_data_field_slice(coords).len() as u64);
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_group_with_data() -> u64 {
+    use ergo_sbe_benchmarks::parity_group_with_data::MessageHeader;
+    let (buf, len) = encode_group_with_data_fixture();
+    let encoded = &buf[..len];
+    let header = MessageHeader(read_bytes::<8>(encoded, 0));
+    ergo_probe_group_with_data(encoded, header.block_length() as usize, header.version())
+}
+
+fn run_tool_group_with_data() -> u64 {
+    use ergo_sbe_benchmarks::parity_group_with_data::MessageHeader;
+    let (buf, len) = encode_group_with_data_fixture();
+    let encoded = &buf[..len];
+    let header = MessageHeader(read_bytes::<8>(encoded, 0));
+    tool_probe_group_with_data(encoded, header.block_length(), header.version())
 }
 
 fn usage() -> ! {

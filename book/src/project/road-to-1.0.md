@@ -54,8 +54,9 @@ Cluster may remain `0.x` after sbe 1.0.
 - External pilot: [External Schema Pilot](external-pilot.md).
 - Cluster compatibility: [Cluster Compatibility](../cluster/compatibility.md).
 - API baseline manifest: `api/public-api-baseline.toml`. `scripts/check-public-api.sh`
-  runs cargo-semver-checks on the two publishable crates. Generated-fixture
-  API extraction is **not** implemented yet (see the manifest header).
+  runs cargo-semver-checks on the two publishable crates.
+  `scripts/check-generated-public-api.sh` diffs generated codec surfaces
+  against `api/generated/*.txt`.
 - Benchmark evidence: `just bench` + `just bench-cluster` write
   provenance-stamped Criterion trees; `scripts/package-bench-artifacts.sh`
   attaches them to a GitHub release. A number without a matching run-id /
@@ -65,7 +66,7 @@ Cluster may remain `0.x` after sbe 1.0.
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | Manifest exists; crate-level cargo-semver-checks runs in CI. Generated-API fixture diffs are **not** enforced. |
+| 1. API-freeze audit | Manifest exists; crate-level cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
 | 2. Parity gate at ≤1.00 | Gate is a literal `1.00` for SBE **and** cluster, with `--run-id` provenance. Three consecutive released minors with downloadable assets are **not** sealed. |
 | 3. Wire compatibility | Dual-encode parity tests and FIX SBE conformance are green. |
 | 4. Trust boundary | Fuzz + Miri fixtures exist; treat any open P0 as blocking. |

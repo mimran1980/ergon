@@ -95,6 +95,14 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
     assert!(out.contains("fn vehicle_code_str"), "{out}");
     assert!(out.contains("FixedArrayTooLong"), "{out}");
     assert!(out.contains("fn copy_vehicle_code"), "{out}");
+    assert!(
+        !out.contains("u8::from_le_bytes([all["),
+        "1-byte array getter must return the bulk copy, not per-element endian conversion:\n{out}"
+    );
+    assert!(
+        out.contains("u32::from_le_bytes([all["),
+        "wider array getters still convert endianness"
+    );
     // ── Runtime: verify _str pads and copy_* round-trips ──────────────────
     compile_and_run(
         "arr_str",
@@ -129,6 +137,55 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
         dec2.copy_vehicle_code(&mut code2);
         assert_eq!(&code2, b"XYZ\0\0\0", "short string should be zero-padded");
     "#,
+    );
+    Ok(())
+}
+
+#[test]
+fn group_entry_char_array_getter_is_bulk_copy() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="gwd" id="1" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint8"/>
+            </composite>
+            <type name="Symbol" primitiveType="char" length="9"/>
+          </types>
+          <message name="TestMessage1" id="1" blockLength="4">
+            <field name="tag1" id="1" type="uint32"/>
+            <group name="Entries" id="2" dimensionType="groupSizeEncoding">
+              <field name="tagGroup1" id="3" type="Symbol"/>
+              <field name="tagGroup2" id="4" type="int64"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let ir = parse(xml)?;
+    let schema = Schema::from_ir(ir);
+    let out = Generator::new(GenerationConfig::new("gwd"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    assert!(
+        out.contains("fn tag_group1"),
+        "group entry must emit tag_group1"
+    );
+    assert!(
+        !out.contains("u8::from_le_bytes([all["),
+        "group entry 1-byte array getter must return the bulk copy:\n{out}"
+    );
+    assert!(
+        !out.contains("acting_version < 0"),
+        "sinceVersion 0 must not emit a tautological acting_version < 0 guard"
     );
     Ok(())
 }

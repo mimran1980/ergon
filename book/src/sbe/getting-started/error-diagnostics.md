@@ -15,7 +15,7 @@ Referencing a type that doesn't exist:
 ```
 ergo_sbe::schema_parse::invalid
 
-  × invalid primitive type: NonExistentType
+  × invalid type for field 'badField': NonExistentType
     ╭─[schema.xml:15:9]
  14 │         <!-- NonExistentType not defined -->
  15 │         <field name="badField" id="10" type="NonExistentType"/>
@@ -96,21 +96,35 @@ match parse_file("my-schema.xml") {
 ```
 
 For programmatic handling, match on the variant directly — `ParseError` is
-a plain enum, no downcast needed:
+a plain enum, no downcast needed. Keep a wildcard so new variants are not
+a compile break:
 
-```rust,ignore
+```rust,no_run
 use ergo_sbe::{parse_file, ParseError};
 
 match parse_file("my-schema.xml") {
     Ok(_) => {}
-    Err(ParseError::Invalid { what, value, .. }) => {
-        eprintln!("invalid {what}: {value}");
+    Err(ParseError::MalformedXml { message, .. }) => {
+        eprintln!("malformed XML: {message}");
     }
     Err(ParseError::Missing { what, .. }) => {
         eprintln!("missing {what}");
     }
-    Err(e) => {
-        eprintln!("{e}");
+    Err(ParseError::Invalid { what, value, .. }) => {
+        eprintln!("invalid {what}: {value}");
+    }
+    Err(ParseError::Resolve { error, .. }) => {
+        eprintln!("resolve: {error}");
+    }
+    Err(ParseError::Io { path, source, .. }) => {
+        eprintln!("cannot read {}: {source}", path.display());
+    }
+    Err(ParseError::Include { href, cause, .. }) => {
+        eprintln!("include {href}: {cause}");
+    }
+    // Forward-compatible: ParseError is #[non_exhaustive].
+    Err(other) => {
+        eprintln!("{other}");
     }
 }
 ```
@@ -133,15 +147,21 @@ and `None` collided on the wire.
 
 ## Error variants
 
+`ParseError` is `#[non_exhaustive]`. Match with a wildcard. Current variants:
+
 | Variant | Error code | When |
 |---------|-----------|------|
 | `MalformedXml` | `ergo_sbe::schema_parse::malformed_xml` | XML is not well-formed |
 | `Missing` | `ergo_sbe::schema_parse::missing` | Required attribute or element absent |
 | `Invalid` | `ergo_sbe::schema_parse::invalid` | Value is syntactically or semantically wrong |
 | `Resolve` | `ergo_sbe::schema_parse::resolve` | Cross-reference or schema-level validation failure |
-| `Unsupported` | `ergo_sbe::schema_parse::unsupported` | Valid SBE construct not yet implemented |
-| `Io` | `ergo_sbe::schema_parse::io` | File read or path resolution error |
+| `Io` | `ergo_sbe::schema_parse::io` | Root schema file could not be read (`Error::source` is the `std::io::Error`) |
+| `Include` | `ergo_sbe::schema_parse::include` | Include failed. `cause` is [`IncludeCause`](https://docs.rs/ergo-sbe): `Cycle { chain }` (visit order, ending at the repeated file; a diamond/shared include is not a cycle), `Io { path, source }`, or `NotFound`. `attempted` lists tried paths. |
 
-Every variant carries `source_code: miette::NamedSource<String>` for span
-rendering, and an optional `span: miette::SourceSpan` pointing to the exact
-location.
+Every diagnostic variant except `Io` carries `source_code` and an optional
+span. `Include` highlights the `<include>` element when the include was
+parsed from a document.
+
+Migration from 0.1.x: `IncludeError { message }` is now `Include { href,
+attempted, cause, .. }`. Root `read_to_string` failures are `Io`, not
+`MalformedXml`.

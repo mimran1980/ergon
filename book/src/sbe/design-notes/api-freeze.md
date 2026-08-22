@@ -82,7 +82,7 @@ This audit records decisions; it does not rename public generated types.
 | `{Msg}Schema` | No (unit struct) | Carries only consts |
 | `ConnectStep` | **Yes** | New async-connect steps must not break exhaustiveness downstream |
 | `GenerateError` | **Yes** | Future validation variants are additive |
-| `ParseError` | No (existing public API) | Variants are well-established; `#[non_exhaustive]` would break existing handlers |
+| `ParseError` | **Yes** (1.0) | Typed `Io` / `Include` causes; exhaustive matches need a wildcard |
 
 **Decision: keep generated consumer-facing structs non-exhaustive via `pub(crate)` fields rather than `#[non_exhaustive]`.** A downstream crate cannot construct one directly, so adding a field is not a breaking change. `#[non_exhaustive]` is reserved for public enums that will gain variants over time (`GenerateError`, `ConnectStep`).
 Any future rename lands in one release with CHANGELOG entries.

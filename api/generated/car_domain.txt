@@ -1,0 +1,535 @@
+AnyMessage::as_bytes
+AnyMessage::decode
+AnyMessage::decode_frame
+AnyMessage::encode
+AnyMessage::encoded_length_with_header
+AnyMessage::try_decode
+AnyMessage::visit
+BooleanType::as_bool
+BooleanType::as_option
+BooleanType::from_raw
+BooleanType::raw
+BoostType::as_option
+BoostType::from_raw
+BoostType::raw
+Booster::boost_type
+Booster::horse_power
+Booster::new
+Booster::raw_boost_type
+BoosterDecoder::boost_type
+BoosterDecoder::horse_power
+CarAfterFuelFigures::performance_figures
+CarAfterFuelFigures::performance_figures_unknown_size
+CarAfterManufacturer::model
+CarAfterManufacturer::model_unchecked
+CarAfterManufacturer::model_with
+CarAfterModel::activation_code
+CarAfterModel::activation_code_unchecked
+CarAfterModel::activation_code_with
+CarAfterPerformanceFigures::manufacturer
+CarAfterPerformanceFigures::manufacturer_unchecked
+CarAfterPerformanceFigures::manufacturer_with
+CarComplete::as_body_bytes
+CarComplete::as_bytes_with_header
+CarComplete::encoded_length
+CarComplete::encoded_length_with_header
+CarComplete::into_remaining_mut
+CarDecoder::acting_block_length
+CarDecoder::acting_version
+CarDecoder::activation_code
+CarDecoder::activation_code_as_str
+CarDecoder::activation_code_as_str_unchecked
+CarDecoder::as_body_bytes
+CarDecoder::as_bytes_with_header
+CarDecoder::available
+CarDecoder::available_meta_attribute
+CarDecoder::code
+CarDecoder::code_meta_attribute
+CarDecoder::copy_vehicle_code
+CarDecoder::decode
+CarDecoder::decode_unchecked
+CarDecoder::discounted_model
+CarDecoder::discounted_model_meta_attribute
+CarDecoder::encoded_length
+CarDecoder::encoded_length_with_header
+CarDecoder::engine
+CarDecoder::engine_meta_attribute
+CarDecoder::engine_value
+CarDecoder::extras
+CarDecoder::extras_meta_attribute
+CarDecoder::get_metadata
+CarDecoder::into_fuel_figures
+CarDecoder::manufacturer
+CarDecoder::manufacturer_as_str
+CarDecoder::manufacturer_as_str_unchecked
+CarDecoder::min_readable_fixed_extent
+CarDecoder::model
+CarDecoder::model_as_str
+CarDecoder::model_as_str_unchecked
+CarDecoder::model_year
+CarDecoder::model_year_meta_attribute
+CarDecoder::raw_available
+CarDecoder::raw_code
+CarDecoder::rewind
+CarDecoder::serial_number
+CarDecoder::serial_number_meta_attribute
+CarDecoder::some_numbers
+CarDecoder::some_numbers_meta_attribute
+CarDecoder::try_available_bool
+CarDecoder::try_decode
+CarDecoder::try_wrap
+CarDecoder::vehicle_code
+CarDecoder::vehicle_code_meta_attribute
+CarDecoder::verify
+CarDecoder::wrap
+CarDecoder::wrap_unchecked
+CarDecoderAfterFuelFigures::acting_block_length
+CarDecoderAfterFuelFigures::acting_version
+CarDecoderAfterFuelFigures::into_performance_figures
+CarDecoderAfterManufacturer::acting_block_length
+CarDecoderAfterManufacturer::acting_version
+CarDecoderAfterManufacturer::into_model
+CarDecoderAfterManufacturer::into_model_as_message
+CarDecoderAfterManufacturer::into_model_as_str
+CarDecoderAfterManufacturer::into_model_as_str_unchecked
+CarDecoderAfterManufacturer::model_slice
+CarDecoderAfterManufacturer::try_model
+CarDecoderAfterManufacturer::try_model_as_message
+CarDecoderAfterModel::acting_block_length
+CarDecoderAfterModel::acting_version
+CarDecoderAfterModel::activation_code_slice
+CarDecoderAfterModel::into_activation_code
+CarDecoderAfterModel::into_activation_code_as_message
+CarDecoderAfterModel::into_activation_code_as_str
+CarDecoderAfterModel::into_activation_code_as_str_unchecked
+CarDecoderAfterModel::try_activation_code
+CarDecoderAfterModel::try_activation_code_as_message
+CarDecoderAfterPerformanceFigures::acting_block_length
+CarDecoderAfterPerformanceFigures::acting_version
+CarDecoderAfterPerformanceFigures::into_manufacturer
+CarDecoderAfterPerformanceFigures::into_manufacturer_as_message
+CarDecoderAfterPerformanceFigures::into_manufacturer_as_str
+CarDecoderAfterPerformanceFigures::into_manufacturer_as_str_unchecked
+CarDecoderAfterPerformanceFigures::manufacturer_slice
+CarDecoderAfterPerformanceFigures::try_manufacturer
+CarDecoderAfterPerformanceFigures::try_manufacturer_as_message
+CarDecoderComplete::acting_block_length
+CarDecoderComplete::acting_version
+CarDecoderComplete::as_body_bytes
+CarDecoderComplete::as_bytes_with_header
+CarDecoderComplete::encoded_length
+CarDecoderComplete::encoded_length_with_header
+CarDecoderComplete::remaining
+CarDecoderMetadata::acting_block_length
+CarDecoderMetadata::acting_version
+CarDecoderMetadata::as_fixed_body_bytes
+CarDecoderMetadata::as_fixed_region_with_header
+CarDecoderMetadata::buffer
+CarDecoderMetadata::limit
+CarDecoderMetadata::message_offset
+CarDecoderMetadata::remaining
+CarDomain::encode
+CarDomain::encoded_length
+CarDomain::encoded_length_with_header
+CarDomain::try_from_decoder
+CarDomain::try_from_slice_with_header
+CarEncodedLength::fuel_figures
+CarEncodedLength::fuel_figures_ragged
+CarEncodedLength::fuel_figures_unknown_size
+CarEncodedLength::new
+CarEncodedLengthAfterFuelFigures::performance_figures
+CarEncodedLengthAfterFuelFigures::performance_figures_ragged
+CarEncodedLengthAfterFuelFigures::performance_figures_unknown_size
+CarEncodedLengthAfterManufacturer::model
+CarEncodedLengthAfterModel::activation_code
+CarEncodedLengthAfterPerformanceFigures::manufacturer
+CarEncodedLengthComplete::encoded_length
+CarEncodedLengthComplete::encoded_length_with_header
+CarEncoder::available
+CarEncoder::available_bool
+CarEncoder::available_meta_attribute
+CarEncoder::code
+CarEncoder::code_meta_attribute
+CarEncoder::compute_length
+CarEncoder::engine
+CarEncoder::engine_meta_attribute
+CarEncoder::extras
+CarEncoder::extras_meta_attribute
+CarEncoder::fixed
+CarEncoder::fuel_figures
+CarEncoder::fuel_figures_unknown_size
+CarEncoder::get_metadata
+CarEncoder::model_year
+CarEncoder::model_year_meta_attribute
+CarEncoder::put_some_numbers
+CarEncoder::put_vehicle_code
+CarEncoder::raw_fixed
+CarEncoder::serial_number
+CarEncoder::serial_number_meta_attribute
+CarEncoder::some_numbers
+CarEncoder::some_numbers_meta_attribute
+CarEncoder::try_wrap
+CarEncoder::try_wrap_and_apply_header
+CarEncoder::vehicle_code
+CarEncoder::vehicle_code_meta_attribute
+CarEncoder::vehicle_code_str
+CarEncoder::wrap
+CarEncoder::wrap_and_apply_header
+CarEncoder::wrap_and_apply_header_unchecked
+CarEncoder::wrap_unchecked
+CarEncoderMetadata::as_fixed_body_bytes
+CarEncoderMetadata::as_fixed_region_with_header
+CarEncoderMetadata::buffer
+CarEncoderMetadata::limit
+CarEncoderMetadata::message_offset
+CarFuelFiguresEntryDomain::encode_into
+CarFuelFiguresEntryDomain::length_contribution
+CarFuelFiguresEntryDomain::try_from_decoder
+CarFuelFiguresRaggedBuilder::add
+CarFuelFiguresRaggedBuilder::uniform
+CarFuelFiguresRaggedBuilder::usage_description
+CarFuelFiguresUniformEncodedLength::finish_empty
+CarFuelFiguresUniformEncodedLength::usage_description
+CarPerformanceFiguresAccelerationRaggedBuilder::add
+CarPerformanceFiguresAccelerationRaggedBuilder::uniform
+CarPerformanceFiguresEntryAccelerationEntryDomain::encode_into
+CarPerformanceFiguresEntryAccelerationEntryDomain::length_contribution
+CarPerformanceFiguresEntryAccelerationEntryDomain::to_wire_entry
+CarPerformanceFiguresEntryAccelerationEntryDomain::try_from_decoder
+CarPerformanceFiguresEntryDomain::encode_into
+CarPerformanceFiguresEntryDomain::length_contribution
+CarPerformanceFiguresEntryDomain::try_from_decoder
+CarPerformanceFiguresRaggedBuilder::acceleration
+CarPerformanceFiguresRaggedBuilder::add
+CarPerformanceFiguresRaggedBuilder::uniform
+CarPerformanceFiguresUniformEncodedLength::acceleration
+CarPerformanceFiguresUniformEncodedLength::finish_empty
+CarRawFixedWriter::available
+CarRawFixedWriter::available_bool
+CarRawFixedWriter::code
+CarRawFixedWriter::engine
+CarRawFixedWriter::extras
+CarRawFixedWriter::model_year
+CarRawFixedWriter::put_some_numbers
+CarRawFixedWriter::put_vehicle_code
+CarRawFixedWriter::serial_number
+CarRawFixedWriter::some_numbers
+CarRawFixedWriter::vehicle_code
+CarRawFixedWriter::vehicle_code_str
+CarSchema::verify
+Engine::booster
+Engine::booster_enabled
+Engine::capacity
+Engine::efficiency
+Engine::fuel
+Engine::manufacturer_code
+Engine::max_rpm
+Engine::new
+Engine::num_cylinders
+Engine::raw_booster_enabled
+EngineDecoder::booster
+EngineDecoder::booster_enabled
+EngineDecoder::capacity
+EngineDecoder::efficiency
+EngineDecoder::fuel
+EngineDecoder::manufacturer_code
+EngineDecoder::max_rpm
+EngineDecoder::num_cylinders
+FrameCursor::new
+FuelFiguresDecoder::finish
+FuelFiguresDecoder::is_empty
+FuelFiguresDecoder::min_readable_fixed_extent
+FuelFiguresDecoder::remaining
+FuelFiguresDecoder::rewind
+FuelFiguresDecoder::scan_entry_at
+FuelFiguresDecoder::skip_n
+FuelFiguresDecoder::skip_remaining
+FuelFiguresDecoder::wrap
+FuelFiguresEncoder::add
+FuelFiguresEncoder::wrap
+FuelFiguresEncoder::written
+FuelFiguresEntryDecoder::encoded_length
+FuelFiguresEntryDecoder::into_usage_description
+FuelFiguresEntryDecoder::into_usage_description_as_message
+FuelFiguresEntryDecoder::into_usage_description_as_str
+FuelFiguresEntryDecoder::into_usage_description_as_str_unchecked
+FuelFiguresEntryDecoder::mpg
+FuelFiguresEntryDecoder::mpg_meta_attribute
+FuelFiguresEntryDecoder::skip
+FuelFiguresEntryDecoder::speed
+FuelFiguresEntryDecoder::speed_meta_attribute
+FuelFiguresEntryDecoder::try_usage_description
+FuelFiguresEntryDecoder::try_usage_description_as_message
+FuelFiguresEntryDecoder::usage_description
+FuelFiguresEntryDecoder::usage_description_slice
+FuelFiguresEntryDecoderComplete::acting_block_length
+FuelFiguresEntryDecoderComplete::acting_version
+FuelFiguresEntryDecoderComplete::as_body_bytes
+FuelFiguresEntryDecoderComplete::as_bytes_with_header
+FuelFiguresEntryDecoderComplete::encoded_length
+FuelFiguresEntryDecoderComplete::encoded_length_with_header
+FuelFiguresEntryDecoderComplete::remaining
+FuelFiguresEntryEncoder::mpg
+FuelFiguresEntryEncoder::speed
+FuelFiguresEntryEncoder::usage_description
+GroupSizeEncoding::block_length
+GroupSizeEncoding::new
+GroupSizeEncoding::num_in_group
+GroupSizeEncodingDecoder::block_length
+GroupSizeEncodingDecoder::num_in_group
+MessageHeader::block_length
+MessageHeader::new
+MessageHeader::peek_for_schema
+MessageHeader::peek_header
+MessageHeader::peek_template_id
+MessageHeader::schema_id
+MessageHeader::template_id
+MessageHeader::version
+MessageHeaderDecoder::block_length
+MessageHeaderDecoder::schema_id
+MessageHeaderDecoder::template_id
+MessageHeaderDecoder::version
+Model::as_option
+Model::from_raw
+Model::raw
+OptionalExtras::cruise_control
+OptionalExtras::default
+OptionalExtras::is_cruise_control
+OptionalExtras::is_sports_pack
+OptionalExtras::is_sun_roof
+OptionalExtras::raw
+OptionalExtras::sports_pack
+OptionalExtras::sun_roof
+PerformanceFiguresAccelerationDecoder::bulk_decode
+PerformanceFiguresAccelerationDecoder::bulk_decode_into
+PerformanceFiguresAccelerationDecoder::entry_at
+PerformanceFiguresAccelerationDecoder::finish
+PerformanceFiguresAccelerationDecoder::is_empty
+PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent
+PerformanceFiguresAccelerationDecoder::remaining
+PerformanceFiguresAccelerationDecoder::rewind
+PerformanceFiguresAccelerationDecoder::skip_n
+PerformanceFiguresAccelerationDecoder::skip_remaining
+PerformanceFiguresAccelerationDecoder::wrap
+PerformanceFiguresAccelerationEncoder::add
+PerformanceFiguresAccelerationEncoder::add_checked
+PerformanceFiguresAccelerationEncoder::add_struct
+PerformanceFiguresAccelerationEncoder::bulk_add
+PerformanceFiguresAccelerationEncoder::bulk_add_domain
+PerformanceFiguresAccelerationEncoder::start_entry
+PerformanceFiguresAccelerationEncoder::wrap
+PerformanceFiguresAccelerationEncoder::written
+PerformanceFiguresAccelerationEntryDecoder::encoded_length
+PerformanceFiguresAccelerationEntryDecoder::mph
+PerformanceFiguresAccelerationEntryDecoder::mph_meta_attribute
+PerformanceFiguresAccelerationEntryDecoder::seconds
+PerformanceFiguresAccelerationEntryDecoder::seconds_meta_attribute
+PerformanceFiguresAccelerationEntryDecoder::skip
+PerformanceFiguresAccelerationEntryEncoder::complete
+PerformanceFiguresAccelerationEntryEncoder::mph
+PerformanceFiguresAccelerationEntryEncoder::seconds
+PerformanceFiguresDecoder::finish
+PerformanceFiguresDecoder::is_empty
+PerformanceFiguresDecoder::min_readable_fixed_extent
+PerformanceFiguresDecoder::remaining
+PerformanceFiguresDecoder::rewind
+PerformanceFiguresDecoder::scan_entry_at
+PerformanceFiguresDecoder::skip_n
+PerformanceFiguresDecoder::skip_remaining
+PerformanceFiguresDecoder::wrap
+PerformanceFiguresEncoder::add
+PerformanceFiguresEncoder::wrap
+PerformanceFiguresEncoder::written
+PerformanceFiguresEntryDecoder::acceleration
+PerformanceFiguresEntryDecoder::encoded_length
+PerformanceFiguresEntryDecoder::into_acceleration
+PerformanceFiguresEntryDecoder::octane_rating
+PerformanceFiguresEntryDecoder::octane_rating_meta_attribute
+PerformanceFiguresEntryDecoder::skip
+PerformanceFiguresEntryDecoderComplete::acting_block_length
+PerformanceFiguresEntryDecoderComplete::acting_version
+PerformanceFiguresEntryDecoderComplete::as_body_bytes
+PerformanceFiguresEntryDecoderComplete::as_bytes_with_header
+PerformanceFiguresEntryDecoderComplete::encoded_length
+PerformanceFiguresEntryDecoderComplete::encoded_length_with_header
+PerformanceFiguresEntryDecoderComplete::remaining
+PerformanceFiguresEntryEncoder::acceleration
+PerformanceFiguresEntryEncoder::acceleration_unknown_size
+PerformanceFiguresEntryEncoder::octane_rating
+RaggedEntryBuilder::add
+RaggedEntryBuilder::entries
+RaggedEntryBuilder::group
+RaggedEntryBuilder::group_ragged
+RaggedEntryBuilder::var_data
+VarAsciiEncoding::length
+VarAsciiEncoding::new
+VarAsciiEncoding::var_data
+VarAsciiEncodingDecoder::length
+VarAsciiEncodingDecoder::var_data
+VarDataEncoding::length
+VarDataEncoding::new
+VarDataEncoding::var_data
+VarDataEncodingDecoder::length
+VarDataEncodingDecoder::var_data
+VarStringEncoding::length
+VarStringEncoding::new
+VarStringEncoding::var_data
+VarStringEncodingDecoder::length
+VarStringEncodingDecoder::var_data
+car_field_meta::const FIELDS
+car_field_meta::struct FieldInfo
+const MESSAGE_HEADER_ENCODED_LENGTH
+const SCHEMA_HASH
+const SCHEMA_ID
+const SCHEMA_SHA256
+const SCHEMA_SHA256_HEX
+const SCHEMA_VERSION
+const SEMANTIC_VERSION
+enum AnyMessage
+enum AnyMessage::Car
+enum AnyMessage::Unknown
+enum BooleanType
+enum BooleanType::F
+enum BooleanType::NullVal
+enum BooleanType::T
+enum BoostType
+enum BoostType::KERS
+enum BoostType::NITROUS
+enum BoostType::NullVal
+enum BoostType::SUPERCHARGER
+enum BoostType::TURBO
+enum FramingPolicy
+enum FramingPolicy::Fixed
+enum FramingPolicy::LengthPrefixU16Le
+enum FramingPolicy::LengthPrefixU32Le
+enum Model
+enum Model::A
+enum Model::B
+enum Model::C
+enum Model::NullVal
+fn read_bytes
+fn schema_id_from_header
+fn write_bytes
+mod car_field_meta
+mod prelude
+mod sbe_rt
+sbe_rt::enum DecodeError
+sbe_rt::enum DecodeError::BufferTooShort
+sbe_rt::enum DecodeError::DomainConversionFailed
+sbe_rt::enum DecodeError::FieldNotInVersion
+sbe_rt::enum DecodeError::InvalidAscii
+sbe_rt::enum DecodeError::InvalidBoolean
+sbe_rt::enum DecodeError::InvalidHeaderValue
+sbe_rt::enum DecodeError::InvalidUtf8
+sbe_rt::enum DecodeError::InvalidVarDataLength
+sbe_rt::enum DecodeError::UnknownTemplateLength
+sbe_rt::enum DecodeError::WrongSchema
+sbe_rt::enum DecodeError::WrongTemplate
+sbe_rt::enum EncodeError
+sbe_rt::enum EncodeError::BufferTooShort
+sbe_rt::enum EncodeError::ClaimLengthMismatch
+sbe_rt::enum EncodeError::Decode
+sbe_rt::enum EncodeError::DomainConversionFailed
+sbe_rt::enum EncodeError::EncodedLengthOverflow
+sbe_rt::enum EncodeError::FixedArrayTooLong
+sbe_rt::enum EncodeError::GroupCountMismatch
+sbe_rt::enum EncodeError::GroupCountOverflow
+sbe_rt::enum EncodeError::GroupFull
+sbe_rt::enum EncodeError::InvalidAscii
+sbe_rt::enum EncodeError::ValueOutOfRange
+sbe_rt::enum EncodeError::VarDataTooLong
+sbe_rt::enum MetaAttribute
+sbe_rt::enum MetaAttribute::Epoch
+sbe_rt::enum MetaAttribute::Presence
+sbe_rt::enum MetaAttribute::SemanticType
+sbe_rt::enum MetaAttribute::TimeUnit
+sbe_rt::enum VerifyError
+sbe_rt::enum VerifyError::DecodeError
+sbe_rt::enum VerifyError::GroupDimOutOfBounds
+sbe_rt::enum VerifyError::HeaderTooShort
+sbe_rt::enum VerifyError::InvalidBlockLength
+sbe_rt::enum VerifyError::MessageTooShort
+sbe_rt::enum VerifyError::VarDataOutOfBounds
+sbe_rt::struct Attached
+sbe_rt::struct Detached
+sbe_rt::struct FieldsFixed
+sbe_rt::struct FieldsUnfixed
+sbe_rt::struct HeaderAbsent
+sbe_rt::struct HeaderPresent
+sbe_rt::trait FieldsState
+sbe_rt::trait GroupContext
+sbe_rt::trait HeaderState
+sbe_rt::trait IntoGroupResult
+sbe_rt::trait SbeMessage
+sbe_rt::type GroupResult
+struct Booster
+struct BoosterDecoder
+struct CarAfterFuelFigures
+struct CarAfterManufacturer
+struct CarAfterModel
+struct CarAfterPerformanceFigures
+struct CarComplete
+struct CarDecoder
+struct CarDecoderAfterFuelFigures
+struct CarDecoderAfterManufacturer
+struct CarDecoderAfterModel
+struct CarDecoderAfterPerformanceFigures
+struct CarDecoderComplete
+struct CarDecoderMetadata
+struct CarDomain
+struct CarEncodedLength
+struct CarEncodedLengthAfterFuelFigures
+struct CarEncodedLengthAfterManufacturer
+struct CarEncodedLengthAfterModel
+struct CarEncodedLengthAfterPerformanceFigures
+struct CarEncodedLengthComplete
+struct CarEncoder
+struct CarEncoderMetadata
+struct CarFixedFields
+struct CarFuelFiguresEntryDomain
+struct CarFuelFiguresRaggedBuilder
+struct CarFuelFiguresUniformEncodedLength
+struct CarPerformanceFiguresAccelerationRaggedBuilder
+struct CarPerformanceFiguresEntryAccelerationEntryDomain
+struct CarPerformanceFiguresEntryDomain
+struct CarPerformanceFiguresRaggedBuilder
+struct CarPerformanceFiguresUniformEncodedLength
+struct CarRawFixedWriter
+struct CarSchema
+struct DecodedFrame
+struct Engine
+struct EngineDecoder
+struct FrameCursor
+struct FuelFiguresDecoder
+struct FuelFiguresEncoder
+struct FuelFiguresEntryComplete
+struct FuelFiguresEntryDecoder
+struct FuelFiguresEntryDecoderComplete
+struct FuelFiguresEntryEncoder
+struct GroupSizeEncoding
+struct GroupSizeEncodingDecoder
+struct MessageHeader
+struct MessageHeaderDecoder
+struct OptionalExtras
+struct PeekedHeader
+struct PerformanceFiguresAccelerationDecoder
+struct PerformanceFiguresAccelerationEncoder
+struct PerformanceFiguresAccelerationEntry
+struct PerformanceFiguresAccelerationEntryComplete
+struct PerformanceFiguresAccelerationEntryDecoder
+struct PerformanceFiguresAccelerationEntryEncoder
+struct PerformanceFiguresDecoder
+struct PerformanceFiguresEncoder
+struct PerformanceFiguresEntryComplete
+struct PerformanceFiguresEntryDecoder
+struct PerformanceFiguresEntryDecoderComplete
+struct PerformanceFiguresEntryEncoder
+struct RaggedEntryBuilder
+struct VarAsciiEncoding
+struct VarAsciiEncodingDecoder
+struct VarDataEncoding
+struct VarDataEncodingDecoder
+struct VarStringEncoding
+struct VarStringEncodingDecoder
+trait MessageVisitor
+type CarUnfixedEncoder

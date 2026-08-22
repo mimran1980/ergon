@@ -254,18 +254,7 @@ fn validate_composite(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidation
 }
 
 fn validate_enum(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
-    check_attrs(
-        "enum",
-        node,
-        &[
-            "name",
-            "encodingType",
-            "description",
-            "sinceVersion",
-            "deprecated",
-            "semanticType",
-        ],
-    )?;
+    check_attrs("enum", node, crate::schema_attrs::ENUM)?;
     for child in node.children().filter(|n| n.is_element()) {
         let name = local_name(child.tag_name().name());
         match name {
@@ -505,5 +494,62 @@ mod tests {
     fn embedded_xsd_is_present() {
         assert!(SBE_XSD.contains("messageSchema"));
         assert!(SBE_XSD.contains("xs:schema"));
+    }
+
+    fn enum_null_schema(encoding: &str, null_value: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+            <messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+              <types>
+                <composite name="messageHeader">
+                  <type name="blockLength" primitiveType="uint16"/>
+                  <type name="templateId" primitiveType="uint16"/>
+                  <type name="schemaId" primitiveType="uint16"/>
+                  <type name="version" primitiveType="uint16"/>
+                </composite>
+                <enum name="Code" encodingType="{encoding}" nullValue="{null_value}">
+                  <validValue name="Ok">0</validValue>
+                </enum>
+              </types>
+              <message name="M" id="1">
+                <field name="code" id="1" type="Code"/>
+              </message>
+            </messageSchema>"#
+        )
+    }
+
+    #[test]
+    fn accepts_unsigned_enum_null_value() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = enum_null_schema("uint8", "99");
+        validate_against_sbe_xsd(&xml)?;
+        crate::parse_with_xsd_validation(&xml)?;
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_signed_enum_null_value() -> Result<(), Box<dyn std::error::Error>> {
+        let xml = enum_null_schema("int8", "-1");
+        validate_against_sbe_xsd(&xml)?;
+        crate::parse_with_xsd_validation(&xml)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_non_namespaced_enum_attribute() {
+        let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="t" id="1" version="0">
+          <types>
+            <enum name="Code" encodingType="uint8" surprise="yes">
+              <validValue name="Ok">0</validValue>
+            </enum>
+          </types>
+        </messageSchema>"#;
+        assert!(matches!(
+            validate_against_sbe_xsd(xml),
+            Err(XsdValidationError::UnexpectedAttribute {
+                element,
+                attr
+            }) if element == "enum" && attr == "surprise"
+        ));
     }
 }

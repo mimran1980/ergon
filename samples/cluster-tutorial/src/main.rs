@@ -32,12 +32,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aeron_dir = cluster.aeron_dir().to_string_lossy().into_owned();
 
     let builder = SessionBuilder::default()
-        .ingress_channel(&cluster.ingress_channel)
-        .egress_channel(&cluster.egress_channel)
+        .ingress_channel(&cluster.ingress_channel)?
+        .egress_channel(&cluster.egress_channel)?
         .ingress_stream_id(101)
         .egress_stream_id(102)
-        .message_timeout(Duration::from_secs(10))
-        .new_leader_timeout(Duration::from_secs(5));
+        .message_timeout(Duration::from_secs(10))?
+        .new_leader_timeout(Duration::from_secs(5))?;
 
     builder.validate()?;
     println!("session config: validated");

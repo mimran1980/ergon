@@ -61,6 +61,21 @@ pub const FIELD_LIKE: &[&str] = &[
     "timeUnit",
 ];
 
+/// `<enum>`.
+///
+/// `nullValue` is a schema-declared wire sentinel (sbe-tool accepts it and
+/// codegen emits it). The published XSD omits it; the validator still must
+/// accept it so `parse_with_xsd_validation` matches `parse`.
+pub const ENUM: &[&str] = &[
+    "name",
+    "encodingType",
+    "description",
+    "sinceVersion",
+    "deprecated",
+    "semanticType",
+    "nullValue",
+];
+
 /// `<group>`.
 pub const GROUP: &[&str] = &[
     "name",

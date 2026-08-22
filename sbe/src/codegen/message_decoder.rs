@@ -632,23 +632,12 @@ pub(crate) fn generate_message_decoder(
                         syn::LitInt::new(&prim_size.to_string(), proc_macro2::Span::call_site());
                     let fn_name_ident = syn::Ident::new(&f.name, proc_macro2::Span::call_site());
 
-                    // Build unrolled element parses via direct constant indexing of a
-                    // bulk-read local `all` array. One bulk read (single bounds check
-                    // via read_bytes) + direct constant indexing (no per-element
-                    // bounds check). This is the fastest safe-mode shape: sbe-tool's
-                    // 4x per-element try_into is slower here because LLVM cannot elide
-                    // the redundant checks when the offset is runtime-derived.
-                    let mut elements: Vec<proc_macro2::TokenStream> = Vec::new();
-                    for i in 0..len_val {
-                        let start = i * prim_size;
-                        let end = start + prim_size;
-                        let byte_indices: Vec<proc_macro2::TokenStream> = (start..end)
-                            .map(|idx| quote::quote! { all[#idx] })
-                            .collect();
-                        elements.push(quote::quote! {
-                            #r_type_ty::#order_fn([#(#byte_indices),*])
-                        });
-                    }
+                    // One bulk read, then reconstruct. 1-byte primitives return
+                    // `all` (endianness is a no-op); wider types unroll
+                    // from_{le,be}_bytes on constant indices.
+                    let elements = super::conversion_helpers::fixed_array_from_bulk_bytes(
+                        &r_type_ty, *prim, prim_size, len_val, &order_fn,
+                    );
 
                     let fn_snake_ident = fname_ident.clone();
                     // Fixed-length array accessors are INFALLIBLE: a fixed array that
@@ -680,7 +669,7 @@ pub(crate) fn generate_message_decoder(
                         pub fn #fn_snake_ident(&self) -> [#r_type_ty; #len_lit] {
                             #version_guard
                             let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, self.offset + #offset_lit) };
-                            [#(#elements),*]
+                            #elements
                         }
                     });
                     // Destination-buffer copy for byte-width arrays (Java getVehicleCode(byte[])).

@@ -81,10 +81,8 @@ else
     echo "     set CLUSTER_SEMVER_CHECKS=1 to force)"
 fi
 
-# Future: generate each fixture from the manifest, compile to a temp crate,
-# extract its public API with `cargo public-api`, and diff against the
-# baseline tag. The manifest exists; the diff implementation will be added
-# as part of the 1.0 freeze audit.
+# Generated codec surfaces (the consumer API) — checked-in snapshots.
+"$root/scripts/check-generated-public-api.sh"
 
 if [ $rc -eq 0 ]; then
     echo ""

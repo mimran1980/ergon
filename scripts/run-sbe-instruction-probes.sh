@@ -255,9 +255,15 @@ print(f\"  Ir/op={r['instructions_per_operation']:.2f}  \"
 done
 
 echo ""
+echo "=== paired Ir/op (ergon vs sbe-tool) ==="
+if ! python3 "$REPO_ROOT/scripts/compare-sbe-probe-pairs.py" "$OUT_ROOT" "$MANIFEST"; then
+    failures=$((failures + 1))
+fi
+
+echo ""
 echo "artifacts: $OUT_ROOT"
 if [ "$failures" -gt 0 ]; then
     echo "FAIL: $failures probe(s) could not be measured"
     exit 1
 fi
-echo "PASS: every selected probe produced raw Callgrind output and disassembly"
+echo "PASS: every selected probe produced raw Callgrind output, disassembly, and ergon Ir/op that does not exceed sbe-tool"

@@ -72,8 +72,8 @@ fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Er
     let err = ergo_sbe::parse_file(&path).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Invalid { what, value, .. }
-            if what == "primitive type" && value == "NonExistentType"),
-        "expected Invalid(primitive type, NonExistentType), got {err:?}"
+            if what == "type for field 'badField'" && value == "NonExistentType"),
+        "expected Invalid(type for field 'badField', NonExistentType), got {err:?}"
     );
     let msg = format!("{err}");
     assert!(
@@ -346,8 +346,72 @@ fn invalid_field_type_names_the_field() -> Result<(), Box<dyn std::error::Error>
         msg.contains("NotARealType"),
         "must name the bad type: {msg}"
     );
-    // NOTE: the error currently does not name the containing field (e.g. "price").
-    // That is a desirable improvement for future releases.
+    assert!(
+        msg.contains("price"),
+        "must name the containing field: {msg}"
+    );
+    assert!(
+        msg.contains("type for field 'price'"),
+        "must render the field-qualified label: {msg}"
+    );
+    match &err {
+        ergo_sbe::ParseError::Invalid {
+            what, value, span, ..
+        } => {
+            assert_eq!(what, "type for field 'price'");
+            assert_eq!(value, "NotARealType");
+            assert!(span.is_some(), "must keep the <field> span");
+        }
+        other => panic!("expected ParseError::Invalid, got {other:?}"),
+    }
+    Ok(())
+}
+
+/// Nested group fields share `parse_message_child`, so they must name the
+/// group field that referenced the missing type.
+#[test]
+fn invalid_nested_group_field_type_names_the_field() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+      <types>
+        <composite name="messageHeader">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="templateId" primitiveType="uint16"/>
+          <type name="schemaId" primitiveType="uint16"/>
+          <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+          <type name="blockLength" primitiveType="uint16"/>
+          <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+      </types>
+      <message name="Msg" id="1">
+        <group name="legs" id="2">
+          <field name="px" id="3" type="NotARealType"/>
+        </group>
+      </message>
+    </messageSchema>"#;
+
+    let err = ergo_sbe::parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("NotARealType"),
+        "must name the bad type: {msg}"
+    );
+    assert!(msg.contains("px"), "must name the nested field: {msg}");
+    assert!(
+        msg.contains("type for field 'px'"),
+        "must render the field-qualified label: {msg}"
+    );
+    match &err {
+        ergo_sbe::ParseError::Invalid {
+            what, value, span, ..
+        } => {
+            assert_eq!(what, "type for field 'px'");
+            assert_eq!(value, "NotARealType");
+            assert!(span.is_some(), "must keep the <field> span");
+        }
+        other => panic!("expected ParseError::Invalid, got {other:?}"),
+    }
     Ok(())
 }
 

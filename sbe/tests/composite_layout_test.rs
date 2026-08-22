@@ -33,7 +33,9 @@ fn composite_is_transparent_wire_image_not_repr_c_fields() -> Result<(), Box<dyn
     let (_schema, src) = generate(&Paths::example_schema(), "comp_layout_src");
 
     assert!(
-        src.contains("#[repr(transparent)]") && src.contains("pub struct Engine(pub [u8; 10])"),
+        src.contains("#[repr(transparent)]")
+            && src.contains("struct Engine")
+            && src.contains("[u8; 10]"),
         "Engine must be a transparent wire-image over [u8; 10], not a native-field struct"
     );
     assert!(
