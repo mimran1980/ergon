@@ -602,8 +602,10 @@ fn generate_staged(
     let complete_ident = syn::Ident::new(&format!("{msg_name}EncodedLengthComplete"), span);
     standalone.extend(quote::quote! {
         impl #complete_ident {
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn encoded_length(&self) -> usize { self.state.len }
+            #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub const fn encoded_length_with_header(&self) -> usize {
                 self.state.len + #hs_lit as usize

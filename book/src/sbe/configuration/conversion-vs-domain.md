@@ -46,3 +46,45 @@ Both styles on different fields:
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_conversion_only}}
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
+
+### Option B, manual impl — concrete signatures, your own conversion logic
+
+`with_domain_type(selector, path)` is the common case: ergo-sbe also generates
+the `TryFromSbe`/`TryToSbe` impl for `bool` / `rust_decimal::Decimal` /
+`chrono::DateTime<Utc>`. If you need different conversion behaviour for one of
+those exact three types — a custom rounding rule, stricter validation,
+different null handling — call additive [`with_manual_domain_type`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.GenerationConfig.html#method.with_manual_domain_type)
+instead: same generated `try_price(...)?` / `try_price()?` signatures, but you
+write the impl:
+
+```rust,ignore
+{{#include ../../../../sbe/tests/baseline_test.rs:with_domain_type_manual_impl_config}}
+```
+
+```rust,ignore
+{{#include ../../../../sbe/tests/baseline_test.rs:with_domain_type_manual_impl_usage}}
+```
+*(From `domain_type_manual_impl_uses_callers_own_impl` in
+`sbe/tests/baseline_test.rs` — a real generated-and-compiled test. Any
+`rust_type` string that *isn't* one of the three built-ins never gets an
+auto-generated impl regardless of `DomainImpl` — it only matters for opting
+those three in or out.)*
+
+**Forgot the impl?** Two things soften it. First, the compile error names the
+missing impl directly instead of the default trait-bound message:
+
+```text
+error[E0277]: `rust_decimal::Decimal` has no `TryFromSbe<Decimal>` impl
+  |
+  | missing `impl TryFromSbe<Decimal> for rust_decimal::Decimal`
+  |
+  = note: if this field uses DomainImpl::Manual, the generated `try_*`
+          accessor's doc comment has a ready-to-paste starting point
+```
+
+Second, for the three built-ins, that pointer is real: the generated
+`try_price` method's own doc comment (visible on hover, or in `cargo doc`)
+carries the *exact* impl `DomainImpl::Generated` would have written — copy it
+out and adjust. `sbe/tests/baseline_test.rs`'s
+`domain_type_manual_impl_doc_comment_has_generated_snippet` asserts this
+snippet is present in the generated source.

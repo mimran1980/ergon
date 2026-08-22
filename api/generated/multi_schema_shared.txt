@@ -1,0 +1,287 @@
+# common_types.rs
+AnyMessage::as_bytes
+AnyMessage::decode
+AnyMessage::decode_frame
+AnyMessage::encode
+AnyMessage::encoded_length_with_header
+AnyMessage::try_decode
+AnyMessage::visit
+CommonMessageDecoder::acting_block_length
+CommonMessageDecoder::acting_version
+CommonMessageDecoder::after_this_message
+CommonMessageDecoder::as_body_bytes
+CommonMessageDecoder::as_bytes_with_header
+CommonMessageDecoder::decode
+CommonMessageDecoder::decode_unchecked
+CommonMessageDecoder::encoded_length
+CommonMessageDecoder::encoded_length_with_header
+CommonMessageDecoder::get_metadata
+CommonMessageDecoder::min_readable_fixed_extent
+CommonMessageDecoder::price
+CommonMessageDecoder::price_meta_attribute
+CommonMessageDecoder::price_value
+CommonMessageDecoder::raw_side
+CommonMessageDecoder::side
+CommonMessageDecoder::side_meta_attribute
+CommonMessageDecoder::try_decode
+CommonMessageDecoder::try_wrap
+CommonMessageDecoder::verify
+CommonMessageDecoder::wrap
+CommonMessageDecoder::wrap_unchecked
+CommonMessageDecoderMetadata::acting_block_length
+CommonMessageDecoderMetadata::acting_version
+CommonMessageDecoderMetadata::as_body_bytes
+CommonMessageDecoderMetadata::as_bytes_with_header
+CommonMessageDecoderMetadata::buffer
+CommonMessageDecoderMetadata::limit
+CommonMessageDecoderMetadata::message_offset
+CommonMessageDecoderMetadata::remaining
+CommonMessageEncoder::as_body_bytes
+CommonMessageEncoder::as_bytes_with_header
+CommonMessageEncoder::compute_length_with_header
+CommonMessageEncoder::encoded_length
+CommonMessageEncoder::encoded_length_with_header
+CommonMessageEncoder::fixed
+CommonMessageEncoder::get_metadata
+CommonMessageEncoder::into_remaining_mut
+CommonMessageEncoder::price
+CommonMessageEncoder::price_meta_attribute
+CommonMessageEncoder::raw_fixed
+CommonMessageEncoder::side
+CommonMessageEncoder::side_meta_attribute
+CommonMessageEncoder::try_wrap
+CommonMessageEncoder::try_wrap_and_apply_header
+CommonMessageEncoder::wrap
+CommonMessageEncoder::wrap_and_apply_header
+CommonMessageEncoder::wrap_and_apply_header_unchecked
+CommonMessageEncoder::wrap_into_claim
+CommonMessageEncoder::wrap_unchecked
+CommonMessageEncoderMetadata::as_body_bytes
+CommonMessageEncoderMetadata::as_bytes_with_header
+CommonMessageEncoderMetadata::buffer
+CommonMessageEncoderMetadata::limit
+CommonMessageEncoderMetadata::message_offset
+CommonMessageRawFixedWriter::price
+CommonMessageRawFixedWriter::side
+CommonMessageSchema::verify
+Decimal::exponent
+Decimal::mantissa
+Decimal::new
+DecimalDecoder::exponent
+DecimalDecoder::mantissa
+FrameCursor::new
+GroupSizeEncoding::block_length
+GroupSizeEncoding::new
+GroupSizeEncoding::num_in_group
+GroupSizeEncodingDecoder::block_length
+GroupSizeEncodingDecoder::num_in_group
+MessageHeader::block_length
+MessageHeader::new
+MessageHeader::peek_for_schema
+MessageHeader::peek_header
+MessageHeader::peek_template_id
+MessageHeader::schema_id
+MessageHeader::template_id
+MessageHeader::version
+MessageHeaderDecoder::block_length
+MessageHeaderDecoder::schema_id
+MessageHeaderDecoder::template_id
+MessageHeaderDecoder::version
+Side::as_option
+Side::from_raw
+Side::raw
+common_message_field_meta::const FIELDS
+common_message_field_meta::struct FieldInfo
+const MESSAGE_HEADER_ENCODED_LENGTH
+const SCHEMA_HASH
+const SCHEMA_ID
+const SCHEMA_SHA256
+const SCHEMA_SHA256_HEX
+const SCHEMA_VERSION
+const SEMANTIC_VERSION
+enum AnyMessage
+enum AnyMessage::CommonMessage
+enum AnyMessage::Unknown
+enum FramingPolicy
+enum FramingPolicy::Fixed
+enum FramingPolicy::LengthPrefixU16Le
+enum FramingPolicy::LengthPrefixU32Le
+enum Side
+enum Side::Buy
+enum Side::NullVal
+enum Side::Sell
+fn read_bytes
+fn schema_id_from_header
+fn write_bytes
+mod common_message_field_meta
+mod prelude
+mod sbe_rt
+sbe_rt::enum DecodeError
+sbe_rt::enum DecodeError::BufferTooShort
+sbe_rt::enum DecodeError::DomainConversionFailed
+sbe_rt::enum DecodeError::FieldNotInVersion
+sbe_rt::enum DecodeError::InvalidAscii
+sbe_rt::enum DecodeError::InvalidBoolean
+sbe_rt::enum DecodeError::InvalidHeaderValue
+sbe_rt::enum DecodeError::InvalidUtf8
+sbe_rt::enum DecodeError::InvalidVarDataLength
+sbe_rt::enum DecodeError::UnknownTemplateLength
+sbe_rt::enum DecodeError::WrongSchema
+sbe_rt::enum DecodeError::WrongTemplate
+sbe_rt::enum EncodeError
+sbe_rt::enum EncodeError::BufferTooShort
+sbe_rt::enum EncodeError::ClaimLengthMismatch
+sbe_rt::enum EncodeError::Decode
+sbe_rt::enum EncodeError::DomainConversionFailed
+sbe_rt::enum EncodeError::EncodedLengthOverflow
+sbe_rt::enum EncodeError::FixedArrayTooLong
+sbe_rt::enum EncodeError::GroupCountMismatch
+sbe_rt::enum EncodeError::GroupCountOverflow
+sbe_rt::enum EncodeError::GroupFull
+sbe_rt::enum EncodeError::InvalidAscii
+sbe_rt::enum EncodeError::ValueOutOfRange
+sbe_rt::enum EncodeError::VarDataTooLong
+sbe_rt::enum MetaAttribute
+sbe_rt::enum MetaAttribute::Epoch
+sbe_rt::enum MetaAttribute::Presence
+sbe_rt::enum MetaAttribute::SemanticType
+sbe_rt::enum MetaAttribute::TimeUnit
+sbe_rt::enum VerifyError
+sbe_rt::enum VerifyError::DecodeError
+sbe_rt::enum VerifyError::GroupDimOutOfBounds
+sbe_rt::enum VerifyError::HeaderTooShort
+sbe_rt::enum VerifyError::InvalidBlockLength
+sbe_rt::enum VerifyError::MessageTooShort
+sbe_rt::enum VerifyError::VarDataOutOfBounds
+sbe_rt::struct Attached
+sbe_rt::struct Detached
+sbe_rt::struct FieldsFixed
+sbe_rt::struct FieldsUnfixed
+sbe_rt::struct HeaderAbsent
+sbe_rt::struct HeaderPresent
+sbe_rt::trait FieldsState
+sbe_rt::trait GroupContext
+sbe_rt::trait HeaderState
+sbe_rt::trait IntoGroupResult
+sbe_rt::trait SbeMessage
+sbe_rt::type GroupResult
+struct CommonMessageDecoder
+struct CommonMessageDecoderMetadata
+struct CommonMessageEncoder
+struct CommonMessageEncoderMetadata
+struct CommonMessageFixedFields
+struct CommonMessageRawFixedWriter
+struct CommonMessageSchema
+struct Decimal
+struct DecimalDecoder
+struct DecodedFrame
+struct FrameCursor
+struct GroupSizeEncoding
+struct GroupSizeEncodingDecoder
+struct MessageHeader
+struct MessageHeaderDecoder
+struct PeekedHeader
+trait MessageVisitor
+type CommonMessageUnfixedEncoder
+# market_data.rs
+AnyMessage::as_bytes
+AnyMessage::decode
+AnyMessage::decode_frame
+AnyMessage::encode
+AnyMessage::encoded_length_with_header
+AnyMessage::try_decode
+AnyMessage::visit
+FrameCursor::new
+QuoteDecoder::acting_block_length
+QuoteDecoder::acting_version
+QuoteDecoder::after_this_message
+QuoteDecoder::as_body_bytes
+QuoteDecoder::as_bytes_with_header
+QuoteDecoder::ask_mantissa
+QuoteDecoder::ask_mantissa_meta_attribute
+QuoteDecoder::bid_mantissa
+QuoteDecoder::bid_mantissa_meta_attribute
+QuoteDecoder::bid_side
+QuoteDecoder::bid_side_meta_attribute
+QuoteDecoder::decode
+QuoteDecoder::decode_unchecked
+QuoteDecoder::encoded_length
+QuoteDecoder::encoded_length_with_header
+QuoteDecoder::get_metadata
+QuoteDecoder::min_readable_fixed_extent
+QuoteDecoder::raw_bid_side
+QuoteDecoder::try_decode
+QuoteDecoder::try_wrap
+QuoteDecoder::verify
+QuoteDecoder::wrap
+QuoteDecoder::wrap_unchecked
+QuoteDecoderMetadata::acting_block_length
+QuoteDecoderMetadata::acting_version
+QuoteDecoderMetadata::as_body_bytes
+QuoteDecoderMetadata::as_bytes_with_header
+QuoteDecoderMetadata::buffer
+QuoteDecoderMetadata::limit
+QuoteDecoderMetadata::message_offset
+QuoteDecoderMetadata::remaining
+QuoteEncoder::as_body_bytes
+QuoteEncoder::as_bytes_with_header
+QuoteEncoder::ask_mantissa
+QuoteEncoder::ask_mantissa_meta_attribute
+QuoteEncoder::bid_mantissa
+QuoteEncoder::bid_mantissa_meta_attribute
+QuoteEncoder::bid_side
+QuoteEncoder::bid_side_meta_attribute
+QuoteEncoder::compute_length_with_header
+QuoteEncoder::encoded_length
+QuoteEncoder::encoded_length_with_header
+QuoteEncoder::fixed
+QuoteEncoder::get_metadata
+QuoteEncoder::into_remaining_mut
+QuoteEncoder::raw_fixed
+QuoteEncoder::try_wrap
+QuoteEncoder::try_wrap_and_apply_header
+QuoteEncoder::wrap
+QuoteEncoder::wrap_and_apply_header
+QuoteEncoder::wrap_and_apply_header_unchecked
+QuoteEncoder::wrap_into_claim
+QuoteEncoder::wrap_unchecked
+QuoteEncoderMetadata::as_body_bytes
+QuoteEncoderMetadata::as_bytes_with_header
+QuoteEncoderMetadata::buffer
+QuoteEncoderMetadata::limit
+QuoteEncoderMetadata::message_offset
+QuoteRawFixedWriter::ask_mantissa
+QuoteRawFixedWriter::bid_mantissa
+QuoteRawFixedWriter::bid_side
+QuoteSchema::verify
+const SCHEMA_HASH
+const SCHEMA_ID
+const SCHEMA_SHA256
+const SCHEMA_SHA256_HEX
+const SCHEMA_VERSION
+const SEMANTIC_VERSION
+enum AnyMessage
+enum AnyMessage::Quote
+enum AnyMessage::Unknown
+enum FramingPolicy
+enum FramingPolicy::Fixed
+enum FramingPolicy::LengthPrefixU16Le
+enum FramingPolicy::LengthPrefixU32Le
+fn read_bytes
+fn schema_id_from_header
+fn write_bytes
+mod prelude
+mod quote_field_meta
+quote_field_meta::const FIELDS
+quote_field_meta::struct FieldInfo
+struct DecodedFrame
+struct FrameCursor
+struct QuoteDecoder
+struct QuoteDecoderMetadata
+struct QuoteEncoder
+struct QuoteEncoderMetadata
+struct QuoteFixedFields
+struct QuoteRawFixedWriter
+struct QuoteSchema
+trait MessageVisitor
+type QuoteUnfixedEncoder

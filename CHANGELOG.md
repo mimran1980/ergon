@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## [0.1.20] — 2026-08-20
+
+### Added
+- `GeneratedModuleSet::into_parts` consumes the set and returns owned modules
+  and warnings without cloning generated source.
+- `SchemaFile` plus `generate_multi_to_dir` / `generate_multi_to_out_dir`
+  generate a shared schema and its consumers in one transaction, using
+  supplied module names and watching every resolved include.
+- `EncodeError::InvalidAscii { field }` for ASCII fixed-array `*_str` writes.
+- Generated public-API snapshots under `api/generated/` (`car_lean`,
+  `car_domain`, `multi_schema_shared`) and
+  `scripts/check-generated-public-api.sh`, invoked from `just preflight`.
+- `GenerationConfig::with_manual_domain_type` for additive Manual
+  `TryFromSbe`/`TryToSbe` mappings. `with_domain_type(selector, path)` is
+  the two-argument Generated path.
+
+### Changed
+- `GenerationConfig::with_domain_type` stays the two-argument
+  `(selector, path)` Generated path it has always been. Use
+  [`with_manual_domain_type`] for additive Manual impls.
+- **Breaking:** `ParseError` is `#[non_exhaustive]`. Root file reads are
+  `Io { path, source }`. Include failures are `Include { href, attempted,
+  cause }` with typed `IncludeCause` (`Cycle` / `Io` / `NotFound`).
+- **Breaking:** `SessionBuilder::ingress_channel`, `egress_channel`,
+  `message_timeout`, and `new_leader_timeout` return `Result` and store only
+  validated values. `is_ingress_exclusive` and `owns_aeron` setters are
+  removed.
+- **Breaking:** generated `*_str` exists only for default-ASCII `char` and
+  encodings `ASCII` / `US-ASCII` / `UTF-8` / `UTF8`. Unencoded numeric arrays
+  and encodings such as GB18030 keep the raw array setter only — schemas
+  relying on the old setter for those types need the raw accessor instead.
+- Optional var-data accessors (`into_*_as_compact_str`, `into_*_as_smol_str`,
+  `into_*_as_bytes`) are always emitted and gated on the *consumer's*
+  `compact_str` / `smol_str` / `bytes` feature, not the generator's. Fixes a
+  feature leak where the generator's own feature flags decided what a
+  consumer crate could see, independent of that crate's own Cargo features.
+- Generated rustdoc snippets referencing a `DomainImpl::Manual` field render
+  as plain text instead of an ignored `rust,ignore` fence.
+- Side-effect-free generated observers (`as_option` / `as_bool`, completed
+  tail views/lengths, encoder metadata, group `written`, exact-length
+  terminals) carry message-bearing `#[must_use]`.
+
+### Fixed
+- One-byte fixed-array getters (`char` / `uint8`) return the bulk-read
+  `[u8; N]` instead of reconstructing each element with `from_le_bytes`.
+- `parse_with_xsd_validation` accepts schema-declared enum `nullValue`
+  (signed and unsigned) and still rejects unknown non-namespaced enum
+  attributes.
+- `generate_to_dir` emits `cargo::rerun-if-changed` for the root schema and
+  every nested or transitive include, so an include-only edit rebuilds.
+- Unresolved-type diagnostics name the containing field as well as the
+  invalid type.
+
+### Deprecated
+- `GenerationConfig::with_error_from_impls` — it converts generated encode/decode
+  errors through `format!` and `From<String>`, dropping fields such as `needed`
+  and `available`. Implement `From<generated::sbe_rt::EncodeError>` /
+  `From<generated::sbe_rt::DecodeError>` instead. Removal is scheduled for 1.0.
+
 ## [0.1.19] — 2026-08-19
 
 ### Fixed

@@ -12,6 +12,7 @@ use crate::structured_ir::{
 
 use super::conversion_helpers::{
     enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
+    fixed_array_from_bulk_bytes,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -887,29 +888,32 @@ pub(crate) fn generate_group_decoder(
                         &f.since_version.to_string(),
                         proc_macro2::Span::call_site(),
                     );
-                    let mut elem_exprs: Vec<proc_macro2::TokenStream> = Vec::new();
-                    for i in 0..*len {
-                        let start = i * prim_size;
-                        let end = start + prim_size;
-                        let byte_indices: Vec<proc_macro2::TokenStream> = (start..end)
-                            .map(|idx| quote::quote! { all[#idx] })
-                            .collect();
-                        elem_exprs.push(quote::quote! {
-                            #r_type_ty::#order_fn([#(#byte_indices),*])
-                        });
-                    }
-                    entry_body.extend(quote::quote! {
-                        #mu
-                        #[inline]
-                        pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
+                    let elements =
+                        fixed_array_from_bulk_bytes(&r_type_ty, *prim, prim_size, *len, &order_fn);
+                    // Skip `acting_version < 0` (always false for u16).
+                    let version_guard = if f.since_version > 0 {
+                        quote::quote! {
                             if self.acting_version < #since_lit
                                 || #offset_end_lit > self.acting_block_length
                             {
                                 return [0 as #r_type_ty; #len_lit];
                             }
+                        }
+                    } else {
+                        quote::quote! {
+                            if #offset_end_lit > self.acting_block_length {
+                                return [0 as #r_type_ty; #len_lit];
+                            }
+                        }
+                    };
+                    entry_body.extend(quote::quote! {
+                        #mu
+                        #[inline]
+                        pub fn #f_name_ident(&self) -> [#r_type_ty; #len_lit] {
+                            #version_guard
                             let offset = self.offset + #offset_lit;
                             let all: [u8; #total_size_lit] = unsafe { read_bytes_unchecked::<#total_size_lit>(self.buf, offset) };
-                            [#(#elem_exprs),*]
+                            #elements
                         }
                     });
                 } else if f.presence == Presence::Optional {

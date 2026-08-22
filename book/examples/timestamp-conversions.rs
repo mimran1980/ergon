@@ -9,8 +9,7 @@ use ergo_sbe::{GenerationConfig, ConversionSelector};
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
-        "chrono::DateTime<chrono::Utc>",
-    );
+        "chrono::DateTime<chrono::Utc>");
 // ANCHOR_END: timestamp_config
 
 // ANCHOR: timestamp_adapter_nanos

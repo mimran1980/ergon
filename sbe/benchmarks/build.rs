@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+/// Generate the codecs the Criterion benches compile against.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sbe_root = manifest

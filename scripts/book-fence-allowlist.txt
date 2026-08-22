@@ -14,6 +14,8 @@ book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:27 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:39 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:45 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:60 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
+book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
 book/src/sbe/configuration/feature-integrations.md:37 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:46 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:61 — deliberate; see page context
@@ -23,8 +25,8 @@ book/src/sbe/configuration/feature-integrations.md:116 — deliberate; see page 
 book/src/sbe/configuration/feature-integrations.md:126 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:139 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:155 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:167 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:210 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:172 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:215 — deliberate; see page context
 book/src/sbe/configuration/hooks.md:21 — deliberate; see page context
 book/src/sbe/core-concepts/composite-layout.md:22 — deliberate; see page context
 book/src/sbe/core-concepts/wire-order-stages.md:45 — deliberate; see page context
@@ -44,7 +46,6 @@ book/src/sbe/feature-tour/generated-code.md:156 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:177 — deliberate; see page context
 book/src/sbe/getting-started/encode-decode.md:54 — deliberate; see page context
 book/src/sbe/getting-started/error-diagnostics.md:85 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
-book/src/sbe/getting-started/error-diagnostics.md:101 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
 book/src/sbe/getting-started/from-sbe-tool.md:18 — deliberate; see page context
 book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
@@ -52,8 +53,7 @@ book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:86 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:114 — deliberate; see page context
+book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:10 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:39 — deliberate; see page context
@@ -63,5 +63,8 @@ book/src/sbe/recipes/domain-dtos.md:27 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:22 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:46 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:77 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:109 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:72 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:83 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:130 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:154 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:209 — deliberate; see page context

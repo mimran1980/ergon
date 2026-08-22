@@ -55,13 +55,15 @@
 //!     NullCredentialsSupplier,
 //!     StaticCredentials,
 //! };
-//! // Build a session configuration (no Aeron / network needed).
-//! let builder = SessionBuilder::default()
-//!     .ingress_channel("aeron:udp?endpoint=localhost:9010")
-//!     .egress_channel("aeron:udp?endpoint=localhost:9020")
-//!     .credentials(Arc::new(StaticCredentials::from_utf8("user:pass")))
-//!     .message_timeout(std::time::Duration::from_secs(5));
-//! builder.validate().expect("valid config");
+//! fn demo() -> Result<(), ergo_aeron_cluster::ClusterError> {
+//!     let builder = SessionBuilder::default()
+//!         .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+//!         .egress_channel("aeron:udp?endpoint=localhost:9020")?
+//!         .credentials(Arc::new(StaticCredentials::from_utf8("user:pass")))
+//!         .message_timeout(std::time::Duration::from_secs(5))?;
+//!     builder.validate()
+//! }
+//! demo().expect("valid config");
 //! ```
 //!
 //! ```rust,no_run
@@ -69,8 +71,8 @@
 //!
 //! fn publish(aeron_dir: &str, app_bytes: &[u8]) -> Result<(), ClusterError> {
 //!     let builder = SessionBuilder::default()
-//!         .ingress_channel("aeron:udp?endpoint=localhost:9010")
-//!         .egress_channel("aeron:udp?endpoint=localhost:9020");
+//!         .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+//!         .egress_channel("aeron:udp?endpoint=localhost:9020")?;
 //!     let mut client = AeronCluster::connect(&builder, aeron_dir)?;
 //!     let mut claim = client.try_claim(app_bytes.len())?;
 //!     claim.payload_mut().copy_from_slice(app_bytes);

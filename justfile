@@ -58,16 +58,22 @@ preflight:
     @echo "=== formatting ==="
     cargo fmt --all --check
     cd samples/exchange-example && cargo fmt --check
+    @echo "=== clippy (same workspace set as CI) ==="
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
     bash scripts/tests/test-public-api.sh
+    bash scripts/tests/test-generated-public-api.sh
+    bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
+    ./scripts/check-generated-public-api.sh
     @echo "=== checked-in generated artifacts still match their source ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
@@ -404,7 +410,7 @@ bench-cold:
 # Mechanism-level evidence: raw Callgrind instruction/branch counts plus
 # disassembly for the named perf-probe symbols, in both optimisation profiles.
 # Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
-# than degrading to a timing harness (a PERF claim needs this, not Criterion).
+# than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 

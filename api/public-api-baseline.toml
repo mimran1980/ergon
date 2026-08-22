@@ -5,17 +5,10 @@
 # ergo-sbe and ergo-aeron-cluster against [metadata].baseline_tag (a git
 # tag; the script strips a leading `v` before passing --baseline-version).
 #
-# Not enforced yet: compiling each fixture below, extracting its generated
-# public API, and diffing that against the baseline tag. That generated-API
-# freeze is future work for the 1.0 audit — this file is the fixture list,
-# not a claim that the diff already runs.
-
-[[fixtures]]
-name = "car_full"
-description = "Full-profile car example — primary API review artifact"
-schema = "sbe/tests/fixtures/schemas/example-schema.xml"
-profile = "Full"
-generated_module = "car_example"
+# Enforced: scripts/check-generated-public-api.sh generates each fixture and
+# diffs public item names against api/generated/<name>.txt. Update with
+# `UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test`
+# after a reviewed API change. Snapshots live in-tree so the gate is offline.
 
 [[fixtures]]
 name = "car_lean"
@@ -23,30 +16,28 @@ description = "Lean-profile car — minimal surface"
 schema = "sbe/tests/fixtures/schemas/example-schema.xml"
 profile = "Lean"
 generated_module = "car_lean"
+snapshot = "api/generated/car_lean.txt"
 
 [[fixtures]]
 name = "car_domain"
-description = "Car with domain objects + conversions"
+description = "Car with domain objects (DomainVarData::Bytes)"
 schema = "sbe/tests/fixtures/schemas/example-schema.xml"
 profile = "Full"
 generated_module = "car_domain"
+domain_objects = "Bytes"
+snapshot = "api/generated/car_domain.txt"
 
 [[fixtures]]
 name = "multi_schema_shared"
 description = "Multi-schema sharing — two schemas, shared common module"
 schema = "sbe/tests/fixtures/schemas/multi-schema-a.xml"
 profile = "Full"
-generated_module = "multi_shared"
+generated_module = "common_types"
 shared_schema = "sbe/tests/fixtures/schemas/multi-schema-b.xml"
-
-[[fixtures]]
-name = "cluster_session"
-description = "Aeron cluster session schema 111"
-schema = "cluster/schemas/aeron-cluster-codecs.xml"
-profile = "Full"
-generated_module = "session"
-package = "ergo-aeron-cluster"
+shared_topology = "shared-first"
+consumer_module = "market_data"
+snapshot = "api/generated/multi_schema_shared.txt"
 
 [metadata]
-baseline_tag = "v0.1.17"
+baseline_tag = "v0.1.20"
 packages = ["ergo-sbe", "ergo-aeron-cluster"]

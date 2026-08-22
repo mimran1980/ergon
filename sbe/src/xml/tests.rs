@@ -63,9 +63,10 @@ fn parse_valid_xml_without_message_schema_root_is_missing() -> Result<(), Box<dy
 }
 
 #[test]
-fn parse_file_missing_path_is_malformed_xml() -> Result<(), Box<dyn std::error::Error>> {
+fn parse_file_missing_path_is_io() -> Result<(), Box<dyn std::error::Error>> {
     let err = parse_file("/nonexistent/ergon/coverage/schema.xml").unwrap_err();
-    assert!(matches!(err, ParseError::MalformedXml { .. }));
+    assert!(matches!(err, ParseError::Io { .. }));
+    assert!(std::error::Error::source(&err).is_some());
 
     Ok(())
 }
@@ -352,7 +353,19 @@ fn parse_include_file_not_found_is_error() -> Result<(), Box<dyn std::error::Err
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
   <include href="definitely_nonexistent_file_12345.xml"/>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "include file not found must error");
+    let err = parse(xml).unwrap_err();
+    match &err {
+        ParseError::Include {
+            href,
+            cause: crate::IncludeCause::NotFound,
+            attempted,
+            ..
+        } => {
+            assert_eq!(href, "definitely_nonexistent_file_12345.xml");
+            assert!(!attempted.is_empty());
+        }
+        other => panic!("expected Include/NotFound, got {other:?}"),
+    }
 
     Ok(())
 }
@@ -1073,7 +1086,8 @@ fn invalid_primitive_error_describes_and_spans() -> Result<(), Box<dyn std::erro
     )
     .unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("invalid primitive type"), "{msg}");
+    assert!(msg.contains("type for field 'f'"), "{msg}");
+    assert!(msg.contains("bogus"), "{msg}");
     assert!(err.labels().is_some(), "expected a span label attached");
 
     Ok(())
@@ -1099,7 +1113,7 @@ fn invalid_primitive_error_renders_source_snippet_via_miette()
 
     assert!(rendered.contains("bogus"), "rendered:\n{rendered}");
     assert!(
-        rendered.contains("invalid primitive type"),
+        rendered.contains("type for field 'f'"),
         "rendered:\n{rendered}"
     );
     assert!(
@@ -1326,16 +1340,285 @@ fn xinclude_without_base_falls_back_to_hardcoded_paths() -> Result<(), Box<dyn s
     Ok(())
 }
 
+fn include_cycle_chain(err: &ParseError) -> &[PathBuf] {
+    match err {
+        ParseError::Include {
+            cause: crate::IncludeCause::Cycle { chain },
+            ..
+        } => chain,
+        other => panic!("expected Include/Cycle, got {other:?}"),
+    }
+}
+
+fn source_chain_reaches_io(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cur = err.source();
+    while let Some(e) = cur {
+        if e.downcast_ref::<std::io::Error>().is_some() {
+            return true;
+        }
+        cur = e.source();
+    }
+    false
+}
+
+struct TempXmlDir(PathBuf);
+
+impl TempXmlDir {
+    fn new(label: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ergon_xml_{label}_{}_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn write(&self, name: &str, body: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = self.0.join(name);
+        std::fs::write(&path, body)?;
+        Ok(path)
+    }
+}
+
+impl Drop for TempXmlDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn stub_schema_including(href: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<messageSchema package="cycle" id="1" version="0" byteOrder="littleEndian">
+  <include href="{href}"/>
+  <types>{HEADER_TYPES}</types>
+</messageSchema>
+"#
+    )
+}
+
 #[test]
 fn xinclude_detects_cycle() -> Result<(), Box<dyn std::error::Error>> {
-    // Self-include: the schema includes itself.
     let path = sbe_test_resource("cyclic-self-include.xml");
+    let canon = path.canonicalize()?;
     let err = parse_file(&path).unwrap_err();
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("cyclic include"),
-        "expected cyclic include error, got: {msg}"
+    assert_eq!(include_cycle_chain(&err), [canon.clone(), canon].as_slice());
+
+    Ok(())
+}
+
+#[test]
+fn parse_file_mutual_include_cycle_is_visit_order() -> Result<(), Box<dyn std::error::Error>> {
+    // Names are chosen so lexicographic HashSet order is a.xml then z.xml.
+    // Visit order when parsing z.xml is z → a → z.
+    let dir = TempXmlDir::new("mutual")?;
+    let z = dir.write("z.xml", &stub_schema_including("a.xml"))?;
+    let a = dir.write("a.xml", &stub_schema_including("z.xml"))?;
+    let err = parse_file(&z).unwrap_err();
+    let z_c = z.canonicalize()?;
+    let a_c = a.canonicalize()?;
+    assert_eq!(
+        include_cycle_chain(&err),
+        [z_c.clone(), a_c, z_c].as_slice(),
+        "cycle chain must be visit order, not sorted HashSet order"
     );
+
+    Ok(())
+}
+
+#[test]
+fn parse_file_transitive_include_cycle_is_visit_order() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempXmlDir::new("transitive")?;
+    let c = dir.write("c.xml", &stub_schema_including("b.xml"))?;
+    let b = dir.write("b.xml", &stub_schema_including("a.xml"))?;
+    let a = dir.write("a.xml", &stub_schema_including("c.xml"))?;
+    let err = parse_file(&c).unwrap_err();
+    let c_c = c.canonicalize()?;
+    let b_c = b.canonicalize()?;
+    let a_c = a.canonicalize()?;
+    assert_eq!(
+        include_cycle_chain(&err),
+        [c_c.clone(), b_c, a_c, c_c].as_slice()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn parse_file_diamond_shared_include_is_not_a_cycle() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempXmlDir::new("diamond")?;
+    dir.write(
+        "shared.xml",
+        r#"<?xml version="1.0"?>
+<types>
+  <composite name="SharedType">
+    <type name="x" primitiveType="uint32"/>
+  </composite>
+</types>
+"#,
+    )?;
+    dir.write(
+        "mid.xml",
+        r#"<?xml version="1.0"?>
+<messageSchema package="mid" id="2" version="0">
+  <include href="shared.xml"/>
+  <types/>
+</messageSchema>
+"#,
+    )?;
+    let root = dir.write(
+        "root.xml",
+        r#"<?xml version="1.0"?>
+<messageSchema package="root" id="1" version="0" byteOrder="littleEndian">
+  <include href="shared.xml"/>
+  <include href="mid.xml"/>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="shared" id="1" type="SharedType"/>
+  </message>
+</messageSchema>
+"#,
+    )?;
+
+    let ir = parse_file(&root)?;
+    assert!(
+        ir.tokens
+            .iter()
+            .any(|t| t.name == "shared" && t.signal == Signal::BeginField),
+        "shared include must resolve once through both root and mid"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn parse_file_directory_root_is_io() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempXmlDir::new("dir_root")?;
+    let err = parse_file(&dir.0).unwrap_err();
+    match &err {
+        ParseError::Io { path, source } => {
+            assert_eq!(path, &dir.0);
+            assert!(
+                source.kind() == std::io::ErrorKind::IsADirectory
+                    || source.kind() == std::io::ErrorKind::PermissionDenied,
+                "directory root must surface a typed I/O kind, got {:?}",
+                source.kind()
+            );
+        }
+        other => panic!("expected ParseError::Io, got {other:?}"),
+    }
+    assert!(
+        source_chain_reaches_io(&err),
+        "Error::source must reach std::io::Error"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn parse_file_unreadable_root_is_io() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempXmlDir::new("perm_root")?;
+    let path = dir.write("schema.xml", &stub_schema_including("missing.xml"))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))?;
+    let err = parse_file(&path).unwrap_err();
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+    match &err {
+        ParseError::Io { source, .. } => {
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected ParseError::Io, got {other:?}"),
+    }
+    assert!(source_chain_reaches_io(&err));
+
+    Ok(())
+}
+
+#[test]
+fn parse_file_unreadable_include_is_include_io() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempXmlDir::new("inc_io")?;
+    let blocked = dir.0.join("blocked");
+    std::fs::create_dir(&blocked)?;
+    let root = dir.write(
+        "root.xml",
+        r#"<?xml version="1.0"?>
+<messageSchema package="ioinc" id="1" version="0" byteOrder="littleEndian">
+  <include href="blocked"/>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+</messageSchema>
+"#,
+    )?;
+    let err = parse_file(&root).unwrap_err();
+    match &err {
+        ParseError::Include {
+            href,
+            cause: crate::IncludeCause::Io { path, source },
+            ..
+        } => {
+            assert_eq!(href, "blocked");
+            assert_eq!(path, &blocked.canonicalize()?);
+            assert!(
+                source.kind() == std::io::ErrorKind::IsADirectory
+                    || source.kind() == std::io::ErrorKind::PermissionDenied,
+                "unreadable include must surface a typed I/O kind, got {:?}",
+                source.kind()
+            );
+        }
+        other => panic!("expected Include/Io, got {other:?}"),
+    }
+    assert!(
+        source_chain_reaches_io(&err),
+        "Error::source must reach std::io::Error through IncludeCause::Io"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn parse_file_permission_denied_include_is_include_io() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempXmlDir::new("inc_perm")?;
+    let blocked = dir.write("blocked.xml", "<types/>")?;
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000))?;
+    let root = dir.write("root.xml", &stub_schema_including("blocked.xml"))?;
+    let err = parse_file(&root).unwrap_err();
+    let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o644));
+    match &err {
+        ParseError::Include {
+            href,
+            cause: crate::IncludeCause::Io { path, source },
+            ..
+        } => {
+            assert_eq!(href, "blocked.xml");
+            assert_eq!(path, &blocked.canonicalize()?);
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected Include/Io, got {other:?}"),
+    }
+    assert!(source_chain_reaches_io(&err));
 
     Ok(())
 }
@@ -2680,6 +2963,87 @@ fn include_of_message_schema_wrapped_types_registers_types()
         "field using included type must resolve"
     );
     std::fs::remove_file(&inc).ok();
+    Ok(())
+}
+
+#[test]
+fn parse_file_with_deps_lists_root_nested_and_transitive_includes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!(
+        "ergon_xml_deps_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let nested = dir.join("nested");
+    std::fs::create_dir_all(&nested)?;
+    std::fs::write(
+        dir.join("leaf.xml"),
+        r#"<?xml version="1.0"?>
+<types>
+  <composite name="LeafType">
+    <type name="x" primitiveType="uint32"/>
+  </composite>
+</types>
+"#,
+    )?;
+    std::fs::write(
+        nested.join("mid.xml"),
+        r#"<?xml version="1.0"?>
+<messageSchema package="mid" id="2" version="0">
+  <include href="../leaf.xml"/>
+  <types/>
+</messageSchema>
+"#,
+    )?;
+    let root = dir.join("root.xml");
+    std::fs::write(
+        &root,
+        r#"<?xml version="1.0"?>
+<messageSchema package="root" id="1" version="0" byteOrder="littleEndian">
+  <include href="nested/mid.xml"/>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="leaf" id="1" type="LeafType"/>
+  </message>
+</messageSchema>
+"#,
+    )?;
+
+    let parsed = parse_file_with_deps(&root)?;
+    assert!(
+        parsed
+            .ir
+            .tokens
+            .iter()
+            .any(|t| t.name == "leaf" && t.signal == Signal::BeginField),
+        "transitive LeafType must resolve through nested/mid.xml"
+    );
+
+    let names: Vec<String> = parsed
+        .dependencies
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.first().map(String::as_str), Some("root.xml"));
+    assert!(names.contains(&"mid.xml".to_string()), "{names:?}");
+    assert!(names.contains(&"leaf.xml".to_string()), "{names:?}");
+    assert_eq!(names.len(), 3, "each path once: {names:?}");
+    let again = parse_file_with_deps(&root)?;
+    assert_eq!(
+        parsed.dependencies, again.dependencies,
+        "dependency order must be deterministic"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 

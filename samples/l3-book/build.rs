@@ -8,16 +8,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
-            "rust_decimal::Decimal",
-        )
+            "rust_decimal::Decimal")
         .with_domain_type(
             ergo_sbe::ConversionSelector::named_type("BooleanType"),
-            "bool",
-        )
+            "bool")
         .with_domain_type(
             ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
-            "chrono::DateTime<chrono::Utc>",
-        );
+            "chrono::DateTime<chrono::Utc>");
     // ANCHOR_END: with_domain_type_config
     ergo_sbe::generate_to_dir("schemas/l3-book.xml", config, &generated_dir)?;
     Ok(())
