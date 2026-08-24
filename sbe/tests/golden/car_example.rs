@@ -6276,7 +6276,7 @@ impl CarDomain {
         Ok(Self {
             serial_number: dec.serial_number(),
             model_year: dec.model_year(),
-            available: dec.try_available_bool().expect("null or invalid bool value"),
+            available: dec.try_available_bool()?,
             code: dec.code(),
             some_numbers: dec.some_numbers(),
             vehicle_code: dec.vehicle_code(),

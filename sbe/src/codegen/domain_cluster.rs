@@ -459,7 +459,7 @@ pub(crate) fn generate_domain_recursive(
                         encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident().expect("null or invalid bool value") });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident()? });
                         encode_stmts.push(quote::quote! { enc.#opt_bool_ident(self.#f_ident); });
                     }
                 } else {

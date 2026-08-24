@@ -789,3 +789,60 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
     );
     Ok(())
 }
+
+/// A required (non-versioned) boolean domain field used to `.expect()` on an
+/// unknown wire discriminant instead of propagating the typed error the
+/// underlying accessor already returns — `try_from_decoder` panicked on a
+/// hostile/corrupt frame instead of failing closed. `available` (offset 10 in
+/// the fixed block, i.e. absolute byte 18 including the 8-byte header) is
+/// `BooleanType`, valid only as 0 or 1.
+#[test]
+fn car_domain_required_bool_invalid_discriminant_is_typed_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_dom_bad_bool");
+    compile_and_run(
+        "car_dom_bad_bool",
+        &src,
+        r#"
+        let mut buf = [0u8; 2048];
+        let mut extras = OptionalExtras::default();
+        extras.cruise_control(true);
+        let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1u32, 2, 3, 4],
+            vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
+            extras,
+            engine: Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(0, |_| Ok(()))?
+        .performance_figures(0, |_| Ok(()))?
+        .manufacturer(b"Honda")?
+        .model(b"Civic")?
+        .activation_code(b"a")?
+        .as_bytes_with_header()
+        .to_vec();
+
+        // Sanity: the valid frame decodes cleanly before corrupting it.
+        CarDomain::try_from_decoder(CarDecoder::try_from(&encoded[..])?)?;
+
+        // Corrupt `available`'s wire byte to an unknown BooleanType discriminant.
+        let mut bad = encoded.clone();
+        assert_eq!(bad[18], 1, "byte 18 must be the `available` field before corrupting it");
+        bad[18] = 0xFF;
+        let err = CarDomain::try_from_decoder(CarDecoder::try_from(&bad[..])?).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                sbe_rt::DecodeError::InvalidBoolean { field: "available", discriminant: 0xFF }
+            ),
+            "expected typed InvalidBoolean, got: {err:?}"
+        );
+        println!("car_domain_required_bool_invalid_discriminant_is_typed_error: PASSED");
+    "#,
+    );
+    Ok(())
+}
