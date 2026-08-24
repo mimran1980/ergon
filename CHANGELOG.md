@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.21] — 2026-08-24
+
 ### Added
 - `GenerationConfig::with_manual_domain_type` and `with_domain_type` now emit
   correctly `Option`-wrapped `try_*` accessors for optional (or
