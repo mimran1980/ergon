@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+- `GenerationConfig::with_manual_domain_type` and `with_domain_type` now emit
+  correctly `Option`-wrapped `try_*` accessors for optional (or
+  `sinceVersion`-gated) domain-typed fields inside repeating groups, matching
+  the message-level behaviour. Generated `Display`/`Debug` for group-entry
+  domain-typed `Primitive`/`Enum` fields now shows the converted domain value
+  instead of failing to compile.
+
+### Changed
+- **Breaking:** `BuildError` is `#[non_exhaustive]`. `Io(std::io::Error)` is
+  now `Io { action: &'static str, path: PathBuf, source: std::io::Error }`,
+  naming the exact attempted step and destination instead of a bare I/O
+  message.
+- `generate_multi_to_dir` / `write_module_set` publish a complete generated
+  module set as one all-or-nothing unit: every module is staged to a unique
+  temp file before any destination is touched, and a mid-commit failure
+  restores every pre-existing destination and leaves no temp/backup debris.
+- `GenerationConfig::with_keyword_append_token` is validated at `generate()`:
+  an empty or invalid token now returns
+  `GenerateError::InvalidConfiguration` instead of generating uncompilable
+  Rust.
+
+### Fixed
+- Domain-object generation for a required (non-`sinceVersion`) boolean field
+  no longer panics on an unknown wire discriminant; `try_from_decoder`
+  propagates `DecodeError::InvalidBoolean` instead.
+- Single-line schema `description` text containing `&`, `<`, or `>` (e.g.
+  `Option<u32>`) is now escaped before emission, so it can no longer break a
+  downstream `-D warnings` rustdoc build with `rustdoc::invalid_html_tags`.
+
 ## [0.1.20] — 2026-08-20
 
 ### Added

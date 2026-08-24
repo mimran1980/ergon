@@ -37,6 +37,7 @@ use crate::xml::{ParseError, parse, parse_file_with_deps, parse_file_with_shared
 /// instead of a raw `Debug` dump. Plain `Box<dyn std::error::Error>` prints
 /// `{:?}` on failure — use `miette::Result` to get the readable form.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
 pub enum BuildError {
     /// Schema XML could not be parsed or resolved.
     #[error(transparent)]
@@ -48,12 +49,32 @@ pub enum BuildError {
     /// `OUT_DIR` is unset — this helper is meant for Cargo `build.rs` only.
     #[error("OUT_DIR is not set (run from a Cargo build.rs script)")]
     MissingOutDir,
-    /// Failed to write a generated file.
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    /// Failed to create, write, back up, or promote a generated output.
+    /// `action` names the attempted step (e.g. "create output directory",
+    /// "write generated module") and `path` is the exact destination or
+    /// staging file involved.
+    #[error("failed to {action} at {}: {source}", path.display())]
+    Io {
+        /// What was being attempted.
+        action: &'static str,
+        /// The path involved.
+        path: PathBuf,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
     /// Generator produced no modules.
     #[error("schema generated no modules")]
     Empty,
+}
+
+/// Build a [`BuildError::Io`] from an I/O result at a known action/path.
+fn io_err(action: &'static str, path: &Path, source: std::io::Error) -> BuildError {
+    BuildError::Io {
+        action,
+        path: path.to_path_buf(),
+        source,
+    }
 }
 
 /// One schema file in a multi-schema generation set.
@@ -151,7 +172,8 @@ pub fn generate_to_dir(
 ) -> Result<GeneratedModuleSet, BuildError> {
     let schema_path = schema_path.as_ref();
     let out_dir = out_dir.as_ref();
-    fs::create_dir_all(out_dir)?;
+    fs::create_dir_all(out_dir)
+        .map_err(|source| io_err("create output directory", out_dir, source))?;
     let parsed = parse_file_with_deps(schema_path)?;
     let modules = write_generated(Schema::from_ir(parsed.ir), config, out_dir)?;
     for watched in schema_watch_paths(schema_path, &parsed.dependencies) {
@@ -358,11 +380,34 @@ fn write_generated(
     Ok(modules)
 }
 
+/// One module's destination, staging file, and whether `dest` already
+/// existed before this write (so a rollback knows whether to restore a
+/// backup or remove a file that should never have been created).
+struct StagedWrite {
+    dest: PathBuf,
+    temp: PathBuf,
+    pre_existed: bool,
+}
+
+/// Publish a complete [`GeneratedModuleSet`] to `out` as one all-or-nothing
+/// unit: shared and consumer modules form one generated protocol graph, so a
+/// failure partway through must never leave a mixture of old and new
+/// generations on disk.
+///
+/// Three phases: validate every basename first (no writes yet); stage every
+/// source to a unique sibling temp file; only once every temp file is
+/// written, back up existing destinations and promote the staged set. Any
+/// failure in staging or commit rolls back — restoring backups and removing
+/// promoted/temp files — before returning the path-aware [`BuildError::Io`].
+/// This guarantees rollback for a failure reported to this process, not
+/// crash-atomicity across power loss.
 fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), BuildError> {
     if modules.modules().len() == 0 {
         return Err(BuildError::Empty);
     }
-    fs::create_dir_all(out)?;
+
+    // Phase 1: validate every basename before any write.
+    let mut dests = Vec::with_capacity(modules.modules().len());
     for m in modules.modules() {
         // Defense in depth: reject paths with directory components.
         // Generated module paths must be simple basenames like "car.rs".
@@ -376,16 +421,95 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
                 },
             ));
         }
-        let dest = out.join(&m.path);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+        dests.push(out.join(path_str));
+    }
+
+    fs::create_dir_all(out).map_err(|source| io_err("create output directory", out, source))?;
+
+    // Phase 2: stage every source to a unique sibling temp file. Nothing at
+    // `dest` is touched yet.
+    let pid = std::process::id();
+    let mut staged: Vec<StagedWrite> = Vec::with_capacity(dests.len());
+    for (idx, (m, dest)) in modules.modules().zip(&dests).enumerate() {
+        let temp = dest.with_extension(format!(
+            "{}.tmp.{pid}.{idx}",
+            dest.extension().and_then(|e| e.to_str()).unwrap_or("rs")
+        ));
+        if let Some(parent) = temp.parent() {
+            if let Err(source) = fs::create_dir_all(parent) {
+                remove_staged_temps(&staged);
+                return Err(io_err("create output directory", parent, source));
+            }
         }
-        fs::write(&dest, &m.source)?;
+        if let Err(source) = fs::write(&temp, &m.source) {
+            remove_staged_temps(&staged);
+            return Err(io_err("write generated module", &temp, source));
+        }
+        staged.push(StagedWrite {
+            dest: dest.clone(),
+            temp,
+            pre_existed: dest.exists(),
+        });
+    }
+
+    // Phase 3: commit. Back up every pre-existing destination, then promote
+    // every staged temp file over its destination.
+    let mut backed_up: Vec<(PathBuf, PathBuf)> = Vec::new(); // (backup, dest)
+    let mut promoted: Vec<&StagedWrite> = Vec::new();
+    let commit_err = 'commit: {
+        for sw in &staged {
+            if sw.pre_existed {
+                let backup = sw.dest.with_extension(format!(
+                    "{}.bak.{pid}",
+                    sw.dest.extension().and_then(|e| e.to_str()).unwrap_or("rs")
+                ));
+                if let Err(source) = fs::rename(&sw.dest, &backup) {
+                    break 'commit Some(io_err("back up existing generated module", &sw.dest, source));
+                }
+                backed_up.push((backup, sw.dest.clone()));
+            }
+        }
+        for sw in &staged {
+            if let Err(source) = fs::rename(&sw.temp, &sw.dest) {
+                break 'commit Some(io_err("promote generated module", &sw.dest, source));
+            }
+            promoted.push(sw);
+        }
+        None
+    };
+
+    if let Some(err) = commit_err {
+        // Restore every destination we backed up.
+        for (backup, dest) in &backed_up {
+            let _ = fs::rename(backup, dest);
+        }
+        // A promoted file that had NO backup did not exist before this call
+        // — remove it so a failed generation leaves no partial output.
+        let backed_up_dests: std::collections::HashSet<&Path> =
+            backed_up.iter().map(|(_, d)| d.as_path()).collect();
+        for sw in &promoted {
+            if !backed_up_dests.contains(sw.dest.as_path()) {
+                let _ = fs::remove_file(&sw.dest);
+            }
+        }
+        remove_staged_temps(&staged);
+        return Err(err);
+    }
+
+    // Success: drop backups and report warnings only after commit.
+    for (backup, _) in &backed_up {
+        let _ = fs::remove_file(backup);
     }
     for w in modules.warnings() {
         println!("cargo::warning={w}");
     }
     Ok(())
+}
+
+fn remove_staged_temps(staged: &[StagedWrite]) {
+    for sw in staged {
+        let _ = fs::remove_file(&sw.temp);
+    }
 }
 
 /// Include a module written by [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
@@ -821,6 +945,147 @@ mod tests {
             !out.join("common_types.rs").exists() && !out.join("orders.rs").exists(),
             "late consumer failure must not write earlier modules"
         );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// First generation into an empty directory: if staging the second
+    /// module fails, the first module's temp file must be cleaned up and
+    /// neither destination must exist — a fresh generation either lands
+    /// completely or not at all.
+    #[test]
+    fn generate_multi_staging_failure_rolls_back_to_no_outputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let out = dir.join("out");
+        fs::create_dir_all(&out)?;
+
+        // Block the second module's ("orders") staging temp file with a
+        // pre-existing directory at that exact path — the same naming
+        // scheme write_module_set uses (same process, so the same pid).
+        let pid = std::process::id();
+        let orders_temp = out.join(format!("orders.rs.tmp.{pid}.1"));
+        fs::create_dir_all(&orders_temp)?;
+
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types"),
+            &out,
+        )
+        .unwrap_err();
+        assert!(matches!(err, BuildError::Io { .. }), "{err:?}");
+        assert!(
+            !out.join("common_types.rs").exists(),
+            "staging failure on module two must not promote module one either"
+        );
+        // Any `*.tmp.*` file besides the directory this test pre-planted
+        // (write_module_set only ever removes files it staged itself, so
+        // the pre-planted directory is expected to remain) means module
+        // one's temp file was left behind instead of being cleaned up.
+        let stray_temps: Vec<_> = fs::read_dir(&out)?
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp.") && *n != format!("orders.rs.tmp.{pid}.1"))
+            .collect();
+        assert!(
+            stray_temps.is_empty(),
+            "module one's temp file must be cleaned up on rollback: {stray_temps:?}"
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// Regenerating over an existing output set: if the commit phase fails
+    /// partway (backing up module two's destination), every pre-existing
+    /// destination must come back byte-identical and no backup/temp debris
+    /// must remain — a failed regeneration must never leave a mixture of the
+    /// old and new generated graphs.
+    #[test]
+    fn generate_multi_commit_failure_restores_pre_existing_outputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let out = dir.join("out");
+        fs::create_dir_all(&out)?;
+
+        // Simulate a prior successful generation already on disk.
+        let original_common = b"// original common_types.rs\n".to_vec();
+        let original_orders = b"// original orders.rs\n".to_vec();
+        fs::write(out.join("common_types.rs"), &original_common)?;
+        fs::write(out.join("orders.rs"), &original_orders)?;
+
+        // Block module two's backup destination with a non-empty directory —
+        // `fs::rename` onto that fails, forcing a commit-phase error after
+        // staging has already succeeded for both modules.
+        let pid = std::process::id();
+        let orders_backup = out.join(format!("orders.rs.bak.{pid}"));
+        fs::create_dir_all(&orders_backup)?;
+        fs::write(orders_backup.join("occupied"), b"x")?;
+
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types"),
+            &out,
+        )
+        .unwrap_err();
+        assert!(matches!(err, BuildError::Io { .. }), "{err:?}");
+
+        assert_eq!(
+            fs::read(out.join("common_types.rs"))?,
+            original_common,
+            "module one must be restored byte-identical after rollback"
+        );
+        assert_eq!(
+            fs::read(out.join("orders.rs"))?,
+            original_orders,
+            "module two must be untouched — its backup step never completed"
+        );
+        let debris: Vec<_> = fs::read_dir(&out)?
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp.") || (n.contains(".bak.") && !n.contains("occupied")))
+            .filter(|n| n != &format!("orders.rs.bak.{pid}"))
+            .collect();
+        assert!(debris.is_empty(), "no leftover temp/backup files: {debris:?}");
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// `BuildError::Io` must name the exact action and path attempted, and
+    /// keep the original `std::io::Error` reachable through `source()` — not
+    /// just a flattened "I/O error: ..." string with no diagnostic context.
+    #[test]
+    fn build_error_io_display_and_source_preserve_action_and_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        let schema_path = dir.join("messages.xml");
+        fs::write(&schema_path, minimal_schema())?;
+
+        // A regular file where the output directory should be — creating a
+        // directory there fails with a real `std::io::Error`.
+        let blocked = dir.join("blocked");
+        fs::write(&blocked, b"not a directory")?;
+
+        let err =
+            generate_to_dir(&schema_path, GenerationConfig::new("blocked"), &blocked).unwrap_err();
+        match &err {
+            BuildError::Io { action, path, .. } => {
+                assert_eq!(*action, "create output directory");
+                assert_eq!(path, &blocked);
+            }
+            other => unreachable!("expected BuildError::Io, got {other:?}"),
+        }
+        let msg = err.to_string();
+        assert!(msg.contains("create output directory"), "{msg}");
+        assert!(msg.contains(&blocked.display().to_string()), "{msg}");
+        assert!(
+            std::error::Error::source(&err).is_some(),
+            "BuildError::Io must expose the original io::Error via source()"
+        );
+
         fs::remove_dir_all(&dir)?;
         Ok(())
     }
