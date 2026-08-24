@@ -461,11 +461,11 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// When `keyword_append_token` is set to empty, a schema field named after a
-/// Rust keyword produces generated code that fails to compile. This is the
-/// intended failure mode: the user must either rename the schema field or
-/// keep the default `_` append token. The test proves that the compiler
-/// rejection is clear (mentions the keyword or the field name).
+/// When `keyword_append_token` is set to empty (or another value that can't
+/// turn a keyword into a valid non-keyword identifier), generation must
+/// reject the *configuration* before emitting anything, rather than let a
+/// schema field named after a Rust keyword produce generated code that fails
+/// to compile with a generic, hard-to-diagnose error.
 #[test]
 fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std::error::Error>> {
     let keyword_schema = r#"<messageSchema package="kwfail" id="1" version="0" byteOrder="littleEndian">
@@ -484,23 +484,22 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     </messageSchema>"#;
 
     let schema = Schema::from_ir(parse(keyword_schema)?);
-    // Empty append token — generated code will have `fn type()` which is
-    // invalid Rust because `type` is a reserved keyword.
+    // Empty append token — "type" + "" is still the keyword `type`, which is
+    // now rejected as configuration before any code is emitted.
     let config = GenerationConfig::new("kwfail").with_keyword_append_token("");
     let result = Generator::new(config).generate(&schema);
 
-    // 0.1.14+: generate() returns Err instead of silently emitting a
-    // comment-banner module. The keyword-affixed-field path already handles
-    // this case (append "_"); the empty-token path exposes the defect.
     match result {
-        Err(ergo_sbe::codegen::GenerateError::InvalidGeneratedSource { module, error }) => {
-            assert!(module == "kwfail", "error module name must match");
+        Err(ergo_sbe::codegen::GenerateError::InvalidConfiguration {
+            option, reason, ..
+        }) => {
+            assert_eq!(option, "keyword_append_token");
             assert!(
-                error.contains("keyword") || error.contains("type"),
-                "error must mention the keyword issue: {error}"
+                reason.contains("keyword"),
+                "error must mention the keyword issue: {reason}"
             );
         }
-        other => unreachable!("expected InvalidGeneratedSource, got {other:?}"),
+        other => unreachable!("expected InvalidConfiguration, got {other:?}"),
     }
 
     Ok(())
