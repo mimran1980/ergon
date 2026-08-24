@@ -1583,10 +1583,23 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {{:?}}", f.name);
-                entry_display_body.extend(quote::quote! {
-                    { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                });
+                // Domain-converted primitives use the fallible try_* accessor
+                // (the plain accessor is renamed to *_wire and no longer
+                // exists under that name once a domain type is registered —
+                // matches the message-level Primitive branch's handling).
+                if let Some(_domain_path) = find_domain_type(f, domain_types) {
+                    let try_ident =
+                        syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { if let Ok(v) = self.#try_ident() { write!(f, #fmt_str, v)?; } }
+                    });
+                } else {
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
+                }
                 entry_display_out_idx += 1;
             }
             FieldType::Enum {
@@ -1595,10 +1608,22 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
-                entry_display_body.extend(quote::quote! {
-                    { let e = self.#f_ident(); write!(f, #fmt_str)?; }
-                });
+                // Same rationale as the Primitive branch above: a domain
+                // enum (e.g. bool) uses the fallible try_* accessor; the
+                // plain accessor no longer exists under that name.
+                if let Some(_domain_path) = find_domain_type(f, domain_types) {
+                    let try_ident =
+                        syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { if let Ok(v) = self.#try_ident() { write!(f, #fmt_str, v)?; } }
+                    });
+                } else {
+                    let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                    });
+                }
                 entry_display_out_idx += 1;
             }
             FieldType::Set { .. } => {

@@ -200,16 +200,38 @@ pub(crate) fn generate_converter_impls(
                     syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
                 let domain_ident = syn::Ident::new(&field_snake, span);
                 let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-                dec_methods.extend(quote::quote! {
-                    #[inline]
-                    pub fn #try_ident(
-                        &self,
-                    ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
-                        <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
-                            self.#raw_decoder_getter()
-                        )
-                    }
-                });
+                // Same rule as the message-level path above: a domain
+                // accessor is `Option`-wrapped exactly when the raw accessor
+                // it delegates to is (optional primitive/enum, or a field
+                // gated by sinceVersion). A composite has no null image, so
+                // it never wraps even when optional.
+                let is_optional = f.since_version > 0
+                    || (f.presence == crate::ir::Presence::Optional
+                        && !matches!(f.field_type, FieldType::Composite { .. }));
+                if is_optional {
+                    dec_methods.extend(quote::quote! {
+                        #[inline]
+                        pub fn #try_ident(
+                            &self,
+                        ) -> Result<Option<#dt_ty>, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
+                            match self.#raw_decoder_getter() {
+                                Some(wire) => <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(wire).map(Some),
+                                None => Ok(None),
+                            }
+                        }
+                    });
+                } else {
+                    dec_methods.extend(quote::quote! {
+                        #[inline]
+                        pub fn #try_ident(
+                            &self,
+                        ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
+                            <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
+                                self.#raw_decoder_getter()
+                            )
+                        }
+                    });
+                }
                 enc_methods.extend(quote::quote! {
                     #[inline]
                     pub fn #try_ident(
