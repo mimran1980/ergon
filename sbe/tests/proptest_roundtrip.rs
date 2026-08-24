@@ -76,7 +76,6 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
         .args(["test"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 
