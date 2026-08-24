@@ -40,6 +40,11 @@
   `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
   Aeron wire code).
 
+- Generated `{Group}Encoder::wrap`, `ENTRY_BLOCK_LENGTH`, and
+  `GROUP_DIM_TEMPLATE` now carry authored rustdoc explaining the standalone
+  group framing contract (offset is the first entry, the dimension header is
+  the caller's responsibility) instead of a placeholder.
+
 ### Fixed
 - Domain-object generation for a required (non-`sinceVersion`) boolean field
   no longer panics on an unknown wire discriminant; `try_from_decoder`
