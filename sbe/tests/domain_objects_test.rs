@@ -858,3 +858,96 @@ fn car_domain_required_bool_invalid_discriminant_is_typed_error()
     );
     Ok(())
 }
+
+/// T-1 regression: no generated domain `try_from_decoder` body may contain
+/// `expect(` or `unwrap(` — every fallible field materialisation must
+/// propagate via `?`, including nested group-entry domain types (not just
+/// the top-level message domain struct T-1's own fix targeted).
+#[test]
+fn no_domain_try_from_decoder_body_contains_expect_or_unwrap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_dom_no_expect_scan");
+
+    let mut checked = 0;
+    let mut offset = 0;
+    while let Some(rel) = src[offset..].find("fn try_from_decoder(") {
+        let start = offset + rel;
+        let body_start = src[start..].find('{').ok_or("no body open brace")? + start;
+        let mut depth = 0i32;
+        let mut end = body_start;
+        for (i, ch) in src[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = body_start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &src[body_start..=end];
+        assert!(
+            !body.contains("expect(") && !body.contains("unwrap("),
+            "try_from_decoder body must propagate via `?`, not panic:\n{body}"
+        );
+        checked += 1;
+        offset = end + 1;
+    }
+    assert!(
+        checked >= 2,
+        "expected multiple try_from_decoder impls (message + group entries) in car_dom_all, found {checked}"
+    );
+    Ok(())
+}
+
+/// T-1 acceptance criteria: a required boolean field inside a *repeating
+/// group entry* (not just a root message field) with an unknown wire
+/// discriminant must also propagate `DecodeError::InvalidBoolean` instead
+/// of panicking. `coverage-edges.xml`'s `MsgA.items` group has exactly this
+/// shape: `flag: BooleanType` at entry offset 4.
+#[test]
+fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema_path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/coverage-edges.xml"
+    ));
+    let (_schema, src) = generate(&schema_path, "cov_edges_group_bool");
+    compile_and_run(
+        "cov_edges_group_bool",
+        &src,
+        r#"
+        let mut buf = [0u8; 128];
+        let len = MsgAEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgAFixedFields {})
+            .items(1, |g| {
+                g.add(|e| {
+                    e.tag(7).flag(BooleanType::T);
+                    Ok(())
+                })
+            })?
+            .encoded_length_with_header();
+
+        // Sanity: the valid frame decodes cleanly before corrupting it.
+        let dec = MsgADecoder::try_from(&buf[..len])?;
+        MsgADomain::try_from_decoder(dec)?;
+
+        // Entry offset 4 is `flag` (tag: uint32 @0, flag: BooleanType @4).
+        // Message header (8) + group dimension header (groupSize: 4) = 12,
+        // entry starts there; flag is entry offset 4 -> absolute byte 16.
+        let mut bad = buf;
+        assert_eq!(bad[16], 1, "byte 16 must be the entry's `flag` field before corrupting it");
+        bad[16] = 0xFF;
+        let dec = MsgADecoder::try_from(&bad[..len])?;
+        let err = MsgADomain::try_from_decoder(dec).unwrap_err();
+        assert!(
+            matches!(err, sbe_rt::DecodeError::InvalidBoolean { field: "flag", discriminant: 0xFF }),
+            "expected typed InvalidBoolean for the group-entry field, got: {err:?}"
+        );
+        "#,
+    );
+    Ok(())
+}

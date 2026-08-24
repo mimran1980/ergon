@@ -5,7 +5,21 @@ use super::conversion_helpers::{
     field_has_conversion_free, find_domain_selector, find_domain_type,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
-use crate::structured_ir::{FieldType, MessageGroup, MessageStructure, rust_type};
+use crate::structured_ir::{FieldType, MessageField, MessageGroup, MessageStructure, rust_type};
+
+/// A domain accessor is `Option`-wrapped exactly when the raw accessor it
+/// delegates to is: a field gated by `sinceVersion` returns `Option` (absent
+/// before its version), and a primitive/enum with `presence="optional"`
+/// null-maps to `Option`. A *composite* with `presence="optional"` does NOT —
+/// there is no null image for a composite, so the raw `_value()` accessor
+/// stays plain and wrapping it here would produce a type mismatch
+/// (`Some`/`None` on a non-`Option`). Shared by the message-level and
+/// group-entry codegen paths so the rule can't drift between them.
+fn is_optional_domain_field(f: &MessageField) -> bool {
+    f.since_version > 0
+        || (f.presence == crate::ir::Presence::Optional
+            && !matches!(f.field_type, FieldType::Composite { .. }))
+}
 
 /// Generate `*_as`/`*_from` conversion methods for fields matching the
 /// configured conversion selectors. Also emits raw `*_wire` aliases if the
@@ -66,17 +80,7 @@ pub(crate) fn generate_converter_impls(
 
             // checked domain accessors are fallible — no `.expect`.
             let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-            // A domain accessor is `Option`-wrapped exactly when the raw
-            // accessor it delegates to is. That is: a field gated by
-            // `sinceVersion` returns `Option` (absent before its version), and
-            // a primitive/enum with `presence="optional"` null-maps to
-            // `Option`. A *composite* with `presence="optional"` does NOT —
-            // there is no null image for a composite, so the raw `_value()`
-            // accessor stays plain and wrapping it here produced a type
-            // mismatch (`Some`/`None` on a non-`Option`).
-            let is_optional = f.since_version > 0
-                || (f.presence == crate::ir::Presence::Optional
-                    && !matches!(f.field_type, FieldType::Composite { .. }));
+            let is_optional = is_optional_domain_field(f);
             // DomainImpl::Manual doc comment: a ready-to-paste starting point,
             // shown on both the decoder and encoder accessor (IDE hover /
             // `cargo doc`) so a missing-impl compile error has somewhere to
@@ -200,14 +204,7 @@ pub(crate) fn generate_converter_impls(
                     syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
                 let domain_ident = syn::Ident::new(&field_snake, span);
                 let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-                // Same rule as the message-level path above: a domain
-                // accessor is `Option`-wrapped exactly when the raw accessor
-                // it delegates to is (optional primitive/enum, or a field
-                // gated by sinceVersion). A composite has no null image, so
-                // it never wraps even when optional.
-                let is_optional = f.since_version > 0
-                    || (f.presence == crate::ir::Presence::Optional
-                        && !matches!(f.field_type, FieldType::Composite { .. }));
+                let is_optional = is_optional_domain_field(f);
                 if is_optional {
                     dec_methods.extend(quote::quote! {
                         #[inline]

@@ -181,17 +181,15 @@ Not a ≤1.00 gate. Compares **flyweight vs wire-image value vs
 `#[repr(C, packed)]`** for a single mid-block field on a **256-byte** composite
 (`BigBlock`, field `f15`). Field-only arms; no alloc on the timed path.
 
-| Arm | Median (this host) |
-|-----|--------------------|
-| flyweight_f15 | ~0.415 ns |
-| value_preheld_f15 | ~0.431 ns |
-| packed_preheld_f15 | ~0.426 ns |
-| value_copy_then_f15 (copy 256 B first) | ~25.8 ns |
-
 **Conclusion:** single-field access is one load for flyweight, preheld
-`[u8; N]` wire image, and packed overlay alike. Packing does **not** beat the
-wire-image design. Materialising the whole composite just to read one field is
-the expensive path. See README
+`[u8; N]` wire image, and packed overlay alike (`flyweight_f15`,
+`value_preheld_f15`, and `packed_preheld_f15` measure equivalently). Packing
+does **not** beat the wire-image design. Materialising the whole composite
+first (`value_copy_then_f15`) is ~60x slower than any single-field access —
+the expensive path is the copy, not the read. This diagnostic is
+unprovenanced (no run-id/commit/host manifest); reproduce with the command
+below and read the live numbers rather than trusting any figure quoted here.
+See README
 [Composite layout & little-endian](https://mimran1980.github.io/ergon/sbe/core-concepts/composite-layout.html).
 
 ```sh
@@ -203,20 +201,17 @@ cd sbe/benchmarks && cargo bench --bench layout_access_bench
 Not a ≤1.00 gate. Confirms FixedFields vs setters, composite write, LE vs BE
 (body) on a LE host. Seeded/preheld values so work is not constant-folded away.
 
-| Arm | Median (this host) |
-|-----|--------------------|
-| setters_all_fixed | ~2.65 ns |
-| fixed_struct (`.fixed`) | ~2.64 ns |
-| engine_new_then_write (+ fixed prelude) | ~5.31 ns |
-| engine_preheld_write (+ fixed prelude) | ~5.67 ns |
-| le_block_new_then_write (256 B) | ~26.1 ns |
-| be_block_new_then_write (256 B) | ~27.5 ns |
-| le_block_preheld_memcpy | ~77.1 ns |
-| be_block_preheld_memcpy | ~77.2 ns |
-
-**Conclusion:** `.fixed` ≈ setters; preheld composite write ≈ build+write for a
-small engine once the rest of the fixed block is written; BE build is slightly
-slower than LE on an LE host; preheld memcpy is endian-independent. See README
+**Conclusion:** `setters_all_fixed` and `fixed_struct` (`.fixed`) measure
+equivalently — the staged builder is not a tax over individual setters.
+`engine_new_then_write` and `engine_preheld_write` (both plus the fixed
+prelude) are likewise close to each other. For the 256-byte composite block,
+`le_block_new_then_write` and `be_block_new_then_write` are close, with BE
+build slightly slower than LE on an LE host; the corresponding preheld-memcpy
+arms are endian-independent and slower than either build path (materialising
+the whole 256-byte block dominates over a single-field build). This
+diagnostic is unprovenanced (no run-id/commit/host manifest); reproduce with
+the command below and read the live numbers rather than trusting any figure
+quoted here. See README
 [Encode — FixedFields vs setters…](https://mimran1980.github.io/ergon/sbe/core-concepts/composite-layout.html).
 
 ```sh
@@ -286,21 +281,12 @@ The timed encode paths reuse caller-owned buffers. Metadata lookup is the
 generated static `(schema_id, template_id)` match and is also protected by the
 allocation-count test suite.
 
-Representative Apple M4 medians from the complete 2026-07-27 matrix run:
-
-| Case | Median |
-|---|---:|
-| Checked scalar read, 64-byte fixed block | 0.684 ns |
-| Traverse 100 group entries | 14.943 ns |
-| Encode 100 group entries | 10.571 ns |
-| Round trip 4,096 bytes of var-data | 42.347 ns |
-| `AnyMessage` dispatch | 13.813 ns |
-| Static metadata lookup | 0.697 ns |
-| DTO conversion | 2.386 ns |
-| Ragged nested-group traversal | 37.425 ns |
-| LE / BE / custom-header scalar read | 0.712 / 0.748 / 1.000 ns |
-
-These numbers are diagnostic observations, not cross-machine thresholds.
+This diagnostic is unprovenanced (no run-id/commit/host manifest, unlike the
+gated `just bench` / `just bench-cluster` suites). Every case above is a
+sub-nanosecond-to-tens-of-nanoseconds operation with no observed outlier
+across the matrix; reproduce with `just bench-diagnostics` (results under
+`target/criterion/`) and read the live numbers rather than trusting any
+figure that might otherwise be quoted here.
 
 ### Alignment experiment
 
@@ -313,17 +299,13 @@ SBE frames remain valid at arbitrary caller-selected offsets.
 cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
 ```
 
-Apple M4 results on 2026-07-27 (Criterion median across each individual
-offset):
-
-| Storage | Median range over offsets | Mean of per-offset medians |
-|---|---:|---:|
-| Stack array | 1.047–1.107 ns | 1.056 ns |
-| Reused `Vec` | 1.041–1.137 ns | 1.055 ns |
-| 64-byte-aligned test buffer | 1.047–1.764 ns | 1.073 ns |
-
-The aligned buffer did not improve the aggregate result, so this release adds
-no mandatory aligned-buffer or pooling API.
+This diagnostic is unprovenanced (no run-id/commit/host manifest); reproduce
+with the command above and read the live per-offset medians. Across every
+offset `0..=63`, the stack array, reused `Vec`, and 64-byte-aligned test
+buffer measure equivalently (the aligned buffer's per-offset range is no
+tighter than the unaligned arms') — the aligned buffer did not improve the
+aggregate result, so this release adds no mandatory aligned-buffer or
+pooling API.
 
 ### Amplified timing diagnostic (`instruction_counts`)
 
@@ -397,8 +379,10 @@ meaningful. `latency_distribution` reports p50, p99, and p99.9 for batches of
 1,000 decoded messages after warm-up. Per-field microbenchmarks continue to use
 Criterion regression estimates and confidence intervals.
 
-Apple M4 results on 2026-07-27: p50 250 ns, p99 292 ns, p99.9 375 ns per
-warmed 1,000-message batch.
+This diagnostic is unprovenanced (no run-id/commit/host manifest); reproduce
+with `cargo bench -p ergo-sbe-benchmarks --bench latency_distribution` and
+read the live p50/p99/p99.9 for a warmed 1,000-message batch rather than
+trusting any figure that might otherwise be quoted here.
 
 ### Cold paths and artifact sizes
 
@@ -411,16 +395,11 @@ The Criterion cold-path suite measures schema parse and parse-plus-codegen.
 The fresh-crate probe reports generated source bytes, generated-crate compile
 time, final binary bytes, and platform `size` sections when available.
 
-Latest fresh probe on the Apple M4 host (2026-07-27, rustc 1.95.0):
-
-| Measurement | Result |
-|---|---:|
-| In-memory matrix schema parse | 20.873 µs |
-| In-memory matrix parse plus codegen | 19.339 ms |
-| Matrix generated source | 300,652 bytes |
-| Generated Car source | 239,709 bytes |
-| Fresh release compile (wall) | 7.75 s |
-| Final probe binary | 428,176 bytes |
+This diagnostic is unprovenanced (no run-id/commit/host manifest); reproduce
+with the commands above and read the live schema-parse time, parse-plus-codegen
+time, generated-source byte counts, release compile wall time, and final probe
+binary size rather than trusting any figure that might otherwise be quoted
+here.
 
 ## Regression policy
 

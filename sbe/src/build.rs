@@ -979,7 +979,17 @@ mod tests {
             &out,
         )
         .unwrap_err();
-        assert!(matches!(err, BuildError::Io { .. }), "{err:?}");
+        match &err {
+            BuildError::Io { action, path, .. } => {
+                assert_eq!(*action, "write generated module");
+                assert!(
+                    path.to_string_lossy().contains("orders.rs.tmp."),
+                    "path must name the exact staging file that failed: {}",
+                    path.display()
+                );
+            }
+            other => unreachable!("expected BuildError::Io, got {other:?}"),
+        }
         assert!(
             !out.join("common_types.rs").exists(),
             "staging failure on module two must not promote module one either"
@@ -1035,7 +1045,13 @@ mod tests {
             &out,
         )
         .unwrap_err();
-        assert!(matches!(err, BuildError::Io { .. }), "{err:?}");
+        match &err {
+            BuildError::Io { action, path, .. } => {
+                assert_eq!(*action, "back up existing generated module");
+                assert_eq!(path, &out.join("orders.rs"));
+            }
+            other => unreachable!("expected BuildError::Io, got {other:?}"),
+        }
 
         assert_eq!(
             fs::read(out.join("common_types.rs"))?,

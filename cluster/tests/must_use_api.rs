@@ -73,3 +73,25 @@ fn cluster_claim_has_must_use_attribute() {
         "ClusterClaim must carry #[must_use]; found preceding text: {before}"
     );
 }
+
+/// T-10: pin the bounded list so a mutating poll/dispatch/transition method
+/// is never annotated `#[must_use]` alongside the pure decision observers —
+/// discarding `close()`/`poll()`/`poll_state_changes()`/`finish()` after
+/// calling it (for the side effect) is intentionally allowed.
+#[test]
+fn mutating_transition_methods_stay_unannotated() {
+    let src = include_str!("../src/client.rs");
+    for sig in [
+        "pub fn close(&mut self)",
+        "pub fn poll_state_changes(&mut self)",
+        "pub fn poll(&mut self)",
+        "pub fn finish(self)",
+    ] {
+        let pos = src.find(sig).unwrap_or_else(|| panic!("{sig} not found in client.rs"));
+        let before = &src[pos.saturating_sub(120)..pos];
+        assert!(
+            !before.contains("#[must_use"),
+            "{sig} is a mutating transition and must stay unannotated; found preceding text: {before}"
+        );
+    }
+}
