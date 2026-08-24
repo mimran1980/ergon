@@ -505,6 +505,33 @@ impl Generator {
                 }
             })?;
         }
+        // A schema field named after a Rust keyword gets this token appended
+        // (`type` -> `type_`). Prove a representative keyword plus the
+        // configured token forms a valid, non-keyword identifier before
+        // generation — an empty or invalid token produces uncompilable
+        // generated Rust with no clear diagnostic otherwise.
+        let token = &self.config.keyword_append_token;
+        let candidate = format!("type{token}");
+        let reason = if syn::parse_str::<syn::Ident>(&candidate).is_err() {
+            Some(format!(
+                "\"type{token}\" is not a valid Rust identifier — \
+                 keyword_append_token must combine with a keyword to form one"
+            ))
+        } else if is_rust_keyword(&candidate) {
+            Some(format!(
+                "\"type{token}\" is itself a Rust keyword — \
+                 keyword_append_token must produce a non-keyword identifier"
+            ))
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "keyword_append_token".into(),
+                value: token.clone(),
+                reason,
+            });
+        }
         Ok(())
     }
 
@@ -1040,7 +1067,10 @@ impl Generator {
         } else {
             crate::codegen::runtime::SEALED_MODULE.to_string()
         };
-        crate::codegen::runtime::set_sealed_path(&sealed_path);
+        let gen_ctx = crate::codegen::runtime::GenerationContext {
+            sealed_path: syn::parse_str(&sealed_path)
+                .expect("sealing module path must be a valid Rust path"),
+        };
 
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
@@ -1145,6 +1175,7 @@ impl Generator {
                 schema,
                 &self.config.null_as_option,
                 self.config.all_enums_as_option,
+                &gen_ctx,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
@@ -1166,6 +1197,7 @@ impl Generator {
                 domain_types,
                 self.config.enable_meta_attributes,
                 self.config.enable_display_debug,
+                &gen_ctx,
             );
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder

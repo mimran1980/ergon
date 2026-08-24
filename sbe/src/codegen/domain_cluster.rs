@@ -459,7 +459,7 @@ pub(crate) fn generate_domain_recursive(
                         encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident().expect("null or invalid bool value") });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident()? });
                         encode_stmts.push(quote::quote! { enc.#opt_bool_ident(self.#f_ident); });
                     }
                 } else {
@@ -1130,15 +1130,20 @@ pub(crate) fn generate_domain_recursive(
                     #encode_body
                 }
 
-                /// Compute the exact SBE message body length from this domain object.
-                /// Matches the length returned by [`Self::encode`].
+                /// Compute the exact SBE message **body** length (no header)
+                /// from this domain object. [`Self::encode`] always writes
+                /// the header too, so its return value is
+                /// [`Self::encoded_length_with_header`], not this — sizing a
+                /// buffer from `encoded_length()` alone under-allocates by
+                /// the message header size.
                 #[inline]
                 pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
                     #msg_len_stmts
                 }
 
-                /// Compute the exact SBE message length including the message header.
-                /// Matches `encode()` return value for non-fixed messages.
+                /// Compute the exact buffer size [`Self::encode`] needs and
+                /// exactly what it returns on success, for both fixed and
+                /// dynamic (group/var-data-bearing) messages.
                 #[inline]
                 pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
                     Ok(self.encoded_length()? + #encoder_ident::HEADER_LENGTH)

@@ -13,46 +13,212 @@ mod common;
 use common::Paths;
 use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
 
-fn public_names(source: &str) -> Result<Vec<String>, Box<dyn Error>> {
+/// Canonically serialise the semver-relevant `syn` surface of every public
+/// item: struct fields (name/position + type), enum variant payloads and
+/// discriminants, full free-fn/method signatures (receiver, generics, args,
+/// return type, where-clause), associated types/consts, type aliases, and
+/// the semver-relevant attributes (`cfg`, `non_exhaustive`, `repr`,
+/// `deprecated`, `must_use`) — preserved on the item rather than causing it
+/// to be dropped. One line per item/field/variant/method, matching the
+/// previous names-only granularity so a change localises the same way.
+fn public_surface(source: &str) -> Result<Vec<String>, Box<dyn Error>> {
     let file = syn::parse_file(source)?;
-    let mut names = Vec::new();
-    collect("", &file.items, &mut names);
-    names.sort();
-    names.dedup();
-    Ok(names)
+    let mut out = Vec::new();
+    collect("", &file.items, &mut out);
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
 const fn is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 
-fn is_cfg_gated(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| a.path().is_ident("cfg"))
+/// Render only the attributes that change the public contract. Doc
+/// comments and other prose-only attributes are deliberately excluded so a
+/// body/doc-only edit does not disturb the snapshot.
+fn semver_attrs(attrs: &[syn::Attribute]) -> String {
+    let relevant: Vec<String> = attrs
+        .iter()
+        .filter(|a| {
+            let p = a.path();
+            p.is_ident("cfg")
+                || p.is_ident("non_exhaustive")
+                || p.is_ident("repr")
+                || p.is_ident("deprecated")
+                || p.is_ident("must_use")
+        })
+        .map(|a| quote::quote!(#a).to_string())
+        .collect();
+    if relevant.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", relevant.join(" "))
+    }
+}
+
+fn generics_str(g: &syn::Generics) -> String {
+    quote::quote!(#g).to_string()
+}
+
+fn where_str(g: &syn::Generics) -> String {
+    g.where_clause
+        .as_ref()
+        .map(|w| format!(" {}", quote::quote!(#w)))
+        .unwrap_or_default()
+}
+
+/// `filter_visibility`: struct fields need an individual `pub` to be part of
+/// the public surface. Enum variant fields have no visibility syntax at all
+/// — they are implicitly as public as the variant — so filtering them by
+/// `is_public` would silently drop every payload.
+fn fields_str(fields: &syn::Fields, filter_visibility: bool) -> String {
+    let keep = |vis: &syn::Visibility| !filter_visibility || is_public(vis);
+    match fields {
+        syn::Fields::Named(f) => f
+            .named
+            .iter()
+            .filter(|fld| keep(&fld.vis))
+            .map(|fld| {
+                let ty = &fld.ty;
+                format!(
+                    "{}{}: {}",
+                    semver_attrs(&fld.attrs),
+                    fld.ident.as_ref().expect("named field has an ident"),
+                    quote::quote!(#ty)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        syn::Fields::Unnamed(f) => f
+            .unnamed
+            .iter()
+            .enumerate()
+            .filter(|(_, fld)| keep(&fld.vis))
+            .map(|(i, fld)| {
+                let ty = &fld.ty;
+                format!("{i}: {}", quote::quote!(#ty))
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        syn::Fields::Unit => String::new(),
+    }
+}
+
+fn sig_str(sig: &syn::Signature) -> String {
+    quote::quote!(#sig).to_string()
 }
 
 fn collect(prefix: &str, items: &[syn::Item], out: &mut Vec<String>) {
     for item in items {
         match item {
-            syn::Item::Struct(s) if is_public(&s.vis) && !is_cfg_gated(&s.attrs) => {
-                out.push(format!("{prefix}struct {}", s.ident));
+            syn::Item::Struct(s) if is_public(&s.vis) => {
+                out.push(format!(
+                    "{}{prefix}struct {}{} {{ {} }}",
+                    semver_attrs(&s.attrs),
+                    s.ident,
+                    generics_str(&s.generics),
+                    fields_str(&s.fields, true)
+                ));
             }
-            syn::Item::Enum(e) if is_public(&e.vis) && !is_cfg_gated(&e.attrs) => {
-                out.push(format!("{prefix}enum {}", e.ident));
+            syn::Item::Enum(e) if is_public(&e.vis) => {
+                let enum_attrs = semver_attrs(&e.attrs);
+                out.push(format!(
+                    "{enum_attrs}{prefix}enum {}{}",
+                    e.ident,
+                    generics_str(&e.generics)
+                ));
                 for v in &e.variants {
-                    out.push(format!("{prefix}enum {}::{}", e.ident, v.ident));
+                    let payload = fields_str(&v.fields, false);
+                    let discriminant = v
+                        .discriminant
+                        .as_ref()
+                        .map(|(_, expr)| format!(" = {}", quote::quote!(#expr)))
+                        .unwrap_or_default();
+                    out.push(format!(
+                        "{}{prefix}enum {}::{}{}{}",
+                        semver_attrs(&v.attrs),
+                        e.ident,
+                        v.ident,
+                        if payload.is_empty() {
+                            String::new()
+                        } else {
+                            format!("({payload})")
+                        },
+                        discriminant
+                    ));
                 }
             }
-            syn::Item::Fn(f) if is_public(&f.vis) && !is_cfg_gated(&f.attrs) => {
-                out.push(format!("{prefix}fn {}", f.sig.ident));
+            syn::Item::Fn(f) if is_public(&f.vis) => {
+                out.push(format!(
+                    "{}{prefix}fn {}",
+                    semver_attrs(&f.attrs),
+                    sig_str(&f.sig)
+                ));
             }
             syn::Item::Const(c) if is_public(&c.vis) => {
-                out.push(format!("{prefix}const {}", c.ident));
+                let ty = &c.ty;
+                out.push(format!(
+                    "{}{prefix}const {}: {}",
+                    semver_attrs(&c.attrs),
+                    c.ident,
+                    quote::quote!(#ty)
+                ));
             }
             syn::Item::Type(t) if is_public(&t.vis) => {
-                out.push(format!("{prefix}type {}", t.ident));
+                let ty = &t.ty;
+                out.push(format!(
+                    "{}{prefix}type {}{}{} = {}",
+                    semver_attrs(&t.attrs),
+                    t.ident,
+                    generics_str(&t.generics),
+                    where_str(&t.generics),
+                    quote::quote!(#ty)
+                ));
             }
             syn::Item::Trait(t) if is_public(&t.vis) => {
-                out.push(format!("{prefix}trait {}", t.ident));
+                let supertraits: Vec<String> = t
+                    .supertraits
+                    .iter()
+                    .map(|b| quote::quote!(#b).to_string())
+                    .collect();
+                out.push(format!(
+                    "{}{prefix}trait {}{}{}{}",
+                    semver_attrs(&t.attrs),
+                    t.ident,
+                    generics_str(&t.generics),
+                    if supertraits.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", supertraits.join(" + "))
+                    },
+                    where_str(&t.generics)
+                ));
+                for ti in &t.items {
+                    match ti {
+                        syn::TraitItem::Fn(f) => {
+                            out.push(format!(
+                                "{}{prefix}trait {}::{}",
+                                semver_attrs(&f.attrs),
+                                t.ident,
+                                sig_str(&f.sig)
+                            ));
+                        }
+                        syn::TraitItem::Type(ty) => {
+                            out.push(format!("{prefix}trait {}::type {}", t.ident, ty.ident));
+                        }
+                        syn::TraitItem::Const(c) => {
+                            let const_ty = &c.ty;
+                            out.push(format!(
+                                "{prefix}trait {}::const {}: {}",
+                                t.ident,
+                                c.ident,
+                                quote::quote!(#const_ty)
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
             }
             syn::Item::Impl(i) => {
                 let ty = match i.self_ty.as_ref() {
@@ -64,11 +230,31 @@ fn collect(prefix: &str, items: &[syn::Item], out: &mut Vec<String>) {
                     _ => "impl".into(),
                 };
                 for ii in &i.items {
-                    if let syn::ImplItem::Fn(f) = ii
-                        && is_public(&f.vis)
-                        && !is_cfg_gated(&f.attrs)
-                    {
-                        out.push(format!("{prefix}{ty}::{}", f.sig.ident));
+                    match ii {
+                        syn::ImplItem::Fn(f) if is_public(&f.vis) => {
+                            out.push(format!(
+                                "{}{prefix}{ty}::{}",
+                                semver_attrs(&f.attrs),
+                                sig_str(&f.sig)
+                            ));
+                        }
+                        syn::ImplItem::Const(c) if is_public(&c.vis) => {
+                            let const_ty = &c.ty;
+                            out.push(format!(
+                                "{prefix}{ty}::const {}: {}",
+                                c.ident,
+                                quote::quote!(#const_ty)
+                            ));
+                        }
+                        syn::ImplItem::Type(assoc_ty) if is_public(&assoc_ty.vis) => {
+                            let underlying = &assoc_ty.ty;
+                            out.push(format!(
+                                "{prefix}{ty}::type {} = {}",
+                                assoc_ty.ident,
+                                quote::quote!(#underlying)
+                            ));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -220,7 +406,7 @@ fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
         let mut combined = String::new();
         for m in modules {
             writeln!(combined, "# {}", m.path)?;
-            combined.push_str(&public_names(&m.source)?.join("\n"));
+            combined.push_str(&public_surface(&m.source)?.join("\n"));
             combined.push('\n');
         }
         return Ok(combined);
@@ -230,7 +416,7 @@ fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
     let (modules, _) = Generator::new(config_for(fix))
         .generate(&schema)?
         .into_parts();
-    let names = public_names(
+    let names = public_surface(
         &modules
             .into_iter()
             .next()
@@ -322,4 +508,133 @@ fn snapshot_removal_of_serial_number_would_fail() -> Result<(), Box<dyn Error>> 
         "car_lean snapshot must include serial_number so removing it is a detectable freeze break"
     );
     Ok(())
+}
+
+/// T-12 acceptance criteria: `public_surface` must change/fail on each of
+/// five mutation classes the previous names-only snapshot missed, and must
+/// NOT change on a private/body/doc-only edit. Each pair below is real,
+/// `syn`-parseable Rust source differing in exactly one respect.
+mod mutation_sensitivity {
+    use super::public_surface;
+
+    fn wrap(body: &str) -> String {
+        format!("pub mod m {{ {body} }}")
+    }
+
+    #[test]
+    fn receiver_change_is_detected() -> Result<(), Box<dyn std::error::Error>> {
+        let a = wrap("pub struct S; impl S { pub fn f(&self) -> i32 { 0 } }");
+        let b = wrap("pub struct S; impl S { pub fn f(self) -> i32 { 0 } }");
+        assert_ne!(
+            public_surface(&a)?,
+            public_surface(&b)?,
+            "receiver change must be visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn argument_and_return_type_change_is_detected() -> Result<(), Box<dyn std::error::Error>> {
+        let a = wrap("pub struct S; impl S { pub fn f(&self, x: i32) -> bool { true } }");
+        let b = wrap("pub struct S; impl S { pub fn f(&self, x: i64) -> bool { true } }");
+        assert_ne!(
+            public_surface(&a)?,
+            public_surface(&b)?,
+            "argument type change must be visible"
+        );
+
+        let c = wrap("pub struct S; impl S { pub fn f(&self, x: i32) -> u8 { 0 } }");
+        assert_ne!(
+            public_surface(&a)?,
+            public_surface(&c)?,
+            "return type change must be visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generic_and_where_clause_change_is_detected() -> Result<(), Box<dyn std::error::Error>> {
+        let a =
+            wrap("pub struct S; impl S { pub fn f<T>(&self, x: T) where T: Clone { let _ = x; } }");
+        let b =
+            wrap("pub struct S; impl S { pub fn f<T>(&self, x: T) where T: Copy { let _ = x; } }");
+        assert_ne!(
+            public_surface(&a)?,
+            public_surface(&b)?,
+            "where-clause bound change must be visible"
+        );
+
+        let c = wrap("pub struct S; impl S { pub fn f<T: Clone>(&self, x: T) { let _ = x; } }");
+        let d = wrap("pub struct S; impl S { pub fn f<T: Copy>(&self, x: T) { let _ = x; } }");
+        assert_ne!(
+            public_surface(&c)?,
+            public_surface(&d)?,
+            "generic bound change must be visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_field_and_enum_payload_change_is_detected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let a = wrap("pub struct S { pub a: i32 }");
+        let b = wrap("pub struct S { pub a: i64 }");
+        assert_ne!(
+            public_surface(&a)?,
+            public_surface(&b)?,
+            "public field type change must be visible"
+        );
+
+        let c = wrap("pub enum E { A(i32) }");
+        let d = wrap("pub enum E { A(i64) }");
+        assert_ne!(
+            public_surface(&c)?,
+            public_surface(&d)?,
+            "enum payload type change must be visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_gated_method_change_is_detected_not_dropped() -> Result<(), Box<dyn std::error::Error>> {
+        let a = wrap(r#"pub struct S; impl S { #[cfg(feature = "x")] pub fn f(&self) {} }"#);
+        let b = wrap(r#"pub struct S; impl S { #[cfg(feature = "x")] pub fn g(&self) {} }"#);
+        let sa = public_surface(&a)?;
+        let sb = public_surface(&b)?;
+        assert_ne!(sa, sb, "a cfg-gated method's own change must be visible");
+        assert!(
+            sa.iter().any(|l| l.contains("cfg") && l.contains("fn f (")),
+            "cfg-gated item must be PRESENT in the surface (not dropped), got: {sa:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn private_field_and_doc_only_edits_do_not_change_the_snapshot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let a = wrap("pub struct S { pub a: i32, priv_b: i32 }");
+        let b = wrap("pub struct S { pub a: i32, priv_b: i64 }");
+        assert_eq!(
+            public_surface(&a)?,
+            public_surface(&b)?,
+            "a private field's type is not part of the public surface"
+        );
+
+        let c = wrap("/// old doc\npub struct S { pub a: i32 }");
+        let d = wrap("/// completely different doc\npub struct S { pub a: i32 }");
+        assert_eq!(
+            public_surface(&c)?,
+            public_surface(&d)?,
+            "doc-only edits must not change the snapshot"
+        );
+
+        let e = wrap("pub struct S; impl S { pub fn f(&self) -> i32 { 0 } }");
+        let f = wrap("pub struct S; impl S { pub fn f(&self) -> i32 { 1 + 2 } }");
+        assert_eq!(
+            public_surface(&e)?,
+            public_surface(&f)?,
+            "a body-only edit must not change the snapshot"
+        );
+        Ok(())
+    }
 }

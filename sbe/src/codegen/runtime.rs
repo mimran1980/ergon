@@ -368,35 +368,22 @@ fn keyword_append_token() -> String {
     KEYWORD_APPEND.with(|c| c.borrow().clone())
 }
 
-/// Path to the module holding the `SbeMessage` sealing trait, as seen from the
-/// generated module currently being emitted.
-///
-/// A module that emits its own `sbe_rt` owns the sealing module outright, so the
-/// path is the bare private child. A module importing a shared runtime has to
-/// name the owner's copy instead — otherwise its message types could not satisfy
-/// the shared `SbeMessage` supertrait at all.
-thread_local! {
-    static SEALED_PATH: std::cell::RefCell<String> =
-        std::cell::RefCell::new(SEALED_MODULE.into());
-}
-
 /// Name of the generated module's private sealing child.
 pub(crate) const SEALED_MODULE: &str = "__sbe_message_sealed";
 
-/// Set the sealing path for the module about to be generated. `gen_schema`
-/// calls this before emitting any message, and generation is not re-entrant, so
-/// a plain set is enough.
-pub(crate) fn set_sealed_path(path: &str) {
-    SEALED_PATH.with(|cell| *cell.borrow_mut() = path.to_string());
-}
-
-/// The sealing module path as tokens, e.g. `__sbe_message_sealed` or
-/// `super::common_types::__sbe_message_sealed`.
-pub(crate) fn sealed_path_tokens() -> TokenStream {
-    let path = SEALED_PATH.with(|cell| cell.borrow().clone());
-    syn::parse_str::<syn::Path>(&path)
-        .map(|p| quote::quote!(#p))
-        .expect("sealing module path must be a valid Rust path")
+/// Per-schema state that travels explicitly through one generation pass,
+/// rather than living in ambient global/thread-local state a re-entrant hook
+/// (one that invokes a nested `Generator`) could observe or clobber.
+///
+/// Currently holds only the sealing path — the module holding the
+/// `SbeMessage` sealing trait, as seen from the generated module currently
+/// being emitted. A module that emits its own `sbe_rt` owns the sealing
+/// module outright, so the path is the bare private child
+/// ([`SEALED_MODULE`]). A module importing a shared runtime has to name the
+/// owner's copy instead — otherwise its message types could not satisfy the
+/// shared `SbeMessage` supertrait at all.
+pub(crate) struct GenerationContext {
+    pub(crate) sealed_path: syn::Path,
 }
 
 /// The private sealing module declaration for a generated module that owns the
@@ -2692,10 +2679,24 @@ pub(crate) fn canonical_token_fingerprint(
 pub(crate) fn sanitize_description_for_doc(desc: &str) -> String {
     let desc = desc.trim_end_matches(['\r', '\n']);
     if !desc.contains('\n') {
-        return desc.to_string();
+        // A schema description is external XML data, not trusted rustdoc
+        // markdown/HTML. Rendered `#[doc]` text interprets a bare `<...>` as
+        // an HTML tag, so prose like `Option<u32>` fails
+        // `rustdoc::invalid_html_tags` under `-D warnings`. Escape it to
+        // literal entities so it always renders as written. The multiline
+        // branch below doesn't need this: its ``` fence already makes the
+        // content literal, and escaping there would show `&amp;` verbatim.
+        return escape_doc_html(desc);
     }
     let fence = if desc.contains("```") { "````" } else { "```" };
     format!("{fence}text\n{desc}\n{fence}")
+}
+
+/// Escape characters markdown/rustdoc would otherwise interpret as HTML.
+fn escape_doc_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// `#[doc = "..."]` token for a schema description (doctest-safe).

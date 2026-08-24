@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+## [0.1.21] — 2026-08-24
+
+### Added
+- `GenerationConfig::with_manual_domain_type` and `with_domain_type` now emit
+  correctly `Option`-wrapped `try_*` accessors for optional (or
+  `sinceVersion`-gated) domain-typed fields inside repeating groups, matching
+  the message-level behaviour. Generated `Display`/`Debug` for group-entry
+  domain-typed `Primitive`/`Enum` fields now shows the converted domain value
+  instead of failing to compile.
+
+### Changed
+- **Breaking:** `BuildError` is `#[non_exhaustive]`. `Io(std::io::Error)` is
+  now `Io { action: &'static str, path: PathBuf, source: std::io::Error }`,
+  naming the exact attempted step and destination instead of a bare I/O
+  message.
+- `generate_multi_to_dir` / `write_module_set` publish a complete generated
+  module set as one all-or-nothing unit: every module is staged to a unique
+  temp file before any destination is touched, and a mid-commit failure
+  restores every pre-existing destination and leaves no temp/backup debris.
+- `GenerationConfig::with_keyword_append_token` is validated at `generate()`:
+  an empty or invalid token now returns
+  `GenerateError::InvalidConfiguration` instead of generating uncompilable
+  Rust.
+- **Breaking:** `SessionBuilder::ingress_endpoints` returns
+  `Result<Self, ClusterError>` and validates the endpoint map (grammar,
+  duplicate IDs, empty entries) at the call site instead of at `validate()`
+  or the first `poll()`.
+- **Breaking:** `poller::parse_event` returns `Result<EgressEvent, ClusterError>`
+  (was `Result<Option<EgressEvent>, ClusterError>` — every decoded branch
+  was already `Some`, so `None` was unreachable).
+  `poller::parse_leader_endpoint` returns `Result<Option<String>, ClusterError>`
+  (was `Option<String>`) — a malformed endpoint map is now `Err` with the
+  parser's specific reason, distinct from `Ok(None)` for a well-formed map
+  that simply lacks the requested leader.
+- Message-bearing `#[must_use]` on pure cluster decision observers:
+  `PublicationFailure::is_retryable`/`raw_code`, `ClusterError::is_retryable`,
+  `AeronCluster::{cluster_session_id, leadership_term_id, leader_member_id,
+  is_ingress_connected, is_ingress_closed, ingress_position,
+  is_egress_connected, state}`, `ClusterClaim::position`, and
+  `AsyncClusterConnect::{step, is_complete}`.
+- **Breaking:** `PublicationFailure` is `#[non_exhaustive]` and gains
+  `TooManyParts`, mapped directly from `AeronOfferError::TooManyParts`
+  instead of the fabricated sentinel `Other(-100)`. `raw()` is replaced by
+  `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
+  Aeron wire code).
+
+- The generated public-API freeze gate (`api/generated/*.txt`) now snapshots
+  the canonical semver-relevant surface — struct fields, enum variant
+  payloads/discriminants, full fn/method signatures (receiver, generics,
+  args, return type, where-clause), associated types/consts, type aliases,
+  and cfg/non_exhaustive/repr/deprecated/must_use attributes — instead of
+  item names only. A cfg-gated item is now recorded (with its condition)
+  instead of being silently excluded from the freeze.
+- The `SbeMessage` sealing-trait path is now explicit per-schema state
+  (`GenerationContext`, passed by reference into decoder/encoder generation)
+  instead of a `thread_local!`. A hook that invokes a nested `Generator`
+  (e.g. to emit a companion crate) can no longer leak its sealed path into
+  the outer generation's remaining messages.
+- `sbe/BENCHMARKS.md` and `book/src/sbe/benchmarks.md`'s "Group encode: LTO
+  on and off" section no longer quotes unprovenanced point estimates
+  (`414.1 ns`, etc., with no run-id/commit/host and duplicated verbatim
+  across both files) as if they were current — it states the qualitative
+  ranking and the reproduction command instead.
+- Generated domain-object `encoded_length()` / `encoded_length_with_header()`
+  rustdoc no longer contradicts `encode()`: `encoded_length()` is documented
+  as body-only, and `encoded_length_with_header()` as the exact buffer size
+  and return value of `encode()` for both fixed and dynamic messages.
+- Generated `{Group}Encoder::wrap`, `ENTRY_BLOCK_LENGTH`, and
+  `GROUP_DIM_TEMPLATE` now carry authored rustdoc explaining the standalone
+  group framing contract (offset is the first entry, the dimension header is
+  the caller's responsibility) instead of a placeholder.
+
+### Fixed
+- Domain-object generation for a required (non-`sinceVersion`) boolean field
+  no longer panics on an unknown wire discriminant; `try_from_decoder`
+  propagates `DecodeError::InvalidBoolean` instead.
+- Single-line schema `description` text containing `&`, `<`, or `>` (e.g.
+  `Option<u32>`) is now escaped before emission, so it can no longer break a
+  downstream `-D warnings` rustdoc build with `rustdoc::invalid_html_tags`.
+
 ## [0.1.20] — 2026-08-20
 
 ### Added

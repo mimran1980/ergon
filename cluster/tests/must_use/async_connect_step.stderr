@@ -1,0 +1,16 @@
+error: unused return value of `AsyncClusterConnect::step` that must be used
+  --> tests/must_use/async_connect_step.rs:12:5
+   |
+12 |     conn.step(); // discarded — must_use violation
+   |     ^^^^^^^^^^^
+   |
+   = note: the connect-step decision is the point of calling this
+note: the lint level is defined here
+  --> tests/must_use/async_connect_step.rs:1:9
+   |
+ 1 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+12 |     let _ = conn.step(); // discarded — must_use violation
+   |     +++++++
