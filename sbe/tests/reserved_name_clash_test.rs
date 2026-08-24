@@ -490,9 +490,7 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
     let result = Generator::new(config).generate(&schema);
 
     match result {
-        Err(ergo_sbe::codegen::GenerateError::InvalidConfiguration {
-            option, reason, ..
-        }) => {
+        Err(ergo_sbe::codegen::GenerateError::InvalidConfiguration { option, reason, .. }) => {
             assert_eq!(option, "keyword_append_token");
             assert!(
                 reason.contains("keyword"),

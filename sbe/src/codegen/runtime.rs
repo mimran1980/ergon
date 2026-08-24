@@ -368,35 +368,22 @@ fn keyword_append_token() -> String {
     KEYWORD_APPEND.with(|c| c.borrow().clone())
 }
 
-/// Path to the module holding the `SbeMessage` sealing trait, as seen from the
-/// generated module currently being emitted.
-///
-/// A module that emits its own `sbe_rt` owns the sealing module outright, so the
-/// path is the bare private child. A module importing a shared runtime has to
-/// name the owner's copy instead — otherwise its message types could not satisfy
-/// the shared `SbeMessage` supertrait at all.
-thread_local! {
-    static SEALED_PATH: std::cell::RefCell<String> =
-        std::cell::RefCell::new(SEALED_MODULE.into());
-}
-
 /// Name of the generated module's private sealing child.
 pub(crate) const SEALED_MODULE: &str = "__sbe_message_sealed";
 
-/// Set the sealing path for the module about to be generated. `gen_schema`
-/// calls this before emitting any message, and generation is not re-entrant, so
-/// a plain set is enough.
-pub(crate) fn set_sealed_path(path: &str) {
-    SEALED_PATH.with(|cell| *cell.borrow_mut() = path.to_string());
-}
-
-/// The sealing module path as tokens, e.g. `__sbe_message_sealed` or
-/// `super::common_types::__sbe_message_sealed`.
-pub(crate) fn sealed_path_tokens() -> TokenStream {
-    let path = SEALED_PATH.with(|cell| cell.borrow().clone());
-    syn::parse_str::<syn::Path>(&path)
-        .map(|p| quote::quote!(#p))
-        .expect("sealing module path must be a valid Rust path")
+/// Per-schema state that travels explicitly through one generation pass,
+/// rather than living in ambient global/thread-local state a re-entrant hook
+/// (one that invokes a nested `Generator`) could observe or clobber.
+///
+/// Currently holds only the sealing path — the module holding the
+/// `SbeMessage` sealing trait, as seen from the generated module currently
+/// being emitted. A module that emits its own `sbe_rt` owns the sealing
+/// module outright, so the path is the bare private child
+/// ([`SEALED_MODULE`]). A module importing a shared runtime has to name the
+/// owner's copy instead — otherwise its message types could not satisfy the
+/// shared `SbeMessage` supertrait at all.
+pub(crate) struct GenerationContext {
+    pub(crate) sealed_path: syn::Path,
 }
 
 /// The private sealing module declaration for a generated module that owns the

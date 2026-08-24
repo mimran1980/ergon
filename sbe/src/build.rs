@@ -464,7 +464,11 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
                     sw.dest.extension().and_then(|e| e.to_str()).unwrap_or("rs")
                 ));
                 if let Err(source) = fs::rename(&sw.dest, &backup) {
-                    break 'commit Some(io_err("back up existing generated module", &sw.dest, source));
+                    break 'commit Some(io_err(
+                        "back up existing generated module",
+                        &sw.dest,
+                        source,
+                    ));
                 }
                 backed_up.push((backup, sw.dest.clone()));
             }
@@ -1049,7 +1053,10 @@ mod tests {
             .filter(|n| n.contains(".tmp.") || (n.contains(".bak.") && !n.contains("occupied")))
             .filter(|n| n != &format!("orders.rs.bak.{pid}"))
             .collect();
-        assert!(debris.is_empty(), "no leftover temp/backup files: {debris:?}");
+        assert!(
+            debris.is_empty(),
+            "no leftover temp/backup files: {debris:?}"
+        );
         fs::remove_dir_all(&dir)?;
         Ok(())
     }

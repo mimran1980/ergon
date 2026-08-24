@@ -1067,7 +1067,10 @@ impl Generator {
         } else {
             crate::codegen::runtime::SEALED_MODULE.to_string()
         };
-        crate::codegen::runtime::set_sealed_path(&sealed_path);
+        let gen_ctx = crate::codegen::runtime::GenerationContext {
+            sealed_path: syn::parse_str(&sealed_path)
+                .expect("sealing module path must be a valid Rust path"),
+        };
 
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
@@ -1172,6 +1175,7 @@ impl Generator {
                 schema,
                 &self.config.null_as_option,
                 self.config.all_enums_as_option,
+                &gen_ctx,
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
@@ -1193,6 +1197,7 @@ impl Generator {
                 domain_types,
                 self.config.enable_meta_attributes,
                 self.config.enable_display_debug,
+                &gen_ctx,
             );
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder

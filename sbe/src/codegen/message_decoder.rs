@@ -54,6 +54,7 @@ pub(crate) fn generate_message_decoder(
     schema: &crate::Schema,
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,
+    gen_ctx: &super::runtime::GenerationContext,
 ) -> (proc_macro2::TokenStream, String) {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -147,7 +148,7 @@ pub(crate) fn generate_message_decoder(
     let _header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
     let _header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
 
-    let sealed_path = super::runtime::sealed_path_tokens();
+    let sealed_path = &gen_ctx.sealed_path;
 
     let mut ts = proc_macro2::TokenStream::new();
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), proc_macro2::Span::call_site());

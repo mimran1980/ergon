@@ -35,6 +35,7 @@ pub(crate) fn generate_message_encoder(
     domain_types: &[(crate::ConversionSelector, String)],
     enable_meta_attributes: bool,
     enable_display_debug: bool,
+    gen_ctx: &super::runtime::GenerationContext,
 ) -> proc_macro2::TokenStream {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
@@ -122,7 +123,7 @@ pub(crate) fn generate_message_encoder(
     let to_endian = syn::Ident::new(&format!("to_{}_bytes", order_suffix), span);
 
     let mut ts = proc_macro2::TokenStream::new();
-    let sealed_path = super::runtime::sealed_path_tokens();
+    let sealed_path = &gen_ctx.sealed_path;
 
     let tail_pascal: Vec<String> = msg
         .groups
