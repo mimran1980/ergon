@@ -47,7 +47,9 @@ fn must_use_async_connect_step() {
 #[test]
 fn cluster_claim_position_has_must_use_attribute() {
     let src = include_str!("../src/client.rs");
-    let fn_pos = src.find("pub fn position(&self) -> i64").expect("ClusterClaim::position not found");
+    let fn_pos = src
+        .find("pub fn position(&self) -> i64")
+        .expect("ClusterClaim::position not found");
     let before = &src[fn_pos.saturating_sub(120)..fn_pos];
     assert!(
         before.contains("#[must_use"),

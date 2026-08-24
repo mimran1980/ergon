@@ -370,12 +370,26 @@ mod tests {
     /// retains its retryability, and `TooManyParts` gets no fabricated raw
     /// sentinel: `-100` is not a real Aeron offer code.
     #[test]
-    fn every_offer_error_maps_with_correct_retryability_and_raw_code()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn every_offer_error_maps_with_correct_retryability_and_raw_code() -> Result<(), Box<dyn std::error::Error>> {
         let cases: &[(AeronOfferError, PublicationFailure, bool, Option<i64>)] = &[
-            (AeronOfferError::NotConnected, PublicationFailure::NotConnected, true, Some(-1)),
-            (AeronOfferError::BackPressured, PublicationFailure::BackPressured, true, Some(-2)),
-            (AeronOfferError::AdminAction, PublicationFailure::AdminAction, true, Some(-3)),
+            (
+                AeronOfferError::NotConnected,
+                PublicationFailure::NotConnected,
+                true,
+                Some(-1),
+            ),
+            (
+                AeronOfferError::BackPressured,
+                PublicationFailure::BackPressured,
+                true,
+                Some(-2),
+            ),
+            (
+                AeronOfferError::AdminAction,
+                PublicationFailure::AdminAction,
+                true,
+                Some(-3),
+            ),
             (AeronOfferError::Closed, PublicationFailure::Closed, false, Some(-4)),
             (
                 AeronOfferError::MaxPositionExceeded,
@@ -383,7 +397,12 @@ mod tests {
                 false,
                 Some(-5),
             ),
-            (AeronOfferError::TooManyParts, PublicationFailure::TooManyParts, false, None),
+            (
+                AeronOfferError::TooManyParts,
+                PublicationFailure::TooManyParts,
+                false,
+                None,
+            ),
         ];
         for (offer_err, expected, retryable, raw) in cases {
             let mapped = PublicationFailure::from_offer_error(offer_err);

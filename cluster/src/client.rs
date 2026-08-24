@@ -844,11 +844,10 @@ impl AeronCluster {
     /// step. Uses [`Self::prepare_reconnect_ingress`] so the connect-time
     /// redirect and the active-session failover share one uniform code path.
     fn on_new_leader_event(&mut self, term: i64, member: i32, endpoints: &str) -> Result<(), ClusterError> {
-        let ep = crate::poller::parse_leader_endpoint(endpoints, member)?.ok_or_else(|| {
-            ClusterError::ReconnectFailed {
+        let ep =
+            crate::poller::parse_leader_endpoint(endpoints, member)?.ok_or_else(|| ClusterError::ReconnectFailed {
                 reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
-            }
-        })?;
+            })?;
         let (new_pub, new_regular, new_controlled) =
             Self::prepare_reconnect_ingress(&self._aeron, &ep, self.ingress_stream_id)?;
         // All preparation succeeded — commit the leadership swap in one step.

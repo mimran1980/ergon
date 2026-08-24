@@ -128,10 +128,7 @@ pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
 /// map, duplicate id) is a distinct failure from a well-formed map that
 /// simply lacks the requested leader: `Err` for the former, `Ok(None)` for
 /// the latter, `Ok(Some(endpoint))` on success.
-pub fn parse_leader_endpoint(
-    endpoints: &str,
-    leader_member_id: i32,
-) -> Result<Option<String>, ClusterError> {
+pub fn parse_leader_endpoint(endpoints: &str, leader_member_id: i32) -> Result<Option<String>, ClusterError> {
     let parsed = crate::endpoints::parse_ingress_endpoints(endpoints)?;
     Ok(parsed
         .into_iter()
@@ -352,12 +349,7 @@ mod tests {
         // Fail-closed: any malformed entry rejects the whole map (validated
         // ingress parser), even when a well-formed leader entry is present.
         // An empty map is malformed too — there is no member to resolve.
-        for eps in [
-            "garbage,1=localhost:9112,not-an-id=x,2",
-            "1",
-            "=,=foo",
-            "",
-        ] {
+        for eps in ["garbage,1=localhost:9112,not-an-id=x,2", "1", "=,=foo", ""] {
             assert!(
                 parse_leader_endpoint(eps, 1).is_err(),
                 "expected {eps:?} to be rejected, not silently treated as \"no leader\""

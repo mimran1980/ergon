@@ -331,13 +331,12 @@ mod tests {
     }
 
     #[test]
-    fn ingress_endpoints_rejects_malformed_maps_at_the_setter()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn ingress_endpoints_rejects_malformed_maps_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
         for bad in [
             "",
-            "0localhost:9012",     // missing '='
-            "x=localhost:9012",    // non-numeric member id
-            "0=",                  // empty endpoint
+            "0localhost:9012",                   // missing '='
+            "x=localhost:9012",                  // non-numeric member id
+            "0=",                                // empty endpoint
             "0=localhost:9012,0=localhost:9112", // duplicate member id
         ] {
             assert!(
