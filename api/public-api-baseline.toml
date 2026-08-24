@@ -6,7 +6,11 @@
 # tag; the script strips a leading `v` before passing --baseline-version).
 #
 # Enforced: scripts/check-generated-public-api.sh generates each fixture and
-# diffs public item names against api/generated/<name>.txt. Update with
+# diffs the canonical semver-relevant surface — struct fields, enum variant
+# payloads/discriminants, full fn/method signatures (receiver, generics,
+# args, return type, where-clause), associated types/consts, type aliases,
+# and cfg/non_exhaustive/repr/deprecated/must_use attributes — against
+# api/generated/<name>.txt. Update with
 # `UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test`
 # after a reviewed API change. Snapshots live in-tree so the gate is offline.
 

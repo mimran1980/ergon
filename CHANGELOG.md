@@ -46,6 +46,18 @@
   `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
   Aeron wire code).
 
+- The generated public-API freeze gate (`api/generated/*.txt`) now snapshots
+  the canonical semver-relevant surface — struct fields, enum variant
+  payloads/discriminants, full fn/method signatures (receiver, generics,
+  args, return type, where-clause), associated types/consts, type aliases,
+  and cfg/non_exhaustive/repr/deprecated/must_use attributes — instead of
+  item names only. A cfg-gated item is now recorded (with its condition)
+  instead of being silently excluded from the freeze.
+- The `SbeMessage` sealing-trait path is now explicit per-schema state
+  (`GenerationContext`, passed by reference into decoder/encoder generation)
+  instead of a `thread_local!`. A hook that invokes a nested `Generator`
+  (e.g. to emit a companion crate) can no longer leak its sealed path into
+  the outer generation's remaining messages.
 - `sbe/BENCHMARKS.md` and `book/src/sbe/benchmarks.md`'s "Group encode: LTO
   on and off" section no longer quotes unprovenanced point estimates
   (`414.1 ns`, etc., with no run-id/commit/host and duplicated verbatim
