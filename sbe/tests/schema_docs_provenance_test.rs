@@ -219,6 +219,43 @@ fn multiline_indented_description_is_text_fenced() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// A schema description is external XML data, not trusted rustdoc
+/// markdown/HTML. A single-line description containing `&`, `<`, or `>`
+/// (e.g. prose like "Option<u32>") used to be emitted into `#[doc]`
+/// unescaped, which rustdoc renders as literal HTML — failing
+/// `rustdoc::invalid_html_tags` under `-D warnings`. It must be escaped to
+/// entities so it always renders as written.
+#[test]
+fn single_line_description_html_chars_are_escaped() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="inline" id="1" version="0" byteOrder="littleEndian">
+  <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
+  <sbe:message name="M" id="1" description="presence=optional field: generates Option&lt;u32&gt; via A &amp; B"><field name="f" id="1" type="uint32"/></sbe:message>
+</sbe:messageSchema>"#;
+    let ir = ergo_sbe::parse(xml).expect("parse");
+    let schema = ergo_sbe::Schema::from_ir(ir);
+    let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("html_escape"))
+        .generate(&schema)
+        .unwrap();
+    let src = &modules.modules().next().unwrap().source;
+    syn::parse_file(src).expect("generated code must be valid Rust");
+
+    assert!(
+        src.contains("Option&lt;u32&gt;"),
+        "angle brackets must render as literal entities, not raw HTML tags: {src}"
+    );
+    assert!(
+        src.contains("A &amp; B"),
+        "ampersand must be escaped once, not left raw or double-escaped: {src}"
+    );
+    assert!(
+        !src.contains("Option<u32>"),
+        "must not contain unescaped angle brackets that rustdoc would parse as an HTML tag"
+    );
+
+    Ok(())
+}
+
 /// Minimal inline XML fixture with a description attribute on a message.
 #[test]
 fn inline_schema_description_attr_on_message() -> Result<(), Box<dyn std::error::Error>> {

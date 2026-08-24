@@ -2692,10 +2692,24 @@ pub(crate) fn canonical_token_fingerprint(
 pub(crate) fn sanitize_description_for_doc(desc: &str) -> String {
     let desc = desc.trim_end_matches(['\r', '\n']);
     if !desc.contains('\n') {
-        return desc.to_string();
+        // A schema description is external XML data, not trusted rustdoc
+        // markdown/HTML. Rendered `#[doc]` text interprets a bare `<...>` as
+        // an HTML tag, so prose like `Option<u32>` fails
+        // `rustdoc::invalid_html_tags` under `-D warnings`. Escape it to
+        // literal entities so it always renders as written. The multiline
+        // branch below doesn't need this: its ``` fence already makes the
+        // content literal, and escaping there would show `&amp;` verbatim.
+        return escape_doc_html(desc);
     }
     let fence = if desc.contains("```") { "````" } else { "```" };
     format!("{fence}text\n{desc}\n{fence}")
+}
+
+/// Escape characters markdown/rustdoc would otherwise interpret as HTML.
+fn escape_doc_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// `#[doc = "..."]` token for a schema description (doctest-safe).
