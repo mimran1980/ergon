@@ -603,6 +603,18 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         assert!(d.extra.is_some());
         assert_eq!(d.extra.as_ref().unwrap().flags(), 7);
         assert_eq!(d.count, 42);
+
+        // A fixed-only (no group/var-data) domain message: encode()'s return
+        // must still equal encoded_length_with_header(), and that must be
+        // exactly encoded_length() (body only) plus the header size — the
+        // same contract a dynamic message honours.
+        let mut out = [0u8; 256];
+        let written = d.encode(&mut out)?;
+        assert_eq!(written, d.encoded_length_with_header()?);
+        assert_eq!(
+            d.encoded_length_with_header()?,
+            d.encoded_length()? + VersionedEncoder::HEADER_LENGTH
+        );
     "#,
     );
     Ok(())

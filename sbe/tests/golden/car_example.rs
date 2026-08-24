@@ -6417,8 +6417,12 @@ impl CarDomain {
         let enc = enc.activation_code(&self.activation_code)?;
         Ok(enc.encoded_length() + CarEncoder::HEADER_LENGTH)
     }
-    /// Compute the exact SBE message body length from this domain object.
-    /// Matches the length returned by [`Self::encode`].
+    /// Compute the exact SBE message **body** length (no header)
+    /// from this domain object. [`Self::encode`] always writes
+    /// the header too, so its return value is
+    /// [`Self::encoded_length_with_header`], not this — sizing a
+    /// buffer from `encoded_length()` alone under-allocates by
+    /// the message header size.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::EncodeError> {
         let mut len: usize = 45;
@@ -6469,8 +6473,9 @@ impl CarDomain {
             .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
         Ok(len)
     }
-    /// Compute the exact SBE message length including the message header.
-    /// Matches `encode()` return value for non-fixed messages.
+    /// Compute the exact buffer size [`Self::encode`] needs and
+    /// exactly what it returns on success, for both fixed and
+    /// dynamic (group/var-data-bearing) messages.
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
         Ok(self.encoded_length()? + CarEncoder::HEADER_LENGTH)

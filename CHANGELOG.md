@@ -40,6 +40,10 @@
   `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
   Aeron wire code).
 
+- Generated domain-object `encoded_length()` / `encoded_length_with_header()`
+  rustdoc no longer contradicts `encode()`: `encoded_length()` is documented
+  as body-only, and `encoded_length_with_header()` as the exact buffer size
+  and return value of `encode()` for both fixed and dynamic messages.
 - Generated `{Group}Encoder::wrap`, `ENTRY_BLOCK_LENGTH`, and
   `GROUP_DIM_TEMPLATE` now carry authored rustdoc explaining the standalone
   group framing contract (offset is the first entry, the dimension header is
