@@ -46,6 +46,11 @@
   `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
   Aeron wire code).
 
+- `sbe/BENCHMARKS.md` and `book/src/sbe/benchmarks.md`'s "Group encode: LTO
+  on and off" section no longer quotes unprovenanced point estimates
+  (`414.1 ns`, etc., with no run-id/commit/host and duplicated verbatim
+  across both files) as if they were current — it states the qualitative
+  ranking and the reproduction command instead.
 - Generated domain-object `encoded_length()` / `encoded_length_with_header()`
   rustdoc no longer contradicts `encode()`: `encoded_length()` is documented
   as body-only, and `encoded_length_with_header()` as the exact buffer size

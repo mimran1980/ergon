@@ -119,49 +119,24 @@ manifest hash — or do not quote it.
 ### Group encode: LTO on and off
 
 sbe-tool performs consistently with and without LTO because its generated hot
-methods carry explicit inline intent. Before this correction, ergon's closure
-path was about 445 ns with LTO but **2.093 µs without LTO**, while sbe-tool
-remained about 956 ns. The missing inline annotations were an ergon codegen
-defect, not an sbe-tool `Option<parent>` penalty.
+methods carry explicit inline intent; ergon's group entry setters now carry
+the same intent (fixed after a prior defect where LTO-off ergon lost to
+sbe-tool for want of `#[inline]`).
 
-After adding inline intent and fixing `bulk_add`:
+Ranking, `just bench-groups`: `bulk_add` is the fastest generated write path
+for both primitive and `Decimal`-composite entries, ahead of `add_struct` and
+the `add_closure` path, with sbe-tool consistently the slowest across both
+profiles. On the owned-DTO diagnostic (unequal work vs. sbe-tool — checked
+buffer entry plus schema min/max validation per field, so not presented as a
+direct ratio), `bulk_add_domain` substantially reduces latency versus the
+prior per-entry `add` path in both profiles.
 
-| 1,000 primitive entries | LTO on | LTO off |
-|---|---:|---:|
-| ergon `add_closure` | 414.1 ns | 418.1 ns |
-| ergon `add_struct` | 429.9 ns | 428.6 ns |
-| ergon `bulk_add` | **321.4 ns** | **325.0 ns** |
-| sbe-tool | 953.8 ns | 958.5 ns |
-
-Owned DTO encode is a separate diagnostic because it performs checked buffer
-entry and schema min/max validation for each domain field; presenting it as a
-direct sbe-tool ratio would be unequal work. The benchmark constructs the DTO
-and its `Vec` outside `b.iter`, then compares automatic domain bulk against the
-exact previous generated DTO path:
-
-| 1,000 primitive DTO entries | LTO on | LTO off |
-|---|---:|---:|
-| previous per-entry `add` path | 1.336 µs | 1.998 µs |
-| automatic `bulk_add_domain` | **509.1 ns** | **508.6 ns** |
-| latency reduction | **61.9%** | **74.5%** |
-
-Both DTO arms perform the same range checks and checked entry, produce exact
-sbe-tool bytes before timing, reuse one exact-size buffer, and allocate nothing
-inside the timed encode. The allocation-count suite independently guards DTO
-encode.
-
-For 1,000 Decimal-composite entries:
-
-| Path | LTO on | LTO off |
-|---|---:|---:|
-| wire closure | 505.5 ns | 511.3 ns |
-| prebuilt `rust_decimal` domain conversion | 1.264 µs | 1.525 µs |
-| `add_struct` | 501.0 ns | 501.8 ns |
-| `bulk_add` | **389.7 ns** | **389.6 ns** |
-
-`bulk_add` now validates one exact output region and iterates
-`chunks_exact_mut`, eliminating the three inner field bounds checks retained by
-the removed implementation.
+This diagnostic is unprovenanced: unlike the gated `just bench` / `just
+bench-cluster` suites, `group_encode_bench` / `group_encode_decimal_bench` do
+not stamp a run-id/commit/host manifest. Reproduce with `just bench-groups`
+(results under `target/criterion/`) and read the live numbers rather than
+trusting any figure quoted here — per the policy above, a number without that
+provenance is not a current result.
 
 ### Maintained pair modes (fairness inventory)
 
