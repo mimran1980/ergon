@@ -321,7 +321,7 @@ impl AeronCluster {
                     |data, _hdr| {
                         if captured.is_none() && decode_err.is_none() {
                             match crate::poller::parse_event(data) {
-                                Ok(e) => captured = e,
+                                Ok(e) => captured = Some(e),
                                 Err(e) => decode_err = Some(e),
                             }
                         }
@@ -359,7 +359,7 @@ impl AeronCluster {
                             // detail lists all members in id order, so a
                             // position-based parse would redirect back to the
                             // follower we just asked (an infinite loop).
-                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)?
                                 .ok_or_else(|| ClusterError::ReconnectFailed {
                                     reason: format!(
                                         "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
@@ -845,7 +845,7 @@ impl AeronCluster {
     /// redirect and the active-session failover share one uniform code path.
     fn on_new_leader_event(&mut self, term: i64, member: i32, endpoints: &str) -> Result<(), ClusterError> {
         let ep =
-            crate::poller::parse_leader_endpoint(endpoints, member).ok_or_else(|| ClusterError::ReconnectFailed {
+            crate::poller::parse_leader_endpoint(endpoints, member)?.ok_or_else(|| ClusterError::ReconnectFailed {
                 reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
             })?;
         let (new_pub, new_regular, new_controlled) =
@@ -863,14 +863,17 @@ impl AeronCluster {
     }
 
     /// The cluster-assigned session id (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn cluster_session_id(&self) -> i64 {
         self.cluster_session_id
     }
     /// The current leadership term (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn leadership_term_id(&self) -> i64 {
         self.leadership_term_id
     }
     /// The current leader's member id (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn leader_member_id(&self) -> i32 {
         self.leader_member_id
     }
@@ -878,18 +881,21 @@ impl AeronCluster {
     /// True when the ingress publication has a connected subscriber (the
     /// leader). Java `publication.isConnected()` analogue for
     /// backpressure-aware callers.
+    #[must_use = "the connectivity decision is the point of calling this"]
     #[inline]
     pub fn is_ingress_connected(&self) -> bool {
         self.ingress.is_connected()
     }
 
     /// True when the ingress publication is closed (fatal for this handle).
+    #[must_use = "the closed-state decision is the point of calling this"]
     #[inline]
     pub fn is_ingress_closed(&self) -> bool {
         self.ingress.is_closed()
     }
 
     /// Current ingress publication position.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn ingress_position(&self) -> i64 {
         self.ingress.position()
@@ -898,6 +904,7 @@ impl AeronCluster {
     /// True when the egress subscription still has a live image from the
     /// cluster (image count > 0). Going false while `Connected` is the
     /// leader-loss signal consumed by [`Self::poll_state_changes`].
+    #[must_use = "the connectivity decision is the point of calling this"]
     #[inline]
     pub fn is_egress_connected(&self) -> bool {
         self.egress.image_count().is_ok_and(|c| c > 0)
@@ -930,6 +937,7 @@ impl AeronCluster {
         AsyncClusterConnect::new(builder, aeron_dir.into())
     }
     /// Current session state: `Connected`, `NotConnected`, `Closed`.
+    #[must_use = "the state decision is the point of calling this"]
     pub fn state(&self) -> SessionState {
         self.state
     }
@@ -1055,6 +1063,7 @@ impl ClusterClaim {
     }
 
     /// Stream position Aeron assigned to this claim.
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn position(&self) -> i64 {
         self.claim.position()
     }
@@ -1170,11 +1179,13 @@ impl AsyncClusterConnect {
     /// Always include a wildcard (`_`) arm — the enum is
     /// [`#[non_exhaustive]`](ConnectStep) so future releases may add steps
     /// without a semver break.
+    #[must_use = "the connect-step decision is the point of calling this"]
     pub fn step(&self) -> ConnectStep {
         self.step
     }
 
     /// True once the connect has completed and `finish()` can be called.
+    #[must_use = "the completion decision is the point of calling this"]
     pub fn is_complete(&self) -> bool {
         self.step == ConnectStep::Done
     }
@@ -1257,7 +1268,7 @@ impl AsyncClusterConnect {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
-                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)?
                                         .ok_or_else(|| ClusterError::ReconnectFailed {
                                             reason: format!(
                                                 "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
@@ -1410,7 +1421,7 @@ impl AsyncClusterConnect {
                     |data, _hdr| {
                         if ev.is_none() && err.is_none() {
                             match crate::poller::parse_event(data) {
-                                Ok(e) => ev = e,
+                                Ok(e) => ev = Some(e),
                                 Err(e) => err = Some(e),
                             }
                         }

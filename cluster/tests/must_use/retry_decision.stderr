@@ -1,0 +1,16 @@
+error: unused return value of `PublicationFailure::is_retryable` that must be used
+ --> tests/must_use/retry_decision.rs:6:5
+  |
+6 |     PublicationFailure::NotConnected.is_retryable(); // discarded — must_use violation
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: the retry decision is the point of calling this
+note: the lint level is defined here
+ --> tests/must_use/retry_decision.rs:1:9
+  |
+1 | #![deny(unused_must_use)]
+  |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+  |
+6 |     let _ = PublicationFailure::NotConnected.is_retryable(); // discarded — must_use violation
+  |     +++++++

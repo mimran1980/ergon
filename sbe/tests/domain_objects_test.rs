@@ -603,6 +603,18 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         assert!(d.extra.is_some());
         assert_eq!(d.extra.as_ref().unwrap().flags(), 7);
         assert_eq!(d.count, 42);
+
+        // A fixed-only (no group/var-data) domain message: encode()'s return
+        // must still equal encoded_length_with_header(), and that must be
+        // exactly encoded_length() (body only) plus the header size — the
+        // same contract a dynamic message honours.
+        let mut out = [0u8; 256];
+        let written = d.encode(&mut out)?;
+        assert_eq!(written, d.encoded_length_with_header()?);
+        assert_eq!(
+            d.encoded_length_with_header()?,
+            d.encoded_length()? + VersionedEncoder::HEADER_LENGTH
+        );
     "#,
     );
     Ok(())
@@ -786,6 +798,156 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
         );
         println!("car_domain_string_var_data_and_invalid_utf8_empty: PASSED");
     "#,
+    );
+    Ok(())
+}
+
+/// A required (non-versioned) boolean domain field used to `.expect()` on an
+/// unknown wire discriminant instead of propagating the typed error the
+/// underlying accessor already returns — `try_from_decoder` panicked on a
+/// hostile/corrupt frame instead of failing closed. `available` (offset 10 in
+/// the fixed block, i.e. absolute byte 18 including the 8-byte header) is
+/// `BooleanType`, valid only as 0 or 1.
+#[test]
+fn car_domain_required_bool_invalid_discriminant_is_typed_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_dom_bad_bool");
+    compile_and_run(
+        "car_dom_bad_bool",
+        &src,
+        r#"
+        let mut buf = [0u8; 2048];
+        let mut extras = OptionalExtras::default();
+        extras.cruise_control(true);
+        let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        .fixed(&CarFixedFields {
+            serial_number: 1,
+            model_year: 2013,
+            available: BooleanType::T,
+            code: Model::A,
+            some_numbers: [1u32, 2, 3, 4],
+            vehicle_code: [b'A', b'B', b'C', b'D', b'E', b'F'],
+            extras,
+            engine: Engine::new(2000, 4, [49, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::TURBO, 0)),
+        })
+        .fuel_figures(0, |_| Ok(()))?
+        .performance_figures(0, |_| Ok(()))?
+        .manufacturer(b"Honda")?
+        .model(b"Civic")?
+        .activation_code(b"a")?
+        .as_bytes_with_header()
+        .to_vec();
+
+        // Sanity: the valid frame decodes cleanly before corrupting it.
+        CarDomain::try_from_decoder(CarDecoder::try_from(&encoded[..])?)?;
+
+        // Corrupt `available`'s wire byte to an unknown BooleanType discriminant.
+        let mut bad = encoded.clone();
+        assert_eq!(bad[18], 1, "byte 18 must be the `available` field before corrupting it");
+        bad[18] = 0xFF;
+        let err = CarDomain::try_from_decoder(CarDecoder::try_from(&bad[..])?).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                sbe_rt::DecodeError::InvalidBoolean { field: "available", discriminant: 0xFF }
+            ),
+            "expected typed InvalidBoolean, got: {err:?}"
+        );
+        println!("car_domain_required_bool_invalid_discriminant_is_typed_error: PASSED");
+    "#,
+    );
+    Ok(())
+}
+
+/// T-1 regression: no generated domain `try_from_decoder` body may contain
+/// `expect(` or `unwrap(` — every fallible field materialisation must
+/// propagate via `?`, including nested group-entry domain types (not just
+/// the top-level message domain struct T-1's own fix targeted).
+#[test]
+fn no_domain_try_from_decoder_body_contains_expect_or_unwrap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "car_dom_no_expect_scan");
+
+    let mut checked = 0;
+    let mut offset = 0;
+    while let Some(rel) = src[offset..].find("fn try_from_decoder(") {
+        let start = offset + rel;
+        let body_start = src[start..].find('{').ok_or("no body open brace")? + start;
+        let mut depth = 0i32;
+        let mut end = body_start;
+        for (i, ch) in src[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = body_start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &src[body_start..=end];
+        assert!(
+            !body.contains("expect(") && !body.contains("unwrap("),
+            "try_from_decoder body must propagate via `?`, not panic:\n{body}"
+        );
+        checked += 1;
+        offset = end + 1;
+    }
+    assert!(
+        checked >= 2,
+        "expected multiple try_from_decoder impls (message + group entries) in car_dom_all, found {checked}"
+    );
+    Ok(())
+}
+
+/// T-1 acceptance criteria: a required boolean field inside a *repeating
+/// group entry* (not just a root message field) with an unknown wire
+/// discriminant must also propagate `DecodeError::InvalidBoolean` instead
+/// of panicking. `coverage-edges.xml`'s `MsgA.items` group has exactly this
+/// shape: `flag: BooleanType` at entry offset 4.
+#[test]
+fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema_path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/coverage-edges.xml"
+    ));
+    let (_schema, src) = generate(&schema_path, "cov_edges_group_bool");
+    compile_and_run(
+        "cov_edges_group_bool",
+        &src,
+        r#"
+        let mut buf = [0u8; 128];
+        let len = MsgAEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgAFixedFields {})
+            .items(1, |g| {
+                g.add(|e| {
+                    e.tag(7).flag(BooleanType::T);
+                    Ok(())
+                })
+            })?
+            .encoded_length_with_header();
+
+        // Sanity: the valid frame decodes cleanly before corrupting it.
+        let dec = MsgADecoder::try_from(&buf[..len])?;
+        MsgADomain::try_from_decoder(dec)?;
+
+        // Entry offset 4 is `flag` (tag: uint32 @0, flag: BooleanType @4).
+        // Message header (8) + group dimension header (groupSize: 4) = 12,
+        // entry starts there; flag is entry offset 4 -> absolute byte 16.
+        let mut bad = buf;
+        assert_eq!(bad[16], 1, "byte 16 must be the entry's `flag` field before corrupting it");
+        bad[16] = 0xFF;
+        let dec = MsgADecoder::try_from(&bad[..len])?;
+        let err = MsgADomain::try_from_decoder(dec).unwrap_err();
+        assert!(
+            matches!(err, sbe_rt::DecodeError::InvalidBoolean { field: "flag", discriminant: 0xFF }),
+            "expected typed InvalidBoolean for the group-entry field, got: {err:?}"
+        );
+        "#,
     );
     Ok(())
 }

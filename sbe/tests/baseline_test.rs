@@ -3728,3 +3728,68 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
     );
     Ok(())
 }
+
+/// A group-entry field with a domain type AND `presence="optional"` used to
+/// fail to compile two different ways:
+/// (1) `emit_group_entry_impls` (converter_impls.rs) never Option-wrapped the
+///     `try_*` accessor's return type for optional group fields the way the
+///     message-level path does, so the raw accessor's `Option<Wire>` was
+///     passed straight to `TryFromSbe<Wire>::try_from_sbe`, which expects an
+///     unwrapped `Wire` — E0308.
+/// (2) the group-entry `Display`/`Debug` codegen (group_decoder.rs) never
+///     checked for a domain type on `Primitive`/`Enum` fields at all, so it
+///     always called the plain field accessor — which no longer exists once
+///     a domain type registers and renames it to `*_wire` — E0599.
+/// Both only reproduce for a domain type on a non-composite (a composite
+/// never gets Option-wrapped, since it has no null image) inside a group —
+/// message-level fields were already correct on both counts.
+#[test]
+fn group_entry_optional_domain_type_field_compiles_and_round_trips()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/group-optional-domain-type.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "group_opt_domain_type", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        )
+    });
+    compile_and_run_with_deps(
+        "group_opt_domain_type",
+        &src,
+        r#"
+        let mut buf = [0u8; 512];
+        let len = BatchEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&BatchFixedFields {})
+            .entries(2, |g| {
+                g.add(|e| {
+                    e.qty(1).ts_wire(1_720_000_000_000_000);
+                    Ok(())
+                })?;
+                g.add(|e| {
+                    e.qty(2);
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let dec = BatchDecoder::try_decode(&buf[..len], 0)?;
+        let entries: Vec<_> = dec.into_entries()?.collect();
+        assert_eq!(entries.len(), 2);
+        let ts0 = entries[0].try_ts()?;
+        assert!(ts0.is_some(), "entry 0 wrote ts, decode must see Some: {ts0:?}");
+        let ts1 = entries[1].try_ts()?;
+        assert_eq!(ts1, None, "entry 1 never wrote ts, decode must see None");
+        // Exercise the Display/Debug codegen this bug also broke.
+        let rendered = format!("{}", entries[0]);
+        assert!(rendered.contains("qty: 1"), "{rendered}");
+        assert!(rendered.contains("ts: Some("), "{rendered}");
+        let rendered1 = format!("{}", entries[1]);
+        assert!(rendered1.contains("ts: None"), "{rendered1}");
+        "#,
+        "chrono = \"0.4\"\n",
+    );
+    Ok(())
+}

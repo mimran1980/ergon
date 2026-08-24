@@ -288,10 +288,37 @@ pub(crate) fn generate_group_encoder(
         }
 
         impl<'a> #group_enc_ident<'a> {
+            /// Wire size in bytes of one entry's fixed block — every entry
+            /// `add()` writes advances `offset` by exactly this much before
+            /// any entry-level var-data or nested groups.
             pub const ENTRY_BLOCK_LENGTH: usize = #block_len_lit;
+            /// The dimension header this group's entries expect, as raw
+            /// wire bytes (block length + count fields, group-header byte
+            /// order). `wrap()` does not write this — a caller assembling a
+            /// standalone group writes it at `offset - GROUP_DIM_TEMPLATE.len()`
+            /// before calling `wrap()`, with the count field set to the
+            /// declared entry count. `add()` calls must write exactly that
+            /// many entries; the parent message stage rejects a mismatch as
+            /// [`sbe_rt::EncodeError::GroupCountMismatch`].
             pub const GROUP_DIM_TEMPLATE: [u8; #dim_size_lit] = [#(#dim_bytes),*];
             const _GROUP_DIM_TEMPLATE_LEN: () = assert!(Self::GROUP_DIM_TEMPLATE.len() == #dim_size_lit);
 
+            /// Low-level entries-only constructor for a standalone group.
+            ///
+            /// `offset` is the position of the **first entry**, immediately
+            /// after a dimension header the caller has already written —
+            /// this constructor neither writes nor back-patches that header.
+            /// `count` bounds how many entries `add()` accepts before it
+            /// returns [`sbe_rt::EncodeError::GroupFull`].
+            ///
+            /// Normal generated code reaches this only through the parent
+            /// message's own group-writing stage (e.g. the `fuel_figures(
+            /// count, |g| { .. })` method on the message encoder), which
+            /// writes the dimension header for you and hands you this type
+            /// already positioned at the first entry. Call this directly
+            /// only when assembling a standalone group outside a full
+            /// message — get the framing (header contents, `offset`, order)
+            /// wrong and the result is a malformed group image.
             #[inline]
             pub fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
                 Self { buf, offset, count, written: 0 }

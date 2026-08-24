@@ -1572,6 +1572,18 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
+    // A domain-typed primitive/enum field uses the fallible `try_*` accessor
+    // for Display — the plain accessor is renamed to `*_wire` (or removed)
+    // once a domain type is registered, so it no longer exists under that
+    // name. Shared by the Primitive and Enum branches below.
+    fn domain_display_write(f_name: &str, field_name: &str, sep: &str) -> proc_macro2::TokenStream {
+        let try_ident = syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+        let fmt_str = format!("{sep}{field_name}: {{:?}}");
+        quote::quote! {
+            { if let Ok(v) = self.#try_ident() { write!(f, #fmt_str, v)?; } }
+        }
+    }
+
     let mut entry_display_body = proc_macro2::TokenStream::new();
     let mut entry_display_out_idx = 0usize;
     for f in &g.fields {
@@ -1583,10 +1595,18 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {{:?}}", f.name);
-                entry_display_body.extend(quote::quote! {
-                    { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                });
+                // Domain-converted primitives use the fallible try_* accessor
+                // (the plain accessor is renamed to *_wire and no longer
+                // exists under that name once a domain type is registered —
+                // matches the message-level Primitive branch's handling).
+                if find_domain_type(f, domain_types).is_some() {
+                    entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
+                } else {
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                    });
+                }
                 entry_display_out_idx += 1;
             }
             FieldType::Enum {
@@ -1595,10 +1615,17 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
-                entry_display_body.extend(quote::quote! {
-                    { let e = self.#f_ident(); write!(f, #fmt_str)?; }
-                });
+                // Same rationale as the Primitive branch above: a domain
+                // enum (e.g. bool) uses the fallible try_* accessor; the
+                // plain accessor no longer exists under that name.
+                if find_domain_type(f, domain_types).is_some() {
+                    entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
+                } else {
+                    let fmt_str = format!("{sep}{}: {enum_name}::{{e:?}}", f.name);
+                    entry_display_body.extend(quote::quote! {
+                        { let e = self.#f_ident(); write!(f, #fmt_str)?; }
+                    });
+                }
                 entry_display_out_idx += 1;
             }
             FieldType::Set { .. } => {

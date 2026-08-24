@@ -213,10 +213,20 @@ impl SessionBuilder {
         self
     }
 
-    /// Set multi-member ingress endpoints (`"0=host:port,1=host:port"`).
-    pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Self {
-        self.ingress_endpoints = Some(endpoints.into());
-        self
+    /// Set multi-member ingress endpoints: `member_id=host:port` pairs
+    /// separated by commas (`"0=host:9002,1=host:9003"`), no `aeron:`
+    /// prefix. Member IDs must be unique; every endpoint must be non-empty.
+    ///
+    /// # Errors
+    ///
+    /// A missing `=`, non-numeric member ID, empty endpoint, empty map, or
+    /// duplicate member ID fails immediately instead of at `validate()` or
+    /// the first `poll()`.
+    pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Result<Self, ClusterError> {
+        let endpoints = endpoints.into();
+        crate::endpoints::parse_ingress_endpoints(&endpoints)?;
+        self.ingress_endpoints = Some(endpoints);
+        Ok(self)
     }
 
     /// Ingress channel as `CStr` for rusteron (after a successful set/validate).
@@ -321,6 +331,34 @@ mod tests {
     }
 
     #[test]
+    fn ingress_endpoints_rejects_malformed_maps_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
+        for bad in [
+            "",
+            "0localhost:9012",                   // missing '='
+            "x=localhost:9012",                  // non-numeric member id
+            "0=",                                // empty endpoint
+            "0=localhost:9012,0=localhost:9112", // duplicate member id
+        ] {
+            assert!(
+                SessionBuilder::default().ingress_endpoints(bad).is_err(),
+                "expected {bad:?} to be rejected at the setter"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ingress_endpoints_accepts_valid_unsorted_map() -> Result<(), Box<dyn std::error::Error>> {
+        let b = SessionBuilder::default().ingress_endpoints("1=host-b:9013,0=host-a:9012")?;
+        assert_eq!(
+            b.ingress_endpoints.as_deref(),
+            Some("1=host-b:9013,0=host-a:9012"),
+            "the setter stores the map as given; member-ID resolution sorts on use"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn cstr_accessors_borrow_cached_storage() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
             .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)?
@@ -335,7 +373,7 @@ mod tests {
     #[test]
     fn test_validate_endpoints_without_ingress_channel() -> Result<(), Box<dyn std::error::Error>> {
         let b = SessionBuilder::default()
-            .ingress_endpoints("0=localhost:9002,1=localhost:9102")
+            .ingress_endpoints("0=localhost:9002,1=localhost:9102")?
             .egress_channel("aeron:udp?endpoint=localhost:19002")?;
         b.validate()?;
         let c = b.resolve_initial_ingress_for_aeron()?;

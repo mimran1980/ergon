@@ -1,464 +1,520 @@
-BooleanType::as_bool
-BooleanType::as_option
-BooleanType::from_raw
-BooleanType::raw
-BoostType::as_option
-BoostType::from_raw
-BoostType::raw
-Booster::boost_type
-Booster::horse_power
-Booster::new
-Booster::raw_boost_type
-BoosterDecoder::boost_type
-BoosterDecoder::horse_power
-CarAfterFuelFigures::performance_figures
-CarAfterFuelFigures::performance_figures_unknown_size
-CarAfterManufacturer::model
-CarAfterManufacturer::model_unchecked
-CarAfterManufacturer::model_with
-CarAfterModel::activation_code
-CarAfterModel::activation_code_unchecked
-CarAfterModel::activation_code_with
-CarAfterPerformanceFigures::manufacturer
-CarAfterPerformanceFigures::manufacturer_unchecked
-CarAfterPerformanceFigures::manufacturer_with
-CarComplete::as_body_bytes
-CarComplete::as_bytes_with_header
-CarComplete::encoded_length
-CarComplete::encoded_length_with_header
-CarComplete::into_remaining_mut
-CarDecoder::acting_block_length
-CarDecoder::acting_version
-CarDecoder::activation_code
-CarDecoder::activation_code_as_str
-CarDecoder::activation_code_as_str_unchecked
-CarDecoder::as_body_bytes
-CarDecoder::as_bytes_with_header
-CarDecoder::available
-CarDecoder::code
-CarDecoder::copy_vehicle_code
-CarDecoder::decode
-CarDecoder::decode_unchecked
-CarDecoder::discounted_model
-CarDecoder::encoded_length
-CarDecoder::encoded_length_with_header
-CarDecoder::engine
-CarDecoder::engine_value
-CarDecoder::extras
-CarDecoder::get_metadata
-CarDecoder::into_fuel_figures
-CarDecoder::manufacturer
-CarDecoder::manufacturer_as_str
-CarDecoder::manufacturer_as_str_unchecked
-CarDecoder::min_readable_fixed_extent
-CarDecoder::model
-CarDecoder::model_as_str
-CarDecoder::model_as_str_unchecked
-CarDecoder::model_year
-CarDecoder::raw_available
-CarDecoder::raw_code
-CarDecoder::rewind
-CarDecoder::serial_number
-CarDecoder::some_numbers
-CarDecoder::try_available_bool
-CarDecoder::try_decode
-CarDecoder::try_wrap
-CarDecoder::vehicle_code
-CarDecoder::verify
-CarDecoder::wrap
-CarDecoder::wrap_unchecked
-CarDecoderAfterFuelFigures::acting_block_length
-CarDecoderAfterFuelFigures::acting_version
-CarDecoderAfterFuelFigures::into_performance_figures
-CarDecoderAfterManufacturer::acting_block_length
-CarDecoderAfterManufacturer::acting_version
-CarDecoderAfterManufacturer::into_model
-CarDecoderAfterManufacturer::into_model_as_str
-CarDecoderAfterManufacturer::into_model_as_str_unchecked
-CarDecoderAfterManufacturer::model_slice
-CarDecoderAfterManufacturer::try_model
-CarDecoderAfterModel::acting_block_length
-CarDecoderAfterModel::acting_version
-CarDecoderAfterModel::activation_code_slice
-CarDecoderAfterModel::into_activation_code
-CarDecoderAfterModel::into_activation_code_as_str
-CarDecoderAfterModel::into_activation_code_as_str_unchecked
-CarDecoderAfterModel::try_activation_code
-CarDecoderAfterPerformanceFigures::acting_block_length
-CarDecoderAfterPerformanceFigures::acting_version
-CarDecoderAfterPerformanceFigures::into_manufacturer
-CarDecoderAfterPerformanceFigures::into_manufacturer_as_str
-CarDecoderAfterPerformanceFigures::into_manufacturer_as_str_unchecked
-CarDecoderAfterPerformanceFigures::manufacturer_slice
-CarDecoderAfterPerformanceFigures::try_manufacturer
-CarDecoderComplete::acting_block_length
-CarDecoderComplete::acting_version
-CarDecoderComplete::as_body_bytes
-CarDecoderComplete::as_bytes_with_header
-CarDecoderComplete::encoded_length
-CarDecoderComplete::encoded_length_with_header
-CarDecoderComplete::remaining
-CarDecoderMetadata::acting_block_length
-CarDecoderMetadata::acting_version
-CarDecoderMetadata::as_fixed_body_bytes
-CarDecoderMetadata::as_fixed_region_with_header
-CarDecoderMetadata::buffer
-CarDecoderMetadata::limit
-CarDecoderMetadata::message_offset
-CarDecoderMetadata::remaining
-CarEncodedLength::fuel_figures
-CarEncodedLength::fuel_figures_ragged
-CarEncodedLength::fuel_figures_unknown_size
-CarEncodedLength::new
-CarEncodedLengthAfterFuelFigures::performance_figures
-CarEncodedLengthAfterFuelFigures::performance_figures_ragged
-CarEncodedLengthAfterFuelFigures::performance_figures_unknown_size
-CarEncodedLengthAfterManufacturer::model
-CarEncodedLengthAfterModel::activation_code
-CarEncodedLengthAfterPerformanceFigures::manufacturer
-CarEncodedLengthComplete::encoded_length
-CarEncodedLengthComplete::encoded_length_with_header
-CarEncoder::available
-CarEncoder::available_bool
-CarEncoder::code
-CarEncoder::compute_length
-CarEncoder::engine
-CarEncoder::extras
-CarEncoder::fixed
-CarEncoder::fuel_figures
-CarEncoder::fuel_figures_unknown_size
-CarEncoder::get_metadata
-CarEncoder::model_year
-CarEncoder::put_some_numbers
-CarEncoder::put_vehicle_code
-CarEncoder::raw_fixed
-CarEncoder::serial_number
-CarEncoder::some_numbers
-CarEncoder::try_wrap
-CarEncoder::try_wrap_and_apply_header
-CarEncoder::vehicle_code
-CarEncoder::vehicle_code_str
-CarEncoder::wrap
-CarEncoder::wrap_and_apply_header
-CarEncoder::wrap_and_apply_header_unchecked
-CarEncoder::wrap_unchecked
-CarEncoderMetadata::as_fixed_body_bytes
-CarEncoderMetadata::as_fixed_region_with_header
-CarEncoderMetadata::buffer
-CarEncoderMetadata::limit
-CarEncoderMetadata::message_offset
-CarFuelFiguresRaggedBuilder::add
-CarFuelFiguresRaggedBuilder::uniform
-CarFuelFiguresRaggedBuilder::usage_description
-CarFuelFiguresUniformEncodedLength::finish_empty
-CarFuelFiguresUniformEncodedLength::usage_description
-CarPerformanceFiguresAccelerationRaggedBuilder::add
-CarPerformanceFiguresAccelerationRaggedBuilder::uniform
-CarPerformanceFiguresRaggedBuilder::acceleration
-CarPerformanceFiguresRaggedBuilder::add
-CarPerformanceFiguresRaggedBuilder::uniform
-CarPerformanceFiguresUniformEncodedLength::acceleration
-CarPerformanceFiguresUniformEncodedLength::finish_empty
-CarRawFixedWriter::available
-CarRawFixedWriter::available_bool
-CarRawFixedWriter::code
-CarRawFixedWriter::engine
-CarRawFixedWriter::extras
-CarRawFixedWriter::model_year
-CarRawFixedWriter::put_some_numbers
-CarRawFixedWriter::put_vehicle_code
-CarRawFixedWriter::serial_number
-CarRawFixedWriter::some_numbers
-CarRawFixedWriter::vehicle_code
-CarRawFixedWriter::vehicle_code_str
-CarSchema::verify
-Engine::booster
-Engine::booster_enabled
-Engine::capacity
-Engine::efficiency
-Engine::fuel
-Engine::manufacturer_code
-Engine::max_rpm
-Engine::new
-Engine::num_cylinders
-Engine::raw_booster_enabled
-EngineDecoder::booster
-EngineDecoder::booster_enabled
-EngineDecoder::capacity
-EngineDecoder::efficiency
-EngineDecoder::fuel
-EngineDecoder::manufacturer_code
-EngineDecoder::max_rpm
-EngineDecoder::num_cylinders
-FuelFiguresDecoder::finish
-FuelFiguresDecoder::is_empty
-FuelFiguresDecoder::min_readable_fixed_extent
-FuelFiguresDecoder::remaining
-FuelFiguresDecoder::rewind
-FuelFiguresDecoder::scan_entry_at
-FuelFiguresDecoder::skip_n
-FuelFiguresDecoder::skip_remaining
-FuelFiguresDecoder::wrap
-FuelFiguresEncoder::add
-FuelFiguresEncoder::wrap
-FuelFiguresEncoder::written
-FuelFiguresEntryDecoder::encoded_length
-FuelFiguresEntryDecoder::into_usage_description
-FuelFiguresEntryDecoder::into_usage_description_as_str
-FuelFiguresEntryDecoder::into_usage_description_as_str_unchecked
-FuelFiguresEntryDecoder::mpg
-FuelFiguresEntryDecoder::skip
-FuelFiguresEntryDecoder::speed
-FuelFiguresEntryDecoder::try_usage_description
-FuelFiguresEntryDecoder::usage_description
-FuelFiguresEntryDecoder::usage_description_slice
-FuelFiguresEntryDecoderComplete::acting_block_length
-FuelFiguresEntryDecoderComplete::acting_version
-FuelFiguresEntryDecoderComplete::as_body_bytes
-FuelFiguresEntryDecoderComplete::as_bytes_with_header
-FuelFiguresEntryDecoderComplete::encoded_length
-FuelFiguresEntryDecoderComplete::encoded_length_with_header
-FuelFiguresEntryDecoderComplete::remaining
-FuelFiguresEntryEncoder::mpg
-FuelFiguresEntryEncoder::speed
-FuelFiguresEntryEncoder::usage_description
-GroupSizeEncoding::block_length
-GroupSizeEncoding::new
-GroupSizeEncoding::num_in_group
-GroupSizeEncodingDecoder::block_length
-GroupSizeEncodingDecoder::num_in_group
-MessageHeader::block_length
-MessageHeader::new
-MessageHeader::peek_for_schema
-MessageHeader::peek_header
-MessageHeader::peek_template_id
-MessageHeader::schema_id
-MessageHeader::template_id
-MessageHeader::version
-MessageHeaderDecoder::block_length
-MessageHeaderDecoder::schema_id
-MessageHeaderDecoder::template_id
-MessageHeaderDecoder::version
-Model::as_option
-Model::from_raw
-Model::raw
-OptionalExtras::cruise_control
-OptionalExtras::default
-OptionalExtras::is_cruise_control
-OptionalExtras::is_sports_pack
-OptionalExtras::is_sun_roof
-OptionalExtras::raw
-OptionalExtras::sports_pack
-OptionalExtras::sun_roof
-PerformanceFiguresAccelerationDecoder::bulk_decode
-PerformanceFiguresAccelerationDecoder::bulk_decode_into
-PerformanceFiguresAccelerationDecoder::entry_at
-PerformanceFiguresAccelerationDecoder::finish
-PerformanceFiguresAccelerationDecoder::is_empty
-PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent
-PerformanceFiguresAccelerationDecoder::remaining
-PerformanceFiguresAccelerationDecoder::rewind
-PerformanceFiguresAccelerationDecoder::skip_n
-PerformanceFiguresAccelerationDecoder::skip_remaining
-PerformanceFiguresAccelerationDecoder::wrap
-PerformanceFiguresAccelerationEncoder::add
-PerformanceFiguresAccelerationEncoder::add_checked
-PerformanceFiguresAccelerationEncoder::add_struct
-PerformanceFiguresAccelerationEncoder::bulk_add
-PerformanceFiguresAccelerationEncoder::start_entry
-PerformanceFiguresAccelerationEncoder::wrap
-PerformanceFiguresAccelerationEncoder::written
-PerformanceFiguresAccelerationEntryDecoder::encoded_length
-PerformanceFiguresAccelerationEntryDecoder::mph
-PerformanceFiguresAccelerationEntryDecoder::seconds
-PerformanceFiguresAccelerationEntryDecoder::skip
-PerformanceFiguresAccelerationEntryEncoder::complete
-PerformanceFiguresAccelerationEntryEncoder::mph
-PerformanceFiguresAccelerationEntryEncoder::seconds
-PerformanceFiguresDecoder::finish
-PerformanceFiguresDecoder::is_empty
-PerformanceFiguresDecoder::min_readable_fixed_extent
-PerformanceFiguresDecoder::remaining
-PerformanceFiguresDecoder::rewind
-PerformanceFiguresDecoder::scan_entry_at
-PerformanceFiguresDecoder::skip_n
-PerformanceFiguresDecoder::skip_remaining
-PerformanceFiguresDecoder::wrap
-PerformanceFiguresEncoder::add
-PerformanceFiguresEncoder::wrap
-PerformanceFiguresEncoder::written
-PerformanceFiguresEntryDecoder::acceleration
-PerformanceFiguresEntryDecoder::encoded_length
-PerformanceFiguresEntryDecoder::into_acceleration
-PerformanceFiguresEntryDecoder::octane_rating
-PerformanceFiguresEntryDecoder::skip
-PerformanceFiguresEntryDecoderComplete::acting_block_length
-PerformanceFiguresEntryDecoderComplete::acting_version
-PerformanceFiguresEntryDecoderComplete::as_body_bytes
-PerformanceFiguresEntryDecoderComplete::as_bytes_with_header
-PerformanceFiguresEntryDecoderComplete::encoded_length
-PerformanceFiguresEntryDecoderComplete::encoded_length_with_header
-PerformanceFiguresEntryDecoderComplete::remaining
-PerformanceFiguresEntryEncoder::acceleration
-PerformanceFiguresEntryEncoder::acceleration_unknown_size
-PerformanceFiguresEntryEncoder::octane_rating
-RaggedEntryBuilder::add
-RaggedEntryBuilder::entries
-RaggedEntryBuilder::group
-RaggedEntryBuilder::group_ragged
-RaggedEntryBuilder::var_data
-VarAsciiEncoding::length
-VarAsciiEncoding::new
-VarAsciiEncoding::var_data
-VarAsciiEncodingDecoder::length
-VarAsciiEncodingDecoder::var_data
-VarDataEncoding::length
-VarDataEncoding::new
-VarDataEncoding::var_data
-VarDataEncodingDecoder::length
-VarDataEncodingDecoder::var_data
-VarStringEncoding::length
-VarStringEncoding::new
-VarStringEncoding::var_data
-VarStringEncodingDecoder::length
-VarStringEncodingDecoder::var_data
-const MESSAGE_HEADER_ENCODED_LENGTH
-const SCHEMA_HASH
-const SCHEMA_ID
-const SCHEMA_SHA256
-const SCHEMA_SHA256_HEX
-const SCHEMA_VERSION
-const SEMANTIC_VERSION
-enum BooleanType
-enum BooleanType::F
-enum BooleanType::NullVal
-enum BooleanType::T
-enum BoostType
-enum BoostType::KERS
-enum BoostType::NITROUS
-enum BoostType::NullVal
-enum BoostType::SUPERCHARGER
-enum BoostType::TURBO
-enum Model
-enum Model::A
-enum Model::B
-enum Model::C
-enum Model::NullVal
-fn read_bytes
-fn schema_id_from_header
-fn write_bytes
+# [cfg (feature = "bytes")] CarDecoderAfterManufacturer::fn into_model_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "bytes")] CarDecoderAfterModel::fn into_activation_code_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+# [cfg (feature = "bytes")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "bytes")] FuelFiguresEntryDecoder::fn into_usage_description_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "compact_str")] CarDecoderAfterManufacturer::fn into_model_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "compact_str")] CarDecoderAfterModel::fn into_activation_code_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "compact_str")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "compact_str")] FuelFiguresEntryDecoder::fn into_usage_description_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "smol_str")] CarDecoderAfterManufacturer::fn into_model_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "smol_str")] CarDecoderAfterModel::fn into_activation_code_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "smol_str")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
+# [cfg (feature = "smol_str")] FuelFiguresEntryDecoder::fn into_usage_description_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
+# [must_use = "complete the nested shape or call finish_empty()"] struct CarFuelFiguresUniformEncodedLength {  }
+# [must_use = "complete the nested shape or call finish_empty()"] struct CarPerformanceFiguresUniformEncodedLength {  }
+# [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CarDecoder< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterFuelFigures< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterManufacturer< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterModel< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterPerformanceFigures< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderComplete< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct FuelFiguresEntryDecoderComplete< 'a > {  }
+# [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct PerformanceFiguresEntryDecoderComplete< 'a > {  }
+# [must_use = "discarding this value is almost always a mistake"] BooleanType::const fn as_bool (self) -> Option < bool >
+# [must_use = "discarding this value is almost always a mistake"] BooleanType::const fn as_option (self) -> Option < Self >
+# [must_use = "discarding this value is almost always a mistake"] BooleanType::fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] BoostType::const fn as_option (self) -> Option < Self >
+# [must_use = "discarding this value is almost always a mistake"] BoostType::fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] Booster::fn boost_type (& self) -> BoostType
+# [must_use = "discarding this value is almost always a mistake"] Booster::fn horse_power (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] Booster::fn raw_boost_type (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] BoosterDecoder::fn boost_type (& self) -> BoostType
+# [must_use = "discarding this value is almost always a mistake"] BoosterDecoder::fn horse_power (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] CarComplete::fn as_body_bytes (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarComplete::fn as_bytes_with_header (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarComplete::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarComplete::fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::const fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::const fn discounted_model (& self) -> Model
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn available (& self) -> BooleanType
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn code (& self) -> Model
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn copy_vehicle_code (& self , dst : & mut [u8]) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn engine (& self) -> EngineDecoder < '_ >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn engine_value (& self) -> Engine
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn extras (& self) -> OptionalExtras
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn get_metadata (& self) -> CarDecoderMetadata < '_ , 'a >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn model_year (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn raw_available (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn raw_code (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn serial_number (& self) -> u64
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn some_numbers (& self) -> [u32 ; 4]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoder::fn vehicle_code (& self) -> [u8 ; 6]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderComplete::fn as_body_bytes (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderComplete::fn as_bytes_with_header (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderComplete::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderComplete::fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderComplete::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn as_fixed_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn as_fixed_region_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn buffer (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn message_offset (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarDecoderMetadata::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarEncodedLengthComplete::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarEncodedLengthComplete::const fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarEncoder::fn get_metadata (& self) -> CarEncoderMetadata < '_ , H >
+# [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::const fn buffer (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::const fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::const fn message_offset (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::fn as_fixed_body_bytes (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::fn as_fixed_region_with_header (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] Engine::const fn fuel (& self) -> & 'static str
+# [must_use = "discarding this value is almost always a mistake"] Engine::const fn max_rpm (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn booster (& self) -> Booster
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn booster_enabled (& self) -> BooleanType
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn capacity (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn efficiency (& self) -> i8
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn manufacturer_code (& self) -> [u8 ; 3]
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn num_cylinders (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] Engine::fn raw_booster_enabled (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::const fn fuel (& self) -> & 'static str
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::const fn max_rpm (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn booster (& self) -> Booster
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn booster_enabled (& self) -> BooleanType
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn capacity (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn efficiency (& self) -> i8
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn manufacturer_code (& self) -> [u8 ; 3]
+# [must_use = "discarding this value is almost always a mistake"] EngineDecoder::fn num_cylinders (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresDecoder::const fn remaining (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresDecoder::fn is_empty (& self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEncoder::fn written (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoder::fn mpg (& self) -> f32
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoder::fn speed (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoderComplete::fn as_body_bytes (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoderComplete::fn as_bytes_with_header (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoderComplete::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoderComplete::fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] FuelFiguresEntryDecoderComplete::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] GroupSizeEncoding::fn block_length (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] GroupSizeEncoding::fn num_in_group (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] GroupSizeEncodingDecoder::fn block_length (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] GroupSizeEncodingDecoder::fn num_in_group (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeader::fn block_length (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeader::fn schema_id (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeader::fn template_id (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeader::fn version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn block_length (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn schema_id (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn template_id (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] Model::const fn as_option (self) -> Option < Self >
+# [must_use = "discarding this value is almost always a mistake"] Model::fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] OptionalExtras::const fn is_cruise_control (self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] OptionalExtras::const fn is_sports_pack (self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] OptionalExtras::const fn is_sun_roof (self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] OptionalExtras::const fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationDecoder::const fn remaining (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationDecoder::fn is_empty (& self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationEncoder::fn written (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationEntryDecoder::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationEntryDecoder::fn mph (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresAccelerationEntryDecoder::fn seconds (& self) -> f32
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresDecoder::const fn remaining (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresDecoder::fn is_empty (& self) -> bool
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEncoder::fn written (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoder::fn octane_rating (& self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoderComplete::fn as_body_bytes (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoderComplete::fn as_bytes_with_header (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoderComplete::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoderComplete::fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] PerformanceFiguresEntryDecoderComplete::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] VarAsciiEncoding::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarAsciiEncoding::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "discarding this value is almost always a mistake"] VarAsciiEncodingDecoder::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarAsciiEncodingDecoder::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "discarding this value is almost always a mistake"] VarDataEncoding::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarDataEncoding::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "discarding this value is almost always a mistake"] VarDataEncodingDecoder::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarDataEncodingDecoder::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "discarding this value is almost always a mistake"] VarStringEncoding::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarStringEncoding::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "discarding this value is almost always a mistake"] VarStringEncodingDecoder::fn length (& self) -> u32
+# [must_use = "discarding this value is almost always a mistake"] VarStringEncodingDecoder::fn var_data (& self) -> [u8 ; 0]
+# [must_use = "encoder must be consumed to write the message"] struct CarAfterFuelFigures< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent > {  }
+# [must_use = "encoder must be consumed to write the message"] struct CarAfterManufacturer< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent > {  }
+# [must_use = "encoder must be consumed to write the message"] struct CarAfterModel< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent > {  }
+# [must_use = "encoder must be consumed to write the message"] struct CarAfterPerformanceFigures< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , > {  }
+# [must_use = "encoder must be consumed to write the message"] struct CarComplete< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent > {  }
+# [must_use = "encoder must be consumed to write the message"] struct CarEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
+# [must_use = "entry encoder fields must be set before the next entry"] struct FuelFiguresEntryEncoder< 'a > {  }
+# [must_use = "entry encoder fields must be set before the next entry"] struct PerformanceFiguresAccelerationEntryEncoder< 'a > {  }
+# [must_use = "entry encoder fields must be set before the next entry"] struct PerformanceFiguresEntryEncoder< 'a > {  }
+# [must_use = "group encoder must call add() to write entries"] struct FuelFiguresEncoder< 'a > {  }
+# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresAccelerationEncoder< 'a > {  }
+# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresEncoder< 'a > {  }
+# [must_use = "length builder must be completed"] struct CarEncodedLengthAfterFuelFigures {  }
+# [must_use = "length builder must be completed"] struct CarEncodedLengthAfterManufacturer {  }
+# [must_use = "length builder must be completed"] struct CarEncodedLengthAfterModel {  }
+# [must_use = "length builder must be completed"] struct CarEncodedLengthAfterPerformanceFigures {  }
+# [must_use = "length builder must be completed"] struct CarEncodedLengthComplete {  }
+# [must_use = "length builder must be consumed"] struct CarEncodedLength {  }
+# [must_use = "ragged builder must be consumed to advance the length"] struct CarFuelFiguresRaggedBuilder< 'a > {  }
+# [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresAccelerationRaggedBuilder< 'a > {  }
+# [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresRaggedBuilder< 'a > {  }
+# [must_use = "raw fixed writer must be embedded in FixedFields"] struct CarRawFixedWriter< 'a > {  }
+# [must_use] CarAfterFuelFigures::fn performance_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarAfterManufacturer::fn model (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterManufacturer::fn model_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterManufacturer::fn model_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarAfterModel < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
+# [must_use] CarAfterModel::fn activation_code (mut self , data : & [u8] ,) -> Result < CarComplete < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterModel::fn activation_code_unchecked (mut self , data : & [u8] ,) -> Result < CarComplete < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterModel::fn activation_code_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarComplete < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
+# [must_use] CarAfterPerformanceFigures::fn manufacturer (mut self , data : & [u8] ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterPerformanceFigures::fn manufacturer_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterPerformanceFigures::fn manufacturer_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarAfterManufacturer < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
+# [must_use] CarEncoder::fn fixed (mut self , fixed : & CarFixedFields ,) -> CarEncoder < 'a , H , sbe_rt :: FieldsFixed >
+# [must_use] CarEncoder::fn fuel_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut FuelFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarEncoder::fn fuel_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut FuelFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarEncoder::fn raw_fixed (self) -> CarRawFixedWriter < 'a >
+# [must_use] FuelFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (FuelFiguresEntryEncoder < 'b > ,) -> Result < FuelFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
+# [must_use] FuelFiguresEntryEncoder::fn usage_description (mut self , data : & [u8] ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
+# [must_use] PerformanceFiguresAccelerationEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
+# [must_use] PerformanceFiguresAccelerationEncoder::fn start_entry (& mut self ,) -> Result < PerformanceFiguresAccelerationEntryEncoder < '_ > , sbe_rt :: EncodeError >
+# [must_use] PerformanceFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresEntryEncoder < 'b > ,) -> Result < PerformanceFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
+# [must_use] PerformanceFiguresEntryEncoder::fn acceleration < F > (mut self , count : u16 , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [repr (transparent)] struct Booster { 0: [u8 ; 2] }
+# [repr (transparent)] struct Engine { 0: [u8 ; 10] }
+# [repr (transparent)] struct GroupSizeEncoding { 0: [u8 ; 4] }
+# [repr (transparent)] struct MessageHeader { 0: [u8 ; 8] }
+# [repr (transparent)] struct OptionalExtras { 0: u8 }
+# [repr (transparent)] struct VarAsciiEncoding { 0: [u8 ; 4] }
+# [repr (transparent)] struct VarDataEncoding { 0: [u8 ; 4] }
+# [repr (transparent)] struct VarStringEncoding { 0: [u8 ; 4] }
+# [repr (u8)] enum BooleanType
+# [repr (u8)] enum BoostType
+# [repr (u8)] enum Model
+BooleanType::const fn from_raw (val : u8) -> Self
+BoostType::const fn from_raw (val : u8) -> Self
+Booster::fn new (boost_type : BoostType , horse_power : u8) -> Self
+CarComplete::fn into_remaining_mut (self) -> & 'a mut [u8]
+CarDecoder::const BLOCK_LENGTH: usize
+CarDecoder::const HEADER_LENGTH: usize
+CarDecoder::const SCHEMA_ID: u16
+CarDecoder::const SCHEMA_VERSION: u16
+CarDecoder::const TEMPLATE_ID: u16
+CarDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+CarDecoder::fn activation_code (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoder::fn activation_code_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
+CarDecoder::fn into_fuel_figures (self ,) -> Result < FuelFiguresDecoder < 'a , sbe_rt :: Attached > , sbe_rt :: DecodeError >
+CarDecoder::fn manufacturer (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoder::fn manufacturer_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::fn model (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoder::fn model_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::fn rewind (self) -> Self
+CarDecoder::fn try_available_bool (& self) -> Result < bool , sbe_rt :: DecodeError >
+CarDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
+CarDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+CarDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
+CarDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
+CarDecoder::unsafe fn activation_code_as_str_unchecked (& self ,) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::unsafe fn decode_unchecked (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
+CarDecoder::unsafe fn manufacturer_as_str_unchecked (& self ,) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::unsafe fn model_as_str_unchecked (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarDecoder::unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
+CarDecoderAfterFuelFigures::const fn acting_block_length (& self) -> usize
+CarDecoderAfterFuelFigures::const fn acting_version (& self) -> u16
+CarDecoderAfterFuelFigures::fn into_performance_figures (self ,) -> Result < PerformanceFiguresDecoder < 'a , sbe_rt :: Attached > , sbe_rt :: DecodeError >
+CarDecoderAfterManufacturer::const fn acting_block_length (& self) -> usize
+CarDecoderAfterManufacturer::const fn acting_version (& self) -> u16
+CarDecoderAfterManufacturer::fn into_model (self ,) -> Result < (& 'a [u8] , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterManufacturer::fn into_model_as_str (self ,) -> Result < (& 'a str , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterManufacturer::fn model_slice (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoderAfterManufacturer::fn try_model < E , F > (self , f : F) -> Result < CarDecoderAfterModel < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& [u8]) -> Result < () , E > ,
+CarDecoderAfterManufacturer::unsafe fn into_model_as_str_unchecked (self ,) -> Result < (& 'a str , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterModel::const fn acting_block_length (& self) -> usize
+CarDecoderAfterModel::const fn acting_version (& self) -> u16
+CarDecoderAfterModel::fn activation_code_slice (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoderAfterModel::fn into_activation_code (self ,) -> Result < (& 'a [u8] , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterModel::fn into_activation_code_as_str (self ,) -> Result < (& 'a str , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterModel::fn try_activation_code < E , F > (self , f : F) -> Result < CarDecoderComplete < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& [u8]) -> Result < () , E > ,
+CarDecoderAfterModel::unsafe fn into_activation_code_as_str_unchecked (self ,) -> Result < (& 'a str , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterPerformanceFigures::const fn acting_block_length (& self) -> usize
+CarDecoderAfterPerformanceFigures::const fn acting_version (& self) -> u16
+CarDecoderAfterPerformanceFigures::fn into_manufacturer (self ,) -> Result < (& 'a [u8] , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_str (self ,) -> Result < (& 'a str , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError >
+CarDecoderAfterPerformanceFigures::fn manufacturer_slice (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarDecoderAfterPerformanceFigures::fn try_manufacturer < E , F > (self , f : F ,) -> Result < CarDecoderAfterManufacturer < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& [u8]) -> Result < () , E > ,
+CarDecoderAfterPerformanceFigures::unsafe fn into_manufacturer_as_str_unchecked (self ,) -> Result < (& 'a str , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError >
+CarDecoderComplete::const fn acting_block_length (& self) -> usize
+CarDecoderComplete::const fn acting_version (& self) -> u16
+CarEncodedLength::const ACTIVATIONCODE_PREFIX: usize
+CarEncodedLength::const BLOCK_LENGTH: usize
+CarEncodedLength::const FUELFIGURES_USAGEDESCRIPTION_PREFIX: usize
+CarEncodedLength::const HEADER_LENGTH: usize
+CarEncodedLength::const MANUFACTURER_PREFIX: usize
+CarEncodedLength::const MODEL_PREFIX: usize
+CarEncodedLength::const PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK: usize
+CarEncodedLength::const PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM: usize
+CarEncodedLength::const fn fuel_figures (self , count : u16) -> CarFuelFiguresUniformEncodedLength
+CarEncodedLength::const fn new () -> Self
+CarEncodedLength::fn fuel_figures_ragged < F > (mut self , count : u16 , f : F ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError > where F : FnOnce (& mut CarFuelFiguresRaggedBuilder < '_ > ,) -> Result < () , sbe_rt :: EncodeError > ,
+CarEncodedLength::fn fuel_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError > where F : FnOnce (& mut CarFuelFiguresRaggedBuilder < '_ > ,) -> Result < () , sbe_rt :: EncodeError > ,
+CarEncodedLengthAfterFuelFigures::const fn performance_figures (self , count : u16 ,) -> CarPerformanceFiguresUniformEncodedLength
+CarEncodedLengthAfterFuelFigures::fn performance_figures_ragged < F > (mut self , count : u16 , f : F ,) -> Result < CarEncodedLengthAfterPerformanceFigures , sbe_rt :: EncodeError > where F : FnOnce (& mut CarPerformanceFiguresRaggedBuilder < '_ > ,) -> Result < () , sbe_rt :: EncodeError > ,
+CarEncodedLengthAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarEncodedLengthAfterPerformanceFigures , sbe_rt :: EncodeError > where F : FnOnce (& mut CarPerformanceFiguresRaggedBuilder < '_ > ,) -> Result < () , sbe_rt :: EncodeError > ,
+CarEncodedLengthAfterManufacturer::const fn model (self , byte_len : usize ,) -> Result < CarEncodedLengthAfterModel , sbe_rt :: EncodeError >
+CarEncodedLengthAfterModel::const fn activation_code (self , byte_len : usize ,) -> Result < CarEncodedLengthComplete , sbe_rt :: EncodeError >
+CarEncodedLengthAfterPerformanceFigures::const fn manufacturer (self , byte_len : usize ,) -> Result < CarEncodedLengthAfterManufacturer , sbe_rt :: EncodeError >
+CarEncoder::const BLOCK_LENGTH: usize
+CarEncoder::const HEADER_LENGTH: usize
+CarEncoder::const HEADER_TEMPLATE: [u8 ; 8]
+CarEncoder::const SCHEMA_ID: u16
+CarEncoder::const SCHEMA_VERSION: u16
+CarEncoder::const TEMPLATE_ID: u16
+CarEncoder::const fn compute_length () -> CarEncodedLength
+CarEncoder::fn available (& mut self , val : BooleanType) -> & mut Self
+CarEncoder::fn available_bool (& mut self , val : bool) -> & mut Self
+CarEncoder::fn code (& mut self , val : Model) -> & mut Self
+CarEncoder::fn engine (& mut self , val : Engine) -> & mut Self
+CarEncoder::fn extras (& mut self , val : OptionalExtras) -> & mut Self
+CarEncoder::fn model_year (& mut self , val : u16) -> & mut Self
+CarEncoder::fn put_some_numbers (& mut self , v0 : u32 , v1 : u32 , v2 : u32 , v3 : u32) -> & mut Self
+CarEncoder::fn put_vehicle_code (& mut self , v0 : u8 , v1 : u8 , v2 : u8 , v3 : u8 , v4 : u8 , v5 : u8 ,) -> & mut Self
+CarEncoder::fn serial_number (& mut self , val : u64) -> & mut Self
+CarEncoder::fn some_numbers (& mut self , val : [u32 ; 4]) -> & mut Self
+CarEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < CarEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
+CarEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < CarEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
+CarEncoder::fn vehicle_code (& mut self , val : [u8 ; 6]) -> & mut Self
+CarEncoder::fn vehicle_code_str (& mut self , src : & str ,) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> CarEncoder < 'a , sbe_rt :: HeaderAbsent >
+CarEncoder::fn wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> CarEncoder < 'a , sbe_rt :: HeaderPresent >
+CarEncoder::unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> CarEncoder < 'a , sbe_rt :: HeaderPresent >
+CarEncoder::unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> CarEncoder < 'a , sbe_rt :: HeaderAbsent >
+CarFuelFiguresRaggedBuilder::fn add (& mut self) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarFuelFiguresRaggedBuilder::fn uniform (& mut self , count : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarFuelFiguresRaggedBuilder::fn usage_description (& mut self , len : usize ,) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarFuelFiguresUniformEncodedLength::const fn usage_description (mut self , byte_len : usize ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError >
+CarFuelFiguresUniformEncodedLength::fn finish_empty (self ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError >
+CarPerformanceFiguresAccelerationRaggedBuilder::fn add (& mut self) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarPerformanceFiguresAccelerationRaggedBuilder::fn uniform (& mut self , count : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarPerformanceFiguresRaggedBuilder::fn acceleration < F > (& mut self , f : F) -> Result < & mut Self , sbe_rt :: EncodeError > where F : FnOnce (& mut CarPerformanceFiguresAccelerationRaggedBuilder < '_ > ,) -> Result < () , sbe_rt :: EncodeError > ,
+CarPerformanceFiguresRaggedBuilder::fn add (& mut self) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarPerformanceFiguresRaggedBuilder::fn uniform (& mut self , count : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarPerformanceFiguresUniformEncodedLength::const fn acceleration (mut self , count : u16 ,) -> Result < CarEncodedLengthAfterPerformanceFigures , sbe_rt :: EncodeError >
+CarPerformanceFiguresUniformEncodedLength::fn finish_empty (self ,) -> Result < CarEncodedLengthAfterPerformanceFigures , sbe_rt :: EncodeError >
+CarRawFixedWriter::fn available (& mut self , val : BooleanType) -> & mut Self
+CarRawFixedWriter::fn available_bool (& mut self , val : bool) -> & mut Self
+CarRawFixedWriter::fn code (& mut self , val : Model) -> & mut Self
+CarRawFixedWriter::fn engine (& mut self , val : Engine) -> & mut Self
+CarRawFixedWriter::fn extras (& mut self , val : OptionalExtras) -> & mut Self
+CarRawFixedWriter::fn model_year (& mut self , val : u16) -> & mut Self
+CarRawFixedWriter::fn put_some_numbers (& mut self , v0 : u32 , v1 : u32 , v2 : u32 , v3 : u32) -> & mut Self
+CarRawFixedWriter::fn put_vehicle_code (& mut self , v0 : u8 , v1 : u8 , v2 : u8 , v3 : u8 , v4 : u8 , v5 : u8 ,) -> & mut Self
+CarRawFixedWriter::fn serial_number (& mut self , val : u64) -> & mut Self
+CarRawFixedWriter::fn some_numbers (& mut self , val : [u32 ; 4]) -> & mut Self
+CarRawFixedWriter::fn vehicle_code (& mut self , val : [u8 ; 6]) -> & mut Self
+CarRawFixedWriter::fn vehicle_code_str (& mut self , src : & str ,) -> Result < & mut Self , sbe_rt :: EncodeError >
+CarSchema::const BLOCK_LENGTH: usize
+CarSchema::const HEADER_LENGTH: usize
+CarSchema::const SCHEMA_ID: u16
+CarSchema::const SCHEMA_VERSION: u16
+CarSchema::const TEMPLATE_ID: u16
+CarSchema::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
+Engine::fn new (capacity : u16 , num_cylinders : u8 , manufacturer_code : [u8 ; 3] , efficiency : i8 , booster_enabled : BooleanType , booster : Booster ,) -> Self
+FuelFiguresDecoder::const ENTRY_BLOCK_LENGTH: usize
+FuelFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+FuelFiguresDecoder::fn finish (self) -> Result < CarDecoderAfterFuelFigures < 'a > , sbe_rt :: DecodeError >
+FuelFiguresDecoder::fn rewind (& mut self) -> & mut Self
+FuelFiguresDecoder::fn scan_entry_at (& self , idx : usize ,) -> Result < FuelFiguresEntryDecoder < 'a > , sbe_rt :: DecodeError >
+FuelFiguresDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
+FuelFiguresDecoder::fn skip_remaining (self ,) -> Result < CarDecoderAfterFuelFigures < 'a > , sbe_rt :: DecodeError >
+FuelFiguresDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < FuelFiguresDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
+FuelFiguresEncoder::const ENTRY_BLOCK_LENGTH: usize
+FuelFiguresEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
+FuelFiguresEncoder::fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+FuelFiguresEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
+FuelFiguresEntryDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::fn into_usage_description (self ,) -> Result < (& 'a [u8] , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::fn into_usage_description_as_str (self ,) -> Result < (& 'a str , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::fn try_usage_description < E , F > (self , f : F ,) -> Result < FuelFiguresEntryDecoderComplete < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& [u8]) -> Result < () , E > ,
+FuelFiguresEntryDecoder::fn usage_description (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::fn usage_description_slice (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoder::unsafe fn into_usage_description_as_str_unchecked (self ,) -> Result < (& 'a str , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError >
+FuelFiguresEntryDecoderComplete::const fn acting_block_length (& self) -> usize
+FuelFiguresEntryDecoderComplete::const fn acting_version (& self) -> u16
+FuelFiguresEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
+FuelFiguresEntryEncoder::fn mpg (& mut self , val : f32) -> & mut Self
+FuelFiguresEntryEncoder::fn speed (& mut self , val : u16) -> & mut Self
+GroupSizeEncoding::fn new (block_length : u16 , num_in_group : u16) -> Self
+MessageHeader::fn new (block_length : u16 , template_id : u16 , schema_id : u16 , version : u16 ,) -> Self
+MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
+MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
+MessageHeader::fn peek_template_id (data : & [u8]) -> Option < u16 >
+Model::const fn from_raw (val : u8) -> Self
+OptionalExtras::const fn default () -> Self
+OptionalExtras::fn cruise_control (& mut self , val : bool) -> & mut Self
+OptionalExtras::fn sports_pack (& mut self , val : bool) -> & mut Self
+OptionalExtras::fn sun_roof (& mut self , val : bool) -> & mut Self
+PerformanceFiguresAccelerationDecoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresAccelerationDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+PerformanceFiguresAccelerationDecoder::fn bulk_decode (& mut self ,) -> Result < Vec < PerformanceFiguresAccelerationEntry > , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn bulk_decode_into (& mut self , dst : & mut Vec < PerformanceFiguresAccelerationEntry > ,) -> Result < usize , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn entry_at (& self , idx : usize ,) -> Result < PerformanceFiguresAccelerationEntryDecoder < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn finish (self ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn rewind (& mut self) -> & mut Self
+PerformanceFiguresAccelerationDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn skip_remaining (self ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < PerformanceFiguresAccelerationDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError , >
+PerformanceFiguresAccelerationEncoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresAccelerationEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
+PerformanceFiguresAccelerationEncoder::fn add_checked < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> Result < PerformanceFiguresAccelerationEntryComplete < 'b > , sbe_rt :: EncodeError , > ,
+PerformanceFiguresAccelerationEncoder::fn add_struct (& mut self , entry : & PerformanceFiguresAccelerationEntry ,) -> Result < () , sbe_rt :: EncodeError >
+PerformanceFiguresAccelerationEncoder::fn bulk_add (& mut self , entries : & [PerformanceFiguresAccelerationEntry] ,) -> Result < () , sbe_rt :: EncodeError >
+PerformanceFiguresAccelerationEncoder::fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+PerformanceFiguresAccelerationEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresAccelerationEntryDecoder::fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , _acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
+PerformanceFiguresAccelerationEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresAccelerationEntryEncoder::fn complete (self) -> PerformanceFiguresAccelerationEntryComplete < 'a >
+PerformanceFiguresAccelerationEntryEncoder::fn mph (& mut self , val : u16) -> & mut Self
+PerformanceFiguresAccelerationEntryEncoder::fn seconds (& mut self , val : f32) -> & mut Self
+PerformanceFiguresDecoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+PerformanceFiguresDecoder::fn finish (self ,) -> Result < CarDecoderAfterPerformanceFigures < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresDecoder::fn rewind (& mut self) -> & mut Self
+PerformanceFiguresDecoder::fn scan_entry_at (& self , idx : usize ,) -> Result < PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
+PerformanceFiguresDecoder::fn skip_remaining (self ,) -> Result < CarDecoderAfterPerformanceFigures < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < PerformanceFiguresDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
+PerformanceFiguresEncoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
+PerformanceFiguresEncoder::fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+PerformanceFiguresEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresEntryDecoder::fn acceleration (& self ,) -> Result < PerformanceFiguresAccelerationDecoder < 'a > , sbe_rt :: DecodeError >
+PerformanceFiguresEntryDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
+PerformanceFiguresEntryDecoder::fn into_acceleration (self ,) -> Result < PerformanceFiguresAccelerationDecoder < 'a , sbe_rt :: Attached > , sbe_rt :: DecodeError , >
+PerformanceFiguresEntryDecoder::fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
+PerformanceFiguresEntryDecoderComplete::const fn acting_block_length (& self) -> usize
+PerformanceFiguresEntryDecoderComplete::const fn acting_version (& self) -> u16
+PerformanceFiguresEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
+PerformanceFiguresEntryEncoder::fn acceleration_unknown_size < F > (mut self , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'a >) -> sbe_rt :: GroupResult ,
+PerformanceFiguresEntryEncoder::fn octane_rating (& mut self , val : u8) -> & mut Self
+RaggedEntryBuilder::fn add (& mut self) -> sbe_rt :: GroupResult
+RaggedEntryBuilder::fn entries (& mut self , n : usize) -> sbe_rt :: GroupResult
+RaggedEntryBuilder::fn group (& mut self , dim : usize , block : usize , count : usize ,) -> sbe_rt :: GroupResult
+RaggedEntryBuilder::fn group_ragged < F > (& mut self , dim : usize , entry_block : usize , f : F ,) -> sbe_rt :: GroupResult where F : FnOnce (& mut RaggedEntryBuilder) -> sbe_rt :: GroupResult ,
+RaggedEntryBuilder::fn var_data (& mut self , prefix : usize , byte_len : usize) -> sbe_rt :: GroupResult
+VarAsciiEncoding::fn new (length : u32 , var_data : [u8 ; 0]) -> Self
+VarDataEncoding::fn new (length : u32 , var_data : [u8 ; 0]) -> Self
+VarStringEncoding::fn new (length : u32 , var_data : [u8 ; 0]) -> Self
+const MESSAGE_HEADER_ENCODED_LENGTH: usize
+const SCHEMA_HASH: u64
+const SCHEMA_ID: u16
+const SCHEMA_SHA256: [u8 ; 32]
+const SCHEMA_SHA256_HEX: & str
+const SCHEMA_VERSION: u16
+const SEMANTIC_VERSION: & str
+enum BooleanType::F = 0
+enum BooleanType::NullVal = 255
+enum BooleanType::T = 1
+enum BoostType::KERS = b'K'
+enum BoostType::NITROUS = b'N'
+enum BoostType::NullVal = 0
+enum BoostType::SUPERCHARGER = b'S'
+enum BoostType::TURBO = b'T'
+enum Model::A = b'A'
+enum Model::B = b'B'
+enum Model::C = b'C'
+enum Model::NullVal = 0
+fn fn read_bytes < const N : usize > (buf : & [u8] , offset : usize) -> [u8 ; N]
+fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
+fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes : & [u8 ; N])
 mod prelude
 mod sbe_rt
 sbe_rt::enum DecodeError
-sbe_rt::enum DecodeError::BufferTooShort
-sbe_rt::enum DecodeError::DomainConversionFailed
-sbe_rt::enum DecodeError::FieldNotInVersion
-sbe_rt::enum DecodeError::InvalidAscii
-sbe_rt::enum DecodeError::InvalidBoolean
-sbe_rt::enum DecodeError::InvalidHeaderValue
-sbe_rt::enum DecodeError::InvalidUtf8
-sbe_rt::enum DecodeError::InvalidVarDataLength
-sbe_rt::enum DecodeError::UnknownTemplateLength
-sbe_rt::enum DecodeError::WrongSchema
-sbe_rt::enum DecodeError::WrongTemplate
+sbe_rt::enum DecodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
+sbe_rt::enum DecodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
+sbe_rt::enum DecodeError::FieldNotInVersion(field: & 'static str, wire_version: u16, since_version: u16)
+sbe_rt::enum DecodeError::InvalidAscii(field: & 'static str)
+sbe_rt::enum DecodeError::InvalidBoolean(field: & 'static str, discriminant: u64)
+sbe_rt::enum DecodeError::InvalidHeaderValue(field: & 'static str, value: u64, maximum: u64)
+sbe_rt::enum DecodeError::InvalidUtf8(field: & 'static str, error: core :: str :: Utf8Error)
+sbe_rt::enum DecodeError::InvalidVarDataLength(field: & 'static str, length: u64, max_length: u64)
+sbe_rt::enum DecodeError::UnknownTemplateLength(template_id: u16)
+sbe_rt::enum DecodeError::WrongSchema(expected: u16, actual: u16, expected_name: & 'static str)
+sbe_rt::enum DecodeError::WrongTemplate(expected: u16, actual: u16, expected_name: & 'static str)
 sbe_rt::enum EncodeError
-sbe_rt::enum EncodeError::BufferTooShort
-sbe_rt::enum EncodeError::ClaimLengthMismatch
-sbe_rt::enum EncodeError::Decode
-sbe_rt::enum EncodeError::DomainConversionFailed
+sbe_rt::enum EncodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
+sbe_rt::enum EncodeError::ClaimLengthMismatch(expected: usize, actual: usize)
+sbe_rt::enum EncodeError::Decode(0: DecodeError)
+sbe_rt::enum EncodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
 sbe_rt::enum EncodeError::EncodedLengthOverflow
-sbe_rt::enum EncodeError::FixedArrayTooLong
-sbe_rt::enum EncodeError::GroupCountMismatch
-sbe_rt::enum EncodeError::GroupCountOverflow
-sbe_rt::enum EncodeError::GroupFull
-sbe_rt::enum EncodeError::InvalidAscii
-sbe_rt::enum EncodeError::ValueOutOfRange
-sbe_rt::enum EncodeError::VarDataTooLong
+sbe_rt::enum EncodeError::FixedArrayTooLong(field: & 'static str, max_length: usize, actual: usize)
+sbe_rt::enum EncodeError::GroupCountMismatch(declared: u32, actual: u32)
+sbe_rt::enum EncodeError::GroupCountOverflow(maximum: u32, actual: u32)
+sbe_rt::enum EncodeError::GroupFull(declared: u32, attempted: u32)
+sbe_rt::enum EncodeError::InvalidAscii(field: & 'static str)
+sbe_rt::enum EncodeError::ValueOutOfRange(field: & 'static str, min: i128, max: i128, actual: i128)
+sbe_rt::enum EncodeError::VarDataTooLong(field: & 'static str, max_length: usize, actual: usize)
 sbe_rt::enum MetaAttribute
 sbe_rt::enum MetaAttribute::Epoch
 sbe_rt::enum MetaAttribute::Presence
 sbe_rt::enum MetaAttribute::SemanticType
 sbe_rt::enum MetaAttribute::TimeUnit
 sbe_rt::enum VerifyError
-sbe_rt::enum VerifyError::DecodeError
-sbe_rt::enum VerifyError::GroupDimOutOfBounds
+sbe_rt::enum VerifyError::DecodeError(0: DecodeError)
+sbe_rt::enum VerifyError::GroupDimOutOfBounds(field: & 'static str, offset: usize)
 sbe_rt::enum VerifyError::HeaderTooShort
-sbe_rt::enum VerifyError::InvalidBlockLength
-sbe_rt::enum VerifyError::MessageTooShort
-sbe_rt::enum VerifyError::VarDataOutOfBounds
-sbe_rt::struct Attached
-sbe_rt::struct Detached
-sbe_rt::struct FieldsFixed
-sbe_rt::struct FieldsUnfixed
-sbe_rt::struct HeaderAbsent
-sbe_rt::struct HeaderPresent
-sbe_rt::trait FieldsState
-sbe_rt::trait GroupContext
-sbe_rt::trait HeaderState
+sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
+sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
+sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
+sbe_rt::struct Attached {  }
+sbe_rt::struct Detached {  }
+sbe_rt::struct FieldsFixed {  }
+sbe_rt::struct FieldsUnfixed {  }
+sbe_rt::struct HeaderAbsent {  }
+sbe_rt::struct HeaderPresent {  }
+sbe_rt::trait FieldsState: private :: Sealed
+sbe_rt::trait GroupContext: private :: Sealed
+sbe_rt::trait HeaderState: private :: Sealed
 sbe_rt::trait IntoGroupResult
-sbe_rt::trait SbeMessage
-sbe_rt::type GroupResult
-struct Booster
-struct BoosterDecoder
-struct CarAfterFuelFigures
-struct CarAfterManufacturer
-struct CarAfterModel
-struct CarAfterPerformanceFigures
-struct CarComplete
-struct CarDecoder
-struct CarDecoderAfterFuelFigures
-struct CarDecoderAfterManufacturer
-struct CarDecoderAfterModel
-struct CarDecoderAfterPerformanceFigures
-struct CarDecoderComplete
-struct CarDecoderMetadata
-struct CarEncodedLength
-struct CarEncodedLengthAfterFuelFigures
-struct CarEncodedLengthAfterManufacturer
-struct CarEncodedLengthAfterModel
-struct CarEncodedLengthAfterPerformanceFigures
-struct CarEncodedLengthComplete
-struct CarEncoder
-struct CarEncoderMetadata
-struct CarFixedFields
-struct CarFuelFiguresRaggedBuilder
-struct CarFuelFiguresUniformEncodedLength
-struct CarPerformanceFiguresAccelerationRaggedBuilder
-struct CarPerformanceFiguresRaggedBuilder
-struct CarPerformanceFiguresUniformEncodedLength
-struct CarRawFixedWriter
-struct CarSchema
-struct Engine
-struct EngineDecoder
-struct FuelFiguresDecoder
-struct FuelFiguresEncoder
-struct FuelFiguresEntryComplete
-struct FuelFiguresEntryDecoder
-struct FuelFiguresEntryDecoderComplete
-struct FuelFiguresEntryEncoder
-struct GroupSizeEncoding
-struct GroupSizeEncodingDecoder
-struct MessageHeader
-struct MessageHeaderDecoder
-struct OptionalExtras
-struct PeekedHeader
-struct PerformanceFiguresAccelerationDecoder
-struct PerformanceFiguresAccelerationEncoder
-struct PerformanceFiguresAccelerationEntry
-struct PerformanceFiguresAccelerationEntryComplete
-struct PerformanceFiguresAccelerationEntryDecoder
-struct PerformanceFiguresAccelerationEntryEncoder
-struct PerformanceFiguresDecoder
-struct PerformanceFiguresEncoder
-struct PerformanceFiguresEntryComplete
-struct PerformanceFiguresEntryDecoder
-struct PerformanceFiguresEntryDecoderComplete
-struct PerformanceFiguresEntryEncoder
-struct RaggedEntryBuilder
-struct VarAsciiEncoding
-struct VarAsciiEncodingDecoder
-struct VarDataEncoding
-struct VarDataEncodingDecoder
-struct VarStringEncoding
-struct VarStringEncodingDecoder
-type CarUnfixedEncoder
+sbe_rt::trait IntoGroupResult::fn into_group_result (self) -> GroupResult
+sbe_rt::trait SbeMessage: super :: __sbe_message_sealed :: Sealed
+sbe_rt::trait SbeMessage::const BLOCK_LENGTH: usize
+sbe_rt::trait SbeMessage::const SCHEMA_ID: u16
+sbe_rt::trait SbeMessage::const SCHEMA_VERSION: u16
+sbe_rt::trait SbeMessage::const TEMPLATE_ID: u16
+sbe_rt::type GroupResult = Result < () , EncodeError >
+struct BoosterDecoder< 'a > {  }
+struct CarDecoderMetadata< 'm , 'a > {  }
+struct CarEncoderMetadata< 'm , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent > {  }
+struct CarFixedFields { serial_number: u64, model_year: u16, available: BooleanType, code: Model, some_numbers: [u32 ; 4], vehicle_code: [u8 ; 6], extras: OptionalExtras, engine: Engine }
+struct CarSchema {  }
+struct EngineDecoder< 'a > {  }
+struct FuelFiguresDecoder< 'a , C : sbe_rt :: GroupContext = sbe_rt :: Detached > {  }
+struct FuelFiguresEntryComplete< 'a > {  }
+struct FuelFiguresEntryDecoder< 'a > {  }
+struct GroupSizeEncodingDecoder< 'a > {  }
+struct MessageHeaderDecoder< 'a > {  }
+struct PeekedHeader { template_id: u16, schema_id: u16 }
+struct PerformanceFiguresAccelerationDecoder< 'a , C : sbe_rt :: GroupContext = sbe_rt :: Detached , > {  }
+struct PerformanceFiguresAccelerationEntry { mph: u16, seconds: f32 }
+struct PerformanceFiguresAccelerationEntryComplete< 'a > {  }
+struct PerformanceFiguresAccelerationEntryDecoder< 'a > {  }
+struct PerformanceFiguresDecoder< 'a , C : sbe_rt :: GroupContext = sbe_rt :: Detached > {  }
+struct PerformanceFiguresEntryComplete< 'a > {  }
+struct PerformanceFiguresEntryDecoder< 'a > {  }
+struct RaggedEntryBuilder { written: usize }
+struct VarAsciiEncodingDecoder< 'a > {  }
+struct VarDataEncodingDecoder< 'a > {  }
+struct VarStringEncodingDecoder< 'a > {  }
+type CarUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CarEncoder < 'a , H , sbe_rt :: FieldsUnfixed , >

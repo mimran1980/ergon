@@ -54,7 +54,7 @@ fn parse_event_unknown_template_is_other_not_timeout() -> Result<(), Box<dyn std
     frame[3] = 0xCD;
     frame[4] = 111; // schema id (cluster codecs)
     match parse_event(&frame)? {
-        Some(EgressEvent::Other { template_id }) => assert_eq!(template_id, 0xCDAB),
+        EgressEvent::Other { template_id } => assert_eq!(template_id, 0xCDAB),
         other => panic!("expected Other, got {other:?}"),
     }
     Ok(())

@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         egress
             .poll_fn(
                 |data, _h| {
-                    if let Ok(Some(ev)) = poller::parse_event(data) {
+                    if let Ok(ev) = poller::parse_event(data) {
                         match ev {
                             poller::EgressEvent::NewLeader {
                                 leader_member_id,
@@ -150,14 +150,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Resolve the new leader's endpoint by member id — the list is in
             // id order, so a first-entry parse would reconnect to the dead leader.
             match poller::parse_leader_endpoint(&eps, leader_member_id) {
-                Some(ep) => {
+                Ok(Some(ep)) => {
                     let _reconn = connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
                         .ok_or("reconnect to new leader failed")?;
                     println!("  Reconnected ingress to new leader (member {leader_member_id}): {ep}");
                     println!("\n=== Result: failover handled — client survived leader death ===");
                 }
-                None => {
+                Ok(None) => {
                     println!("\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ===");
+                }
+                Err(e) => {
+                    println!("\n=== Result: NewLeaderEvent endpoint map was malformed: {e} ===");
                 }
             }
 
