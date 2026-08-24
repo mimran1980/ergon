@@ -41,6 +41,7 @@ impl From<AeronCError> for AeronErrorSource {
 /// Typed classification of a failed `offer` / `try_claim` (Aeron publication
 /// sentinels). Use [`Self::is_retryable`] for idle/retry loops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PublicationFailure {
     /// No subscriber yet (`-1`). Retryable.
     NotConnected,
@@ -52,7 +53,12 @@ pub enum PublicationFailure {
     Closed,
     /// Max stream position (`-5`). Fatal — need a new publication.
     MaxPositionExceeded,
-    /// Unexpected negative or other failure.
+    /// A vectored offer (`try_claim`-style, multiple parts) exceeded the
+    /// number of parts Aeron supports. Not a raw wire sentinel — rusteron
+    /// classifies this before any Aeron return code exists. Fatal for this
+    /// offer shape; retrying with the same part count cannot succeed.
+    TooManyParts,
+    /// Unexpected negative or other failure, carrying the raw Aeron sentinel.
     Other(i64),
 }
 
@@ -79,7 +85,7 @@ impl PublicationFailure {
             AeronOfferError::AdminAction => Self::AdminAction,
             AeronOfferError::Closed => Self::Closed,
             AeronOfferError::MaxPositionExceeded => Self::MaxPositionExceeded,
-            AeronOfferError::TooManyParts => Self::Other(-100),
+            AeronOfferError::TooManyParts => Self::TooManyParts,
             AeronOfferError::Error(c) => Self::Other(i64::from(c.code)),
         }
     }
@@ -90,16 +96,19 @@ impl PublicationFailure {
         matches!(self, Self::NotConnected | Self::BackPressured | Self::AdminAction)
     }
 
-    /// Raw Aeron sentinel when known.
+    /// Raw Aeron sentinel, when this failure actually carries one.
+    /// `None` for [`Self::TooManyParts`] — rusteron classifies it before any
+    /// Aeron return code exists, so there is no real sentinel to report.
     #[inline]
-    pub fn raw(self) -> i64 {
+    pub fn raw_code(self) -> Option<i64> {
         match self {
-            Self::NotConnected => -1,
-            Self::BackPressured => -2,
-            Self::AdminAction => -3,
-            Self::Closed => -4,
-            Self::MaxPositionExceeded => -5,
-            Self::Other(c) => c,
+            Self::NotConnected => Some(-1),
+            Self::BackPressured => Some(-2),
+            Self::AdminAction => Some(-3),
+            Self::Closed => Some(-4),
+            Self::MaxPositionExceeded => Some(-5),
+            Self::TooManyParts => None,
+            Self::Other(c) => Some(c),
         }
     }
 }
@@ -112,6 +121,7 @@ impl std::fmt::Display for PublicationFailure {
             Self::AdminAction => write!(f, "publication admin action"),
             Self::Closed => write!(f, "publication closed"),
             Self::MaxPositionExceeded => write!(f, "publication max position exceeded"),
+            Self::TooManyParts => write!(f, "publication offer exceeded the maximum vectored part count"),
             Self::Other(c) => write!(f, "publication failed (code {c})"),
         }
     }
@@ -350,6 +360,50 @@ mod tests {
         assert!(ClusterError::from_offer_raw("offer", -3).is_retryable());
         assert!(!ClusterError::from_offer_raw("offer", -4).is_retryable());
         assert!(!ClusterError::from_offer_raw("offer", -5).is_retryable());
+        Ok(())
+    }
+
+    /// Every `AeronOfferError` variant maps to a `PublicationFailure`,
+    /// retains its retryability, and `TooManyParts` gets no fabricated raw
+    /// sentinel: `-100` is not a real Aeron offer code.
+    #[test]
+    fn every_offer_error_maps_with_correct_retryability_and_raw_code()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cases: &[(AeronOfferError, PublicationFailure, bool, Option<i64>)] = &[
+            (AeronOfferError::NotConnected, PublicationFailure::NotConnected, true, Some(-1)),
+            (AeronOfferError::BackPressured, PublicationFailure::BackPressured, true, Some(-2)),
+            (AeronOfferError::AdminAction, PublicationFailure::AdminAction, true, Some(-3)),
+            (AeronOfferError::Closed, PublicationFailure::Closed, false, Some(-4)),
+            (
+                AeronOfferError::MaxPositionExceeded,
+                PublicationFailure::MaxPositionExceeded,
+                false,
+                Some(-5),
+            ),
+            (AeronOfferError::TooManyParts, PublicationFailure::TooManyParts, false, None),
+        ];
+        for (offer_err, expected, retryable, raw) in cases {
+            let mapped = PublicationFailure::from_offer_error(offer_err);
+            assert_eq!(mapped, *expected, "{offer_err:?}");
+            assert_eq!(mapped.is_retryable(), *retryable, "{offer_err:?}");
+            assert_eq!(mapped.raw_code(), *raw, "{offer_err:?}");
+        }
+
+        // AeronOfferError::Error(_) carries a real code through unchanged.
+        let inner = AeronCError::from_code(-42);
+        let mapped = PublicationFailure::from_offer_error(&AeronOfferError::Error(inner));
+        assert_eq!(mapped, PublicationFailure::Other(-42));
+        assert!(!mapped.is_retryable());
+        assert_eq!(mapped.raw_code(), Some(-42));
+
+        Ok(())
+    }
+
+    #[test]
+    fn too_many_parts_display_never_mentions_a_fabricated_code() -> Result<(), Box<dyn std::error::Error>> {
+        let msg = PublicationFailure::TooManyParts.to_string();
+        assert!(!msg.contains("-100"), "{msg}");
+        assert!(msg.contains("part"), "{msg}");
         Ok(())
     }
 }

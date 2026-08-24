@@ -34,6 +34,11 @@
   (was `Option<String>`) — a malformed endpoint map is now `Err` with the
   parser's specific reason, distinct from `Ok(None)` for a well-formed map
   that simply lacks the requested leader.
+- **Breaking:** `PublicationFailure` is `#[non_exhaustive]` and gains
+  `TooManyParts`, mapped directly from `AeronOfferError::TooManyParts`
+  instead of the fabricated sentinel `Other(-100)`. `raw()` is replaced by
+  `raw_code() -> Option<i64>` (`None` for `TooManyParts`, which has no real
+  Aeron wire code).
 
 ### Fixed
 - Domain-object generation for a required (non-`sinceVersion`) boolean field
