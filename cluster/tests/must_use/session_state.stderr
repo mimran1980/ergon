@@ -1,0 +1,16 @@
+error: unused return value of `AeronCluster::state` that must be used
+  --> tests/must_use/session_state.rs:11:5
+   |
+11 |     session.connect("/dev/shm/aeron-driver").unwrap().state(); // discarded — must_use violation
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the state decision is the point of calling this
+note: the lint level is defined here
+  --> tests/must_use/session_state.rs:1:9
+   |
+ 1 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+11 |     let _ = session.connect("/dev/shm/aeron-driver").unwrap().state(); // discarded — must_use violation
+   |     +++++++

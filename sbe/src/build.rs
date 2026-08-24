@@ -435,11 +435,11 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
             "{}.tmp.{pid}.{idx}",
             dest.extension().and_then(|e| e.to_str()).unwrap_or("rs")
         ));
-        if let Some(parent) = temp.parent() {
-            if let Err(source) = fs::create_dir_all(parent) {
-                remove_staged_temps(&staged);
-                return Err(io_err("create output directory", parent, source));
-            }
+        if let Some(parent) = temp.parent()
+            && let Err(source) = fs::create_dir_all(parent)
+        {
+            remove_staged_temps(&staged);
+            return Err(io_err("create output directory", parent, source));
         }
         if let Err(source) = fs::write(&temp, &m.source) {
             remove_staged_temps(&staged);

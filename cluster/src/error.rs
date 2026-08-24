@@ -91,6 +91,7 @@ impl PublicationFailure {
     }
 
     /// A retry (after idle / waiting for a subscriber) can succeed.
+    #[must_use = "the retry decision is the point of calling this"]
     #[inline]
     pub fn is_retryable(self) -> bool {
         matches!(self, Self::NotConnected | Self::BackPressured | Self::AdminAction)
@@ -99,6 +100,7 @@ impl PublicationFailure {
     /// Raw Aeron sentinel, when this failure actually carries one.
     /// `None` for [`Self::TooManyParts`] — rusteron classifies it before any
     /// Aeron return code exists, so there is no real sentinel to report.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn raw_code(self) -> Option<i64> {
         match self {
@@ -312,6 +314,7 @@ impl ClusterError {
     }
 
     /// Whether an idle/retry loop may succeed.
+    #[must_use = "the retry decision is the point of calling this"]
     #[inline]
     pub fn is_retryable(&self) -> bool {
         match self {

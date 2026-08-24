@@ -864,14 +864,17 @@ impl AeronCluster {
     }
 
     /// The cluster-assigned session id (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn cluster_session_id(&self) -> i64 {
         self.cluster_session_id
     }
     /// The current leadership term (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn leadership_term_id(&self) -> i64 {
         self.leadership_term_id
     }
     /// The current leader's member id (set after connect completes).
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn leader_member_id(&self) -> i32 {
         self.leader_member_id
     }
@@ -879,18 +882,21 @@ impl AeronCluster {
     /// True when the ingress publication has a connected subscriber (the
     /// leader). Java `publication.isConnected()` analogue for
     /// backpressure-aware callers.
+    #[must_use = "the connectivity decision is the point of calling this"]
     #[inline]
     pub fn is_ingress_connected(&self) -> bool {
         self.ingress.is_connected()
     }
 
     /// True when the ingress publication is closed (fatal for this handle).
+    #[must_use = "the closed-state decision is the point of calling this"]
     #[inline]
     pub fn is_ingress_closed(&self) -> bool {
         self.ingress.is_closed()
     }
 
     /// Current ingress publication position.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn ingress_position(&self) -> i64 {
         self.ingress.position()
@@ -899,6 +905,7 @@ impl AeronCluster {
     /// True when the egress subscription still has a live image from the
     /// cluster (image count > 0). Going false while `Connected` is the
     /// leader-loss signal consumed by [`Self::poll_state_changes`].
+    #[must_use = "the connectivity decision is the point of calling this"]
     #[inline]
     pub fn is_egress_connected(&self) -> bool {
         self.egress.image_count().is_ok_and(|c| c > 0)
@@ -931,6 +938,7 @@ impl AeronCluster {
         AsyncClusterConnect::new(builder, aeron_dir.into())
     }
     /// Current session state: `Connected`, `NotConnected`, `Closed`.
+    #[must_use = "the state decision is the point of calling this"]
     pub fn state(&self) -> SessionState {
         self.state
     }
@@ -1056,6 +1064,7 @@ impl ClusterClaim {
     }
 
     /// Stream position Aeron assigned to this claim.
+    #[must_use = "discarding this value is almost always a mistake"]
     pub fn position(&self) -> i64 {
         self.claim.position()
     }
@@ -1171,11 +1180,13 @@ impl AsyncClusterConnect {
     /// Always include a wildcard (`_`) arm — the enum is
     /// [`#[non_exhaustive]`](ConnectStep) so future releases may add steps
     /// without a semver break.
+    #[must_use = "the connect-step decision is the point of calling this"]
     pub fn step(&self) -> ConnectStep {
         self.step
     }
 
     /// True once the connect has completed and `finish()` can be called.
+    #[must_use = "the completion decision is the point of calling this"]
     pub fn is_complete(&self) -> bool {
         self.step == ConnectStep::Done
     }

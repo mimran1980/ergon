@@ -34,6 +34,12 @@
   (was `Option<String>`) — a malformed endpoint map is now `Err` with the
   parser's specific reason, distinct from `Ok(None)` for a well-formed map
   that simply lacks the requested leader.
+- Message-bearing `#[must_use]` on pure cluster decision observers:
+  `PublicationFailure::is_retryable`/`raw_code`, `ClusterError::is_retryable`,
+  `AeronCluster::{cluster_session_id, leadership_term_id, leader_member_id,
+  is_ingress_connected, is_ingress_closed, ingress_position,
+  is_egress_connected, state}`, `ClusterClaim::position`, and
+  `AsyncClusterConnect::{step, is_complete}`.
 - **Breaking:** `PublicationFailure` is `#[non_exhaustive]` and gains
   `TooManyParts`, mapped directly from `AeronOfferError::TooManyParts`
   instead of the fabricated sentinel `Other(-100)`. `raw()` is replaced by
