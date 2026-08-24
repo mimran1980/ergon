@@ -23,6 +23,17 @@
   an empty or invalid token now returns
   `GenerateError::InvalidConfiguration` instead of generating uncompilable
   Rust.
+- **Breaking:** `SessionBuilder::ingress_endpoints` returns
+  `Result<Self, ClusterError>` and validates the endpoint map (grammar,
+  duplicate IDs, empty entries) at the call site instead of at `validate()`
+  or the first `poll()`.
+- **Breaking:** `poller::parse_event` returns `Result<EgressEvent, ClusterError>`
+  (was `Result<Option<EgressEvent>, ClusterError>` — every decoded branch
+  was already `Some`, so `None` was unreachable).
+  `poller::parse_leader_endpoint` returns `Result<Option<String>, ClusterError>`
+  (was `Option<String>`) — a malformed endpoint map is now `Err` with the
+  parser's specific reason, distinct from `Ok(None)` for a well-formed map
+  that simply lacks the requested leader.
 
 ### Fixed
 - Domain-object generation for a required (non-`sinceVersion`) boolean field

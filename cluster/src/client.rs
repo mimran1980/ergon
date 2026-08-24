@@ -321,7 +321,7 @@ impl AeronCluster {
                     |data, _hdr| {
                         if captured.is_none() && decode_err.is_none() {
                             match crate::poller::parse_event(data) {
-                                Ok(e) => captured = e,
+                                Ok(e) => captured = Some(e),
                                 Err(e) => decode_err = Some(e),
                             }
                         }
@@ -359,7 +359,7 @@ impl AeronCluster {
                             // detail lists all members in id order, so a
                             // position-based parse would redirect back to the
                             // follower we just asked (an infinite loop).
-                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                            let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)?
                                 .ok_or_else(|| ClusterError::ReconnectFailed {
                                     reason: format!(
                                         "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
@@ -844,10 +844,11 @@ impl AeronCluster {
     /// step. Uses [`Self::prepare_reconnect_ingress`] so the connect-time
     /// redirect and the active-session failover share one uniform code path.
     fn on_new_leader_event(&mut self, term: i64, member: i32, endpoints: &str) -> Result<(), ClusterError> {
-        let ep =
-            crate::poller::parse_leader_endpoint(endpoints, member).ok_or_else(|| ClusterError::ReconnectFailed {
+        let ep = crate::poller::parse_leader_endpoint(endpoints, member)?.ok_or_else(|| {
+            ClusterError::ReconnectFailed {
                 reason: format!("NewLeaderEvent listed no endpoint for leader member {member}: {endpoints}"),
-            })?;
+            }
+        })?;
         let (new_pub, new_regular, new_controlled) =
             Self::prepare_reconnect_ingress(&self._aeron, &ep, self.ingress_stream_id)?;
         // All preparation succeeded — commit the leadership swap in one step.
@@ -1257,7 +1258,7 @@ impl AsyncClusterConnect {
                                     return Err(ClusterError::AuthRejected);
                                 }
                                 EventCode::REDIRECT => {
-                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)
+                                    let ep = crate::poller::parse_leader_endpoint(&detail, leader_member_id)?
                                         .ok_or_else(|| ClusterError::ReconnectFailed {
                                             reason: format!(
                                                 "connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"
@@ -1410,7 +1411,7 @@ impl AsyncClusterConnect {
                     |data, _hdr| {
                         if ev.is_none() && err.is_none() {
                             match crate::poller::parse_event(data) {
-                                Ok(e) => ev = e,
+                                Ok(e) => ev = Some(e),
                                 Err(e) => err = Some(e),
                             }
                         }

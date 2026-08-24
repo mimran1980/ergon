@@ -14,7 +14,7 @@ use ergo_aeron_cluster::{ClusterError, EgressEvent, parse_event};
 fn redirect_missing_leader_is_reconnect_failed() -> Result<(), Box<dyn std::error::Error>> {
     let detail = "0=localhost:9012,2=localhost:9212";
     let leader_member_id = 1;
-    let err = parse_leader_endpoint(detail, leader_member_id)
+    let err = parse_leader_endpoint(detail, leader_member_id)?
         .ok_or_else(|| ClusterError::ReconnectFailed {
             reason: format!("connect redirect listed no endpoint for leader member {leader_member_id}: {detail}"),
         })
@@ -23,12 +23,13 @@ fn redirect_missing_leader_is_reconnect_failed() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// T-16: malformed endpoint map (no id=host entries) cannot resolve a leader.
+/// T-16: malformed endpoint map (no id=host entries) is a distinct `Err`,
+/// not silently collapsed into "no leader" alongside a well-formed map.
 #[test]
 fn redirect_malformed_endpoints_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(parse_leader_endpoint("not-a-map", 0).is_none());
-    assert!(parse_leader_endpoint("=,=foo", 0).is_none());
-    assert!(parse_leader_endpoint("abc=def", 0).is_none()); // non-numeric id
+    assert!(parse_leader_endpoint("not-a-map", 0).is_err());
+    assert!(parse_leader_endpoint("=,=foo", 0).is_err());
+    assert!(parse_leader_endpoint("abc=def", 0).is_err()); // non-numeric id
     Ok(())
 }
 
@@ -51,16 +52,17 @@ fn redirect_session_event_decodes_then_resolution_fails() -> Result<(), Box<dyn 
         .detail(detail)?;
     let bytes = complete.as_bytes_with_header();
     match parse_event(bytes)? {
-        Some(EgressEvent::SessionEvent {
+        EgressEvent::SessionEvent {
             code,
             leader_member_id,
             detail,
             ..
-        }) => {
+        } => {
             assert_eq!(code, EventCode::REDIRECT);
             assert_eq!(leader_member_id, 1);
-            assert!(
-                parse_leader_endpoint(&detail, leader_member_id).is_none(),
+            assert_eq!(
+                parse_leader_endpoint(&detail, leader_member_id)?,
+                None,
                 "leader 1 must be absent from {detail}"
             );
         }
