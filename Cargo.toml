@@ -1,5 +1,5 @@
 [workspace]
-members = ["sbe", "sbe/benchmarks", "cluster"]
+members = ["sbe", "sbe/benchmarks", "cluster", "cluster-test-harness"]
 # Excluded because they require nightly toolchain:
 #   sbe/fuzz         — cargo-fuzz (libfuzzer), needs `cargo +nightly fuzz run`
 #   sbe/miri-fixtures — cargo-miri, needs `cargo +nightly miri test`

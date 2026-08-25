@@ -169,6 +169,14 @@
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresAccelerationRaggedBuilder< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresRaggedBuilder< 'a > {  }
 # [must_use = "raw fixed writer must be embedded in FixedFields"] struct CarRawFixedWriter< 'a > {  }
+# [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
+# [must_use = "the peeked header identity is unused; ignoring it skips dispatch"] MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
+# [must_use = "the peeked template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_template_id (data : & [u8]) -> Option < u16 >
+# [must_use = "the schema-matched template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] CarDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] FuelFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] PerformanceFiguresAccelerationDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] PerformanceFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use] CarAfterFuelFigures::fn performance_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
 # [must_use] CarAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
 # [must_use] CarAfterManufacturer::fn model (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
@@ -210,7 +218,6 @@ CarDecoder::const HEADER_LENGTH: usize
 CarDecoder::const SCHEMA_ID: u16
 CarDecoder::const SCHEMA_VERSION: u16
 CarDecoder::const TEMPLATE_ID: u16
-CarDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 CarDecoder::fn activation_code (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 CarDecoder::fn activation_code_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
 CarDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
@@ -331,7 +338,6 @@ CarSchema::const TEMPLATE_ID: u16
 CarSchema::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 Engine::fn new (capacity : u16 , num_cylinders : u8 , manufacturer_code : [u8 ; 3] , efficiency : i8 , booster_enabled : BooleanType , booster : Booster ,) -> Self
 FuelFiguresDecoder::const ENTRY_BLOCK_LENGTH: usize
-FuelFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 FuelFiguresDecoder::fn finish (self) -> Result < CarDecoderAfterFuelFigures < 'a > , sbe_rt :: DecodeError >
 FuelFiguresDecoder::fn rewind (& mut self) -> & mut Self
 FuelFiguresDecoder::fn scan_entry_at (& self , idx : usize ,) -> Result < FuelFiguresEntryDecoder < 'a > , sbe_rt :: DecodeError >
@@ -357,16 +363,12 @@ FuelFiguresEntryEncoder::fn mpg (& mut self , val : f32) -> & mut Self
 FuelFiguresEntryEncoder::fn speed (& mut self , val : u16) -> & mut Self
 GroupSizeEncoding::fn new (block_length : u16 , num_in_group : u16) -> Self
 MessageHeader::fn new (block_length : u16 , template_id : u16 , schema_id : u16 , version : u16 ,) -> Self
-MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
-MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
-MessageHeader::fn peek_template_id (data : & [u8]) -> Option < u16 >
 Model::const fn from_raw (val : u8) -> Self
 OptionalExtras::const fn default () -> Self
 OptionalExtras::fn cruise_control (& mut self , val : bool) -> & mut Self
 OptionalExtras::fn sports_pack (& mut self , val : bool) -> & mut Self
 OptionalExtras::fn sun_roof (& mut self , val : bool) -> & mut Self
 PerformanceFiguresAccelerationDecoder::const ENTRY_BLOCK_LENGTH: usize
-PerformanceFiguresAccelerationDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 PerformanceFiguresAccelerationDecoder::fn bulk_decode (& mut self ,) -> Result < Vec < PerformanceFiguresAccelerationEntry > , sbe_rt :: DecodeError >
 PerformanceFiguresAccelerationDecoder::fn bulk_decode_into (& mut self , dst : & mut Vec < PerformanceFiguresAccelerationEntry > ,) -> Result < usize , sbe_rt :: DecodeError >
 PerformanceFiguresAccelerationDecoder::fn entry_at (& self , idx : usize ,) -> Result < PerformanceFiguresAccelerationEntryDecoder < 'a > , sbe_rt :: DecodeError >
@@ -388,7 +390,6 @@ PerformanceFiguresAccelerationEntryEncoder::fn complete (self) -> PerformanceFig
 PerformanceFiguresAccelerationEntryEncoder::fn mph (& mut self , val : u16) -> & mut Self
 PerformanceFiguresAccelerationEntryEncoder::fn seconds (& mut self , val : f32) -> & mut Self
 PerformanceFiguresDecoder::const ENTRY_BLOCK_LENGTH: usize
-PerformanceFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 PerformanceFiguresDecoder::fn finish (self ,) -> Result < CarDecoderAfterPerformanceFigures < 'a > , sbe_rt :: DecodeError >
 PerformanceFiguresDecoder::fn rewind (& mut self) -> & mut Self
 PerformanceFiguresDecoder::fn scan_entry_at (& self , idx : usize ,) -> Result < PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: DecodeError >
@@ -436,7 +437,6 @@ enum Model::B = b'B'
 enum Model::C = b'C'
 enum Model::NullVal = 0
 fn fn read_bytes < const N : usize > (buf : & [u8] , offset : usize) -> [u8 ; N]
-fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes : & [u8 ; N])
 mod prelude
 mod sbe_rt

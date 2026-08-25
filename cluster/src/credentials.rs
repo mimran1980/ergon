@@ -57,12 +57,34 @@ impl core::fmt::Debug for StaticCredentials {
 }
 
 impl StaticCredentials {
-    /// Build from raw credential bytes.
-    pub fn new(credentials: Vec<u8>) -> Self {
-        Self { credentials }
+    /// Build from opaque wire bytes.
+    ///
+    /// Accepts any `Into<Vec<u8>>` so a moved `Vec<u8>` is kept without a copy,
+    /// while slices and arrays allocate once. The same bytes answer both the
+    /// connect request and any challenge.
+    ///
+    /// ```
+    /// use ergo_aeron_cluster::StaticCredentials;
+    ///
+    /// // Non-UTF-8 and embedded NUL are valid credential octets.
+    /// let raw = [0x00, 0xff, 0x00, b'x'];
+    /// let from_vec = StaticCredentials::new(raw.to_vec());
+    /// let from_slice = StaticCredentials::new(&raw[..]);
+    /// let from_array = StaticCredentials::new(raw);
+    /// assert_eq!(format!("{from_vec:?}"), format!("{from_slice:?}"));
+    /// assert_eq!(format!("{from_vec:?}"), format!("{from_array:?}"));
+    /// ```
+    #[must_use = "the credentials supplier is unused; ignoring it skips authentication"]
+    pub fn new(credentials: impl Into<Vec<u8>>) -> Self {
+        Self {
+            credentials: credentials.into(),
+        }
     }
 
     /// Build from a UTF-8 string (encoded as its bytes).
+    ///
+    /// Prefer [`Self::new`] when the secret is already opaque octets.
+    #[must_use = "the credentials supplier is unused; ignoring it skips authentication"]
     pub fn from_utf8(text: &str) -> Self {
         Self {
             credentials: text.as_bytes().to_vec(),
@@ -92,21 +114,33 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_static_credentials_answer_connect_and_challenge() -> Result<(), Box<dyn std::error::Error>> {
-        let supplier = StaticCredentials::from_utf8("user:pass");
+    fn assert_same_connect_and_challenge(
+        supplier: &StaticCredentials,
+        expected: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let connect = supplier
             .encoded_credentials()
             .ok_or("static creds missing on connect")?;
         let challenge = supplier
             .on_challenge(b"server-challenge")
             .ok_or("static creds missing on challenge")?;
-        assert_eq!(&*connect, b"user:pass");
-        assert_eq!(&*challenge, b"user:pass", "challenge must reuse the same bytes");
-        assert_eq!(
-            &*StaticCredentials::new(vec![1, 2, 3]).encoded_credentials().unwrap(),
-            &[1u8, 2, 3][..]
-        );
+        assert_eq!(&*connect, expected);
+        assert_eq!(&*challenge, expected, "challenge must reuse the same bytes");
+        Ok(())
+    }
+
+    #[test]
+    fn test_static_credentials_answer_connect_and_challenge() -> Result<(), Box<dyn std::error::Error>> {
+        assert_same_connect_and_challenge(&StaticCredentials::from_utf8("user:pass"), b"user:pass")?;
+        let moved = vec![1u8, 2, 3];
+        assert_same_connect_and_challenge(&StaticCredentials::new(moved), &[1, 2, 3])?;
+        let slice: &[u8] = &[1, 2, 3];
+        assert_same_connect_and_challenge(&StaticCredentials::new(slice), &[1, 2, 3])?;
+        assert_same_connect_and_challenge(&StaticCredentials::new([1u8, 2, 3]), &[1, 2, 3])?;
+        let with_nul = b"user\0pass";
+        assert_same_connect_and_challenge(&StaticCredentials::new(with_nul.as_slice()), with_nul)?;
+        let invalid_utf8 = [0xffu8, 0x00, 0xfe];
+        assert_same_connect_and_challenge(&StaticCredentials::new(invalid_utf8), &invalid_utf8)?;
         Ok(())
     }
 

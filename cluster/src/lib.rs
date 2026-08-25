@@ -150,16 +150,6 @@ pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
 pub use uri::AERON_IPC_STREAM;
 
-/// Java Aeron Cluster spawn harness (integration tests / examples only).
-///
-/// Enable with `--features test-harness` (requires Java 17+ and
-/// `just build-aeron-jars`). Not for production and not published as a separate crate.
-#[cfg(feature = "test-harness")]
-pub mod test_support;
-
-#[cfg(feature = "test-harness")]
-pub use test_support::{EmbeddedArchiveDriver, TestCluster};
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

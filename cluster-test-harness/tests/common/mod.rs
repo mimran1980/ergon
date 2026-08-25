@@ -31,7 +31,10 @@ pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
     dc.set_dir_delete_on_start(true)?;
     let _guard = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
     Ok(OwnDriver {
-        dir: dir.to_str().ok_or("aeron dir is not valid UTF-8")?.to_string(),
+        dir: dir
+            .to_str()
+            .ok_or("aeron dir is not valid UTF-8")?
+            .to_string(),
         _guard,
     })
 }
@@ -40,7 +43,7 @@ pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
 /// egress port is the client's own UDP endpoint (the cluster sends
 /// SessionEvent / echoes / NewLeaderEvent here).
 ///
-/// Egress URI is built via [`ergo_aeron_cluster::test_support::udp_endpoint_cstr`] so it
+/// Egress URI is built via [`ergo_aeron_cluster_test_harness::udp_endpoint_cstr`] so it
 /// matches the typed `AeronUriStringBuilder` path used in production.
 pub fn connect_own_driver(
     cluster_ingress: &str,
@@ -48,12 +51,14 @@ pub fn connect_own_driver(
     aeron_dir: &str,
 ) -> Result<AeronCluster, ergo_aeron_cluster::ClusterError> {
     // CString path once; SessionBuilder re-validates/stores as CString for rusteron.
-    let egress = ergo_aeron_cluster::test_support::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
-    let egress_uri = egress
-        .to_str()
-        .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
-            reason: format!("egress URI utf8: {e}"),
-        })?;
+    let egress =
+        ergo_aeron_cluster_test_harness::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
+    let egress_uri =
+        egress
+            .to_str()
+            .map_err(|e| ergo_aeron_cluster::ClusterError::ConnectFailed {
+                reason: format!("egress URI utf8: {e}"),
+            })?;
     let builder = SessionBuilder::default()
         .ingress_channel(cluster_ingress)?
         .egress_channel(egress_uri)?
@@ -89,7 +94,16 @@ impl EgressListener for Capture {
         }
     }
     fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
-    fn on_admin_response(&mut self, _: i64, _: i64, _: AdminRequestType, _: AdminResponseCode, _: &str, _: &[u8]) {}
+    fn on_admin_response(
+        &mut self,
+        _: i64,
+        _: i64,
+        _: AdminRequestType,
+        _: AdminResponseCode,
+        _: &str,
+        _: &[u8],
+    ) {
+    }
 }
 
 /// Offer `payload` and poll egress (with best-effort keep-alive) until the
@@ -105,7 +119,12 @@ pub fn await_echo(
     loop {
         let _ = client.send_keep_alive();
         let _ = client.poll_egress(adapter, 10);
-        if adapter.listener().messages.iter().any(|m| m.as_slice() == payload) {
+        if adapter
+            .listener()
+            .messages
+            .iter()
+            .any(|m| m.as_slice() == payload)
+        {
             return Ok(());
         }
         if Instant::now() >= deadline {

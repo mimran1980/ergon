@@ -339,11 +339,11 @@ impl Generator {
     }
 
     fn validate_header_values(&self, schema: &Schema) -> Result<(), GenerateError> {
-        let elements = partition_tokens(&schema.ir.tokens);
+        let elements = partition_tokens(&schema.ir().tokens);
         let Some(header) = elements
             .composites
             .iter()
-            .find(|tokens| tokens[0].name == schema.ir.header_type)
+            .find(|tokens| tokens[0].name == schema.ir().header_type)
         else {
             // Synthetic `Schema::new` values used by metadata-only callers may
             // contain no messages or header tokens. XML-parsed schemas have
@@ -373,9 +373,9 @@ impl Generator {
             Ok(())
         };
 
-        let schema_context = format!("schema '{}'", schema.package);
-        check("schemaId", u64::from(schema.id), schema_context.clone())?;
-        check("version", u64::from(schema.version), schema_context)?;
+        let schema_context = format!("schema '{}'", schema.package());
+        check("schemaId", u64::from(schema.id()), schema_context.clone())?;
+        check("version", u64::from(schema.version()), schema_context)?;
 
         for message_tokens in &elements.messages {
             let message = parse_message_structure(message_tokens, &elements);
@@ -392,7 +392,7 @@ impl Generator {
         if !self.config.has_conversions() {
             return Ok(());
         }
-        let elements = partition_tokens(&schema.ir.tokens);
+        let elements = partition_tokens(&schema.ir().tokens);
         for sel in &self.config.conversions {
             let matched = match sel {
                 crate::ConversionSelector::NamedType(name) => {
@@ -488,14 +488,6 @@ impl Generator {
                         .into(),
             });
         }
-        if let Some(ref err_path) = self.config.error_from_path {
-            syn::parse_str::<syn::Type>(err_path).map_err(|e| {
-                GenerateError::InvalidConversion {
-                    selector: "error_from_path".into(),
-                    reason: format!("error-from path is not a valid Rust type: {e}"),
-                }
-            })?;
-        }
         if let Some(ref rt_path) = self.config.external_sbe_rt_path {
             syn::parse_str::<syn::Path>(rt_path).map_err(|e| {
                 GenerateError::InvalidConfiguration {
@@ -543,7 +535,7 @@ impl Generator {
         let mut types = self.config.domain_types.clone();
         if self.config.auto_bool_domain {
             for (schema, _) in schemas {
-                let elements = partition_tokens(&schema.ir.tokens);
+                let elements = partition_tokens(&schema.ir().tokens);
                 for e in &elements.enums {
                     let name = &e[0].name;
                     if crate::structured_ir::is_bool_value_enum(&elements, name) {
@@ -644,11 +636,11 @@ impl Generator {
         // different layouts or byte order silently produce corrupted codecs.
         if schemas.len() > 1 && self.config.shared_module.is_some() {
             let owner_module = schemas[0].1.to_string();
-            let owner_byte_order = schemas[0].0.ir.byte_order;
-            let first_elements = partition_tokens(&schemas[0].0.ir.tokens);
+            let owner_byte_order = schemas[0].0.ir().byte_order;
+            let first_elements = partition_tokens(&schemas[0].0.ir().tokens);
             for (schema, consumer_module) in schemas.iter().skip(1) {
-                let elements = partition_tokens(&schema.ir.tokens);
-                let consumer_byte_order = schema.ir.byte_order;
+                let elements = partition_tokens(&schema.ir().tokens);
+                let consumer_byte_order = schema.ir().byte_order;
                 let check = |kind: &str, name: String, a: String, b: String| {
                     if a != b {
                         Err(GenerateError::IncompatibleSharedType {
@@ -738,7 +730,7 @@ impl Generator {
             let mut union_elements: Vec<(&Schema, crate::structured_ir::SchemaElements)> =
                 Vec::with_capacity(schemas.len());
             for (schema, _) in schemas.iter() {
-                union_elements.push((schema, partition_tokens(&schema.ir.tokens)));
+                union_elements.push((schema, partition_tokens(&schema.ir().tokens)));
             }
             self.validate_conversions_union(&union_elements)?;
         }
@@ -746,7 +738,7 @@ impl Generator {
         for (i, (schema, module_name)) in schemas.iter().enumerate() {
             self.validate_header_values(schema)?;
             if i == 0 {
-                let elements = partition_tokens(&schema.ir.tokens);
+                let elements = partition_tokens(&schema.ir().tokens);
                 for et in &elements.enums {
                     let name = to_pascal_case(&et[0].name);
                     shared_types.insert(name.clone());
@@ -823,6 +815,7 @@ impl Generator {
             name,
             encoding_type: et_str,
             variants,
+            deprecated_since: tokens[0].encoding.deprecated,
         }
     }
 
@@ -834,7 +827,33 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields = message_field_infos(&msg.fields, &[], None);
+        let mut fields = message_field_infos(&msg.fields, &[], None);
+        for g in &msg.groups {
+            fields.push(crate::FieldInfo {
+                name: to_snake_case(&g.name),
+                rust_type: "group".to_string(),
+                offset: None,
+                since_version: g.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated_since: g.deprecated,
+                description: g.description.clone(),
+            });
+        }
+        for vd in &msg.var_data {
+            fields.push(crate::FieldInfo {
+                name: to_snake_case(&vd.name),
+                rust_type: "data".to_string(),
+                offset: None,
+                since_version: vd.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated_since: vd.deprecated,
+                description: vd.description.clone(),
+            });
+        }
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -847,6 +866,7 @@ impl Generator {
                 template_id: msg.id,
                 block_length: msg.block_length,
                 fields,
+                deprecated_since: msg.deprecated,
             },
             crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
                 schema,
@@ -854,6 +874,7 @@ impl Generator {
                 template_id: msg.id,
                 block_length: msg.block_length,
                 fields,
+                deprecated_since: msg.deprecated,
             },
             _ => unreachable!("build_message_ctx only for MessageDecoder/MessageEncoder"),
         }
@@ -943,7 +964,7 @@ impl Generator {
                     semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
                     null_value: enc.and_then(|e| e.null_value),
-                    deprecated: enc.is_some_and(|e| e.deprecated),
+                    deprecated_since: enc.and_then(|e| e.deprecated),
                     description: enc.and_then(|e| e.description.clone()),
                 }
             })
@@ -952,6 +973,7 @@ impl Generator {
             schema,
             name,
             fields,
+            deprecated_since: tokens[0].encoding.deprecated,
         }
     }
 
@@ -987,6 +1009,7 @@ impl Generator {
             name,
             encoding_type: et_str,
             choices,
+            deprecated_since: tokens[0].encoding.deprecated,
         }
     }
 
@@ -1007,7 +1030,7 @@ impl Generator {
         emit_sbe_rt: bool,
         domain_types: &[(crate::ConversionSelector, String)],
     ) -> Result<String, GenerateError> {
-        let ir = &schema.ir;
+        let ir = schema.ir();
 
         let mut src = String::new();
         // NOTE: In Rust edition 2024, inner attributes (`#![allow(...)])`) are
@@ -1018,7 +1041,9 @@ impl Generator {
         writeln!(
             src,
             "/// Generated from SBE schema package `{}` id {} version {}.",
-            schema.package, schema.id, schema.version
+            schema.package(),
+            schema.id(),
+            schema.version()
         )
         .unwrap();
         // Lint allow list is intentionally narrow — do not re-add
@@ -1260,7 +1285,7 @@ impl Generator {
         }
 
         // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
-        if let Some(ref sem_ver) = schema.ir.semantic_version {
+        if let Some(ref sem_ver) = schema.ir().semantic_version {
             write!(
                 src,
                 "pub const SEMANTIC_VERSION: &str = \"{}\";\n\n",
@@ -1268,9 +1293,9 @@ impl Generator {
             )
             .unwrap();
         }
-        let schema_hash = compute_schema_hash(&schema.package, schema.id, schema.version);
+        let schema_hash = compute_schema_hash(schema.package(), schema.id(), schema.version());
         write!(src, "pub const SCHEMA_HASH: u64 = {};\n\n", schema_hash).unwrap();
-        let sha256_hash = compute_schema_sha256(&schema.ir);
+        let sha256_hash = compute_schema_sha256(schema.ir());
         src.push_str("pub const SCHEMA_SHA256: [u8; 32] = [");
         for (i, &b) in sha256_hash.iter().enumerate() {
             if i > 0 {
@@ -1290,27 +1315,6 @@ impl Generator {
             ir.version,
             self.config.enable_dispatch,
         );
-        // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
-        if let Some(ref err_path) = self.config.error_from_path {
-            let err_ty: syn::Type = syn::parse_str(err_path).expect("invalid error_from_path");
-            let span = proc_macro2::Span::call_site();
-            let impls = quote::quote! {
-                /// Generated: encode errors convert directly to the crate error type.
-                impl From<sbe_rt::EncodeError> for #err_ty {
-                    fn from(e: sbe_rt::EncodeError) -> Self {
-                        Self::from(format!("sbe encode: {e}"))
-                    }
-                }
-                /// Generated: decode errors convert directly to the crate error type.
-                impl From<sbe_rt::DecodeError> for #err_ty {
-                    fn from(e: sbe_rt::DecodeError) -> Self {
-                        Self::from(format!("sbe decode: {e}"))
-                    }
-                }
-            };
-            src.push_str(&impls.to_string());
-            src.push('\n');
-        }
         // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
         // private + unsafe — never a safe public memory-safety
         // precondition for callers.
@@ -1896,7 +1900,7 @@ mod tests {
             min_value: None,
             max_value: None,
             description: None,
-            deprecated: false,
+            deprecated: None,
             semantic_type: Some("UTCTimestamp".into()),
             constant_value: None,
             epoch: None,

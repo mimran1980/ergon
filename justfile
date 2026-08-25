@@ -1,8 +1,8 @@
 # ergon — reproducible workspace gates
 #
-# `ergo-aeron-cluster` is a workspace member excluded from `--all-features`
-# because its `test-harness` feature pulls in Java/Aeron jars. Each gate
-# excludes it then re-runs the crate with default (pure-Rust) features.
+# `ergo-aeron-cluster-test-harness` is a workspace member excluded from
+# `--all-features` because it compiles the Java ClusterLauncher. Product
+# `ergo-aeron-cluster` has no advertised extra features.
 #
 # Samples are standalone packages, not workspace members.
 
@@ -19,7 +19,7 @@ default:
 
 # Compile product workspace + sample harnesses (no tests, no Java jars).
 build:
-    cargo build --workspace --all-features --exclude ergo-aeron-cluster
+    cargo build --workspace --all-features --exclude ergo-aeron-cluster-test-harness
     cargo build -p ergo-aeron-cluster
     cd samples/exchange-example && cargo build
     cd samples/cluster-ha-orderbook && cargo build
@@ -33,6 +33,7 @@ policy:
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
     bash scripts/tests/test-public-api.sh
+    bash scripts/tests/test-packaged-cluster-features.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
@@ -59,7 +60,7 @@ preflight:
     cargo fmt --all --check
     cd samples/exchange-example && cargo fmt --check
     @echo "=== clippy (same workspace set as CI) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
@@ -68,12 +69,14 @@ preflight:
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-generated-public-api.sh
     bash scripts/tests/test-instruction-probe-pairs.sh
+    bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
     ./scripts/check-generated-public-api.sh
+    bash scripts/check-packaged-cluster-features.sh --list
     @echo "=== checked-in generated artifacts still match their source ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
@@ -87,9 +90,9 @@ preflight:
 check-local: policy
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
     cargo test -p ergo-aeron-cluster --doc
     cd samples/exchange-example && cargo fmt --check
@@ -148,7 +151,8 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
-    # ergo-aeron-cluster dry-run waits until ergo-sbe is on crates.io (publish step below).
+    bash scripts/check-packaged-cluster-features.sh --list
+    # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
     @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
     bash scripts/measure-codegen-cold-path.sh
     @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
@@ -236,6 +240,8 @@ _release-post:
     bash scripts/package-bench-artifacts.sh release-assets
     @echo "=== publish ergo-sbe ==="
     cargo publish -p ergo-sbe
+    @echo "=== packaged cluster features (fail-closed) ==="
+    bash scripts/check-packaged-cluster-features.sh --unpack
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
     @echo "=== tag ==="
@@ -265,14 +271,14 @@ test: policy
     @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
     @echo "=== 2/7 clippy (workspace + samples) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     @echo "=== 3/7 unit + integration tests ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
     @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
@@ -288,7 +294,7 @@ test: policy
     cd samples/cluster-rfq && cargo build --examples
     @echo "=== 6/7 Aeron Cluster Java lifecycle + HA sample ==="
     just build-aeron-jars
-    cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
+    cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
     @echo "=== 7/7 benchmark compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
@@ -299,7 +305,7 @@ test: policy
 
 # Workspace unit tests only.
 test-unit: policy
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster --lib
 
 # Every test gate: standard suite + Miri UB detection + fuzz corpus replay.
@@ -359,7 +365,7 @@ fmt:
 # Auto-fix: fmt + clippy --fix (same feature split as check).
 fix:
     just fmt
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --fix --allow-dirty --allow-staged -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/exchange-example && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings

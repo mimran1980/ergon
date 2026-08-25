@@ -149,10 +149,10 @@ fn profile_then_override_dispatch() -> Result<(), Box<dyn Error>> {
 
 // ── Config surface that had no callers anywhere ───────────────────────────
 //
-// The four APIs below were public but exercised by nothing: `lean`,
-// `with_module_name`, `with_error_from_impls`, and
-// `ConversionSelector::field_path`. Untested public API is how the coverage
-// ratchet drifted below its baseline; these assert behaviour, not mere calls.
+// The APIs below were public but exercised by nothing: `lean`,
+// `with_module_name`, and `ConversionSelector::field_path`. Untested public
+// API is how the coverage ratchet drifted below its baseline; these assert
+// behaviour, not mere calls.
 
 /// `lean()` is shorthand for `new(..).profile(Lean)` — it must produce the same
 /// source as spelling the profile out.
@@ -195,50 +195,16 @@ fn with_module_name_renames_the_generated_module() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// `with_error_from_impls` emits `From<EncodeError>` / `From<DecodeError>` for
-/// the caller's error type.
-#[test]
-#[allow(deprecated)]
-fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
-    let src = generate_with(&Paths::example_schema(), "cfg_errfrom", |c| {
-        c.with_error_from_impls("crate::MyError")
-    })?;
-    assert!(
-        src.contains("impl From<sbe_rt::EncodeError> for crate::MyError"),
-        "encode error conversion must be generated"
-    );
-    assert!(
-        src.contains("impl From<sbe_rt::DecodeError> for crate::MyError"),
-        "decode error conversion must be generated"
-    );
-    Ok(())
-}
-
-/// A malformed error path is rejected at generation time rather than emitting
-/// source that cannot compile.
-#[test]
-#[allow(deprecated)]
-fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>> {
-    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
-    let schema = Schema::from_ir(ir);
-    let err = Generator::new(
-        GenerationConfig::new("cfg_errbad").with_error_from_impls("not a rust type!"),
-    )
-    .generate(&schema)
-    .expect_err("a non-type error path must fail generation");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("error-from path") || msg.contains("error_from_path"),
-        "error must name the offending option, got: {msg}"
-    );
-    Ok(())
-}
-
-/// Field-preserving `From<EncodeError>` / `From<DecodeError>` compiles against
-/// the generated `sbe_rt` types (the 1.0 replacement for the lossy bridge).
+/// Field-preserving `From<EncodeError>` / `From<DecodeError>` is the 1.0
+/// replacement for the removed lossy `with_error_from_impls` bridge. `?`
+/// works because the conversion is typed.
 #[test]
 fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>> {
     let src = generate_with(&Paths::example_schema(), "cfg_errtyped", |c| c)?;
+    assert!(
+        !src.contains("sbe encode:") && !src.contains("From<String>"),
+        "generated source must not emit the lossy String conversion"
+    );
     let src = format!(
         "{src}\n\
          #[derive(Debug)]\n\
@@ -262,14 +228,16 @@ fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>>
         &src,
         r#"
         use cfg_errtyped::sbe_rt;
-        let err: AppError = sbe_rt::EncodeError::BufferTooShort {
-            field: "seq",
-            needed: 8,
-            available: 2,
+        fn consume_encode() -> Result<(), AppError> {
+            Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "seq",
+                needed: 8,
+                available: 2,
+            })?;
+            Ok(())
         }
-        .into();
-        match err {
-            AppError::Encode(sbe_rt::EncodeError::BufferTooShort { needed, available, .. }) => {
+        match consume_encode() {
+            Err(AppError::Encode(sbe_rt::EncodeError::BufferTooShort { needed, available, .. })) => {
                 assert_eq!(needed, 8);
                 assert_eq!(available, 2);
             }
@@ -280,24 +248,21 @@ fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// Callers that `#![deny(deprecated)]` must migrate off `with_error_from_impls`.
+/// `with_error_from_impls` is gone: old call sites must fail to compile.
 #[test]
-fn with_error_from_impls_deprecation_fires() -> Result<(), Box<dyn Error>> {
+fn with_error_from_impls_is_absent() -> Result<(), Box<dyn Error>> {
     use std::fs;
     use std::process::Command;
 
     let sbe_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::temp_dir().join(format!(
-        "ergo_sbe_errfrom_deprecated_{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("ergo_sbe_errfrom_removed_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "errfrom_deprecated"
+name = "errfrom_removed"
 version = "0.1.0"
 edition = "2024"
 
@@ -309,8 +274,7 @@ ergo-sbe = {{ path = "{}" }}
     )?;
     fs::write(
         dir.join("src/main.rs"),
-        r#"#![deny(deprecated)]
-fn main() {
+        r#"fn main() {
     let _ = ergo_sbe::GenerationConfig::new("x").with_error_from_impls("crate::E");
 }
 "#,
@@ -327,11 +291,11 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
     assert!(
         !out.status.success(),
-        "deny(deprecated) must fail, stderr:\n{stderr}"
+        "with_error_from_impls must not compile, stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("deprecated") && stderr.contains("with_error_from_impls"),
-        "expected deprecation diagnostic, stderr:\n{stderr}"
+        stderr.contains("with_error_from_impls"),
+        "expected missing-method diagnostic, stderr:\n{stderr}"
     );
     Ok(())
 }

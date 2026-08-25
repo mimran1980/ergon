@@ -502,6 +502,33 @@ pub mod sbe_rt {
                 maximum: usize::MAX as u64,
             })
     }
+    /// Group `numInGroup` must fit both `usize` and the implementation
+    /// iteration ceiling (`u32::MAX`). Never truncate a parser-accepted
+    /// unsigned dimension into a narrower diagnostic or loop count.
+    #[inline]
+    pub(crate) fn checked_group_count(
+        field: &'static str,
+        value: u64,
+    ) -> Result<usize, DecodeError> {
+        if value > u32::MAX as u64 {
+            return Err(DecodeError::InvalidHeaderValue {
+                field,
+                value,
+                maximum: u32::MAX as u64,
+            });
+        }
+        checked_header_usize(field, value)
+    }
+    /// Narrow a group count for `GroupFull` / mismatch diagnostics.
+    /// Errors instead of truncating when the count exceeds `u32::MAX`.
+    #[inline]
+    pub(crate) fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
+        u32::try_from(count)
+            .map_err(|_| EncodeError::GroupCountOverflow {
+                maximum: u32::MAX,
+                actual: u32::MAX,
+            })
+    }
     /// Compile-time metadata for a generated SBE message.
     ///
     /// Sealed: the supertrait lives in a private child of the generated
@@ -1046,6 +1073,7 @@ impl MessageHeader {
     /// Read the header fields from a buffer without constructing a
     /// full `MessageHeader`. Returns `None` when the buffer is
     /// shorter than the header.
+    #[must_use = "the peeked header identity is unused; ignoring it skips dispatch"]
     #[inline]
     pub fn peek_header(data: &[u8]) -> Option<PeekedHeader> {
         if data.len() < 8 {
@@ -1065,6 +1093,7 @@ impl MessageHeader {
     /// `MessageHeader`. Returns `None` when the buffer is shorter
     /// than the header. For correct multi-schema dispatch,
     /// prefer [`Self::peek_header`] which also returns `schema_id`.
+    #[must_use = "the peeked template id is unused; ignoring it skips dispatch"]
     #[inline]
     pub fn peek_template_id(data: &[u8]) -> Option<u16> {
         if data.len() < 8 {
@@ -1077,6 +1106,7 @@ impl MessageHeader {
     /// Validate `schema_id` and return `template_id`. Returns
     /// `None` when the buffer is too short or the schema doesn't
     /// match. Use this for correct multi-schema dispatch.
+    #[must_use = "the schema-matched template id is unused; ignoring it skips dispatch"]
     #[inline]
     pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
         let header = Self::peek_header(data)?;
@@ -1771,6 +1801,7 @@ impl<'a> CarDecoder<'a> {
     pub const HEADER_LENGTH: usize = 8;
     /// Minimum body bytes needed to safely read every fixed field present
     /// at `acting_version` (version-aware; not always full `BLOCK_LENGTH`).
+    #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
     #[inline]
     pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
         let mut m = 45;
@@ -2415,8 +2446,14 @@ impl<'a> CarDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_len = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_len = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -2442,8 +2479,14 @@ impl<'a> CarDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_len = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_len = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -2776,7 +2819,13 @@ impl<'a> CarDecoder<'a> {
             }
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
-            let count = dim.num_in_group() as usize;
+            let count = match sbe_rt::checked_group_count(
+                "numInGroup",
+                dim.num_in_group() as u64,
+            ) {
+                Ok(count) => count,
+                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+            };
             let mut entry_offset = offset + 4;
             for _ in 0..count {
                 match FuelFiguresEntryDecoder::skip(buf, entry_offset, 6, 0) {
@@ -2795,7 +2844,13 @@ impl<'a> CarDecoder<'a> {
             }
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
-            let count = dim.num_in_group() as usize;
+            let count = match sbe_rt::checked_group_count(
+                "numInGroup",
+                dim.num_in_group() as u64,
+            ) {
+                Ok(count) => count,
+                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+            };
             let mut entry_offset = offset + 4;
             for _ in 0..count {
                 match PerformanceFiguresEntryDecoder::skip(buf, entry_offset, 1, 0) {
@@ -3043,8 +3098,14 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let entries_start = offset + 4;
         let min_fixed = <FuelFiguresDecoder<
             '_,
@@ -3094,6 +3155,7 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
     /// `ENTRY_BLOCK_LENGTH`: a forward-compatible reader accepts a
     /// wire block length it does not recognise, but never one too
     /// small for the fields it will actually read.
+    #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
     #[inline]
     pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
         let mut m = 6;
@@ -3162,11 +3224,17 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         acting_version: u16,
         parent_pos: usize,
         parent_block_length: usize,
-    ) -> Self {
+    ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let min_fixed = <FuelFiguresDecoder<
             '_,
             sbe_rt::Detached,
@@ -3176,7 +3244,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         } else {
             min_fixed
         };
-        Self {
+        Ok(Self {
             buf,
             offset: offset + 4,
             count,
@@ -3189,7 +3257,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             poisoned: None,
             min_entry_extent,
             _context: core::marker::PhantomData,
-        }
+        })
     }
     /// Restart iteration from the group's proven start.
     ///
@@ -3903,8 +3971,14 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let entries_start = offset + 4;
         let min_fixed = <PerformanceFiguresDecoder<
             '_,
@@ -3954,6 +4028,7 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
     /// `ENTRY_BLOCK_LENGTH`: a forward-compatible reader accepts a
     /// wire block length it does not recognise, but never one too
     /// small for the fields it will actually read.
+    #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
     #[inline]
     pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
         let mut m = 1;
@@ -4022,11 +4097,17 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         acting_version: u16,
         parent_pos: usize,
         parent_block_length: usize,
-    ) -> Self {
+    ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let min_fixed = <PerformanceFiguresDecoder<
             '_,
             sbe_rt::Detached,
@@ -4036,7 +4117,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         } else {
             min_fixed
         };
-        Self {
+        Ok(Self {
             buf,
             offset: offset + 4,
             count,
@@ -4049,7 +4130,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             poisoned: None,
             min_entry_extent,
             _context: core::marker::PhantomData,
-        }
+        })
     }
     /// Restart iteration from the group's proven start.
     ///
@@ -4319,8 +4400,14 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_len = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_len = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -4341,7 +4428,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     ) -> Result<PerformanceFiguresAccelerationDecoder<'a>, sbe_rt::DecodeError> {
         if self.tail_end.get().is_some() {
             let offset = self.offset + self.acting_block_length;
-            return Ok(unsafe {
+            return unsafe {
                 PerformanceFiguresAccelerationDecoder::wrap_trusted(
                     self.buf,
                     offset,
@@ -4349,11 +4436,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
                     0,
                     0,
                 )
-            });
+            };
         }
         let offset = self.tail_offset_0()?;
         if self.tail_end.get().is_some() {
-            return Ok(unsafe {
+            return unsafe {
                 PerformanceFiguresAccelerationDecoder::wrap_trusted(
                     self.buf,
                     offset,
@@ -4361,7 +4448,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
                     0,
                     0,
                 )
-            });
+            };
         }
         PerformanceFiguresAccelerationDecoder::wrap(
             self.buf,
@@ -4472,8 +4559,14 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let entries_start = offset + 4;
         let min_fixed = <PerformanceFiguresAccelerationDecoder<
             '_,
@@ -4530,6 +4623,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Detached> {
     /// `ENTRY_BLOCK_LENGTH`: a forward-compatible reader accepts a
     /// wire block length it does not recognise, but never one too
     /// small for the fields it will actually read.
+    #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
     #[inline]
     pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
         let mut m = 6;
@@ -4599,16 +4693,22 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
         acting_version: u16,
         parent_pos: usize,
         parent_block_length: usize,
-    ) -> Self {
+    ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = header.num_in_group() as usize;
-        let block_length = header.block_length() as usize;
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
         let min_fixed = <PerformanceFiguresAccelerationDecoder<
             '_,
             sbe_rt::Detached,
         >>::min_readable_fixed_extent(acting_version);
-        Self {
+        Ok(Self {
             buf,
             offset: offset + 4,
             count,
@@ -4619,7 +4719,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             _context: core::marker::PhantomData,
-        }
+        })
     }
     /// Restart iteration from the group's proven start.
     ///
@@ -6108,6 +6208,7 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
 }
 impl CarPerformanceFiguresEntryAccelerationEntryDomain {
     /// Convert to the wire entry struct for bulk encoding.
+    #[must_use = "the converted wire entry is unused; ignoring it skips encoding"]
     #[inline]
     pub fn to_wire_entry(&self) -> PerformanceFiguresAccelerationEntry {
         PerformanceFiguresAccelerationEntry {
@@ -8294,8 +8395,13 @@ impl<'a> FuelFiguresEncoder<'a> {
         if self.written >= self.count {
             return Err(
                 sbe_rt::EncodeError::GroupFull {
-                    declared: self.count as u32,
-                    attempted: self.written as u32 + 1,
+                    declared: sbe_rt::group_diag_count(self.count as u64)?,
+                    attempted: sbe_rt::group_diag_count(self.written as u64)?
+                        .checked_add(1)
+                        .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                            maximum: u32::MAX,
+                            actual: u32::MAX,
+                        })?,
                 }
                     .into(),
             );
@@ -8490,8 +8596,13 @@ impl<'a> PerformanceFiguresEncoder<'a> {
         if self.written >= self.count {
             return Err(
                 sbe_rt::EncodeError::GroupFull {
-                    declared: self.count as u32,
-                    attempted: self.written as u32 + 1,
+                    declared: sbe_rt::group_diag_count(self.count as u64)?,
+                    attempted: sbe_rt::group_diag_count(self.written as u64)?
+                        .checked_add(1)
+                        .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                            maximum: u32::MAX,
+                            actual: u32::MAX,
+                        })?,
                 }
                     .into(),
             );
@@ -8609,8 +8720,8 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             let written = group.written();
             if written != count {
                 return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                    declared: count as u32,
-                    actual: written as u32,
+                    declared: sbe_rt::group_diag_count(count as u64)?,
+                    actual: sbe_rt::group_diag_count(written as u64)?,
                 });
             }
             __offset = group.offset;
@@ -8731,8 +8842,13 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         if self.written >= self.count {
             return Err(
                 sbe_rt::EncodeError::GroupFull {
-                    declared: self.count as u32,
-                    attempted: self.written as u32 + 1,
+                    declared: sbe_rt::group_diag_count(self.count as u64)?,
+                    attempted: sbe_rt::group_diag_count(self.written as u64)?
+                        .checked_add(1)
+                        .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                            maximum: u32::MAX,
+                            actual: u32::MAX,
+                        })?,
                 }
                     .into(),
             );
@@ -8777,8 +8893,13 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         if self.written >= self.count {
             return Err(
                 sbe_rt::EncodeError::GroupFull {
-                    declared: self.count as u32,
-                    attempted: self.written as u32 + 1,
+                    declared: sbe_rt::group_diag_count(self.count as u64)?,
+                    attempted: sbe_rt::group_diag_count(self.written as u64)?
+                        .checked_add(1)
+                        .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                            maximum: u32::MAX,
+                            actual: u32::MAX,
+                        })?,
                 }
                     .into(),
             );
@@ -8813,10 +8934,15 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     pub fn start_entry(
         &mut self,
     ) -> Result<PerformanceFiguresAccelerationEntryEncoder<'_>, sbe_rt::EncodeError> {
-        if self.written as u32 >= self.count as u32 {
+        if self.written as u64 >= self.count as u64 {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: (self.written as u32) + 1,
+                declared: sbe_rt::group_diag_count(self.count as u64)?,
+                attempted: sbe_rt::group_diag_count(self.written as u64)?
+                    .checked_add(1)
+                    .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                        maximum: u32::MAX,
+                        actual: u32::MAX,
+                    })?,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -8863,10 +8989,15 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         &mut self,
         entry: &PerformanceFiguresAccelerationEntry,
     ) -> Result<(), sbe_rt::EncodeError> {
-        if self.written as u32 >= self.count as u32 {
+        if self.written as u64 >= self.count as u64 {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: (self.written as u32) + 1,
+                declared: sbe_rt::group_diag_count(self.count as u64)?,
+                attempted: sbe_rt::group_diag_count(self.written as u64)?
+                    .checked_add(1)
+                    .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                        maximum: u32::MAX,
+                        actual: u32::MAX,
+                    })?,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -8903,8 +9034,8 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
         if attempted > self.count as usize {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: attempted.min(u32::MAX as usize) as u32,
+                declared: sbe_rt::group_diag_count(self.count as u64)?,
+                attempted: sbe_rt::group_diag_count(attempted as u64)?,
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -10012,6 +10143,7 @@ unsafe fn write_bytes_unchecked<const N: usize>(
 }
 /// Read `schemaId` from a message header at the start of `buf`.
 /// Returns [`None`] if `buf` is shorter than the header field.
+#[must_use = "the header schema id is unused; ignoring it skips dispatch"]
 #[inline]
 pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
     if buf.len() < 4 + 2 {
@@ -10225,21 +10357,50 @@ impl<'a> AnyMessage<'a> {
     }
 }
 impl<'a> AnyMessage<'a> {
-    ///Generated method `decode_frame`.
+    /// Decode one externally framed message.
+    ///
+    /// `frame_len` is header-inclusive: it is the size of the whole
+    /// SBE frame starting at `offset` (message header plus body),
+    /// not a body-only length. The declared range
+    /// `offset .. offset + frame_len` must fit in `buf`, and
+    /// `frame_len` must be at least the schema message-header size,
+    /// **before** any header field is read. A shorter declared
+    /// length returns [`sbe_rt::DecodeError::BufferTooShort`] with
+    /// `field: "message header"` so one frame cannot source
+    /// identity bytes from the next framing unit.
     #[inline]
     pub fn decode_frame(
         buf: &'a [u8],
         offset: usize,
         frame_len: usize,
     ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        if 8 > buf.len().saturating_sub(offset) {
+        let available = buf.len().saturating_sub(offset);
+        let frame_end = match offset.checked_add(frame_len) {
+            Some(end) => end,
+            None => {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "message header",
+                    needed: 8,
+                    available,
+                });
+            }
+        };
+        if frame_end > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "message header",
+                needed: frame_len,
+                available,
+            });
+        }
+        if frame_len < 8 {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message header",
                 needed: 8,
-                available: buf.len().saturating_sub(offset),
+                available: frame_len,
             });
         }
-        let header_bytes: [u8; 8] = read_bytes::<8>(buf, offset);
+        let frame = &buf[offset..frame_end];
+        let header_bytes: [u8; 8] = read_bytes::<8>(frame, 0);
         let header = MessageHeader(header_bytes);
         let template_id = sbe_rt::checked_header_u16(
             "templateId",
@@ -10286,17 +10447,9 @@ impl<'a> AnyMessage<'a> {
                 })
             }
             _ => {
-                if frame_len > buf.len().saturating_sub(offset) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: "template body",
-                        needed: frame_len,
-                        available: buf.len().saturating_sub(offset),
-                    });
-                }
-                let frame = &buf[offset..offset + frame_len];
                 Ok(DecodedFrame {
                     message: Self::Unknown { header, frame },
-                    range: offset..offset + frame_len,
+                    range: offset..frame_end,
                     len: frame_len,
                 })
             }

@@ -562,12 +562,21 @@ dependencies = [
  "criterion",
  "ergo-sbe",
  "proptest",
- "rusteron-archive",
  "rusteron-client",
  "rusteron-media-driver",
  "serial_test",
  "thiserror",
  "trybuild",
+]
+
+[[package]]
+name = "ergo-aeron-cluster-test-harness"
+version = "0.1.22"
+dependencies = [
+ "ergo-aeron-cluster",
+ "rusteron-client",
+ "rusteron-media-driver",
+ "serial_test",
 ]
 
 [[package]]
@@ -1431,23 +1440,6 @@ name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
-
-[[package]]
-name = "rusteron-archive"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51ca89499cb9b78c044fd4818e84596cae97af204b3871f9f65eb7df6b47d3e3"
-dependencies = [
- "bindgen",
- "cmake",
- "dunce",
- "log",
- "pkg-config",
- "proc-macro2",
- "regex",
- "rusteron-code-gen",
- "walkdir",
-]
 
 [[package]]
 name = "rusteron-client"

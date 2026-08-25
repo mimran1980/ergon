@@ -32,9 +32,8 @@
 //! | [`with_domain_objects`](GenerationConfig::with_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
-//! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
-//! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
+//! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated(note = "SBE schema deprecated since version N")]` |
 
 /// Selects which fields receive conversion / domain-type methods.
 ///
@@ -218,8 +217,8 @@ pub struct FieldInfo {
     pub presence: &'static str,
     /// Null sentinel value (optional fields only).
     pub null_value: Option<u64>,
-    /// Whether the field is schema-deprecated.
-    pub deprecated: bool,
+    /// Schema version this field was deprecated in (`None` if not deprecated).
+    pub deprecated_since: Option<u16>,
     /// Schema description on the field, if present.
     pub description: Option<String>,
 }
@@ -245,6 +244,8 @@ pub enum ItemContext<'a> {
         encoding_type: String,
         /// Variants in schema order.
         variants: Vec<EnumVariantInfo>,
+        /// Schema version this type was deprecated in.
+        deprecated_since: Option<u16>,
     },
     /// An SBE bitset after codegen.
     Set {
@@ -256,6 +257,8 @@ pub enum ItemContext<'a> {
         encoding_type: String,
         /// Bit choices in schema order.
         choices: Vec<SetChoiceInfo>,
+        /// Schema version this type was deprecated in.
+        deprecated_since: Option<u16>,
     },
     /// An SBE composite after codegen.
     Composite {
@@ -265,6 +268,8 @@ pub enum ItemContext<'a> {
         name: String,
         /// Member fields in wire order.
         fields: Vec<FieldInfo>,
+        /// Schema version this type was deprecated in.
+        deprecated_since: Option<u16>,
     },
     /// A message decoder flyweight.
     MessageDecoder {
@@ -278,6 +283,8 @@ pub enum ItemContext<'a> {
         block_length: usize,
         /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
+        /// Schema version this message was deprecated in.
+        deprecated_since: Option<u16>,
     },
     /// A message encoder stage root.
     MessageEncoder {
@@ -291,6 +298,8 @@ pub enum ItemContext<'a> {
         block_length: usize,
         /// Fixed/group/data fields visible on this message.
         fields: Vec<FieldInfo>,
+        /// Schema version this message was deprecated in.
+        deprecated_since: Option<u16>,
     },
     /// An owned domain DTO (`*Domain`) when domain objects are enabled.
     DomainStruct {
@@ -385,8 +394,6 @@ pub struct GenerationConfig {
     pub(crate) manual_impl_selectors: Vec<ConversionSelector>,
     /// When set, emit `pub use <path> as sbe_rt;` instead of inlining runtime.
     pub(crate) external_sbe_rt_path: Option<String>,
-    /// Emit `From<EncodeError/DecodeError>` for this error type path.
-    pub(crate) error_from_path: Option<String>,
     /// Map enum/boolean NullVal → `Option<T>`. Matched selectors produce
     /// `Option<EventCode>` accessors instead of bare enum types.
     /// Wire is byte-identical: `None` writes the `NullVal` discriminant.
@@ -426,7 +433,6 @@ impl std::fmt::Debug for GenerationConfig {
             .field("domain_types", &self.domain_types)
             .field("manual_impl_selectors", &self.manual_impl_selectors)
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
-            .field("error_from_path", &self.error_from_path)
             .field("null_as_option", &self.null_as_option)
             .field("all_enums_as_option", &self.all_enums_as_option)
             .field("auto_bool_domain", &self.auto_bool_domain)
@@ -459,7 +465,6 @@ impl GenerationConfig {
             domain_types: Vec::new(),
             manual_impl_selectors: Vec::new(),
             external_sbe_rt_path: None,
-            error_from_path: None,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             null_as_option: Vec::new(),
@@ -710,29 +715,6 @@ impl GenerationConfig {
         } else {
             self.domain_types.push((sel, ty));
         }
-        self
-    }
-
-    /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
-    ///
-    /// In build.rs: `.with_error_from_impls("crate::AppError")`.
-    /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
-    ///
-    /// **Note:** The generated `From` impl uses `format!("sbe encode: {err}")` —
-    /// stringifying the typed error through its `Display` form, then calling
-    /// `YourType::from(String)`. This means (1) your error type must implement
-    /// `From<String>`, and (2) field-level error details (e.g.
-    /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
-    /// the conversion. Implement `From<generated::sbe_rt::EncodeError>` and
-    /// `From<generated::sbe_rt::DecodeError>` on your error type so those
-    /// fields survive. Removal is scheduled for 1.0.
-    #[must_use]
-    #[deprecated(
-        since = "0.1.20",
-        note = "implement From<generated::sbe_rt::EncodeError> and From<generated::sbe_rt::DecodeError> on your error type so wire fields (needed/available) are preserved; this helper formats through String and will be removed in 1.0"
-    )]
-    pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
-        self.error_from_path = Some(path.into());
         self
     }
 
@@ -1160,15 +1142,12 @@ mod tests {
             ConversionSelector::FieldPath("Order.price".to_string())
         );
 
-        #[allow(deprecated)]
         let config = GenerationConfig::new("m")
-            .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
             .with_keyword_append_token("x")
             .with_bool_domain_type(true)
             .with_deprecated_attrs(true);
 
-        assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
         assert_eq!(config.shared_module.as_deref(), Some("shared"));
         assert_eq!(config.keyword_append_token, "x");
         assert!(config.auto_bool_domain);

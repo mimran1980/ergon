@@ -35,17 +35,13 @@ pub(crate) fn generate_group_encoder(
     let group_block_length = g.effective_block_length();
 
     assert!(
-        dim_size <= 32,
-        "group dimension header larger than stack pad: {dim_size}"
-    );
-    let mut dim_storage = [0u8; 32];
-    let dim_tpl = &mut dim_storage[..dim_size];
-    assert!(
         block_offset
             .checked_add(block_size)
             .is_some_and(|end| end <= dim_size),
         "group dimension blockLength is outside its composite"
     );
+    let mut dim_storage = vec![0u8; dim_size];
+    let dim_tpl = dim_storage.as_mut_slice();
     match block_prim {
         PrimitiveType::UInt8 => {
             dim_tpl[block_offset] = u8::try_from(group_block_length)
@@ -68,6 +64,15 @@ pub(crate) fn generate_group_encoder(
                 ByteOrder::BigEndian => value.to_be_bytes(),
             };
             dim_tpl[block_offset..block_offset + 4].copy_from_slice(&bytes);
+        }
+        PrimitiveType::UInt64 => {
+            let value = u64::try_from(group_block_length)
+                .expect("group blockLength exceeds uint64 dimension field");
+            let bytes = match byte_order {
+                ByteOrder::LittleEndian => value.to_le_bytes(),
+                ByteOrder::BigEndian => value.to_be_bytes(),
+            };
+            dim_tpl[block_offset..block_offset + 8].copy_from_slice(&bytes);
         }
         _ => panic!("group dimension blockLength must use an unsigned integer type"),
     }
@@ -142,8 +147,13 @@ pub(crate) fn generate_group_encoder(
     let mut capacity_body = quote::quote! {
         if self.written >= self.count {
             return Err(sbe_rt::EncodeError::GroupFull {
-                declared: self.count as u32,
-                attempted: self.written as u32 + 1,
+                declared: sbe_rt::group_diag_count(self.count as u64)?,
+                attempted: sbe_rt::group_diag_count(self.written as u64)?
+                    .checked_add(1)
+                    .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                        maximum: u32::MAX,
+                        actual: u32::MAX,
+                    })?,
             }
             .into());
         }
@@ -246,10 +256,15 @@ pub(crate) fn generate_group_encoder(
             #[must_use]
             #[inline]
             pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
-                if self.written as u32 >= self.count as u32 {
+                if self.written as u64 >= self.count as u64 {
                     return Err(sbe_rt::EncodeError::GroupFull {
-                        declared: self.count as u32,
-                        attempted: (self.written as u32) + 1,
+                        declared: sbe_rt::group_diag_count(self.count as u64)?,
+                        attempted: sbe_rt::group_diag_count(self.written as u64)?
+                            .checked_add(1)
+                            .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                                maximum: u32::MAX,
+                                actual: u32::MAX,
+                            })?,
                     });
                 }
                 let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -416,10 +431,15 @@ pub(crate) fn generate_group_encoder(
                 /// the entry has no nested groups or var-data.
                 #[inline]
                 pub fn add_struct(&mut self, entry: &#entry_struct_ident) -> Result<(), sbe_rt::EncodeError> {
-                    if self.written as u32 >= self.count as u32 {
+                    if self.written as u64 >= self.count as u64 {
                         return Err(sbe_rt::EncodeError::GroupFull {
-                            declared: self.count as u32,
-                            attempted: (self.written as u32) + 1,
+                            declared: sbe_rt::group_diag_count(self.count as u64)?,
+                            attempted: sbe_rt::group_diag_count(self.written as u64)?
+                                .checked_add(1)
+                                .ok_or(sbe_rt::EncodeError::GroupCountOverflow {
+                                    maximum: u32::MAX,
+                                    actual: u32::MAX,
+                                })?,
                         });
                     }
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -455,8 +475,8 @@ pub(crate) fn generate_group_encoder(
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if attempted > self.count as usize {
                         return Err(sbe_rt::EncodeError::GroupFull {
-                            declared: self.count as u32,
-                            attempted: attempted.min(u32::MAX as usize) as u32,
+                            declared: sbe_rt::group_diag_count(self.count as u64)?,
+                            attempted: sbe_rt::group_diag_count(attempted as u64)?,
                         });
                     }
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
@@ -724,8 +744,8 @@ pub(crate) fn generate_group_encoder(
                     let written = group.written();
                     if written != count {
                         return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                            declared: count as u32,
-                            actual: written as u32,
+                            declared: sbe_rt::group_diag_count(count as u64)?,
+                            actual: sbe_rt::group_diag_count(written as u64)?,
                         });
                     }
                     __offset = group.offset;

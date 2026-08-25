@@ -176,19 +176,22 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
                             sequence,
                         })
                         .bids(bids.len() as u16, |g| {
-                        for l in bids {
-                            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
-                                let _ = e
-                                    .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
-                                    .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
-                                Ok(())
-                            })?;
-                        }
-                        Ok::<(), sbe_rt::EncodeError>(())
-                    })?;
+                            for l in bids {
+                                g.add(|e| -> Result<_, sbe_rt::EncodeError> {
+                                    let _ = e
+                                        .price_wire(Decimal::new(
+                                            l.price.mantissa,
+                                            l.price.exponent,
+                                        ))
+                                        .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));
+                                    Ok(())
+                                })?;
+                            }
+                            Ok::<(), sbe_rt::EncodeError>(())
+                        })?;
                     let after = after.asks(asks.len() as u16, |g| {
                         for l in asks {
-                            g.add(|mut e| -> Result<_, sbe_rt::EncodeError> {
+                            g.add(|e| -> Result<_, sbe_rt::EncodeError> {
                                 let _ = e
                                     .price_wire(Decimal::new(l.price.mantissa, l.price.exponent))
                                     .size_wire(Decimal::new(l.size.mantissa, l.size.exponent));

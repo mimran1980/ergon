@@ -22,8 +22,27 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
 ```
 
 Connection remains poll-driven internally; the crate does not require Tokio or
-another async runtime. Use `connect_async` when the application owns the poll
-loop.
+another async runtime. `AsyncClusterConnect` is a poll-driven Aeron state
+machine, not a Rust `Future`. When the application owns the poll loop, the
+shortest supported path is `SessionBuilder` → `connect_async` → `default_idle`
+→ `poll_connect_until_done` → `finish`:
+
+```rust,ignore
+use ergo_aeron_cluster::{default_idle, poll_connect_until_done, SessionBuilder};
+
+fn connect(aeron_dir: &str) -> Result<ergo_aeron_cluster::AeronCluster, ergo_aeron_cluster::ClusterError> {
+    let builder = SessionBuilder::default()
+        .ingress_channel("aeron:udp?endpoint=localhost:9010")?
+        .egress_channel("aeron:udp?endpoint=localhost:9020")?;
+    let mut connecting = builder.connect_async(aeron_dir);
+    let mut idle = default_idle();
+    poll_connect_until_done(&mut connecting, &mut idle)?;
+    connecting.finish()
+}
+```
+
+Drive `poll` / `step` yourself when you need to inspect connect steps or plug
+in a custom idle strategy.
 
 ## Multi-member ingress: `ingress_endpoints`
 

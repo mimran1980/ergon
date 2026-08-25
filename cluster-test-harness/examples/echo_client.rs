@@ -1,7 +1,7 @@
 //! Echo client using the `AeronCluster` library API.
 //!
 //! ```bash
-//! cargo run --example echo_client --features test-harness
+//! cargo run -p ergo-aeron-cluster-test-harness --example echo_client
 //! ```
 
 use ergo_aeron_cluster::{
@@ -9,6 +9,7 @@ use ergo_aeron_cluster::{
     cluster_codec_types::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
+use ergo_aeron_cluster_test_harness::TestCluster;
 use std::time::Duration;
 
 struct EchoListener {
@@ -24,7 +25,15 @@ impl EgressListener for EchoListener {
             std::str::from_utf8(buf).unwrap_or("<binary>")
         );
     }
-    fn on_session_event(&mut self, _cid: i64, _sid: i64, _tid: i64, _mid: i32, code: EventCode, _d: &str) {
+    fn on_session_event(
+        &mut self,
+        _cid: i64,
+        _sid: i64,
+        _tid: i64,
+        _mid: i32,
+        code: EventCode,
+        _d: &str,
+    ) {
         println!("  SessionEvent: {code:?}");
     }
     fn on_new_leader(&mut self, _sid: i64, _tid: i64, _mid: i32, _eps: &str) {}
@@ -44,7 +53,7 @@ impl EgressListener for EchoListener {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ergo Aeron Cluster Echo Client (library API) ===\n");
 
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
 
     let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())?

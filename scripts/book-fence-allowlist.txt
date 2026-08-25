@@ -6,7 +6,8 @@ book/src/cluster/chained-decoding.md:14 — deliberate; see page context
 book/src/cluster/chained-decoding.md:45 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
 book/src/cluster/chained-decoding.md:79 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
-book/src/cluster/session-builder.md:33 — deliberate; see page context
+book/src/cluster/session-builder.md:30 — poll-driven connect recipe; Aeron/rusteron, not compilable in the ergo-sbe book harness
+book/src/cluster/session-builder.md:52 — deliberate; see page context
 book/src/introduction.md:75 — deliberate; see page context
 book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:15 — deliberate; see page context

@@ -67,7 +67,6 @@ if [ "${CLUSTER_SEMVER_CHECKS:-0}" = "1" ]; then
     echo "  checking ergo-aeron-cluster against $baseline..."
     if cargo semver-checks check-release \
         -p ergo-aeron-cluster \
-        --exclude-features test-harness \
         --baseline-version "$baseline" \
         2>&1; then
         echo "  PASS: ergo-aeron-cluster has no semver violations against $baseline"

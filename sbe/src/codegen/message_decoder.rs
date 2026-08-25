@@ -228,6 +228,7 @@ pub(crate) fn generate_message_decoder(
             const _ENCODED_LEN: () = assert!(Self::ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             /// Slice after one full header-inclusive message of this type
             /// (e.g. SessionMessageHeader then application payload).
+            #[must_use = "the slice after this message is unused; ignoring it skips payload framing"]
             #[inline]
             pub fn after_this_message(frame: &[u8]) -> Option<&[u8]> {
                 if frame.len() < Self::ENCODED_LENGTH {
@@ -282,6 +283,7 @@ pub(crate) fn generate_message_decoder(
     impl_body.extend(quote::quote! {
         /// Minimum body bytes needed to safely read every fixed field present
         /// at `acting_version` (version-aware; not always full `BLOCK_LENGTH`).
+        #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
         #[inline]
         pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
             #min_extent_arms
@@ -1148,8 +1150,14 @@ pub(crate) fn generate_message_decoder(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dn_ident(bytes);
-                let count = header.#cf_ident() as usize;
-                let block_len = header.#bf_ident() as usize;
+                let count = sbe_rt::checked_group_count(
+                    "numInGroup",
+                    header.#cf_ident() as u64,
+                )?;
+                let block_len = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#bf_ident() as u64,
+                )?;
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
@@ -1520,7 +1528,13 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = dim.#cf_ident() as usize;
+                    let count = match sbe_rt::checked_group_count(
+                        "numInGroup",
+                        dim.#cf_ident() as u64,
+                    ) {
+                        Ok(count) => count,
+                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+                    };
                     let mut entry_offset = offset + #ds_lit;
                     for _ in 0..count {
                         match #entry_dec_ident::skip(buf, entry_offset, #ebl_lit, 0) {
@@ -1542,7 +1556,13 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = dim.#cf_ident() as usize;
+                    let count = match sbe_rt::checked_group_count(
+                        "numInGroup",
+                        dim.#cf_ident() as u64,
+                    ) {
+                        Ok(count) => count,
+                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+                    };
                     let entries_end = offset + #ds_lit + count * #ebl_lit;
                     if entries_end > buf.len() {
                         return Err(sbe_rt::VerifyError::MessageTooShort {

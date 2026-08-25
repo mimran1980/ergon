@@ -340,3 +340,109 @@ fn config_and_item_context_debug_stay_short_and_useful() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+#[derive(Clone, Debug, Default)]
+struct DepVersions {
+    enum_: Option<u16>,
+    set: Option<u16>,
+    composite: Option<u16>,
+    message: Option<u16>,
+    field: Option<u16>,
+    group: Option<u16>,
+    data: Option<u16>,
+}
+
+const DEP_SCHEMA_XML: &str = r#"<?xml version="1.0"?>
+<messageSchema package="dep" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <enum name="OldEnum" encodingType="uint8" deprecated="3">
+      <validValue name="A">1</validValue>
+    </enum>
+    <set name="OldSet" encodingType="uint8" deprecated="4">
+      <choice name="X">0</choice>
+    </set>
+    <composite name="OldComp" deprecated="5">
+      <type name="val" primitiveType="uint32"/>
+    </composite>
+  </types>
+  <message name="M" id="1" deprecated="6">
+    <field name="legacy" id="1" type="uint8" deprecated="2"/>
+    <group name="rows" id="2" dimensionType="groupSizeEncoding" deprecated="7">
+      <field name="qty" id="3" type="uint32"/>
+    </group>
+    <data name="note" id="4" type="varDataEncoding" deprecated="8"/>
+  </message>
+</messageSchema>"#;
+
+fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> Option<u16> {
+    fields
+        .iter()
+        .find(|f| f.name == name)
+        .and_then(|f| f.deprecated_since)
+}
+
+/// T-101: hooks see the exact deprecation version for types, messages,
+/// fields, groups, and var-data.
+#[test]
+fn hooks_expose_exact_deprecation_versions() -> Result<(), Box<dyn std::error::Error>> {
+    let seen = Arc::new(Mutex::new(DepVersions::default()));
+    let sink = Arc::clone(&seen);
+    let config = GenerationConfig::new("depver").with_hook(move |ctx: &ItemContext| {
+        let mut s = sink.lock().expect("lock");
+        match ctx {
+            ItemContext::Enum {
+                name,
+                deprecated_since,
+                ..
+            } if name == "OldEnum" => s.enum_ = *deprecated_since,
+            ItemContext::Set {
+                name,
+                deprecated_since,
+                ..
+            } if name == "OldSet" => s.set = *deprecated_since,
+            ItemContext::Composite {
+                name,
+                deprecated_since,
+                ..
+            } if name == "OldComp" => s.composite = *deprecated_since,
+            ItemContext::MessageDecoder {
+                deprecated_since,
+                fields,
+                ..
+            } => {
+                s.message = *deprecated_since;
+                s.field = field_deprecated(fields, "legacy");
+                s.group = field_deprecated(fields, "rows");
+                s.data = field_deprecated(fields, "note");
+            }
+            _ => {}
+        }
+        drop(s);
+        vec![]
+    });
+    let schema = Schema::from_ir(parse(DEP_SCHEMA_XML)?);
+    let _ = Generator::new(config).generate(&schema)?;
+    let versions = seen.lock().expect("lock").clone();
+    assert_eq!(versions.enum_, Some(3), "enum version");
+    assert_eq!(versions.set, Some(4), "set version");
+    assert_eq!(versions.composite, Some(5), "composite version");
+    assert_eq!(versions.message, Some(6), "message version");
+    assert_eq!(versions.field, Some(2), "field version");
+    assert_eq!(versions.group, Some(7), "group version");
+    assert_eq!(versions.data, Some(8), "data version");
+    Ok(())
+}

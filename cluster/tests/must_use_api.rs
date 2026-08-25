@@ -41,6 +41,18 @@ fn must_use_async_connect_step() {
     t.compile_fail("tests/must_use/async_connect_step.rs");
 }
 
+#[test]
+fn must_use_static_credentials() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/must_use/static_credentials.rs");
+}
+
+#[test]
+fn must_use_default_idle() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/must_use/default_idle.rs");
+}
+
 /// `ClusterClaim::position` can't be constructed without a live Aeron
 /// connection, so there's no trybuild fixture — same rationale as
 /// `cluster_claim_has_must_use_attribute` below.

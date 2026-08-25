@@ -139,7 +139,7 @@ pub(crate) struct MessageStructure {
     pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) semantic_type: Option<String>,
     /// Root fixed-block length in bytes (schema `blockLength` when declared and
     /// larger than the tight field packing, else the computed field span).
@@ -160,7 +160,7 @@ pub(crate) struct MessageField {
     pub(crate) min_value: Option<u64>,
     pub(crate) max_value: Option<u64>,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) semantic_type: Option<String>,
     pub(crate) constant_value: Option<String>,
     /// Epoch for timestamp fields (e.g. `"unix"`); feeds `MetaAttribute::Epoch`.
@@ -222,6 +222,7 @@ pub(crate) struct MessageGroup {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
     pub(crate) dimension_type: String,
     pub(crate) fields: Vec<MessageField>,
@@ -270,6 +271,7 @@ pub(crate) struct MessageVarData {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
     pub(crate) type_name: String,
     pub(crate) max_length: Option<usize>,
@@ -434,6 +436,7 @@ pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements)
     let name = begin.name.clone();
     let id = begin.id.unwrap_or(0);
     let since_version = begin.encoding.since_version;
+    let deprecated = begin.encoding.deprecated;
     let description = begin.encoding.description.clone();
     let block_length = begin.encoding.offset.unwrap_or(0);
 
@@ -477,6 +480,7 @@ pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements)
         name,
         id,
         since_version,
+        deprecated,
         description,
         dimension_type,
         fields,
@@ -491,6 +495,7 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
     let name = begin.name.clone();
     let id = begin.id.unwrap_or(0);
     let since_version = begin.encoding.since_version;
+    let deprecated = begin.encoding.deprecated;
     let description = begin.encoding.description.clone();
 
     let mut type_name = "varDataEncoding".to_string();
@@ -520,6 +525,7 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
         name,
         id,
         since_version,
+        deprecated,
         description,
         type_name,
         max_length,

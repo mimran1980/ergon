@@ -230,8 +230,14 @@ pub(crate) fn generate_group_decoder(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, offset);
                 let header = #dim_name_ident(bytes);
-                let count = header.#count_field_ident() as usize;
-                let block_length = header.#bl_field_ident() as usize;
+                let count = sbe_rt::checked_group_count(
+                    "numInGroup",
+                    header.#count_field_ident() as u64,
+                )?;
+                let block_length = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#bl_field_ident() as u64,
+                )?;
                 let entries_start = offset + #dim_size_lit;
                 // SBE acting-version rule at the flyweight trust boundary: an
                 // entry whose wire block length cannot hold the required fixed
@@ -280,6 +286,7 @@ pub(crate) fn generate_group_decoder(
             /// `ENTRY_BLOCK_LENGTH`: a forward-compatible reader accepts a
             /// wire block length it does not recognise, but never one too
             /// small for the fields it will actually read.
+            #[must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"]
             #[inline]
             pub const fn min_readable_fixed_extent(acting_version: u16) -> usize {
                 #min_extent_arms
@@ -352,21 +359,27 @@ pub(crate) fn generate_group_decoder(
             pub(crate) unsafe fn wrap_trusted(
                 buf: &'a [u8], offset: usize, acting_version: u16,
                 parent_pos: usize, parent_block_length: usize,
-            ) -> Self {
+            ) -> Result<Self, sbe_rt::DecodeError> {
                 let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, offset) };
                 let header = #dim_name_ident(bytes);
-                let count = header.#count_field_ident() as usize;
-                let block_length = header.#bl_field_ident() as usize;
+                let count = sbe_rt::checked_group_count(
+                    "numInGroup",
+                    header.#count_field_ident() as u64,
+                )?;
+                let block_length = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#bl_field_ident() as u64,
+                )?;
                 let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
                 #dyn_extent_decl
-                Self {
+                Ok(Self {
                     buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,
                     total: count, acting_version, acting_block_length: block_length,
                     parent_pos, parent_block_length,
                     #poison_init
                     #dyn_extent_init
                     _context: core::marker::PhantomData,
-                }
+                })
             }
 
             /// Restart iteration from the group's proven start.
@@ -1341,8 +1354,14 @@ pub(crate) fn generate_group_decoder(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dim_name_ident(bytes);
-                let count = header.#count_field_ident() as usize;
-                let block_len = header.#bl_field_ident() as usize;
+                let count = sbe_rt::checked_group_count(
+                    "numInGroup",
+                    header.#count_field_ident() as u64,
+                )?;
+                let block_len = sbe_rt::checked_header_usize(
+                    "blockLength",
+                    header.#bl_field_ident() as u64,
+                )?;
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
@@ -1405,11 +1424,11 @@ pub(crate) fn generate_group_decoder(
                 if self.tail_end.get().is_some() {
                     let offset = self.offset + self.acting_block_length;
                     // SAFETY: tail_end proves the nested group dim is in-bounds.
-                    return Ok(unsafe {
+                    return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
                         )
-                    });
+                    };
                 }
             }
         } else {
@@ -1422,11 +1441,11 @@ pub(crate) fn generate_group_decoder(
                 let offset = self.#tail_ng_fn()?;
                 if self.tail_end.get().is_some() {
                     // SAFETY: tail_offset_* validated the nested dim header region.
-                    return Ok(unsafe {
+                    return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
                         )
-                    });
+                    };
                 }
                 #ng_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }

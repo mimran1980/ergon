@@ -167,6 +167,14 @@ fn dimension_composites_are_byte_exact_for_u8_u16_u32_and_both_endians()
             vec![1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 4, 3, 2, 1],
             vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 1, 2, 3, 4],
         ),
+        (
+            "u64",
+            "uint64",
+            8,
+            0,
+            vec![1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4, 3, 2, 1],
+            vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 1, 2, 3, 4],
+        ),
     ];
 
     for (width, primitive, block_offset, count_offset, little, big) in cases {
@@ -228,6 +236,148 @@ fn dimension_composites_are_byte_exact_for_u8_u16_u32_and_both_endians()
         }
     }
     Ok(())
+}
+
+#[test]
+fn padded_dimension_composite_larger_than_32_bytes_round_trips()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="dims" id="903" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16" offset="0"/>
+              <type name="numInGroup" primitiveType="uint16" offset="2"/>
+              <type name="pad" primitiveType="uint8" length="36" offset="4"/>
+            </composite>
+          </types>
+          <message name="Dims" id="1">
+            <group name="rows" id="2" dimensionType="groupSizeEncoding">
+              <field name="value" id="3" type="uint32"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let source = generate_xml(xml, "dims_padded")?;
+    assert!(
+        !source.contains("[0u8; 32]"),
+        "generator must not use a 32-byte panicking pad"
+    );
+    compile_and_run(
+        "dims_padded",
+        &source,
+        r"
+        let mut pad = [0u8; 36];
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&4u16.to_le_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&pad);
+        expected.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+        let frame_len = DimsEncoder::try_compute_encoded_length_with_header(1)?;
+        let mut storage = vec![0u8; frame_len];
+        let len = DimsEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&DimsFixedFields {})
+            .rows(1, |rows| {
+                rows.add(|row| {
+                    row.value(0x0102_0304);
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, frame_len);
+        assert_eq!(&storage[DimsEncoder::HEADER_LENGTH..len], &expected);
+        DimsDecoder::verify(&storage[..len])?;
+        ",
+    );
+    Ok(())
+}
+
+#[test]
+fn over_limit_u64_group_count_is_a_typed_range_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="dims" id="904" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint64"/>
+              <type name="numInGroup" primitiveType="uint64"/>
+            </composite>
+          </types>
+          <message name="Dims" id="1">
+            <group name="rows" id="2" dimensionType="groupSizeEncoding">
+              <field name="value" id="3" type="uint32"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let source = generate_xml(xml, "dims_over_limit")?;
+    compile_and_run(
+        "dims_over_limit",
+        &source,
+        r#"
+        let frame_len = DimsEncoder::try_compute_encoded_length_with_header(1)?;
+        let mut storage = vec![0u8; frame_len];
+        let len = DimsEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&DimsFixedFields {})
+            .rows(1, |rows| {
+                rows.add(|row| {
+                    row.value(1);
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        // Patch numInGroup (offset 8 in the 16-byte dimension header) to u32::MAX+1.
+        let dim = DimsEncoder::HEADER_LENGTH;
+        let too_big = (u32::MAX as u64) + 1;
+        storage[dim + 8..dim + 16].copy_from_slice(&too_big.to_le_bytes());
+        match DimsDecoder::verify(&storage[..len]) {
+            Err(sbe_rt::VerifyError::DecodeError(
+                sbe_rt::DecodeError::InvalidHeaderValue { field, value, maximum },
+            )) => {
+                assert_eq!(field, "numInGroup");
+                assert_eq!(value, too_big);
+                assert_eq!(maximum, u32::MAX as u64);
+            }
+            other => panic!("verify expected typed range error, got {other:?}"),
+        }
+        let msg = DimsDecoder::try_wrap(
+            &storage[..len],
+            0,
+            DimsDecoder::BLOCK_LENGTH,
+            0,
+        )?;
+        match msg.into_rows() {
+            Err(sbe_rt::DecodeError::InvalidHeaderValue { field, value, maximum }) => {
+                assert_eq!(field, "numInGroup");
+                assert_eq!(value, too_big);
+                assert_eq!(maximum, u32::MAX as u64);
+            }
+            Err(other) => panic!("into_rows expected typed range error, got {other:?}"),
+            Ok(_) => panic!("into_rows must reject an over-limit group count"),
+        }
+        "#,
+    );
+    Ok(())
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn thirty_two_bit_rejects_unrepresentable_u64_group_count() -> Result<(), Box<dyn std::error::Error>>
+{
+    // On 32-bit, u32::MAX+1 also fails usize conversion; the typed error above
+    // is the same InvalidHeaderValue path. Keep this cfg so 32-bit CI compiles
+    // a dedicated assertion rather than skipping the lane.
+    over_limit_u64_group_count_is_a_typed_range_error()
 }
 
 fn offset_schema(byte_order: &str, custom_header: bool) -> String {

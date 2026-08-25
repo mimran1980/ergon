@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
-#![cfg(feature = "test-harness")]
 
-use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
+use ergo_aeron_cluster::cluster_codec_types::{
+    SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
+};
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -9,7 +10,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
     let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
     eprintln!("AERON_DIR={}", cluster.aeron_dir().display());
 
@@ -30,11 +31,14 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
         Duration::from_secs(3),
     )?;
     let dp = a.add_publication(ipc, 999, Duration::from_secs(3))?;
-    assert!(dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0, "IPC diag");
+    assert!(
+        dp.offer_raw(b"t", rusteron_client::Handlers::NONE) > 0,
+        "IPC diag"
+    );
 
     // Connect to cluster via its ingress channel
-    let ing_cstr = ergo_aeron_cluster::test_support::channel_cstr(&cluster.ingress_channel)?;
-    let egr_cstr = ergo_aeron_cluster::test_support::channel_cstr(&cluster.egress_channel)?;
+    let ing_cstr = ergo_aeron_cluster_test_harness::channel_cstr(&cluster.ingress_channel)?;
+    let egr_cstr = ergo_aeron_cluster_test_harness::channel_cstr(&cluster.egress_channel)?;
 
     let egress = a.add_subscription(
         &egr_cstr,

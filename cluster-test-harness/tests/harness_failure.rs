@@ -1,7 +1,6 @@
-#![cfg(feature = "test-harness")]
 #![allow(missing_docs)]
 
-use ergo_aeron_cluster::test_support::jar;
+use ergo_aeron_cluster_test_harness::jar;
 
 #[test]
 fn test_find_jar_returns_error_for_invalid_prefix() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,7 +12,10 @@ fn test_find_jar_returns_error_for_invalid_prefix() -> Result<(), Box<dyn std::e
     let result = std::panic::catch_unwind(|| {
         jar::find_jar("nonexistent-jar-");
     });
-    assert!(result.is_err(), "find_jar should panic on unknown jar prefix");
+    assert!(
+        result.is_err(),
+        "find_jar should panic on unknown jar prefix"
+    );
 
     Ok(())
 }

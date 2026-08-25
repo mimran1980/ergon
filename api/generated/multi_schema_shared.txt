@@ -49,6 +49,12 @@
 # [must_use = "discarding this value is almost always a mistake"] Side::fn raw (self) -> u8
 # [must_use = "encoder must be consumed to write the message"] struct CommonMessageEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
 # [must_use = "raw fixed writer must be embedded in FixedFields"] struct CommonMessageRawFixedWriter< 'a > {  }
+# [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
+# [must_use = "the peeked header identity is unused; ignoring it skips dispatch"] MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
+# [must_use = "the peeked template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_template_id (data : & [u8]) -> Option < u16 >
+# [must_use = "the schema-matched template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
+# [must_use = "the slice after this message is unused; ignoring it skips payload framing"] CommonMessageDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] CommonMessageDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use] CommonMessageEncoder::fn fixed (mut self , fixed : & CommonMessageFixedFields ,) -> CommonMessageEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] CommonMessageEncoder::fn raw_fixed (self) -> CommonMessageRawFixedWriter < 'a >
 # [non_exhaustive] enum AnyMessage< 'a >
@@ -78,10 +84,8 @@ CommonMessageDecoder::const SIDE_ID: u16
 CommonMessageDecoder::const SIDE_NULL: Side
 CommonMessageDecoder::const SIDE_SINCE_VERSION: u16
 CommonMessageDecoder::const TEMPLATE_ID: u16
-CommonMessageDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 CommonMessageDecoder::const fn price_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 CommonMessageDecoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
-CommonMessageDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 CommonMessageDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 CommonMessageDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
 CommonMessageDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
@@ -130,9 +134,6 @@ Decimal::fn new (mantissa : i64 , exponent : i8) -> Self
 FrameCursor::const fn new (buf : & 'a [u8] , framing : FramingPolicy) -> Self
 GroupSizeEncoding::fn new (block_length : u16 , num_in_group : u16) -> Self
 MessageHeader::fn new (block_length : u16 , template_id : u16 , schema_id : u16 , version : u16 ,) -> Self
-MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
-MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
-MessageHeader::fn peek_template_id (data : & [u8]) -> Option < u16 >
 Side::const fn from_raw (val : u8) -> Self
 common_message_field_meta::const FIELDS: & [FieldInfo]
 common_message_field_meta::struct FieldInfo { name: & 'static str, id: u16, offset: usize, since_version: u16, field_type: & 'static str, presence: & 'static str, null_value: Option < & 'static str >, semantic_type: Option < & 'static str >, description: Option < & 'static str > }
@@ -153,7 +154,6 @@ enum Side::Buy = 0
 enum Side::NullVal = 255
 enum Side::Sell = 1
 fn fn read_bytes < const N : usize > (buf : & [u8] , offset : usize) -> [u8 ; N]
-fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes : & [u8 ; N])
 mod common_message_field_meta
 mod prelude
@@ -260,6 +260,9 @@ type CommonMessageUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CommonMes
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoderMetadata::fn as_bytes_with_header (& self) -> & [u8]
 # [must_use = "encoder must be consumed to write the message"] struct QuoteEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
 # [must_use = "raw fixed writer must be embedded in FixedFields"] struct QuoteRawFixedWriter< 'a > {  }
+# [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
+# [must_use = "the slice after this message is unused; ignoring it skips payload framing"] QuoteDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
+# [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] QuoteDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use] QuoteEncoder::fn fixed (mut self , fixed : & QuoteFixedFields ,) -> QuoteEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] QuoteEncoder::fn raw_fixed (self) -> QuoteRawFixedWriter < 'a >
 # [non_exhaustive] enum AnyMessage< 'a >
@@ -299,8 +302,6 @@ QuoteDecoder::const TEMPLATE_ID: u16
 QuoteDecoder::const fn ask_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteDecoder::const fn bid_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteDecoder::const fn bid_side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
-QuoteDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
-QuoteDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 QuoteDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 QuoteDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
 QuoteDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
@@ -371,7 +372,6 @@ enum FramingPolicy::Fixed(0: usize)
 enum FramingPolicy::LengthPrefixU16Le
 enum FramingPolicy::LengthPrefixU32Le
 fn fn read_bytes < const N : usize > (buf : & [u8] , offset : usize) -> [u8 ; N]
-fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes : & [u8 ; N])
 mod prelude
 mod quote_field_meta

@@ -1833,6 +1833,104 @@ fn group_with_wrong_dimension_type_structure_fails() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+fn dimension_schema(member: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="BadDim">
+      {member}
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="g" id="2" dimensionType="BadDim">
+      <field name="f" id="3" type="uint32"/>
+    </group>
+  </message>
+</messageSchema>"#
+    )
+}
+
+fn assert_dimension_invalid(xml: &str, field: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let err = parse(xml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains(field),
+        "expected field-qualified diagnostic containing {field:?}, got {msg}"
+    );
+    assert!(matches!(err, ParseError::Invalid { .. }));
+    Ok(())
+}
+
+#[test]
+fn group_dimension_rejects_signed_member() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(
+            r#"<type name="blockLength" primitiveType="int16"/>
+               <type name="numInGroup" primitiveType="uint16"/>"#,
+        ),
+        "blockLength",
+    )
+}
+
+#[test]
+fn group_dimension_rejects_optional_member() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(
+            r#"<type name="blockLength" primitiveType="uint16"/>
+               <type name="numInGroup" primitiveType="uint16" presence="optional"/>"#,
+        ),
+        "numInGroup",
+    )
+}
+
+#[test]
+fn group_dimension_rejects_array_member() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(
+            r#"<type name="blockLength" primitiveType="uint16" length="2"/>
+               <type name="numInGroup" primitiveType="uint16"/>"#,
+        ),
+        "blockLength",
+    )
+}
+
+#[test]
+fn group_dimension_rejects_overlapping_members() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(
+            r#"<type name="blockLength" primitiveType="uint32" offset="0"/>
+               <type name="numInGroup" primitiveType="uint32" offset="2"/>"#,
+        ),
+        "numInGroup",
+    )
+}
+
+#[test]
+fn group_dimension_rejects_out_of_bounds_member() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(
+            r#"<type name="blockLength" primitiveType="uint16" offset="0"/>
+               <type name="numInGroup" primitiveType="uint16" offset="18446744073709551615"/>"#,
+        ),
+        "numInGroup",
+    )
+}
+
+#[test]
+fn group_dimension_rejects_missing_member() -> Result<(), Box<dyn std::error::Error>> {
+    assert_dimension_invalid(
+        &dimension_schema(r#"<type name="blockLength" primitiveType="uint16"/>"#),
+        "numInGroup",
+    )
+}
+
 #[test]
 fn var_data_with_unknown_type_fails() -> Result<(), Box<dyn std::error::Error>> {
     let schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2524,7 +2622,7 @@ fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(old_tokens.len(), 1);
-    assert!(old_tokens[0].encoding.deprecated);
+    assert_eq!(old_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2551,7 +2649,7 @@ fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
     assert!(msg_token.is_some());
-    assert!(msg_token.unwrap().encoding.deprecated);
+    assert_eq!(msg_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2579,7 +2677,7 @@ fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(f_tokens.len(), 1);
-    assert!(f_tokens[0].encoding.deprecated);
+    assert_eq!(f_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2612,7 +2710,7 @@ fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
     assert!(g_token.is_some());
-    assert!(g_token.unwrap().encoding.deprecated);
+    assert_eq!(g_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2643,7 +2741,7 @@ fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
     assert!(d_token.is_some());
-    assert!(d_token.unwrap().encoding.deprecated);
+    assert_eq!(d_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2673,7 +2771,7 @@ fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
     assert!(c_token.is_some());
-    assert!(c_token.unwrap().encoding.deprecated);
+    assert_eq!(c_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2703,7 +2801,7 @@ fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
     assert!(e_token.is_some());
-    assert!(e_token.unwrap().encoding.deprecated);
+    assert_eq!(e_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2733,8 +2831,124 @@ fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
     assert!(s_token.is_some());
-    assert!(s_token.unwrap().encoding.deprecated);
+    assert_eq!(s_token.unwrap().encoding.deprecated, Some(1));
 
+    Ok(())
+}
+
+#[test]
+fn deprecated_version_zero_is_preserved() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OldType" primitiveType="uint32" deprecated="0"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldType"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let field = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "f" && t.signal == Signal::BeginField)
+        .ok_or("field f")?;
+    assert_eq!(field.encoding.deprecated, Some(0));
+    Ok(())
+}
+
+#[test]
+fn deprecated_ordinary_version_is_preserved() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OldType" primitiveType="uint32" deprecated="7"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldType"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let field = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "f" && t.signal == Signal::BeginField)
+        .ok_or("field f")?;
+    assert_eq!(field.encoding.deprecated, Some(7));
+    Ok(())
+}
+
+#[test]
+fn field_inherits_type_deprecation_version() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OldType" primitiveType="uint32" deprecated="4"/>
+  </types>
+  <message name="M" id="1">
+    <field name="f" id="1" type="OldType"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let field = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "f" && t.signal == Signal::BeginField)
+        .ok_or("field f")?;
+    assert_eq!(field.encoding.deprecated, Some(4));
+    Ok(())
+}
+
+#[test]
+fn field_and_type_deprecation_keep_the_earliest_version() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="OldType" primitiveType="uint32" deprecated="5"/>
+  </types>
+  <message name="M" id="1">
+    <field name="earlier_on_field" id="1" type="OldType" deprecated="2"/>
+    <field name="earlier_on_type" id="2" type="OldType" deprecated="9"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(xml)?;
+    let earlier_on_field = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "earlier_on_field" && t.signal == Signal::BeginField)
+        .ok_or("earlier_on_field")?;
+    let earlier_on_type = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "earlier_on_type" && t.signal == Signal::BeginField)
+        .ok_or("earlier_on_type")?;
+    assert_eq!(earlier_on_field.encoding.deprecated, Some(2));
+    assert_eq!(earlier_on_type.encoding.deprecated, Some(5));
     Ok(())
 }
 
@@ -3607,6 +3821,27 @@ fn deprecated_negative_is_error() -> Result<(), Box<dyn std::error::Error>> {
           <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
         </sbe:messageSchema>"#;
     assert!(parse(xml).is_err());
+    Ok(())
+}
+
+#[test]
+fn deprecated_overflow_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="t" id="1" version="0" byteOrder="littleEndian">
+          <types><composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+          </composite>
+          <type name="Old" primitiveType="uint32" deprecated="65536"/>
+          </types>
+          <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
+        </sbe:messageSchema>"#;
+    let err = parse(xml).expect_err("deprecated overflow");
+    let s = format!("{err}");
+    assert!(s.contains("deprecated") || s.contains("Invalid"), "{s}");
     Ok(())
 }
 
