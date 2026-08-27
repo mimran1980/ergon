@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.1.22] — 2026-08-27
+
+### Added
+- Generated observers named by T-1 (`after_this_message`, message/group
+  `min_readable_fixed_extent`, `MessageHeader` peeks, `schema_id_from_header`,
+  domain `to_wire_entry`) carry specific `#[must_use]` diagnostics.
+- `StaticCredentials::new` accepts `impl Into<Vec<u8>>` (moved `Vec`, slice,
+  array, embedded NUL, invalid UTF-8) with byte-identical connect and challenge
+  credentials. `from_utf8` remains the text convenience.
+- Poll-driven connect recipe in rustdoc, `cluster/README.md`, and the session
+  builder book chapter: `SessionBuilder` → `connect_async` → `default_idle` →
+  `poll_connect_until_done` → `finish`. `AsyncClusterConnect` is a poll-driven
+  Aeron state machine, not a Rust `Future`.
+- Group-dimension composites accept unsigned `u8`/`u16`/`u32`/`u64` members
+  (both endians, reordered offsets, padded composites over 32 bytes). Parser
+  rejects signed/optional/array/missing/overlapping/out-of-bounds members.
+  Over-limit counts and non-representable 32-bit `u64` wire values are typed
+  range errors.
+- Unpublished workspace crate `ergo-aeron-cluster-test-harness` owns the Java
+  ClusterLauncher, harness tests, and examples. Release automation unpacks
+  `ergo-aeron-cluster` with every advertised feature and fails closed.
+
+### Changed
+- **Breaking:** `ergo-aeron-cluster` no longer advertises a `test-harness`
+  feature or `test_support` module. Depend on `ergo-aeron-cluster-test-harness`
+  in this repository.
+- `AnyMessage::decode_frame` rejects every `frame_len` in `0..HEADER_LENGTH`
+  before reading header fields, even when the backing slice contains a later
+  valid header.
+
 ## [0.1.21] — 2026-08-24
 
 ### Added

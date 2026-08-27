@@ -6,17 +6,20 @@
 //! reconnect to the new leader.
 //!
 //! ```bash
-//! cargo run --example failover_demo --features test-harness
+//! cargo run -p ergo-aeron-cluster-test-harness --example failover_demo
 //! ```
 
-use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
+use ergo_aeron_cluster::cluster_codec_types::{
+    SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
+};
 use ergo_aeron_cluster::poller;
+use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Live 3-node failover (own-driver UDP) ===\n");
-    let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
+    let mut cluster = TestCluster::three_node();
     let node0_port = parse_port(&cluster.ingress_channel);
     println!("3-node cluster up. node 0 ingress port = {node0_port}");
 
@@ -48,21 +51,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
         let uri = cformat!("localhost:{port}");
         let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
-        let expected_len = SessionConnectRequestEncoder::compute_length_with_header(resp.len(), 0, 0);
+        let expected_len =
+            SessionConnectRequestEncoder::compute_length_with_header(resp.len(), 0, 0);
         let mut storage = [0u8; 512];
-        let len = SessionConnectRequestEncoder::wrap_and_apply_header(&mut storage[..expected_len], 0)
-            .fixed(&SessionConnectRequestFixedFields {
-                correlation_id: 1,
-                response_stream_id: 102,
-                version: Some(0),
-            })
-            .response_channel(resp.as_bytes())
-            .ok()?
-            .encoded_credentials(b"")
-            .ok()?
-            .client_info(b"")
-            .ok()?
-            .encoded_length_with_header();
+        let len =
+            SessionConnectRequestEncoder::wrap_and_apply_header(&mut storage[..expected_len], 0)
+                .fixed(&SessionConnectRequestFixedFields {
+                    correlation_id: 1,
+                    response_stream_id: 102,
+                    version: Some(0),
+                })
+                .response_channel(resp.as_bytes())
+                .ok()?
+                .encoded_credentials(b"")
+                .ok()?
+                .client_info(b"")
+                .ok()?
+                .encoded_length_with_header();
         debug_assert_eq!(len, expected_len);
         let bytes = &storage[..len];
         for _ in 0..50 {
@@ -151,13 +156,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // id order, so a first-entry parse would reconnect to the dead leader.
             match poller::parse_leader_endpoint(&eps, leader_member_id) {
                 Ok(Some(ep)) => {
-                    let _reconn = connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
-                        .ok_or("reconnect to new leader failed")?;
-                    println!("  Reconnected ingress to new leader (member {leader_member_id}): {ep}");
+                    let _reconn =
+                        connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
+                            .ok_or("reconnect to new leader failed")?;
+                    println!(
+                        "  Reconnected ingress to new leader (member {leader_member_id}): {ep}"
+                    );
                     println!("\n=== Result: failover handled — client survived leader death ===");
                 }
                 Ok(None) => {
-                    println!("\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ===");
+                    println!(
+                        "\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ==="
+                    );
                 }
                 Err(e) => {
                     println!("\n=== Result: NewLeaderEvent endpoint map was malformed: {e} ===");
@@ -176,5 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn parse_port(ch: &str) -> u16 {
-    ch.rsplit(':').next().and_then(|s| s.parse().ok()).unwrap_or(0)
+    ch.rsplit(':')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }

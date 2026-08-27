@@ -2,7 +2,7 @@
 //! `try_claim()` — the two Java-parity features.
 //!
 //! ```bash
-//! cargo run --example async_connect_demo --features test-harness
+//! cargo run -p ergo-aeron-cluster-test-harness --example async_connect_demo
 //! ```
 
 use ergo_aeron_cluster::{
@@ -16,7 +16,11 @@ struct L(usize);
 impl EgressListener for L {
     fn on_message(&mut self, _cs: i64, _ts: i64, b: &[u8]) {
         self.0 += 1;
-        println!("  Echo #{}: {:?}", self.0, std::str::from_utf8(b).unwrap_or("<bin>"));
+        println!(
+            "  Echo #{}: {:?}",
+            self.0,
+            std::str::from_utf8(b).unwrap_or("<bin>")
+        );
     }
     fn on_session_event(&mut self, _: i64, _: i64, _: i64, _: i32, c: EventCode, _: &str) {
         println!("  SessionEvent {c:?}");
@@ -37,7 +41,7 @@ impl EgressListener for L {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== async_connect + try_claim demo ===\n");
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
 
     let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())?

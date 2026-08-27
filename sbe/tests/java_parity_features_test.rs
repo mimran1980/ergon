@@ -596,10 +596,15 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
         .find("pub fn legacy(&self)")
         .ok_or_else(|| format!("legacy getter missing in:\n{out}"))?;
     let preceding = &out[..legacy];
-    let last_deprecated = preceding.rfind("#[deprecated]");
+    let last_deprecated = preceding.rfind("#[deprecated");
     assert!(
         last_deprecated.is_some(),
         "no #[deprecated] before legacy getter in:\n{out}"
+    );
+    let attr_window = &out[last_deprecated.unwrap()..legacy];
+    assert!(
+        attr_window.contains("#[deprecated"),
+        "generated warning must mark the field deprecated, got:\n{attr_window}"
     );
     // The deprecated attr must be immediately above the getter (no other fn between).
     let between = &out[last_deprecated.unwrap()..legacy];

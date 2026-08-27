@@ -1,11 +1,12 @@
 #![allow(missing_docs)]
-#![cfg(feature = "test-harness")]
 //! Probe: own-driver UDP with a SEPARATE egress port (Java pattern).
 //! Client egress on localhost:9100 (ephemeral-style, non-conflicting),
 //! ingress to cluster's 9002, responseChannel=9100 so the cluster
 //! sends SessionEvent back to the client's sub.
 
-use ergo_aeron_cluster::cluster_codec_types::{SessionConnectRequestEncoder, SessionConnectRequestFixedFields};
+use ergo_aeron_cluster::cluster_codec_types::{
+    SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
+};
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -13,7 +14,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
     let client_dir = std::env::temp_dir().join(format!("eph-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
     let dir_cstr = cformat!("{}", client_dir.display());
@@ -31,8 +32,8 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
     // Client egress on a SEPARATE high port (no conflict with cluster), ingress to cluster's port.
     let egress_port: u16 = 19099;
     // Already CString — do not cformat! again (would re-allocate).
-    let egress_uri = ergo_aeron_cluster::test_support::udp_endpoint_cstr(&format!("localhost:{egress_port}"))?;
-    let ingress_uri = ergo_aeron_cluster::test_support::channel_cstr(&cluster.ingress_channel)?;
+    let egress_uri = cformat!("aeron:udp?endpoint=localhost:{egress_port}");
+    let ingress_uri = cformat!("{}", cluster.ingress_channel);
 
     let egress = a.add_subscription(
         &egress_uri,
@@ -85,7 +86,10 @@ fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Erro
         std::thread::sleep(Duration::from_millis(100));
     }
     eprintln!("own-driver UDP received SessionEvent from cluster: {got_event}");
-    assert!(offered, "ingress offer never connected over cross-driver UDP");
+    assert!(
+        offered,
+        "ingress offer never connected over cross-driver UDP"
+    );
     assert!(got_event, "no SessionEvent received over cross-driver UDP");
 
     Ok(())

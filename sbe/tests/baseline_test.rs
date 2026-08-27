@@ -3067,6 +3067,125 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// **Optional** domain-typed fields under `DomainImpl::Manual` — the
+/// combination `optional_decimal_and_timestamp_domain_types_roundtrip`
+/// (generated impls, optional fields) and
+/// `domain_type_manual_impl_uses_callers_own_impl` (manual impls, required
+/// fields) each cover only half of.
+///
+/// `Manual` and `Generated` share one `Option` rule
+/// (`converter_impls.rs::is_optional_domain_field`, computed before any
+/// impl-mode branching): an optional **composite** has no null image, so
+/// `try_*` stays a plain `Result<Decimal>`; an optional **primitive**
+/// null-maps to `Result<Option<DateTime>>`, `None` included. The caller's
+/// impls scale the mantissa by 10 so a silently generated built-in impl
+/// would show up as a wire mismatch, not a passing round-trip.
+#[test]
+fn optional_domain_types_with_manual_impls_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/optional-domain-types.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "opt_manual_domain", |c| {
+        c.with_manual_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal64"),
+            "rust_decimal::Decimal",
+        )
+        .with_manual_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal128"),
+            "rust_decimal::Decimal",
+        )
+        .with_manual_domain_type(
+            ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+            "chrono::DateTime<chrono::Utc>",
+        )
+    });
+    compile_and_run_with_deps(
+        "opt_manual_domain",
+        &src,
+        r#"
+        use rust_decimal::Decimal;
+        use chrono::{DateTime, Utc};
+
+        macro_rules! manual_decimal {
+            ($wire:ty) => {
+                impl TryFromSbe<$wire> for Decimal {
+                    type Error = &'static str;
+                    fn try_from_sbe(wire: $wire) -> Result<Self, Self::Error> {
+                        Ok(Decimal::new(wire.mantissa() / 10, (-wire.exponent()) as u32))
+                    }
+                }
+                impl TryToSbe<$wire> for Decimal {
+                    type Error = &'static str;
+                    fn try_to_sbe(&self) -> Result<$wire, Self::Error> {
+                        Ok(<$wire>::new(self.mantissa() as i64 * 10, -(self.scale() as i8)))
+                    }
+                }
+            };
+        }
+        manual_decimal!(Decimal64);
+        manual_decimal!(Decimal128);
+
+        impl TryFromSbe<u64> for DateTime<Utc> {
+            type Error = &'static str;
+            fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> {
+                DateTime::from_timestamp(wire as i64, 0).ok_or("timestamp out of range")
+            }
+        }
+        impl TryToSbe<u64> for DateTime<Utc> {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<u64, Self::Error> {
+                Ok(self.timestamp() as u64)
+            }
+        }
+
+        let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
+        let len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&QuoteFixedFields {
+                price64: None,
+                size64: Decimal64::new(0, 0),
+                price128: None,
+                ts: None,
+            })
+            .try_price64(Decimal::new(12345, 2))?
+            .try_size64(Decimal::new(100, 0))?
+            .try_price128(Decimal::new(99999, 1))?
+            .try_ts(DateTime::from_timestamp(42, 0).ok_or("bad fixture timestamp")?)?
+            .encoded_length_with_header();
+
+        let dec = QuoteDecoder::try_decode(&buf[..len], 0)?;
+
+        // Optional composites: plain Result<Decimal>, no Option wrapper —
+        // annotated to fail compilation if the return type ever grows one.
+        let price64: Decimal = dec.try_price64()?;
+        assert_eq!(price64, Decimal::new(12345, 2));
+        assert_eq!(dec.try_size64()?, Decimal::new(100, 0));
+        assert_eq!(dec.try_price128()?, Decimal::new(99999, 1));
+
+        // The caller's impl really ran: it scales the wire mantissa by 10.
+        assert_eq!(dec.price64_value().mantissa(), 123_450);
+
+        // Optional primitive null-maps to Option, Some on the written path.
+        assert_eq!(dec.try_ts()?, Some(DateTime::from_timestamp(42, 0).ok_or("bad fixture timestamp")?));
+
+        // ... and None when the field was never written. Absence is expressed
+        // through FixedFields, not the domain setter (which takes a bare
+        // DateTime, never an Option).
+        let null_len = QuoteEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&QuoteFixedFields {
+                price64: None,
+                size64: Decimal64::new(0, 0),
+                price128: None,
+                ts: None,
+            })
+            .encoded_length_with_header();
+        assert_eq!(QuoteDecoder::try_decode(&buf[..null_len], 0)?.try_ts()?, None);
+        "#,
+        "chrono = \"0.4\"\nrust_decimal = \"1\"\n",
+    );
+    Ok(())
+}
+
 /// A composite member with `presence="optional"` AND a schema `nullValue`
 /// (e.g. a `PriceNull9`-style Decimal's `mantissa`) DOES have a genuine null
 /// image, unlike `optional_decimal_and_timestamp_domain_types_roundtrip`'s

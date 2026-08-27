@@ -1160,15 +1160,12 @@ mod tests {
             ConversionSelector::FieldPath("Order.price".to_string())
         );
 
-        #[allow(deprecated)]
         let config = GenerationConfig::new("m")
-            .with_error_from_impls("crate::AppError")
             .with_shared_module("shared")
             .with_keyword_append_token("x")
             .with_bool_domain_type(true)
             .with_deprecated_attrs(true);
 
-        assert_eq!(config.error_from_path.as_deref(), Some("crate::AppError"));
         assert_eq!(config.shared_module.as_deref(), Some("shared"));
         assert_eq!(config.keyword_append_token, "x");
         assert!(config.auto_bool_domain);

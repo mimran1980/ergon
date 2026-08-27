@@ -8,12 +8,13 @@ publish = false
 [dependencies]
 ergo-aeron-cluster = { path = "../../cluster" }
 serde = { version = "1", features = ["derive"] }
+ergo-aeron-cluster-test-harness = { path = "../../cluster-test-harness", optional = true }
 
 [features]
 default = []
 # Multi-node Java kill-leader HA harness (needs built Aeron jars).
 test-harness = [
-    "ergo-aeron-cluster/test-harness",
+    "dep:ergo-aeron-cluster-test-harness",
     "dep:rusteron-client",
     "dep:rusteron-media-driver",
     "dep:serial_test",

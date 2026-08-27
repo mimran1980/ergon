@@ -76,7 +76,7 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                     })
                     .bids(bids, |g| {
                         for i in 0..bids {
-                            g.add(|mut e| {
+                            g.add(|e| {
                                 let _ = e
                                     .price_wire(Decimal::new((50000 - i as i64) * 100, -2))
                                     .size_wire(Decimal::new((1 + i as i64) * 50, -2));
@@ -87,7 +87,7 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                     })?
                     .asks(asks, |g| {
                         for i in 0..asks {
-                            g.add(|mut e| {
+                            g.add(|e| {
                                 let _ = e
                                     .price_wire(Decimal::new((50100 + i as i64) * 100, -2))
                                     .size_wire(Decimal::new((1 + i as i64) * 25, -2));

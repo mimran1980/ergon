@@ -1316,8 +1316,8 @@ pub(crate) fn generate_message_encoder(
                         let written = group.written();
                         if written != count {
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                                declared: count as u32,
-                                actual: written as u32,
+                                declared: sbe_rt::group_diag_count(count as u64)?,
+                                actual: sbe_rt::group_diag_count(written as u64)?,
                             });
                         }
                         Ok(#next_stage {

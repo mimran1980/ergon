@@ -199,7 +199,7 @@ impl<P: Publication> ClaimPublisher<P> {
                                 })
                                 .bids(bids.len() as u16, |g| {
                                     for l in *bids {
-                                        g.add(|mut e| {
+                                        g.add(|e| {
                                             e.price_wire(Decimal::new(
                                                 l.price.mantissa,
                                                 l.price.exponent,
@@ -215,7 +215,7 @@ impl<P: Publication> ClaimPublisher<P> {
                                 })?;
                             let after = after.asks(asks.len() as u16, |g| {
                                 for l in *asks {
-                                    g.add(|mut e| {
+                                    g.add(|e| {
                                         e.price_wire(Decimal::new(
                                             l.price.mantissa,
                                             l.price.exponent,

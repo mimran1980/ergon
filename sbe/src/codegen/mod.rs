@@ -373,7 +373,7 @@ impl Generator {
             Ok(())
         };
 
-        let schema_context = format!("schema '{}'", schema.package);
+        let schema_context = format!("schema '{}'", &schema.package);
         check("schemaId", u64::from(schema.id), schema_context.clone())?;
         check("version", u64::from(schema.version), schema_context)?;
 
@@ -834,7 +834,33 @@ impl Generator {
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
         let name_with = |suffix: &str| format!("{name}{suffix}");
-        let fields = message_field_infos(&msg.fields, &[], None);
+        let mut fields = message_field_infos(&msg.fields, &[], None);
+        for g in &msg.groups {
+            fields.push(crate::FieldInfo {
+                name: to_snake_case(&g.name),
+                rust_type: "group".to_string(),
+                offset: None,
+                since_version: g.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated: g.deprecated,
+                description: g.description.clone(),
+            });
+        }
+        for vd in &msg.var_data {
+            fields.push(crate::FieldInfo {
+                name: to_snake_case(&vd.name),
+                rust_type: "data".to_string(),
+                offset: None,
+                since_version: vd.since_version,
+                semantic_type: None,
+                presence: "required",
+                null_value: None,
+                deprecated: vd.deprecated,
+                description: vd.description.clone(),
+            });
+        }
         let name = match kind {
             crate::ItemKind::MessageDecoder => name_with("Decoder"),
             crate::ItemKind::MessageEncoder => name_with("Encoder"),
@@ -943,7 +969,7 @@ impl Generator {
                     semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
                     null_value: enc.and_then(|e| e.null_value),
-                    deprecated: enc.is_some_and(|e| e.deprecated),
+                    deprecated: enc.map(|e| e.deprecated).unwrap_or(false),
                     description: enc.and_then(|e| e.description.clone()),
                 }
             })
@@ -1018,7 +1044,7 @@ impl Generator {
         writeln!(
             src,
             "/// Generated from SBE schema package `{}` id {} version {}.",
-            schema.package, schema.id, schema.version
+            &schema.package, schema.id, schema.version
         )
         .unwrap();
         // Lint allow list is intentionally narrow — do not re-add
@@ -1293,7 +1319,6 @@ impl Generator {
         // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
         if let Some(ref err_path) = self.config.error_from_path {
             let err_ty: syn::Type = syn::parse_str(err_path).expect("invalid error_from_path");
-            let span = proc_macro2::Span::call_site();
             let impls = quote::quote! {
                 /// Generated: encode errors convert directly to the crate error type.
                 impl From<sbe_rt::EncodeError> for #err_ty {
