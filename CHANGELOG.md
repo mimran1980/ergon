@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.22] — 2026-08-27
+
 ### Added
 - Generated observers named by T-1 (`after_this_message`, message/group
   `min_readable_fixed_extent`, `MessageHeader` peeks, `schema_id_from_header`,
