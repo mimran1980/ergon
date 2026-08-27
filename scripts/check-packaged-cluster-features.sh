@@ -102,7 +102,12 @@ tar -xf "$crate_tar" -C "$work"
 unpacked=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 if ! (
     cd "$unpacked"
-    cargo check --offline --all-features --all-targets
+    # NOT --offline. This runs immediately after `cargo publish -p ergo-sbe`,
+    # and the packaged cluster crate depends on that just-published version,
+    # which is not in the local registry cache. `--offline` made this gate
+    # structurally unable to pass at release time (0.1.22): the self-test
+    # fixtures have no external deps, so it stayed green there.
+    cargo check --all-features --all-targets
 ); then
     echo "FAIL: unpack-and-build of $package with all advertised features failed" >&2
     exit 1
