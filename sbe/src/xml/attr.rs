@@ -231,13 +231,18 @@ pub(crate) fn opt_usize_attr(
 }
 
 /// Parse the `deprecated` attribute as a non-negative schema version.
-/// Returns `Ok(true)` when the attribute holds a valid non-negative u16;
-/// `Ok(false)` when absent; and `Err` for non-numeric, negative, or
-/// overflowing values.
-pub(crate) fn parse_deprecated_attr(node: Node<'_, '_>) -> Result<bool, Fault> {
-    match opt_u16_attr(node, "deprecated", "deprecated")? {
-        Some(_version) => Ok(true),
-        None => Ok(false),
+/// Returns `Ok(Some(version))` when present, `Ok(None)` when absent, and
+/// `Err` for non-numeric, negative, or overflowing values.
+pub(crate) fn parse_deprecated_attr(node: Node<'_, '_>) -> Result<Option<u16>, Fault> {
+    opt_u16_attr(node, "deprecated", "deprecated")
+}
+
+/// Combine a field/item deprecation with an inherited type deprecation by
+/// taking the earliest applicable schema version.
+pub(crate) fn earliest_deprecated(a: Option<u16>, b: Option<u16>) -> Option<u16> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (x, y) => x.or(y),
     }
 }
 

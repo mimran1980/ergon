@@ -6,7 +6,7 @@ book/src/cluster/chained-decoding.md:14 — deliberate; see page context
 book/src/cluster/chained-decoding.md:45 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
 book/src/cluster/chained-decoding.md:79 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
-book/src/cluster/session-builder.md:33 — deliberate; see page context
+book/src/cluster/session-builder.md:52 — deliberate; see page context
 book/src/introduction.md:75 — deliberate; see page context
 book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:15 — deliberate; see page context
@@ -64,8 +64,8 @@ book/src/sbe/recipes/domain-dtos.md:27 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:22 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:46 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:72 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:83 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:130 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:154 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:209 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:76 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:87 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:134 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:158 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:213 — deliberate; see page context

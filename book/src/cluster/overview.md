@@ -24,9 +24,9 @@ crate implements none of those server-side components.
 
 ## Features and harness
 
-Default features use the Rust client library only. The `test-harness` feature
-adds repository-only Java Cluster launch support and requires Java 17 or newer
-plus locally built Aeron artifacts:
+The published crate has no extra features. Java Cluster launch support lives in
+the unpublished workspace crate `ergo-aeron-cluster-test-harness` and requires
+Java 17 or newer plus locally built Aeron artifacts:
 
 ```sh
 just build-aeron-jars

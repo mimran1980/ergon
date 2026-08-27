@@ -854,7 +854,7 @@ pub(crate) fn generate_domain_recursive(
                 semantic_type: None,
                 presence: "required",
                 null_value: None,
-                deprecated: false,
+                deprecated: g.deprecated,
                 description: g.description.clone(),
             });
         }
@@ -880,7 +880,7 @@ pub(crate) fn generate_domain_recursive(
                 semantic_type: None,
                 presence: "required",
                 null_value: None,
-                deprecated: false,
+                deprecated: vd.deprecated,
                 description: vd.description.clone(),
             });
         }
@@ -1031,6 +1031,7 @@ pub(crate) fn generate_domain_recursive(
             ts.extend(quote::quote! {
                 impl #domain_ident {
                     /// Convert to the wire entry struct for bulk encoding.
+                    #[must_use = "the converted wire entry is unused; ignoring it skips encoding"]
                     #[inline]
                     pub fn to_wire_entry(&self) -> #wire_entry_ident {
                         #wire_entry_ident {

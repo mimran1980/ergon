@@ -73,4 +73,4 @@ jobs:
           tool: cargo-fuzz
 
       - name: Fuzz checked-in corpus and new inputs for ten minutes
-        run: cd sbe/fuzz && cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600 -timeout=10
+        run: cd sbe/fuzz && cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=600 -timeout=10

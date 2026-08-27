@@ -4,11 +4,9 @@
 //! cluster and verifies the reply arrives on `on_admin_response`.
 //!
 //! ```sh
-//! cargo test -p ergo-aeron-cluster --features test-harness \
+//! cargo test -p ergo-aeron-cluster-test-harness \
 //!   --test admin_snapshot -- --test-threads=1
 //! ```
-
-#![cfg(feature = "test-harness")]
 
 use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
 use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
@@ -48,7 +46,7 @@ impl EgressListener for Rec {
 #[test]
 #[serial]
 fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
     let builder = SessionBuilder::default()

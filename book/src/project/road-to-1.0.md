@@ -62,19 +62,45 @@ Cluster may remain `0.x` after sbe 1.0.
   attaches them to a GitHub release. A number without a matching run-id /
   HEAD commit is not evidence.
 
-### Status (2026-08-16)
+### Status (2026-08-25)
+
+Ancestry of a claimed release is `git merge-base --is-ancestor <tag> main`
+(not `git describe --tags`). Audited 2026-08-25:
+
+```sh
+git merge-base --is-ancestor v0.1.15 main   # true
+git merge-base --is-ancestor v0.1.21 main   # false
+```
+
+`v0.1.15` is the latest tag that is an ancestor of `main`. GitHub Releases
+`v0.1.19`, `v0.1.20`, and `v0.1.21` publish `bench-sbe-lto.tar.gz`,
+`bench-sbe-no-lto.tar.gz`, `bench-cluster-lto.tar.gz`, and
+`bench-cluster-no-lto.tar.gz`, but those tags are not ancestors of `main`.
 
 | Criterion | Status |
 |-----------|--------|
 | 1. API-freeze audit | Manifest exists; crate-level cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
-| 2. Parity gate at ≤1.00 | Gate is a literal `1.00` for SBE **and** cluster, with `--run-id` provenance. Three consecutive released minors with downloadable assets are **not** sealed. |
+| 2. Parity gate at ≤1.00 | **Open.** Gate is a literal `1.00` for SBE **and** cluster. Three consecutive GitHub Release minors have downloadable bench archives, but those tags are not ancestors of `main`, so the chain is not sealed on the 1.0 branch. |
 | 3. Wire compatibility | Dual-encode parity tests and FIX SBE conformance are green. |
 | 4. Trust boundary | Fuzz + Miri fixtures exist; treat any open P0 as blocking. |
 | 5. Docs | Book + migration pages published. |
-| 6. External signal | **Open.** The in-repo FIX SBE suite is internal wire evidence, not an external user or latency case study. |
+| 6. External signal | **Open.** Matches [external-pilot.md](external-pilot.md): the in-repo FIX SBE suite is internal wire evidence, not an external user or latency case study. |
 | Cluster 1.0 criteria | Separate clock; compatibility page + `just bench-cluster` exist. |
 
-**Release ancestry.** Tag `v0.1.17` exists on GitHub with assets, but it is
-**not** an ancestor of `main` (`git describe --tags` on `main` still reports
-a `v0.1.15-*` describe). Do not treat `v0.1.17` as the tip of published
-history until that tag is merged or a replacement tag is cut from `main`.
+## 1.0 API migrations (still 1.0-only)
+
+These remain scheduled for 1.0 and are **not** shipped on 0.x. `cargo
+semver-checks` against the 0.1.21 baseline must stay green.
+
+- `Schema` identity as one private `Ir` (no duplicate public
+  `package`/`id`/`version` beside `ir`). 0.x keeps the public fields.
+- XML `deprecated` as `Option<u16>` through `Encoding`, `FieldInfo`, and
+  `ItemContext`. 0.x keeps `deprecated: bool` on those public types.
+- Removal of `GenerationConfig::with_error_from_impls`. 0.x keeps the
+  deprecated helper; prefer a typed `From<generated::sbe_rt::{EncodeError,
+  DecodeError}>` so `needed`/`available` survive `?`.
+
+Shipped on this 0.x line:
+
+- `ergo-aeron-cluster` has no `test-harness` feature. Repository Java
+  launch support is `ergo-aeron-cluster-test-harness`.

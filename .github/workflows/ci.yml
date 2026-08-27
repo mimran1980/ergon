@@ -54,7 +54,7 @@ jobs:
           components: rustfmt, clippy
 
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- -D warnings
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
       - run: cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
@@ -111,9 +111,9 @@ jobs:
 
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
       - run: ./scripts/regenerate-golden.sh --check
-      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster -- --test-threads=2
+      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster --lib
-      - run: cargo test --doc
+      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster-test-harness
 
   # Fail-fast gate: downstream jobs need this, so if policy, lint, or test
   # fails the gate is skipped and everything else is cancelled.
@@ -185,8 +185,11 @@ jobs:
       - name: Build Aeron jars
         run: cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar :aeron-samples:jar
 
+      - name: Harness clippy
+        run: cargo clippy -p ergo-aeron-cluster-test-harness --all-targets -- -D warnings
+
       - name: Cluster integration tests
-        run: cargo test -p ergo-aeron-cluster --features test-harness -- --test-threads=1
+        run: cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 
       - name: Cluster HA sample
         run: |
@@ -264,7 +267,7 @@ jobs:
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y libbsd-dev
 
-      - run: cargo build --release --workspace --exclude ergo-aeron-cluster
+      - run: cargo build --release --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
       - run: cargo build --release -p ergo-aeron-cluster
 
   # Thin compile check — full bench runs locally with `just bench`.

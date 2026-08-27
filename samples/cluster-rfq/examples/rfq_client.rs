@@ -15,6 +15,7 @@ use cluster_rfq::rfq_codec::{
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionMessageHeaderEncoder,
 };
+use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
 use std::time::Duration;
 
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = TestCluster::single_node();
     let dir = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new()?;
     ctx.set_dir(&dir)?;

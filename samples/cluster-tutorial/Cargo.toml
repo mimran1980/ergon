@@ -7,7 +7,8 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-ergo-aeron-cluster = { path = "../../cluster", features = ["test-harness"] }
+ergo-aeron-cluster = { path = "../../cluster" }
+ergo-aeron-cluster-test-harness = { path = "../../cluster-test-harness" }
 rusteron-client = "0.2"
 rusteron-archive = "0.2"
 rusteron-media-driver = "0.2"

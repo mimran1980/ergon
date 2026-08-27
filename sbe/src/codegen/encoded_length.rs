@@ -244,7 +244,11 @@ fn generate_staged(
                         pub const fn #ng_snake(
                             mut self, count: #ng_count_ty,
                         ) -> Result<#next_name, sbe_rt::EncodeError> {
-                            let pm = self.state.enter_group(count as usize, #ng_ds as usize, #ng_bl as usize);
+                            let count = match sbe_rt::count_to_usize(count as u64) {
+                                Ok(c) => c,
+                                Err(e) => return Err(e),
+                            };
+                            let pm = self.state.enter_group(count, #ng_ds as usize, #ng_bl as usize);
                             self.state.leave_group(pm);
                             match self.state.check() {
                                 Ok(()) => Ok(#next_name { state: self.state }),
@@ -278,8 +282,15 @@ fn generate_staged(
                         pub const fn #ng_snake(
                             mut self, count: #ng_count_ty,
                         ) -> #nested_pending {
+                            let count = match sbe_rt::count_to_usize(count as u64) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    self.state.fail(e);
+                                    0
+                                }
+                            };
                             let pm = self.state.enter_group(
-                                count as usize, #ng_ds as usize, #ng_bl as usize,
+                                count, #ng_ds as usize, #ng_bl as usize,
                             );
                             #nested_pending {
                                 state: self.state,
@@ -447,13 +458,27 @@ fn generate_staged(
                         self, count: #count_ty,
                     ) -> #pending_ident {
                         let mut state = self.state;
+                        let count_usize = match sbe_rt::count_to_usize(count as u64) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                state.fail(e);
+                                0
+                            }
+                        };
+                        let declared_count = match sbe_rt::group_diag_count(count as u64) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                state.fail(e);
+                                0
+                            }
+                        };
                         let pm = state.enter_group(
-                            count as usize, #ds as usize, #g_bl as usize,
+                            count_usize, #ds as usize, #g_bl as usize,
                         );
                         #pending_ident {
                             state,
                             parent_multiplier: pm,
-                            declared_count: count as u32,
+                            declared_count,
                         }
                     }
 
@@ -475,17 +500,20 @@ fn generate_staged(
                     where
                         F: FnOnce(&mut #wrapper_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
                     {
+                        let count_usize = sbe_rt::count_to_usize(count as u64)?;
+                        let declared = sbe_rt::group_diag_count(count as u64)?;
                         let pm = self.state.enter_group(
-                            count as usize, #ds as usize, #g_bl as usize,
+                            count_usize, #ds as usize, #g_bl as usize,
                         );
                         self.state.leave_group(pm);
                         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
                         let mut wrapper = #wrapper_ident { b: &mut builder };
                         f(&mut wrapper)?;
-                        if builder.written != count as usize {
+                        let actual = sbe_rt::group_diag_count(builder.written as u64)?;
+                        if actual != declared {
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                                declared: count as u32,
-                                actual: builder.written as u32,
+                                declared,
+                                actual,
                             });
                         }
                         self.state = builder.state;
@@ -504,7 +532,7 @@ fn generate_staged(
                     where
                         F: FnOnce(&mut #wrapper_ident<'_>) -> Result<(), sbe_rt::EncodeError>,
                     {
-                        let max_count = #count_ty::MAX as usize;
+                        let max_count = sbe_rt::count_to_usize(#count_ty::MAX as u64)?;
                         let pm = self.state.multiplier();
                         self.state.add_scaled(#ds as usize, pm);
                         let mut builder = RaggedEntryBuilder::new(self.state, pm, #g_bl as usize);
@@ -512,8 +540,8 @@ fn generate_staged(
                         f(&mut wrapper)?;
                         if builder.written > max_count {
                             return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                                maximum: #count_ty::MAX as u32,
-                                actual: builder.written as u32,
+                                maximum: sbe_rt::group_diag_count(#count_ty::MAX as u64)?,
+                                actual: sbe_rt::group_diag_count(builder.written as u64)?,
                             });
                         }
                         self.state = builder.state;
@@ -532,17 +560,21 @@ fn generate_staged(
                     pub const fn #g_snake(
                         self, count: #count_ty,
                     ) -> Result<#next_name, sbe_rt::EncodeError> {
-                        let entries_len = match (#g_bl as usize).checked_mul(count as usize) {
-                            Some(v) => v,
-                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        let count = match sbe_rt::count_to_usize(count as u64) {
+                            Ok(c) => c,
+                            Err(e) => return Err(e),
                         };
-                        let len = match self.state.len.checked_add(#ds as usize) {
-                            Some(v) => v,
-                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        let entries_len = match sbe_rt::checked_len_mul(#g_bl as usize, count) {
+                            Ok(v) => v,
+                            Err(e) => return Err(e),
                         };
-                        let len = match len.checked_add(entries_len) {
-                            Some(v) => v,
-                            None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+                        let len = match sbe_rt::checked_len_add(self.state.len, #ds as usize) {
+                            Ok(v) => v,
+                            Err(e) => return Err(e),
+                        };
+                        let len = match sbe_rt::checked_len_add(len, entries_len) {
+                            Ok(v) => v,
+                            Err(e) => return Err(e),
                         };
                         Ok(#next_name { state: EncodedLengthAccumulator { len, multiplier: 1, error: None } })
                     }
@@ -699,17 +731,21 @@ fn generate_direct(
         checked_param_names.push(param_ident.clone());
 
         checked_body.push(quote::quote! {
-            let entries_len = match (#g_bl as usize).checked_mul(#param_ident as usize) {
-                Some(v) => v,
-                None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+            let count = match sbe_rt::count_to_usize(#param_ident as u64) {
+                Ok(c) => c,
+                Err(e) => return Err(e),
             };
-            len = match len.checked_add(#ds as usize) {
-                Some(v) => v,
-                None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+            let entries_len = match sbe_rt::checked_len_mul(#g_bl as usize, count) {
+                Ok(v) => v,
+                Err(e) => return Err(e),
             };
-            len = match len.checked_add(entries_len) {
-                Some(v) => v,
-                None => return Err(sbe_rt::EncodeError::EncodedLengthOverflow),
+            len = match sbe_rt::checked_len_add(len, #ds as usize) {
+                Ok(v) => v,
+                Err(e) => return Err(e),
+            };
+            len = match sbe_rt::checked_len_add(len, entries_len) {
+                Ok(v) => v,
+                Err(e) => return Err(e),
             };
         });
     }

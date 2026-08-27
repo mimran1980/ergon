@@ -30,7 +30,7 @@ pub(crate) fn parse_message(
     let id = u16_attr(node, "id", "message @id")?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
     let block_length = opt_u16_attr(node, "blockLength", "blockLength")?;
-    let message_deprecated = parse_deprecated_attr(node)?;
+    let message_deprecated = parse_deprecated_attr(node)?.is_some();
 
     validate_message_member_order(node)?;
 
@@ -179,8 +179,8 @@ pub(crate) fn parse_message_child(
             let time_unit = explicit_time_unit
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
-            let deprecated =
-                parse_deprecated_attr(node)? || type_encoding.is_some_and(|e| e.deprecated);
+            let deprecated = parse_deprecated_attr(node)?.is_some()
+                || type_encoding.is_some_and(|e| e.deprecated);
             // Gap 1: presence inheritance from referenced types
             let explicit_presence = node.attribute("presence");
             let presence = if let Some(p) = explicit_presence {
@@ -294,7 +294,7 @@ pub(crate) fn parse_message_child(
             let group_name = string_attr(node, "name", "group @name")?;
             let id = u16_attr(node, "id", "group @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let group_deprecated = parse_deprecated_attr(node)?;
+            let group_deprecated = parse_deprecated_attr(node)?.is_some();
             let dimension_type = node
                 .attribute("dimensionType")
                 .unwrap_or("groupSizeEncoding");
@@ -327,20 +327,7 @@ pub(crate) fn parse_message_child(
             });
 
             if let Some(dim_tokens) = registry.registry.get(dimension_type) {
-                // Validate the dimension composite has blockLength and numInGroup fields.
-                let has_block_length = dim_tokens
-                    .iter()
-                    .any(|t| t.signal == Signal::BeginField && t.name == "blockLength");
-                let has_num_in_group = dim_tokens
-                    .iter()
-                    .any(|t| t.signal == Signal::BeginField && t.name == "numInGroup");
-                if !has_block_length || !has_num_in_group {
-                    return Err(Fault::invalid(
-                        node,
-                        "group dimensionType",
-                        format!("{dimension_type}: expected 'blockLength' and 'numInGroup' fields"),
-                    ));
-                }
+                validate_dimension_composite(node, dimension_type, dim_tokens)?;
                 tokens.extend(dim_tokens.clone());
             } else {
                 return Err(Fault::invalid(node, "group dimensionType", dimension_type));
@@ -361,7 +348,7 @@ pub(crate) fn parse_message_child(
             let data_name = string_attr(node, "name", "data @name")?;
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            let data_deprecated = parse_deprecated_attr(node)?;
+            let data_deprecated = parse_deprecated_attr(node)?.is_some();
             let type_name = node.attribute("type").unwrap_or("varDataEncoding");
             let data_presence = node
                 .attribute("presence")
@@ -491,6 +478,96 @@ pub(crate) fn parse_message_child(
                 format!("unexpected element <{other}> (expected <field>, <group>, or <data>)"),
             ));
         }
+    }
+    Ok(())
+}
+
+fn dimension_member_size(token: &Token) -> usize {
+    let width = token
+        .encoding
+        .primitive_type
+        .map(PrimitiveType::size)
+        .unwrap_or(0);
+    width.saturating_mul(token.encoding.length.unwrap_or(1))
+}
+
+fn validate_dimension_member(
+    node: Node<'_, '_>,
+    dimension_type: &str,
+    field: &str,
+    token: &Token,
+) -> Result<(), Fault> {
+    let qualified = format!("{dimension_type}.{field}");
+    let length = token.encoding.length.unwrap_or(1);
+    let unsigned = matches!(
+        token.encoding.primitive_type,
+        Some(
+            PrimitiveType::UInt8
+                | PrimitiveType::UInt16
+                | PrimitiveType::UInt32
+                | PrimitiveType::UInt64
+        )
+    );
+    if !unsigned || token.encoding.presence != Presence::Required || length != 1 {
+        return Err(Fault::invalid(
+            node,
+            format!("group dimensionType {qualified}"),
+            "must be a required scalar unsigned integer",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_dimension_composite(
+    node: Node<'_, '_>,
+    dimension_type: &str,
+    dim_tokens: &[Token],
+) -> Result<(), Fault> {
+    let fields: Vec<&Token> = dim_tokens
+        .iter()
+        .filter(|token| token.signal == Signal::BeginField)
+        .collect();
+    let block = fields
+        .iter()
+        .copied()
+        .find(|token| token.name == "blockLength");
+    let count = fields
+        .iter()
+        .copied()
+        .find(|token| token.name == "numInGroup");
+    let (Some(block), Some(count)) = (block, count) else {
+        return Err(Fault::invalid(
+            node,
+            "group dimensionType",
+            format!("{dimension_type}: expected 'blockLength' and 'numInGroup' fields"),
+        ));
+    };
+    validate_dimension_member(node, dimension_type, "blockLength", block)?;
+    validate_dimension_member(node, dimension_type, "numInGroup", count)?;
+
+    let mut current = 0usize;
+    let mut occupied: Vec<(&str, usize, usize)> = Vec::new();
+    for field in fields {
+        let size = dimension_member_size(field);
+        let offset = field.encoding.offset.unwrap_or(current);
+        let end = offset.checked_add(size).ok_or_else(|| {
+            Fault::invalid(
+                node,
+                format!("group dimensionType {dimension_type}.{}", field.name),
+                format!("offset {offset} is out of bounds"),
+            )
+        })?;
+        for (other, start, other_end) in &occupied {
+            if offset < *other_end && end > *start {
+                return Err(Fault::invalid(
+                    node,
+                    format!("group dimensionType {dimension_type}.{}", field.name),
+                    format!("overlaps {other} at [{start}, {other_end})"),
+                ));
+            }
+        }
+        occupied.push((field.name.as_str(), offset, end));
+        current = current.max(end);
     }
     Ok(())
 }

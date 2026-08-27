@@ -8,6 +8,7 @@ description = "RFQ protocol examples — moved from cluster/examples/"
 [[example]]
 name = "rfq_client"
 path = "examples/rfq_client.rs"
+required-features = ["test-harness"]
 
 [[example]]
 name = "rfq_roundtrip"
@@ -16,11 +17,17 @@ path = "examples/rfq_roundtrip.rs"
 [[example]]
 name = "auction_client"
 path = "examples/auction_client.rs"
+required-features = ["test-harness"]
 
 # Build-dep only for codecs: generated rfq_codec embeds sbe_rt.
 [dependencies]
-ergo-aeron-cluster = { path = "../../cluster", features = ["test-harness"] }
+ergo-aeron-cluster = { path = "../../cluster" }
+ergo-aeron-cluster-test-harness = { path = "../../cluster-test-harness", optional = true }
 rusteron-client = "0.2"
+
+[features]
+default = []
+test-harness = ["dep:ergo-aeron-cluster-test-harness"]
 
 [build-dependencies]
 ergo-sbe = { path = "../../sbe" }

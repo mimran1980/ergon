@@ -62,7 +62,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
                 sequence: 3,
             })
             .bids(1, |g| {
-                g.add(|mut e| {
+                g.add(|e| {
                     e.price_from(&d).unwrap();
                     let _ = e.size_wire(Decimal::new(1, 0));
                     Ok(())
@@ -97,7 +97,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
                 sequence: 3,
             })
             .bids(1, |g| {
-                g.add(|mut entry| {
+                g.add(|entry| {
                     entry
                         .price_wire(Decimal::new(m, e))
                         .size_wire(Decimal::new(1, 0));

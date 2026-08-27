@@ -74,7 +74,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                     sequence: 1,
                 })
                 .bids(1, |g| {
-                    g.add(|mut e| {
+                    g.add(|e| {
                         e.price_wire(Decimal::new(1, 0));
                         e.size_wire(Decimal::new(1, 0));
                         Ok(())
@@ -130,7 +130,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                         sequence: 1,
                     })
                     .bids(1, |g| {
-                        g.add(|mut e| {
+                        g.add(|e| {
                             e.price_wire(Decimal::new(1, 0));
                             e.size_wire(Decimal::new(1, 0));
                             Ok(())

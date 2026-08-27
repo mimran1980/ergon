@@ -1,13 +1,13 @@
-#![cfg(feature = "test-harness")]
 #![allow(missing_docs)]
 
-use ergo_aeron_cluster::TestCluster;
+use ergo_aeron_cluster_test_harness::TestCluster;
 use serial_test::serial;
 use std::time::Duration;
 
 #[test]
 #[serial]
-fn test_single_node_cluster_spawns_and_is_killed_on_drop() -> Result<(), Box<dyn std::error::Error>> {
+fn test_single_node_cluster_spawns_and_is_killed_on_drop() -> Result<(), Box<dyn std::error::Error>>
+{
     let cluster = TestCluster::single_node();
     std::thread::sleep(Duration::from_secs(2));
     assert!(!cluster.ingress_channel.is_empty());

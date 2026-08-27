@@ -50,7 +50,11 @@ let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
 
 // Encode
 enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(chrono::NaiveDateTime::from_timestamp_micros(1_720_000_000_000_000).unwrap())?;
+enc.try_updated_at(
+    chrono::DateTime::from_timestamp_micros(1_720_000_000_000_000)
+        .ok_or("micros out of range")?
+        .naive_utc(),
+)?;
 ```
 
 Conversion cost: 2.8 ns (nanos → DateTime), 5.5 ns (micros → NaiveDateTime).

@@ -340,3 +340,101 @@ fn config_and_item_context_debug_stay_short_and_useful() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+#[derive(Clone, Debug, Default)]
+struct DepFlags {
+    items: Vec<&'static str>,
+}
+
+const DEP_SCHEMA_XML: &str = r#"<?xml version="1.0"?>
+<messageSchema package="dep" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varDataEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <enum name="OldEnum" encodingType="uint8" deprecated="3">
+      <validValue name="A">1</validValue>
+    </enum>
+    <set name="OldSet" encodingType="uint8" deprecated="4">
+      <choice name="X">0</choice>
+    </set>
+    <composite name="OldComp" deprecated="5">
+      <type name="val" primitiveType="uint32"/>
+    </composite>
+  </types>
+  <message name="M" id="1" deprecated="6">
+    <field name="legacy" id="1" type="uint8" deprecated="2"/>
+    <group name="rows" id="2" dimensionType="groupSizeEncoding" deprecated="7">
+      <field name="qty" id="3" type="uint32"/>
+    </group>
+    <data name="note" id="4" type="varDataEncoding" deprecated="8"/>
+  </message>
+</messageSchema>"#;
+
+fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> bool {
+    fields
+        .iter()
+        .find(|f| f.name == name)
+        .is_some_and(|f| f.deprecated)
+}
+
+/// Hooks see schema-deprecated flags for types, messages, fields, groups,
+/// and var-data. Exact version numbers are a 1.0 FieldInfo/ItemContext change.
+#[test]
+fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
+    let seen = Arc::new(Mutex::new(DepFlags::default()));
+    let sink = Arc::clone(&seen);
+    let config = GenerationConfig::new("depver").with_hook(move |ctx: &ItemContext| {
+        let mut s = sink.lock().expect("lock");
+        match ctx {
+            ItemContext::Enum { name, .. } if name == "OldEnum" => s.items.push("enum"),
+            ItemContext::Set { name, .. } if name == "OldSet" => s.items.push("set"),
+            ItemContext::Composite { name, .. } if name == "OldComp" => s.items.push("composite"),
+            ItemContext::MessageDecoder { fields, .. } => {
+                s.items.push("message");
+                if field_deprecated(fields, "legacy") {
+                    s.items.push("field");
+                }
+                if field_deprecated(fields, "rows") {
+                    s.items.push("group");
+                }
+                if field_deprecated(fields, "note") {
+                    s.items.push("data");
+                }
+            }
+            _ => {}
+        }
+        drop(s);
+        vec![]
+    });
+    let schema = Schema::from_ir(parse(DEP_SCHEMA_XML)?);
+    let _ = Generator::new(config).generate(&schema)?;
+    let flags = seen.lock().expect("lock").clone();
+    for name in [
+        "enum",
+        "set",
+        "composite",
+        "message",
+        "field",
+        "group",
+        "data",
+    ] {
+        assert!(
+            flags.items.contains(&name),
+            "missing deprecated {name}: {:?}",
+            flags.items
+        );
+    }
+    Ok(())
+}

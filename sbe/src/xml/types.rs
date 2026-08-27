@@ -156,7 +156,7 @@ pub(crate) fn parse_type_element(
     let length = opt_usize_attr(node, "length", "length")?;
     let epoch = node.attribute("epoch").map(str::to_string);
     let time_unit = node.attribute("timeUnit").map(str::to_string);
-    let deprecated = parse_deprecated_attr(node)?;
+    let deprecated = parse_deprecated_attr(node)?.is_some();
 
     let null_value = match node.attribute("nullValue") {
         Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
@@ -243,7 +243,7 @@ pub(crate) fn parse_composite(
     validate_sbe_name(node, &name, "composite @name")?;
     reject_duplicate_type_name(node, &name, registry)?;
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-    let composite_deprecated = parse_deprecated_attr(node)?;
+    let composite_deprecated = parse_deprecated_attr(node)?.is_some();
 
     let mut composite_tokens = Vec::new();
     composite_tokens.push(Token {
@@ -607,7 +607,7 @@ pub(crate) fn parse_enum(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
-            deprecated: parse_deprecated_attr(node)?,
+            deprecated: parse_deprecated_attr(node)?.is_some(),
             description: collect_description(node),
             semantic_type,
             null_value: match node.attribute("nullValue") {
@@ -739,7 +739,7 @@ pub(crate) fn parse_set(
         encoding: Encoding {
             primitive_type: Some(encoding_type),
             since_version,
-            deprecated: parse_deprecated_attr(node)?,
+            deprecated: parse_deprecated_attr(node)?.is_some(),
             description: collect_description(node),
             ..Encoding::default()
         },

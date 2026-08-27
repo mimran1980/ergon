@@ -34,14 +34,18 @@ fn launch_node_keep_dirs(base_port: u16, member_id: u16, node_count: u16) -> Chi
 
 fn launch_node_impl(base_port: u16, member_id: u16, node_count: u16, keep: bool) -> Child {
     let mut cmd = Command::new("java");
-    cmd.args(["--add-opens", "java.base/jdk.internal.misc=ALL-UNNAMED", "-cp"])
-        .arg(classpath())
-        .args([
-            "ClusterLauncher",
-            &base_port.to_string(),
-            &member_id.to_string(),
-            &node_count.to_string(),
-        ]);
+    cmd.args([
+        "--add-opens",
+        "java.base/jdk.internal.misc=ALL-UNNAMED",
+        "-cp",
+    ])
+    .arg(classpath())
+    .args([
+        "ClusterLauncher",
+        &base_port.to_string(),
+        &member_id.to_string(),
+        &node_count.to_string(),
+    ]);
     if keep {
         cmd.arg("keep");
     }
@@ -79,7 +83,9 @@ fn read_ready(child: &mut Child) -> (String, String, String) {
             let _ = child_stderr.read_to_string(&mut stderr);
         }
         let status = child.try_wait().ok().flatten();
-        panic!("ClusterLauncher did not emit CLUSTER_READY (status: {status:?})\nstderr:\n{stderr}");
+        panic!(
+            "ClusterLauncher did not emit CLUSTER_READY (status: {status:?})\nstderr:\n{stderr}"
+        );
     }
     (ingress, egress, aeron_dir)
 }

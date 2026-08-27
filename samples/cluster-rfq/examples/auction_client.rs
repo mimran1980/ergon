@@ -7,6 +7,7 @@
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionMessageHeaderEncoder,
 };
+use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
 use std::time::Duration;
 
@@ -23,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ergo Aeron Cluster Auction Client ===\n");
     println!("Customer ID: {customer_id}, Bids to send: {num_bids}");
 
-    let cluster = ergo_aeron_cluster::TestCluster::single_node();
+    let cluster = TestCluster::single_node();
     let dir = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new()?;
     ctx.set_dir(&dir)?;

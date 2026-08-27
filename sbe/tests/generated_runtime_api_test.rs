@@ -342,3 +342,97 @@ fn unknown_variant_carries_the_complete_frame() -> Result<(), Box<dyn std::error
     );
     Ok(())
 }
+
+#[test]
+fn decode_frame_rejects_declared_length_shorter_than_header()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "framing_short_len");
+    assert!(
+        src.contains("header-inclusive"),
+        "decode_frame rustdoc must define frame_len as header-inclusive"
+    );
+    compile_and_run(
+        "framing_short_len",
+        &src,
+        r#"
+        // Backing buffer holds a valid unknown header plus a later frame.
+        let mut buf = [0u8; 48];
+        buf[0..2].copy_from_slice(&16u16.to_le_bytes());
+        buf[2..4].copy_from_slice(&99u16.to_le_bytes());
+        buf[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buf[6..8].copy_from_slice(&0u16.to_le_bytes());
+        buf[8..24].fill(0xAB);
+        buf[24..26].copy_from_slice(&16u16.to_le_bytes());
+        buf[26..28].copy_from_slice(&77u16.to_le_bytes());
+        buf[28..30].copy_from_slice(&1u16.to_le_bytes());
+        buf[30..32].copy_from_slice(&0u16.to_le_bytes());
+        buf[32..48].fill(0xCD);
+
+        for frame_len in 0..CarDecoder::HEADER_LENGTH {
+            match AnyMessage::decode_frame(&buf, 0, frame_len) {
+                Err(sbe_rt::DecodeError::BufferTooShort { field, needed, available }) => {
+                    assert_eq!(field, "message header");
+                    assert_eq!(needed, CarDecoder::HEADER_LENGTH);
+                    assert_eq!(available, frame_len);
+                }
+                Err(other) => panic!("unexpected error for frame_len={frame_len}: {other:?}"),
+                Ok(_) => panic!("short declared length {frame_len} must not decode"),
+            }
+        }
+
+        // A short first declared length must not consume the second header.
+        match AnyMessage::decode_frame(&buf, 0, 4) {
+            Err(sbe_rt::DecodeError::BufferTooShort { field, needed, available }) => {
+                assert_eq!(field, "message header");
+                assert_eq!(needed, 8);
+                assert_eq!(available, 4);
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("must not read the following frame's header"),
+        }
+
+        let first = AnyMessage::decode_frame(&buf, 0, 24)?;
+        match first.message {
+            AnyMessage::Unknown { header, frame } => {
+                assert_eq!(header.template_id(), 99);
+                assert_eq!(frame.len(), 24);
+            }
+            _ => panic!("expected Unknown for template 99"),
+        }
+        let second = AnyMessage::decode_frame(&buf, 24, 24)?;
+        match second.message {
+            AnyMessage::Unknown { header, frame } => {
+                assert_eq!(header.template_id(), 77);
+                assert_eq!(frame.len(), 24);
+            }
+            _ => panic!("expected Unknown for template 77"),
+        }
+
+        let mut body = [0u8; 256];
+        let known_len = CarEncoder::wrap_and_apply_header(&mut body, 0)
+            .fixed(&CarFixedFields {
+                serial_number: 7,
+                model_year: 2020,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0; 4],
+                vehicle_code: *b"ABCDEF",
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1, 1, [0; 3], 0i8, BooleanType::F,
+                                    Booster::new(BoostType::TURBO, 0)),
+            })
+            .fuel_figures(0, |_| Ok(()))?
+            .performance_figures(0, |_| Ok(()))?
+            .manufacturer(b"H")?
+            .model(b"C")?
+            .activation_code(b"A")?
+            .encoded_length_with_header();
+        let known = AnyMessage::decode_frame(&body, 0, known_len)?;
+        match known.message {
+            AnyMessage::Car(car) => assert_eq!(car.serial_number(), 7),
+            _ => panic!("expected known Car"),
+        }
+        "#,
+    );
+    Ok(())
+}

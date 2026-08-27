@@ -8,19 +8,15 @@ categories = ["network-programming"]
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ergon"
-# Published package = product code only. Tests, benches, the Java test-harness
-# (src/test_support, incl. ClusterLauncher.java), examples (all require the
-# test-harness feature), and the reference sbe-tool tree are repo-only and not
-# shipped. `test-harness` is a repo convenience feature; the published crate's
-# default features are empty.
+# Published package = product code only. Tests, benches, examples, and the
+# reference sbe-tool tree are repo-only. The Java ClusterLauncher lives in
+# the unpublished `ergo-aeron-cluster-test-harness` crate.
 exclude = [
     "reference_sbe/",
     "Cargo.lock",
     "tests/",
     "benches/",
     "examples/",
-    "src/test_support/",
-    "test-jars.sha256",
 ]
 
 [dependencies]
@@ -28,30 +24,13 @@ rusteron-client = { workspace = true }
 thiserror = "2"
 # Runtime dep for `sbe_mod!` (generated codecs live in OUT_DIR).
 ergo-sbe = { workspace = true }
-# Optional: only with feature `test-harness` (Java multi-node spawn helpers).
-rusteron-archive = { workspace = true, optional = true }
 
 [features]
 default = []
-# Java ClusterLauncher + TestCluster (integration tests / examples). Pure Rust
-# default build does not enable this.
-test-harness = ["dep:rusteron-archive"]
 
 [lib]
 name = "ergo_aeron_cluster"
 path = "src/lib.rs"
-
-[[example]]
-name = "echo_client"
-required-features = ["test-harness"]
-
-[[example]]
-name = "async_connect_demo"
-required-features = ["test-harness"]
-
-[[example]]
-name = "failover_demo"
-required-features = ["test-harness"]
 
 [dev-dependencies]
 proptest = "1.11"
@@ -69,13 +48,3 @@ missing_docs = "warn"
 [[bench]]
 name = "cluster_codec_bench"
 harness = false
-
-[[test]]
-name = "harness_cluster_spawn"
-path = "tests/harness_cluster_spawn.rs"
-required-features = ["test-harness"]
-
-[[test]]
-name = "harness_failure"
-path = "tests/harness_failure.rs"
-required-features = ["test-harness"]

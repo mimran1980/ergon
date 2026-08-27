@@ -8,8 +8,10 @@ sbe/benchmarks/benches/*.rs	benchmark	cargo bench -p ergo-sbe-benchmarks --no-ru
 sbe/fuzz/fuzz_targets/*.rs	nightly-fuzz	cd sbe/fuzz && cargo +nightly fuzz run TARGET
 sbe/miri-fixtures/src/*.rs	nightly-miri	cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
 cluster/src/*.rs	pr	cargo test -p ergo-aeron-cluster --lib && cargo test -p ergo-aeron-cluster --doc
-cluster/tests/*.rs	java-harness	cargo test -p ergo-aeron-cluster --features test-harness
+cluster/tests/*.rs	pr	cargo test -p ergo-aeron-cluster
 cluster/benches/*.rs	benchmark	cargo bench -p ergo-aeron-cluster --no-run
+cluster-test-harness/src/*.rs	java-harness	cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
+cluster-test-harness/tests/*.rs	java-harness	cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 samples/exchange-example/src/*.rs	samples	cd samples/exchange-example && cargo test
 samples/exchange-example/tests/*.rs	samples	cd samples/exchange-example && cargo test
 samples/cluster-ha-orderbook/src/*.rs	samples	cd samples/cluster-ha-orderbook && cargo test --features test-harness

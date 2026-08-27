@@ -246,6 +246,18 @@ fn bench_display(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_decode_frame(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode/decode_frame");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+    group.bench_function("car_known", |b| {
+        b.iter(|| {
+            let decoded = AnyMessage::decode_frame(black_box(BASELINE), 0, BASELINE.len()).unwrap();
+            black_box(decoded);
+        });
+    });
+    group.finish();
+}
+
 fn bench_skip(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode/skip");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
@@ -275,6 +287,7 @@ criterion_group!(
     bench_hot_field_stride,
     bench_hot_alloc_free,
     bench_display,
+    bench_decode_frame,
     bench_skip,
 );
 criterion_main!(benches);

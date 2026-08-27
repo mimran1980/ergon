@@ -274,6 +274,23 @@ fn frame_cursor_emits_one_error_then_permanent_none() -> Result<(), Box<dyn std:
         assert_fused("undecodable frame", &bad_body, FramingPolicy::LengthPrefixU16Le);
         // 5. Fixed framing whose declared length runs past the buffer.
         assert_fused("fixed overrun", &[0u8; 4], FramingPolicy::Fixed(64));
+        // 6. Zero/short fixed frames on a buffer that still holds a valid header.
+        let mut headed = [0u8; 24];
+        headed[0..2].copy_from_slice(&16u16.to_le_bytes());
+        headed[2..4].copy_from_slice(&99u16.to_le_bytes());
+        headed[4..6].copy_from_slice(&1u16.to_le_bytes());
+        headed[6..8].copy_from_slice(&0u16.to_le_bytes());
+        assert_fused("fixed zero", &headed, FramingPolicy::Fixed(0));
+        assert_fused("fixed short", &headed, FramingPolicy::Fixed(7));
+        // 7. Length-prefixed frame whose declared payload is shorter than a header.
+        let mut short_prefixed = Vec::new();
+        short_prefixed.extend_from_slice(&0u16.to_le_bytes());
+        short_prefixed.extend_from_slice(&headed);
+        assert_fused("prefixed zero", &short_prefixed, FramingPolicy::LengthPrefixU16Le);
+        let mut short7 = Vec::new();
+        short7.extend_from_slice(&7u16.to_le_bytes());
+        short7.extend_from_slice(&headed);
+        assert_fused("prefixed short", &short7, FramingPolicy::LengthPrefixU16Le);
 
         // Empty input yields nothing at all — not an error.
         let mut empty = FrameCursor::new(&[], FramingPolicy::LengthPrefixU16Le);

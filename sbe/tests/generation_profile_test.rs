@@ -149,10 +149,10 @@ fn profile_then_override_dispatch() -> Result<(), Box<dyn Error>> {
 
 // ── Config surface that had no callers anywhere ───────────────────────────
 //
-// The four APIs below were public but exercised by nothing: `lean`,
-// `with_module_name`, `with_error_from_impls`, and
-// `ConversionSelector::field_path`. Untested public API is how the coverage
-// ratchet drifted below its baseline; these assert behaviour, not mere calls.
+// The APIs below were public but exercised by nothing: `lean`,
+// `with_module_name`, and `ConversionSelector::field_path`. Untested public
+// API is how the coverage ratchet drifted below its baseline; these assert
+// behaviour, not mere calls.
 
 /// `lean()` is shorthand for `new(..).profile(Lean)` — it must produce the same
 /// source as spelling the profile out.
@@ -262,14 +262,16 @@ fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>>
         &src,
         r#"
         use cfg_errtyped::sbe_rt;
-        let err: AppError = sbe_rt::EncodeError::BufferTooShort {
-            field: "seq",
-            needed: 8,
-            available: 2,
+        fn consume_encode() -> Result<(), AppError> {
+            Err(sbe_rt::EncodeError::BufferTooShort {
+                field: "seq",
+                needed: 8,
+                available: 2,
+            })?;
+            Ok(())
         }
-        .into();
-        match err {
-            AppError::Encode(sbe_rt::EncodeError::BufferTooShort { needed, available, .. }) => {
+        match consume_encode() {
+            Err(AppError::Encode(sbe_rt::EncodeError::BufferTooShort { needed, available, .. })) => {
                 assert_eq!(needed, 8);
                 assert_eq!(available, 2);
             }

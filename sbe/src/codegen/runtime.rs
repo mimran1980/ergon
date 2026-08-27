@@ -253,6 +253,66 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 })
             }
 
+            /// Group `numInGroup` must fit both `usize` and the implementation
+            /// iteration ceiling (`u32::MAX`). Never truncate a parser-accepted
+            /// unsigned dimension into a narrower diagnostic or loop count.
+            #[inline]
+            pub(crate) fn checked_group_count(
+                field: &'static str,
+                value: u64,
+            ) -> Result<usize, DecodeError> {
+                if value > u32::MAX as u64 {
+                    return Err(DecodeError::InvalidHeaderValue {
+                        field,
+                        value,
+                        maximum: u32::MAX as u64,
+                    });
+                }
+                checked_header_usize(field, value)
+            }
+
+            /// Narrow a group count for `GroupFull` / mismatch diagnostics.
+            /// Errors instead of truncating when the count exceeds `u32::MAX`.
+            #[inline]
+            pub(crate) const fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
+                if count > u32::MAX as u64 {
+                    Err(EncodeError::GroupCountOverflow {
+                        maximum: u32::MAX,
+                        actual: u32::MAX,
+                    })
+                } else {
+                    Ok(count as u32)
+                }
+            }
+
+            /// Convert a wire/user group count to `usize` without truncation.
+            #[inline]
+            pub(crate) const fn count_to_usize(count: u64) -> Result<usize, EncodeError> {
+                if count > usize::MAX as u64 {
+                    Err(EncodeError::EncodedLengthOverflow)
+                } else {
+                    Ok(count as usize)
+                }
+            }
+
+            /// `a * b` for encoded-length / verify arithmetic, never wrapping.
+            #[inline]
+            pub(crate) const fn checked_len_mul(a: usize, b: usize) -> Result<usize, EncodeError> {
+                match a.checked_mul(b) {
+                    Some(v) => Ok(v),
+                    None => Err(EncodeError::EncodedLengthOverflow),
+                }
+            }
+
+            /// `a + b` for encoded-length / verify arithmetic, never wrapping.
+            #[inline]
+            pub(crate) const fn checked_len_add(a: usize, b: usize) -> Result<usize, EncodeError> {
+                match a.checked_add(b) {
+                    Some(v) => Ok(v),
+                    None => Err(EncodeError::EncodedLengthOverflow),
+                }
+            }
+
             /// Compile-time metadata for a generated SBE message.
             ///
             /// Sealed: the supertrait lives in a private child of the generated
@@ -1647,6 +1707,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 /// Read the header fields from a buffer without constructing a
                 /// full `MessageHeader`. Returns `None` when the buffer is
                 /// shorter than the header.
+                #[must_use = "the peeked header identity is unused; ignoring it skips dispatch"]
                 #[inline]
                 pub fn peek_header(data: &[u8]) -> Option<PeekedHeader> {
                     if data.len() < #hs_lit {
@@ -1666,6 +1727,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 /// `MessageHeader`. Returns `None` when the buffer is shorter
                 /// than the header. For correct multi-schema dispatch,
                 /// prefer [`Self::peek_header`] which also returns `schema_id`.
+                #[must_use = "the peeked template id is unused; ignoring it skips dispatch"]
                 #[inline]
                 pub fn peek_template_id(data: &[u8]) -> Option<u16> {
                     if data.len() < #hs_lit {
@@ -1679,6 +1741,7 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
                 /// Validate `schema_id` and return `template_id`. Returns
                 /// `None` when the buffer is too short or the schema doesn't
                 /// match. Use this for correct multi-schema dispatch.
+                #[must_use = "the schema-matched template id is unused; ignoring it skips dispatch"]
                 #[inline]
                 pub fn peek_for_schema(data: &[u8], expected_schema_id: u16) -> Option<u16> {
                     let header = Self::peek_header(data)?;
@@ -1987,6 +2050,7 @@ pub(crate) fn generate_schema_id_from_header(
             "/// Read `schemaId` from a message header at the start of `buf`.\n\
              /// Returns [`None`] when the header composite has no `schemaId` field\n\
              /// or `buf` is shorter than the header.\n\
+             #[must_use = \"the header schema id is unused; ignoring it skips dispatch\"]\n\
              #[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
         );
         return;
@@ -1998,6 +2062,7 @@ pub(crate) fn generate_schema_id_from_header(
                 "/// Read `schemaId` from a message header at the start of `buf`.\n\
                  /// Returns [`None`] when `schemaId` is constant but has no value,\n\
                  /// or `buf` is shorter than the header.\n\
+                 #[must_use = \"the header schema id is unused; ignoring it skips dispatch\"]\n\
                  #[inline]\npub const fn schema_id_from_header(_buf: &[u8]) -> Option<u16> { None }\n",
             );
             return;
@@ -2008,10 +2073,11 @@ pub(crate) fn generate_schema_id_from_header(
         let header_size =
             syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
         let ts = quote::quote! {
-            #[inline]
             /// Read `schemaId` from a standard 8-byte SBE message header at
             /// the start of `buf`. Returns [`None`] if the buffer is shorter
             /// than the header.
+            #[must_use = "the header schema id is unused; ignoring it skips dispatch"]
+            #[inline]
             pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
                 if buf.len() < #header_size {
                     return None;
@@ -2040,6 +2106,7 @@ pub(crate) fn generate_schema_id_from_header(
     let ts = quote::quote! {
         /// Read `schemaId` from a message header at the start of `buf`.
         /// Returns [`None`] if `buf` is shorter than the header field.
+        #[must_use = "the header schema id is unused; ignoring it skips dispatch"]
         #[inline]
         pub fn schema_id_from_header(buf: &[u8]) -> Option<u16> {
             if buf.len() < #sid + #sid_size {
@@ -2408,17 +2475,46 @@ pub(crate) fn generate_any_message(
 
         out.extend(quote::quote! {
             impl<'a> AnyMessage<'a> {
+                /// Decode one externally framed message.
+                ///
+                /// `frame_len` is header-inclusive: it is the size of the whole
+                /// SBE frame starting at `offset` (message header plus body),
+                /// not a body-only length. The declared range
+                /// `offset .. offset + frame_len` must fit in `buf`, and
+                /// `frame_len` must be at least the schema message-header size,
+                /// **before** any header field is read. A shorter declared
+                /// length returns [`sbe_rt::DecodeError::BufferTooShort`] with
+                /// `field: "message header"` so one frame cannot source
+                /// identity bytes from the next framing unit.
                 #[inline]
                 pub fn decode_frame(buf: &'a [u8], offset: usize, frame_len: usize) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-                    // Trust boundary: always validate header fits
-                    if #header_size_lit > buf.len().saturating_sub(offset) {
+                    let available = buf.len().saturating_sub(offset);
+                    let frame_end = match offset.checked_add(frame_len) {
+                        Some(end) => end,
+                        None => {
+                            return Err(sbe_rt::DecodeError::BufferTooShort {
+                                field: "message header",
+                                needed: #header_size_lit,
+                                available,
+                            });
+                        }
+                    };
+                    if frame_end > buf.len() {
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "message header",
+                            needed: frame_len,
+                            available,
+                        });
+                    }
+                    if frame_len < #header_size_lit {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
-                            available: buf.len().saturating_sub(offset),
+                            available: frame_len,
                         });
                     }
-                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(buf, offset);
+                    let frame = &buf[offset..frame_end];
+                    let header_bytes: [u8; #header_size_lit] = read_bytes::<#header_size_lit>(frame, 0);
                     let header = #header_type_ident(header_bytes);
                     let template_id = sbe_rt::checked_header_u16(
                         "templateId",
@@ -2443,20 +2539,12 @@ pub(crate) fn generate_any_message(
                     match template_id {
                         #decode_frame_arms
                         _ => {
-                            if frame_len > buf.len().saturating_sub(offset) {
-                                return Err(sbe_rt::DecodeError::BufferTooShort {
-                                    field: "template body",
-                                    needed: frame_len,
-                                    available: buf.len().saturating_sub(offset),
-                                });
-                            }
-                            let frame = &buf[offset .. offset + frame_len];
                             Ok(DecodedFrame {
                                 message: Self::Unknown {
                                     header,
                                     frame,
                                 },
-                                range: offset .. offset + frame_len,
+                                range: offset .. frame_end,
                                 len: frame_len,
                             })
                         }
@@ -2725,8 +2813,8 @@ pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
     out
 }
 
-/// `#[deprecated]` when the item is schema-deprecated AND `with_deprecated_attrs()`
-/// is active. Centralises the flag check so every call site stays ungated.
+/// `#[deprecated]` when the item is schema-deprecated AND
+/// `with_deprecated_attrs()` is active. Exact version notes are a 1.0 change.
 pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {
     if deprecated && deprecated_attrs_enabled() {
         quote::quote! { #[deprecated] }

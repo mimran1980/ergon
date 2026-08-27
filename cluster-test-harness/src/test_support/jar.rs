@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::ClusterError;
+use ergo_aeron_cluster::ClusterError;
 
 /// Locate a jar in the aeron Gradle build output.
 ///
@@ -8,7 +8,9 @@ use crate::ClusterError;
 /// (prefer this over panicking in CI). The legacy panic path is available
 /// via [`find_jar`].
 pub fn try_find_jar(name_prefix: &str) -> Result<PathBuf, ClusterError> {
-    let aeron = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("aeron");
+    let aeron = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("aeron");
 
     for dir in &[
         aeron.join("aeron-all/build/libs"),
@@ -52,7 +54,10 @@ pub fn try_sha256(path: &Path) -> Result<String, ClusterError> {
         .output()
         .map_err(|e| ClusterError::connect(format!("{bin} failed: {e}")))?;
     if !output.status.success() {
-        return Err(ClusterError::connect(format!("{bin} exited {}", output.status)));
+        return Err(ClusterError::connect(format!(
+            "{bin} exited {}",
+            output.status
+        )));
     }
     let s = String::from_utf8_lossy(&output.stdout);
     Ok(s.split_whitespace().next().unwrap_or("unknown").to_string())

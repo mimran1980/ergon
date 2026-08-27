@@ -9,7 +9,7 @@
 //!   java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED \
 //!     -cp 'rfq/cluster/build/install/cluster/lib/*' com.aeroncookbook.rfq.ClusterApp
 //!
-//! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip --features test-harness
+//! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip
 
 use cluster_rfq::rfq_codec::{AddInstrumentEncoder, BooleanType, CreateRfqCommandEncoder, Side};
 use ergo_aeron_cluster::cluster_codec_types::{

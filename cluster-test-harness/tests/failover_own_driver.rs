@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-#![cfg(feature = "test-harness")]
 //! Deterministic 3-node failover over the **own-driver UDP** transport,
 //! driven through the high-level `AeronCluster` API.
 //!
@@ -25,11 +24,15 @@ use ergo_aeron_cluster::egress::EgressAdapter;
 #[test]
 #[serial]
 fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cluster = ergo_aeron_cluster::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node();
     let driver = launch_own_driver("fo-udp")?;
 
     let mut client = connect_own_driver(&cluster.ingress_channel, 19200, &driver.dir)?;
-    assert_eq!(client.state(), SessionState::Connected, "connected after handshake");
+    assert_eq!(
+        client.state(),
+        SessionState::Connected,
+        "connected after handshake"
+    );
 
     // Kill whichever node actually won the initial election — don't assume
     // node 0. (If we connected via REDIRECT, the leader may be node 1 or 2;
@@ -42,7 +45,12 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
 
     // --- Pre-failover round trip over own-driver UDP ---
     let mut adapter = EgressAdapter::new(Capture::new());
-    await_echo(&mut client, &mut adapter, b"PRE-FAILOVER", Duration::from_secs(15))?;
+    await_echo(
+        &mut client,
+        &mut adapter,
+        b"PRE-FAILOVER",
+        Duration::from_secs(15),
+    )?;
 
     // --- Kill the actual leader ---
     cluster.kill_node(initial_leader as usize);
@@ -52,7 +60,9 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     loop {
         let _ = client.send_keep_alive();
         client.poll_egress(&mut adapter, 10)?;
-        if adapter.listener().new_leader_member_id.is_some() && client.state() == SessionState::Connected {
+        if adapter.listener().new_leader_member_id.is_some()
+            && client.state() == SessionState::Connected
+        {
             break;
         }
         if Instant::now() >= deadline {
@@ -88,7 +98,12 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     // --- Post-failover round trip: proves the redirect landed on the
     //     WORKING new leader (a position-based reconnect to the dead
     //     leader would never echo). ---
-    await_echo(&mut client, &mut adapter, b"POST-FAILOVER", Duration::from_secs(15))?;
+    await_echo(
+        &mut client,
+        &mut adapter,
+        b"POST-FAILOVER",
+        Duration::from_secs(15),
+    )?;
 
     let _ = client.close();
     Ok(())

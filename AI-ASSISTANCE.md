@@ -58,27 +58,47 @@ whether you continue evaluating the crate:
 ## Cumulative token usage (since 2026-06-28)
 
 Per-model high-water mark reconstructed from every `ccusage` snapshot committed
-to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19, and
-2026-08-20. Claude Code and Codex agent usage only.
+to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19,
+2026-08-20, and 2026-08-27. Claude Code and Codex agent usage only.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
 | claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
 | claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 1,266,953 | 1,826,314 | 13,404,583 | 1,015,376,093 | — | 1,031,873,943 | $683.07 |
+| claude-opus-5 | 2,645,098 | 2,160,528 | 15,886,928 | 1,064,550,409 | — | 1,085,242,963 | $741.47 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 30,556 | 554,512 | 6,974,859 | 364,664,072 | — | 372,216,535 | $106.42 |
-| deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $19.28 |
-| deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $71.89 |
+| claude-sonnet-5 | 30,556 | 1,217,628 | 10,936,574 | 1,096,731,349 | — | 1,108,916,107 | $274.99 |
+| deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $35.00 |
+| deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $551.30 |
 | glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
 | glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
 | gpt-5.6-luna | 1,552,433 | 172,891 | 0 | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
-| gpt-5.6-sol | 43,575,714 | 4,014,321 | 0 | 1,209,778,944 | 1,968,275 | 1,259,337,254 | $950.21 |
-| **Total** | **183,594,388** | **37,860,766** | **36,629,256** | **20,221,927,822** | **2,097,938** | **20,482,102,706** | **$3,458.33** |
+| gpt-5.6-sol | 45,679,049 | 4,214,826 | 0 | 1,261,371,648 | 2,076,019 | 1,313,341,542 | $950.21 |
+| gpt-5.6-terra | 484,995 | 29,907 | 0 | 6,463,744 | 14,882 | 6,993,528 | — |
+| **Total** | **187,560,863** | **39,088,508** | **43,073,316** | **21,061,225,863** | **2,220,564** | **21,333,169,114** | **$4,180.42** |
 
 **Notes:**
+
+- The 2026-08-27 run raised eight columns and added one model. `claude-opus-5`
+  set new maxima on all five of its columns and `claude-sonnet-5` on four
+  (input stayed at the older 30,556); `gpt-5.6-sol` rose on all four of its.
+  `deepseek-v4-flash` and `deepseek-v4-pro` rose on **cost only** while every
+  token column fell — the same retention pruning as before, re-priced. New
+  model `gpt-5.6-terra` (485K in / 29.9K out / 6.46M cache read / 14.9K
+  reasoning) appears for the first time. Reconstructed total moves
+  20.48B → **21.33B** (+851M), so the monotonicity check holds.
+- `gpt-5.6-terra` carries no cost figure: `ccusage codex --breakdown` reports
+  `costUSD` per day only, not per model, so a per-model cost for a
+  newly-appearing Codex model cannot be derived without apportioning. The
+  other Codex rows keep their previously committed per-model costs as
+  high-water marks; today's Codex total ($804.68) is below their sum, so none
+  of them moved.
+- `observer` was not installed on this machine, so Antigravity/Gemini
+  contributed nothing to this snapshot — third run in a row (2026-08-19,
+  2026-08-20, 2026-08-27). Any Antigravity rows in the table survive purely
+  from git history.
 
 - **Why a high-water mark, not the latest snapshot.** `ccusage` keeps no ledger:
   it recomputes totals by reading local session transcripts. Claude Code deleted

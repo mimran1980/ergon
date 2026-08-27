@@ -8,7 +8,7 @@
 //! 4. **Keep-alive** auto-scheduling during poll
 //! 5. **Close** the session cleanly
 //!
-//! Requires `just build-aeron-jars` and test-harness feature.  Seeds a
+//! Requires `just build-aeron-jars`. Seeds a
 //! single-node Java cluster via `TestCluster::single_node()`, connects the
 //! Rust client, sends a few messages, and verifies the cluster echoes them.
 //!
@@ -20,8 +20,9 @@
 
 use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
 use ergo_aeron_cluster::{
-    AeronCluster, EgressAdapter, EgressListener, SessionBuilder, SessionState, TestCluster,
+    AeronCluster, EgressAdapter, EgressListener, SessionBuilder, SessionState,
 };
+use ergo_aeron_cluster_test_harness::TestCluster;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,7 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     impl EgressListener for EchoListener {
         fn on_message(&mut self, _csid: i64, _ts: i64, buffer: &[u8]) {
             self.echo_count += 1;
-            println!("  egress: {} bytes (echo #{})", buffer.len(), self.echo_count);
+            println!(
+                "  egress: {} bytes (echo #{})",
+                buffer.len(),
+                self.echo_count
+            );
         }
         fn on_session_event(
             &mut self,
@@ -72,13 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ) {
             println!("  session event: {code:?} / {detail}");
         }
-        fn on_new_leader(
-            &mut self,
-            _csid: i64,
-            ltid: i64,
-            lmid: i32,
-            endpoints: &str,
-        ) {
+        fn on_new_leader(&mut self, _csid: i64, ltid: i64, lmid: i32, endpoints: &str) {
             println!("  new leader: term={ltid} member={lmid} eps={endpoints}");
         }
         fn on_challenge(&mut self, _cid: i64, _csid: i64, _chal: &[u8]) {}
@@ -90,7 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _rc: AdminResponseCode,
             _msg: &str,
             _payload: &[u8],
-        ) {}
+        ) {
+        }
     }
 
     // ── 3. Offer messages (allocation-free claim path) ───────────────────
@@ -114,9 +114,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     assert_eq!(
-        adapter.listener().echo_count, messages.len(),
+        adapter.listener().echo_count,
+        messages.len(),
         "expected {} echoes, got {}",
-        messages.len(), adapter.listener().echo_count
+        messages.len(),
+        adapter.listener().echo_count
     );
     println!("all {} messages echoed", messages.len());
 

@@ -27,6 +27,9 @@ use crate::ir::{ByteOrder, Ir};
 /// Parsed + resolved SBE schema ready for [`crate::Generator`].
 ///
 /// Built with [`Schema::from_ir`] after [`crate::parse`] / [`crate::parse_file`].
+///
+/// Package, id, and version are copied from the IR at construction. A single
+/// identity source (`Ir` only) is a 1.0 migration and is not shipped on 0.x.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Schema {
     /// SBE package name from the XML schema (e.g. `"fix.sbe"`, `"baseline"`).

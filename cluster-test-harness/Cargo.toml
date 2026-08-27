@@ -1,0 +1,32 @@
+[package]
+name = "ergo-aeron-cluster-test-harness"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Unpublished Java Aeron Cluster spawn harness for ergo-aeron-cluster tests"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ergo-aeron-cluster = { path = "../cluster" }
+rusteron-client = { workspace = true }
+
+[dev-dependencies]
+rusteron-media-driver = { workspace = true }
+serial_test = { version = "3", features = ["file_locks"] }
+
+[lib]
+name = "ergo_aeron_cluster_test_harness"
+path = "src/lib.rs"
+
+[[example]]
+name = "echo_client"
+
+[[example]]
+name = "async_connect_demo"
+
+[[example]]
+name = "failover_demo"
+
+[lints.rust]
+missing_docs = "warn"
