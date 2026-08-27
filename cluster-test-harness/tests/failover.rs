@@ -4,7 +4,7 @@
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
 };
-use ergo_aeron_cluster_test_harness::{TestCluster, channel_cstr};
+use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
 use serial_test::serial;
 use std::time::Duration;
@@ -30,8 +30,8 @@ fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>
     let a = rusteron_client::Aeron::new(&ctx)?;
     a.start()?;
 
-    let ing = channel_cstr(&cluster.ingress_channel)?;
-    let egr = channel_cstr(&cluster.egress_channel)?;
+    let ing = cformat!("{}", cluster.ingress_channel);
+    let egr = cformat!("{}", cluster.egress_channel);
 
     let egress = a.add_subscription(
         &egr,

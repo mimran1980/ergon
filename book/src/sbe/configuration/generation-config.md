@@ -16,9 +16,10 @@ flags default to the value shown.
 | `with_null_as_option(selector)` | — | `NullVal` → `None` for matching enum fields; getter returns `Option<Enum>` |
 | `with_all_enums_as_option()` | `false` | All enums → `Option<Enum>`; blanket form of `with_null_as_option` |
 | `profile(GenerationProfile)` | `Full` | Preset: `Full` (default conveniences) or `Lean` (off: Display/Debug, meta attrs, dispatch; domains stay off unless re-enabled). Individual `with_*` overrides still apply after `profile`. |
-| `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated(note = "SBE schema deprecated since version N")]` on schema-deprecated items |
+| `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated]` on schema-deprecated items |
 | `with_shared_module(name)` | — | Multi-schema shared types module |
 | `with_external_sbe_rt(path)` | — | Share one `sbe_rt` runtime module instead of inlining |
+| `with_error_from_impls(path)` | — | Deprecated: `From<EncodeError> for YourError` via `String`; prefer a typed `From` (see below) |
 | `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
 | `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
 
@@ -27,11 +28,11 @@ reduce generated-code size (~6,100 lines/message with all on). Text fields
 stay bytes unless the schema declares a character encoding (then strict
 UTF-8/ASCII helpers apply).
 
-## Typed error conversions (1.0)
+## Typed error conversions
 
-`GenerationConfig::with_error_from_impls` is removed. Implement `From` yourself
-on the generated `sbe_rt` types so fields such as `needed` and `available`
-survive:
+`GenerationConfig::with_error_from_impls` is deprecated and scheduled for
+removal in 1.0. It formats through `String`, so `needed`/`available` are
+lost. Prefer a typed `From` on the generated `sbe_rt` types:
 
 ```rust,no_run
 enum AppError {

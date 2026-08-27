@@ -1535,7 +1535,15 @@ pub(crate) fn generate_message_decoder(
                         Ok(count) => count,
                         Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                     };
-                    let mut entry_offset = offset + #ds_lit;
+                    let mut entry_offset = match offset.checked_add(#ds_lit) {
+                        Some(v) => v,
+                        None => {
+                            return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                                field: #g_snake,
+                                offset,
+                            });
+                        }
+                    };
                     for _ in 0..count {
                         match #entry_dec_ident::skip(buf, entry_offset, #ebl_lit, 0) {
                             Ok(next) => entry_offset = next,
@@ -1563,7 +1571,33 @@ pub(crate) fn generate_message_decoder(
                         Ok(count) => count,
                         Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                     };
-                    let entries_end = offset + #ds_lit + count * #ebl_lit;
+                    let dim_end = match offset.checked_add(#ds_lit) {
+                        Some(v) => v,
+                        None => {
+                            return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                                field: #g_snake,
+                                offset,
+                            });
+                        }
+                    };
+                    let entries = match count.checked_mul(#ebl_lit) {
+                        Some(v) => v,
+                        None => {
+                            return Err(sbe_rt::VerifyError::MessageTooShort {
+                                needed: usize::MAX,
+                                available: buf.len(),
+                            });
+                        }
+                    };
+                    let entries_end = match dim_end.checked_add(entries) {
+                        Some(v) => v,
+                        None => {
+                            return Err(sbe_rt::VerifyError::MessageTooShort {
+                                needed: usize::MAX,
+                                available: buf.len(),
+                            });
+                        }
+                    };
                     if entries_end > buf.len() {
                         return Err(sbe_rt::VerifyError::MessageTooShort {
                             needed: entries_end,

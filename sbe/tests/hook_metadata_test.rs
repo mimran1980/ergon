@@ -342,14 +342,8 @@ fn config_and_item_context_debug_stay_short_and_useful() -> Result<(), Box<dyn s
 }
 
 #[derive(Clone, Debug, Default)]
-struct DepVersions {
-    enum_: Option<u16>,
-    set: Option<u16>,
-    composite: Option<u16>,
-    message: Option<u16>,
-    field: Option<u16>,
-    group: Option<u16>,
-    data: Option<u16>,
+struct DepFlags {
+    items: Vec<&'static str>,
 }
 
 const DEP_SCHEMA_XML: &str = r#"<?xml version="1.0"?>
@@ -388,46 +382,36 @@ const DEP_SCHEMA_XML: &str = r#"<?xml version="1.0"?>
   </message>
 </messageSchema>"#;
 
-fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> Option<u16> {
+fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> bool {
     fields
         .iter()
         .find(|f| f.name == name)
-        .and_then(|f| f.deprecated_since)
+        .is_some_and(|f| f.deprecated)
 }
 
-/// T-101: hooks see the exact deprecation version for types, messages,
-/// fields, groups, and var-data.
+/// Hooks see schema-deprecated flags for types, messages, fields, groups,
+/// and var-data. Exact version numbers are a 1.0 FieldInfo/ItemContext change.
 #[test]
-fn hooks_expose_exact_deprecation_versions() -> Result<(), Box<dyn std::error::Error>> {
-    let seen = Arc::new(Mutex::new(DepVersions::default()));
+fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
+    let seen = Arc::new(Mutex::new(DepFlags::default()));
     let sink = Arc::clone(&seen);
     let config = GenerationConfig::new("depver").with_hook(move |ctx: &ItemContext| {
         let mut s = sink.lock().expect("lock");
         match ctx {
-            ItemContext::Enum {
-                name,
-                deprecated_since,
-                ..
-            } if name == "OldEnum" => s.enum_ = *deprecated_since,
-            ItemContext::Set {
-                name,
-                deprecated_since,
-                ..
-            } if name == "OldSet" => s.set = *deprecated_since,
-            ItemContext::Composite {
-                name,
-                deprecated_since,
-                ..
-            } if name == "OldComp" => s.composite = *deprecated_since,
-            ItemContext::MessageDecoder {
-                deprecated_since,
-                fields,
-                ..
-            } => {
-                s.message = *deprecated_since;
-                s.field = field_deprecated(fields, "legacy");
-                s.group = field_deprecated(fields, "rows");
-                s.data = field_deprecated(fields, "note");
+            ItemContext::Enum { name, .. } if name == "OldEnum" => s.items.push("enum"),
+            ItemContext::Set { name, .. } if name == "OldSet" => s.items.push("set"),
+            ItemContext::Composite { name, .. } if name == "OldComp" => s.items.push("composite"),
+            ItemContext::MessageDecoder { fields, .. } => {
+                s.items.push("message");
+                if field_deprecated(fields, "legacy") {
+                    s.items.push("field");
+                }
+                if field_deprecated(fields, "rows") {
+                    s.items.push("group");
+                }
+                if field_deprecated(fields, "note") {
+                    s.items.push("data");
+                }
             }
             _ => {}
         }
@@ -436,13 +420,21 @@ fn hooks_expose_exact_deprecation_versions() -> Result<(), Box<dyn std::error::E
     });
     let schema = Schema::from_ir(parse(DEP_SCHEMA_XML)?);
     let _ = Generator::new(config).generate(&schema)?;
-    let versions = seen.lock().expect("lock").clone();
-    assert_eq!(versions.enum_, Some(3), "enum version");
-    assert_eq!(versions.set, Some(4), "set version");
-    assert_eq!(versions.composite, Some(5), "composite version");
-    assert_eq!(versions.message, Some(6), "message version");
-    assert_eq!(versions.field, Some(2), "field version");
-    assert_eq!(versions.group, Some(7), "group version");
-    assert_eq!(versions.data, Some(8), "data version");
+    let flags = seen.lock().expect("lock").clone();
+    for name in [
+        "enum",
+        "set",
+        "composite",
+        "message",
+        "field",
+        "group",
+        "data",
+    ] {
+        assert!(
+            flags.items.contains(&name),
+            "missing deprecated {name}: {:?}",
+            flags.items
+        );
+    }
     Ok(())
 }

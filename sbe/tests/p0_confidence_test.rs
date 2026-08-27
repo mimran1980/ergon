@@ -370,6 +370,43 @@ fn over_limit_u64_group_count_is_a_typed_range_error() -> Result<(), Box<dyn std
     Ok(())
 }
 
+#[test]
+fn huge_u64_group_count_is_encoded_length_overflow() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="dims" id="905" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint64"/>
+            </composite>
+          </types>
+          <message name="Dims" id="1">
+            <group name="rows" id="2" dimensionType="groupSizeEncoding">
+              <field name="value" id="3" type="uint32"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let source = generate_xml(xml, "dims_len_overflow")?;
+    compile_and_run(
+        "dims_len_overflow",
+        &source,
+        r#"
+        match DimsEncoder::try_compute_encoded_length_with_header(u64::MAX) {
+            Err(sbe_rt::EncodeError::EncodedLengthOverflow)
+            | Err(sbe_rt::EncodeError::GroupCountOverflow { .. }) => {}
+            other => panic!("expected overflow, got {other:?}"),
+        }
+        "#,
+    );
+    Ok(())
+}
+
 #[cfg(target_pointer_width = "32")]
 #[test]
 fn thirty_two_bit_rejects_unrepresentable_u64_group_count() -> Result<(), Box<dyn std::error::Error>>

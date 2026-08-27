@@ -189,7 +189,7 @@ pub(crate) fn message_field_infos(
                 semantic_type: f.semantic_type.clone(),
                 presence: presence_str(f.presence),
                 null_value: f.null_value,
-                deprecated_since: f.deprecated,
+                deprecated: f.deprecated,
                 description: f.description.clone(),
             }
         })
@@ -329,9 +329,7 @@ pub(crate) fn warn_version_gated(
         "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
          Version numbers are per-schema — importing schemas at different versions may decode \
          these members incorrectly. Consider keeping shared types at version 0.",
-        type_name,
-        schema.package(),
-        schema.id()
+        type_name, &schema.package, schema.id
     ))
 }
 

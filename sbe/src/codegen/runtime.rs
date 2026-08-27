@@ -274,11 +274,43 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             /// Narrow a group count for `GroupFull` / mismatch diagnostics.
             /// Errors instead of truncating when the count exceeds `u32::MAX`.
             #[inline]
-            pub(crate) fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
-                u32::try_from(count).map_err(|_| EncodeError::GroupCountOverflow {
-                    maximum: u32::MAX,
-                    actual: u32::MAX,
-                })
+            pub(crate) const fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
+                if count > u32::MAX as u64 {
+                    Err(EncodeError::GroupCountOverflow {
+                        maximum: u32::MAX,
+                        actual: u32::MAX,
+                    })
+                } else {
+                    Ok(count as u32)
+                }
+            }
+
+            /// Convert a wire/user group count to `usize` without truncation.
+            #[inline]
+            pub(crate) const fn count_to_usize(count: u64) -> Result<usize, EncodeError> {
+                if count > usize::MAX as u64 {
+                    Err(EncodeError::EncodedLengthOverflow)
+                } else {
+                    Ok(count as usize)
+                }
+            }
+
+            /// `a * b` for encoded-length / verify arithmetic, never wrapping.
+            #[inline]
+            pub(crate) const fn checked_len_mul(a: usize, b: usize) -> Result<usize, EncodeError> {
+                match a.checked_mul(b) {
+                    Some(v) => Ok(v),
+                    None => Err(EncodeError::EncodedLengthOverflow),
+                }
+            }
+
+            /// `a + b` for encoded-length / verify arithmetic, never wrapping.
+            #[inline]
+            pub(crate) const fn checked_len_add(a: usize, b: usize) -> Result<usize, EncodeError> {
+                match a.checked_add(b) {
+                    Some(v) => Ok(v),
+                    None => Err(EncodeError::EncodedLengthOverflow),
+                }
             }
 
             /// Compile-time metadata for a generated SBE message.
@@ -2722,8 +2754,8 @@ pub(crate) fn canonical_token_fingerprint(
         if let Some(ref st) = e.semantic_type {
             let _ = write!(fp, "st{}:", st);
         }
-        if let Some(version) = e.deprecated {
-            let _ = write!(fp, "dep{version}:");
+        if e.deprecated {
+            let _ = write!(fp, "dep:");
         }
     }
     fp
@@ -2781,15 +2813,13 @@ pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
     out
 }
 
-/// `#[deprecated(note = "SBE schema deprecated since version N")]` when the
-/// item is schema-deprecated AND `with_deprecated_attrs()` is active.
-pub(crate) fn deprecated_attr_tokens(deprecated_since: Option<u16>) -> proc_macro2::TokenStream {
-    match (deprecated_since, deprecated_attrs_enabled()) {
-        (Some(version), true) => {
-            let note = format!("SBE schema deprecated since version {version}");
-            quote::quote! { #[deprecated(note = #note)] }
-        }
-        _ => quote::quote! {},
+/// `#[deprecated]` when the item is schema-deprecated AND
+/// `with_deprecated_attrs()` is active. Exact version notes are a 1.0 change.
+pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {
+    if deprecated && deprecated_attrs_enabled() {
+        quote::quote! { #[deprecated] }
+    } else {
+        quote::quote! {}
     }
 }
 

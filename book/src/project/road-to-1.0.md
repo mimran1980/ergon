@@ -87,18 +87,20 @@ git merge-base --is-ancestor v0.1.21 main   # false
 | 6. External signal | **Open.** Matches [external-pilot.md](external-pilot.md): the in-repo FIX SBE suite is internal wire evidence, not an external user or latency case study. |
 | Cluster 1.0 criteria | Separate clock; compatibility page + `just bench-cluster` exist. |
 
-## 1.0 API migrations (landed on 0.x)
+## 1.0 API migrations (still 1.0-only)
 
-These are the 1.0-only ticket migrations, shipped now because 0.x may break:
+These remain scheduled for 1.0 and are **not** shipped on 0.x. `cargo
+semver-checks` against the 0.1.21 baseline must stay green.
 
-- `Schema` identity is one `Ir`: `schema.id()` / `schema.package()` /
-  `schema.version()` / `schema.ir()` / `schema.ir_mut()` / `schema.into_ir()`.
-  Direct fields (`schema.id`, `schema.ir`) and struct literals do not compile.
-- XML `deprecated` is `Option<u16>` (`Encoding::deprecated`,
-  `FieldInfo::deprecated_since`). Generated rustc notes are
-  `SBE schema deprecated since version N`.
-- `GenerationConfig::with_error_from_impls` is gone. Implement
-  `From<generated::sbe_rt::{EncodeError, DecodeError}>` so `needed` /
-  `available` survive `?`.
+- `Schema` identity as one private `Ir` (no duplicate public
+  `package`/`id`/`version` beside `ir`). 0.x keeps the public fields.
+- XML `deprecated` as `Option<u16>` through `Encoding`, `FieldInfo`, and
+  `ItemContext`. 0.x keeps `deprecated: bool` on those public types.
+- Removal of `GenerationConfig::with_error_from_impls`. 0.x keeps the
+  deprecated helper; prefer a typed `From<generated::sbe_rt::{EncodeError,
+  DecodeError}>` so `needed`/`available` survive `?`.
+
+Shipped on this 0.x line:
+
 - `ergo-aeron-cluster` has no `test-harness` feature. Repository Java
   launch support is `ergo-aeron-cluster-test-harness`.

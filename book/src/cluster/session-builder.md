@@ -27,7 +27,7 @@ machine, not a Rust `Future`. When the application owns the poll loop, the
 shortest supported path is `SessionBuilder` → `connect_async` → `default_idle`
 → `poll_connect_until_done` → `finish`:
 
-```rust,ignore
+```rust,no_run
 use ergo_aeron_cluster::{default_idle, poll_connect_until_done, SessionBuilder};
 
 fn connect(aeron_dir: &str) -> Result<ergo_aeron_cluster::AeronCluster, ergo_aeron_cluster::ClusterError> {

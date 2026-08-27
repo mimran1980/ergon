@@ -171,8 +171,8 @@ pub struct Encoding {
     pub time_unit: Option<String>,
     /// Whether this token's wire size is variable; used for var-data composites.
     pub is_variable_length: bool,
-    /// Schema version this type or field was deprecated in (`None` if not).
-    pub deprecated: Option<u16>,
+    /// Whether this type or field is marked as deprecated in the schema.
+    pub deprecated: bool,
 }
 
 /// One token in the flat IR stream.

@@ -603,8 +603,8 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
     );
     let attr_window = &out[last_deprecated.unwrap()..legacy];
     assert!(
-        attr_window.contains("SBE schema deprecated since version 1"),
-        "generated warning must include the schema version, got:\n{attr_window}"
+        attr_window.contains("#[deprecated"),
+        "generated warning must mark the field deprecated, got:\n{attr_window}"
     );
     // The deprecated attr must be immediately above the getter (no other fn between).
     let between = &out[last_deprecated.unwrap()..legacy];

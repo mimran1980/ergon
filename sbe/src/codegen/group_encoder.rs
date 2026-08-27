@@ -473,7 +473,7 @@ pub(crate) fn generate_group_encoder(
                     let attempted = (self.written as usize)
                         .checked_add(count)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-                    if attempted > self.count as usize {
+                    if attempted > sbe_rt::count_to_usize(self.count as u64)? {
                         return Err(sbe_rt::EncodeError::GroupFull {
                             declared: sbe_rt::group_diag_count(self.count as u64)?,
                             attempted: sbe_rt::group_diag_count(attempted as u64)?,

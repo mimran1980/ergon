@@ -854,7 +854,7 @@ pub(crate) fn generate_domain_recursive(
                 semantic_type: None,
                 presence: "required",
                 null_value: None,
-                deprecated_since: g.deprecated,
+                deprecated: g.deprecated,
                 description: g.description.clone(),
             });
         }
@@ -880,7 +880,7 @@ pub(crate) fn generate_domain_recursive(
                 semantic_type: None,
                 presence: "required",
                 null_value: None,
-                deprecated_since: vd.deprecated,
+                deprecated: vd.deprecated,
                 description: vd.description.clone(),
             });
         }

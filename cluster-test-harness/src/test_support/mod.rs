@@ -34,6 +34,3 @@ pub mod jar;
 pub use archive::EmbeddedArchiveDriver;
 pub use cluster::TestCluster;
 pub use jar::{find_jar, sha256, try_find_jar, try_sha256};
-
-// URI helpers (also re-exported at the crate root).
-pub use crate::uri::{channel_cstr, udp_endpoint_cstr};

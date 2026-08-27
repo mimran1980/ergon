@@ -139,7 +139,7 @@ pub(crate) struct MessageStructure {
     pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: Option<u16>,
+    pub(crate) deprecated: bool,
     pub(crate) semantic_type: Option<String>,
     /// Root fixed-block length in bytes (schema `blockLength` when declared and
     /// larger than the tight field packing, else the computed field span).
@@ -160,7 +160,7 @@ pub(crate) struct MessageField {
     pub(crate) min_value: Option<u64>,
     pub(crate) max_value: Option<u64>,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: Option<u16>,
+    pub(crate) deprecated: bool,
     pub(crate) semantic_type: Option<String>,
     pub(crate) constant_value: Option<String>,
     /// Epoch for timestamp fields (e.g. `"unix"`); feeds `MetaAttribute::Epoch`.
@@ -222,7 +222,7 @@ pub(crate) struct MessageGroup {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
-    pub(crate) deprecated: Option<u16>,
+    pub(crate) deprecated: bool,
     pub(crate) description: Option<String>,
     pub(crate) dimension_type: String,
     pub(crate) fields: Vec<MessageField>,
@@ -271,7 +271,7 @@ pub(crate) struct MessageVarData {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
-    pub(crate) deprecated: Option<u16>,
+    pub(crate) deprecated: bool,
     pub(crate) description: Option<String>,
     pub(crate) type_name: String,
     pub(crate) max_length: Option<usize>,

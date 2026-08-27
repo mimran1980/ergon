@@ -54,6 +54,8 @@ for p in meta["packages"]:
         elif field == "manifest_dir":
             import os
             print(os.path.dirname(p["manifest_path"]))
+        elif field == "target_directory":
+            print(meta["target_directory"])
         sys.exit(0)
 sys.exit(f"package {package} not in cargo metadata")
 ' "$package" "$1" <<<"$metadata_json"
@@ -61,7 +63,7 @@ sys.exit(f"package {package} not in cargo metadata")
 
 features=$(read_meta features)
 version=$(read_meta version)
-manifest_dir=$(read_meta manifest_dir)
+target_directory=$(read_meta target_directory)
 
 if [[ "$package" == "ergo-aeron-cluster" ]]; then
     if grep -qx 'test-harness' <<<"$features"; then
@@ -90,11 +92,8 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-(
-    cd "$manifest_dir"
-    cargo package --no-verify "${allow_dirty[@]+"${allow_dirty[@]}"}" >/dev/null
-)
-crate_tar="$manifest_dir/target/package/${package}-${version}.crate"
+cargo package "${pkg_args[@]}" --no-verify "${allow_dirty[@]+"${allow_dirty[@]}"}" >/dev/null
+crate_tar="$target_directory/package/${package}-${version}.crate"
 if [[ ! -f "$crate_tar" ]]; then
     echo "FAIL: packed crate $crate_tar not found" >&2
     exit 1

@@ -152,6 +152,7 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
+    bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
     @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
     bash scripts/measure-codegen-cold-path.sh

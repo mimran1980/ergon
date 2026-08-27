@@ -66,16 +66,17 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
          ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n\
          \n\
          [dev-dependencies]\n\
-         proptest = \"1\"\n",
+         proptest = \"=1.11.0\"\n",
         sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo_toml).unwrap();
 
     let target_dir = dir.join("target_ci");
     let out = Command::new("cargo")
-        .args(["test"])
+        .args(["test", "--offline"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 

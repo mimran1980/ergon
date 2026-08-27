@@ -598,6 +598,13 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!md_files.is_empty(), "no book markdown files found");
 
     for md_path in &md_files {
+        // Cluster pages need `ergo-aeron-cluster` (Aeron/rusteron). This
+        // harness compiles fences against ergo-sbe only; cluster recipes are
+        // compile-checked as `rust,no_run` doctests on that crate.
+        if md_path.components().any(|c| c.as_os_str() == "cluster") {
+            skipped += 1;
+            continue;
+        }
         let md = fs::read_to_string(md_path)?;
         let fences = extract_all_rust_fences(&md);
         for (_line, body) in &fences {

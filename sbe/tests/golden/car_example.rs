@@ -522,12 +522,46 @@ pub mod sbe_rt {
     /// Narrow a group count for `GroupFull` / mismatch diagnostics.
     /// Errors instead of truncating when the count exceeds `u32::MAX`.
     #[inline]
-    pub(crate) fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
-        u32::try_from(count)
-            .map_err(|_| EncodeError::GroupCountOverflow {
+    pub(crate) const fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
+        if count > u32::MAX as u64 {
+            Err(EncodeError::GroupCountOverflow {
                 maximum: u32::MAX,
                 actual: u32::MAX,
             })
+        } else {
+            Ok(count as u32)
+        }
+    }
+    /// Convert a wire/user group count to `usize` without truncation.
+    #[inline]
+    pub(crate) const fn count_to_usize(count: u64) -> Result<usize, EncodeError> {
+        if count > usize::MAX as u64 {
+            Err(EncodeError::EncodedLengthOverflow)
+        } else {
+            Ok(count as usize)
+        }
+    }
+    /// `a * b` for encoded-length / verify arithmetic, never wrapping.
+    #[inline]
+    pub(crate) const fn checked_len_mul(
+        a: usize,
+        b: usize,
+    ) -> Result<usize, EncodeError> {
+        match a.checked_mul(b) {
+            Some(v) => Ok(v),
+            None => Err(EncodeError::EncodedLengthOverflow),
+        }
+    }
+    /// `a + b` for encoded-length / verify arithmetic, never wrapping.
+    #[inline]
+    pub(crate) const fn checked_len_add(
+        a: usize,
+        b: usize,
+    ) -> Result<usize, EncodeError> {
+        match a.checked_add(b) {
+            Some(v) => Ok(v),
+            None => Err(EncodeError::EncodedLengthOverflow),
+        }
     }
     /// Compile-time metadata for a generated SBE message.
     ///
@@ -2826,7 +2860,15 @@ impl<'a> CarDecoder<'a> {
                 Ok(count) => count,
                 Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
             };
-            let mut entry_offset = offset + 4;
+            let mut entry_offset = match offset.checked_add(4) {
+                Some(v) => v,
+                None => {
+                    return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                        field: "fuel_figures",
+                        offset,
+                    });
+                }
+            };
             for _ in 0..count {
                 match FuelFiguresEntryDecoder::skip(buf, entry_offset, 6, 0) {
                     Ok(next) => entry_offset = next,
@@ -2851,7 +2893,15 @@ impl<'a> CarDecoder<'a> {
                 Ok(count) => count,
                 Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
             };
-            let mut entry_offset = offset + 4;
+            let mut entry_offset = match offset.checked_add(4) {
+                Some(v) => v,
+                None => {
+                    return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
+                        field: "performance_figures",
+                        offset,
+                    });
+                }
+            };
             for _ in 0..count {
                 match PerformanceFiguresEntryDecoder::skip(buf, entry_offset, 1, 0) {
                     Ok(next) => entry_offset = next,
@@ -7674,8 +7724,8 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         let written = group.written();
         if written != count {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: written as u32,
+                declared: sbe_rt::group_diag_count(count as u64)?,
+                actual: sbe_rt::group_diag_count(written as u64)?,
             });
         }
         Ok(CarAfterFuelFigures {
@@ -7770,8 +7820,8 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         let written = group.written();
         if written != count {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: written as u32,
+                declared: sbe_rt::group_diag_count(count as u64)?,
+                actual: sbe_rt::group_diag_count(written as u64)?,
             });
         }
         Ok(CarAfterPerformanceFigures {
@@ -9032,7 +9082,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         let attempted = (self.written as usize)
             .checked_add(count)
             .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
-        if attempted > self.count as usize {
+        if attempted > sbe_rt::count_to_usize(self.count as u64)? {
             return Err(sbe_rt::EncodeError::GroupFull {
                 declared: sbe_rt::group_diag_count(self.count as u64)?,
                 attempted: sbe_rt::group_diag_count(attempted as u64)?,
@@ -9380,11 +9430,25 @@ impl CarEncodedLength {
     #[inline]
     pub const fn fuel_figures(self, count: u16) -> CarFuelFiguresUniformEncodedLength {
         let mut state = self.state;
-        let pm = state.enter_group(count as usize, 4 as usize, 6 as usize);
+        let count_usize = match sbe_rt::count_to_usize(count as u64) {
+            Ok(c) => c,
+            Err(e) => {
+                state.fail(e);
+                0
+            }
+        };
+        let declared_count = match sbe_rt::group_diag_count(count as u64) {
+            Ok(c) => c,
+            Err(e) => {
+                state.fail(e);
+                0
+            }
+        };
+        let pm = state.enter_group(count_usize, 4 as usize, 6 as usize);
         CarFuelFiguresUniformEncodedLength {
             state,
             parent_multiplier: pm,
-            declared_count: count as u32,
+            declared_count,
         }
     }
     /// **Ragged** group (known count) — entries may have *different*
@@ -9409,17 +9473,20 @@ impl CarEncodedLength {
             &mut CarFuelFiguresRaggedBuilder<'_>,
         ) -> Result<(), sbe_rt::EncodeError>,
     {
-        let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
+        let count_usize = sbe_rt::count_to_usize(count as u64)?;
+        let declared = sbe_rt::group_diag_count(count as u64)?;
+        let pm = self.state.enter_group(count_usize, 4 as usize, 6 as usize);
         self.state.leave_group(pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
         let mut wrapper = CarFuelFiguresRaggedBuilder {
             b: &mut builder,
         };
         f(&mut wrapper)?;
-        if builder.written != count as usize {
+        let actual = sbe_rt::group_diag_count(builder.written as u64)?;
+        if actual != declared {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: builder.written as u32,
+                declared,
+                actual,
             });
         }
         self.state = builder.state;
@@ -9446,7 +9513,7 @@ impl CarEncodedLength {
             &mut CarFuelFiguresRaggedBuilder<'_>,
         ) -> Result<(), sbe_rt::EncodeError>,
     {
-        let max_count = u16::MAX as usize;
+        let max_count = sbe_rt::count_to_usize(u16::MAX as u64)?;
         let pm = self.state.multiplier();
         self.state.add_scaled(4 as usize, pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 6 as usize);
@@ -9456,8 +9523,8 @@ impl CarEncodedLength {
         f(&mut wrapper)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                maximum: u16::MAX as u32,
-                actual: builder.written as u32,
+                maximum: sbe_rt::group_diag_count(u16::MAX as u64)?,
+                actual: sbe_rt::group_diag_count(builder.written as u64)?,
             });
         }
         self.state = builder.state;
@@ -9485,7 +9552,11 @@ impl CarPerformanceFiguresUniformEncodedLength {
         mut self,
         count: u16,
     ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
-        let pm = self.state.enter_group(count as usize, 4 as usize, 6 as usize);
+        let count = match sbe_rt::count_to_usize(count as u64) {
+            Ok(c) => c,
+            Err(e) => return Err(e),
+        };
+        let pm = self.state.enter_group(count, 4 as usize, 6 as usize);
         self.state.leave_group(pm);
         match self.state.check() {
             Ok(()) => {
@@ -9533,11 +9604,25 @@ impl CarEncodedLengthAfterFuelFigures {
         count: u16,
     ) -> CarPerformanceFiguresUniformEncodedLength {
         let mut state = self.state;
-        let pm = state.enter_group(count as usize, 4 as usize, 1 as usize);
+        let count_usize = match sbe_rt::count_to_usize(count as u64) {
+            Ok(c) => c,
+            Err(e) => {
+                state.fail(e);
+                0
+            }
+        };
+        let declared_count = match sbe_rt::group_diag_count(count as u64) {
+            Ok(c) => c,
+            Err(e) => {
+                state.fail(e);
+                0
+            }
+        };
+        let pm = state.enter_group(count_usize, 4 as usize, 1 as usize);
         CarPerformanceFiguresUniformEncodedLength {
             state,
             parent_multiplier: pm,
-            declared_count: count as u32,
+            declared_count,
         }
     }
     /// **Ragged** group (known count) — entries may have *different*
@@ -9562,17 +9647,20 @@ impl CarEncodedLengthAfterFuelFigures {
             &mut CarPerformanceFiguresRaggedBuilder<'_>,
         ) -> Result<(), sbe_rt::EncodeError>,
     {
-        let pm = self.state.enter_group(count as usize, 4 as usize, 1 as usize);
+        let count_usize = sbe_rt::count_to_usize(count as u64)?;
+        let declared = sbe_rt::group_diag_count(count as u64)?;
+        let pm = self.state.enter_group(count_usize, 4 as usize, 1 as usize);
         self.state.leave_group(pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 0);
         let mut wrapper = CarPerformanceFiguresRaggedBuilder {
             b: &mut builder,
         };
         f(&mut wrapper)?;
-        if builder.written != count as usize {
+        let actual = sbe_rt::group_diag_count(builder.written as u64)?;
+        if actual != declared {
             return Err(sbe_rt::EncodeError::GroupCountMismatch {
-                declared: count as u32,
-                actual: builder.written as u32,
+                declared,
+                actual,
             });
         }
         self.state = builder.state;
@@ -9599,7 +9687,7 @@ impl CarEncodedLengthAfterFuelFigures {
             &mut CarPerformanceFiguresRaggedBuilder<'_>,
         ) -> Result<(), sbe_rt::EncodeError>,
     {
-        let max_count = u16::MAX as usize;
+        let max_count = sbe_rt::count_to_usize(u16::MAX as u64)?;
         let pm = self.state.multiplier();
         self.state.add_scaled(4 as usize, pm);
         let mut builder = RaggedEntryBuilder::new(self.state, pm, 1 as usize);
@@ -9609,8 +9697,8 @@ impl CarEncodedLengthAfterFuelFigures {
         f(&mut wrapper)?;
         if builder.written > max_count {
             return Err(sbe_rt::EncodeError::GroupCountOverflow {
-                maximum: u16::MAX as u32,
-                actual: builder.written as u32,
+                maximum: sbe_rt::group_diag_count(u16::MAX as u64)?,
+                actual: sbe_rt::group_diag_count(builder.written as u64)?,
             });
         }
         self.state = builder.state;

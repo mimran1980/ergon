@@ -37,8 +37,8 @@ fn test_connect_and_receive_session_event_ok() -> Result<(), Box<dyn std::error:
     );
 
     // Connect to cluster via its ingress channel
-    let ing_cstr = ergo_aeron_cluster_test_harness::channel_cstr(&cluster.ingress_channel)?;
-    let egr_cstr = ergo_aeron_cluster_test_harness::channel_cstr(&cluster.egress_channel)?;
+    let ing_cstr = cformat!("{}", cluster.ingress_channel);
+    let egr_cstr = cformat!("{}", cluster.egress_channel);
 
     let egress = a.add_subscription(
         &egr_cstr,

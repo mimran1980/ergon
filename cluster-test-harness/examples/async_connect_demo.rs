@@ -10,7 +10,6 @@ use ergo_aeron_cluster::{
     cluster_codec_types::EventCode,
     egress::{EgressAdapter, EgressListener},
 };
-use ergo_aeron_cluster_test_harness::TestCluster;
 use std::time::Duration;
 
 struct L(usize);

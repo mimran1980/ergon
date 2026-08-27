@@ -23,16 +23,6 @@
   `ergo-aeron-cluster` with every advertised feature and fails closed.
 
 ### Changed
-- **Breaking:** `Schema` stores a single private `Ir`. Use `package()`, `id()`,
-  `version()`, `ir()`, `ir_mut()`, and `into_ir()`. Duplicate public identity
-  fields are unrepresentable.
-- **Breaking:** XML `deprecated` is preserved as `Option<u16>` through IR,
-  structured IR, and hook metadata (`FieldInfo::deprecated_since`). Generated
-  `#[deprecated(note = "SBE schema deprecated since version N")]` includes the
-  exact version. Inherited type/field deprecations keep the earliest version.
-- **Breaking:** `GenerationConfig::with_error_from_impls` / `error_from_path`
-  and generated lossy `From<String>` error conversions are removed. Implement
-  `From<generated::sbe_rt::{EncodeError, DecodeError}>` directly.
 - **Breaking:** `ergo-aeron-cluster` no longer advertises a `test-harness`
   feature or `test_support` module. Depend on `ergo-aeron-cluster-test-harness`
   in this repository.

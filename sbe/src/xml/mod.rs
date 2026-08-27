@@ -23,7 +23,7 @@
 //!   </types>
 //! </messageSchema>"#).unwrap();
 //! let schema = Schema::from_ir(ir);
-//! assert_eq!(schema.id(), 1);
+//! assert_eq!(schema.id, 1);
 //! ```
 //!
 //! Errors are span-bearing [`ParseError`]s ([`miette`]).

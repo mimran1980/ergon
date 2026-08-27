@@ -7,7 +7,5 @@
 #![allow(missing_docs)]
 
 pub mod test_support;
-mod uri;
 
 pub use test_support::{EmbeddedArchiveDriver, TestCluster, jar};
-pub use uri::{channel_cstr, udp_endpoint_cstr};
