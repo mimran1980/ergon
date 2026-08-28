@@ -43,6 +43,26 @@ fn lean_omits_display_meta_and_dispatch() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// `with_display_debug(false)` must reach group entry decoders too — the
+/// entry `Display` impl used to be emitted unconditionally, so a lean build
+/// still carried the formatting code it asked not to have.
+#[test]
+fn display_debug_off_omits_group_entry_display() -> Result<(), Box<dyn Error>> {
+    let lean = generate_with(&Paths::example_schema(), "prof_no_disp", |c| {
+        c.with_display_debug(false)
+    })?;
+    assert!(
+        !lean.contains("core::fmt::Display for FuelFiguresEntryDecoder"),
+        "with_display_debug(false) must omit group entry Display"
+    );
+    let full = generate_with(&Paths::example_schema(), "prof_disp", |c| c)?;
+    assert!(
+        full.contains("core::fmt::Display for FuelFiguresEntryDecoder"),
+        "default must still emit group entry Display"
+    );
+    Ok(())
+}
+
 #[test]
 fn full_profile_includes_display_and_dispatch() -> Result<(), Box<dyn Error>> {
     let full = generate_with(&Paths::example_schema(), "prof_full", |c| {
