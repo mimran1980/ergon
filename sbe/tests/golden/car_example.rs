@@ -3830,61 +3830,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
-    #[cfg(feature = "compact_str")]
-    #[inline]
-    pub fn into_usage_description_as_compact_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::compact_str::CompactString, FuelFiguresEntryDecoderComplete<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_usage_description()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "usageDescription",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
-    #[cfg(feature = "smol_str")]
-    #[inline]
-    pub fn into_usage_description_as_smol_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::smol_str::SmolStr, FuelFiguresEntryDecoderComplete<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_usage_description()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "usageDescription",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as
-    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
-    #[cfg(feature = "bytes")]
-    #[inline]
-    pub fn into_usage_description_as_bytes(
-        self,
-    ) -> Result<
-        (ergo_sbe::bytes::Bytes, FuelFiguresEntryDecoderComplete<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (data, next) = self.into_usage_description()?;
-        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
-    }
-}
-impl<'a> FuelFiguresEntryDecoder<'a> {
     /// Fallible scoped var-data accessor. Calls the closure with
     /// the decoded bytes and returns the next stage on success.
     #[inline]
@@ -5487,61 +5432,6 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
-    #[cfg(feature = "compact_str")]
-    #[inline]
-    pub fn into_manufacturer_as_compact_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::compact_str::CompactString, CarDecoderAfterManufacturer<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_manufacturer()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "manufacturer",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
-    #[cfg(feature = "smol_str")]
-    #[inline]
-    pub fn into_manufacturer_as_smol_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::smol_str::SmolStr, CarDecoderAfterManufacturer<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_manufacturer()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "manufacturer",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as
-    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
-    #[cfg(feature = "bytes")]
-    #[inline]
-    pub fn into_manufacturer_as_bytes(
-        self,
-    ) -> Result<
-        (ergo_sbe::bytes::Bytes, CarDecoderAfterManufacturer<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (data, next) = self.into_manufacturer()?;
-        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
-    }
-}
-impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     /// Fallible scoped var-data accessor. Calls the closure with
     /// the decoded bytes and returns the next stage on success.
     #[inline]
@@ -5703,61 +5593,6 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
-    #[cfg(feature = "compact_str")]
-    #[inline]
-    pub fn into_model_as_compact_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::compact_str::CompactString, CarDecoderAfterModel<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_model()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "model",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
-    #[cfg(feature = "smol_str")]
-    #[inline]
-    pub fn into_model_as_smol_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::smol_str::SmolStr, CarDecoderAfterModel<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_model()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "model",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as
-    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
-    #[cfg(feature = "bytes")]
-    #[inline]
-    pub fn into_model_as_bytes(
-        self,
-    ) -> Result<
-        (ergo_sbe::bytes::Bytes, CarDecoderAfterModel<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (data, next) = self.into_model()?;
-        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
-    }
-}
-impl<'a> CarDecoderAfterManufacturer<'a> {
     /// Fallible scoped var-data accessor. Calls the closure with
     /// the decoded bytes and returns the next stage on success.
     #[inline]
@@ -5906,58 +5741,6 @@ impl<'a> CarDecoderAfterModel<'a> {
         let (bytes, next) = self.into_activation_code()?;
         let s = unsafe { core::str::from_utf8_unchecked(bytes) };
         Ok((s, next))
-    }
-}
-impl<'a> CarDecoderAfterModel<'a> {
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
-    #[cfg(feature = "compact_str")]
-    #[inline]
-    pub fn into_activation_code_as_compact_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::compact_str::CompactString, CarDecoderComplete<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_activation_code()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "activationCode",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as a
-    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
-    #[cfg(feature = "smol_str")]
-    #[inline]
-    pub fn into_activation_code_as_smol_str(
-        self,
-    ) -> Result<
-        (ergo_sbe::smol_str::SmolStr, CarDecoderComplete<'a>),
-        sbe_rt::DecodeError,
-    > {
-        let (bytes, next) = self.into_activation_code()?;
-        let s = core::str::from_utf8(bytes)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "activationCode",
-                    error: e,
-                }
-            })?;
-        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
-    }
-    /// Consume this stage, read the next var-data field as
-    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
-    #[cfg(feature = "bytes")]
-    #[inline]
-    pub fn into_activation_code_as_bytes(
-        self,
-    ) -> Result<(ergo_sbe::bytes::Bytes, CarDecoderComplete<'a>), sbe_rt::DecodeError> {
-        let (data, next) = self.into_activation_code()?;
-        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {

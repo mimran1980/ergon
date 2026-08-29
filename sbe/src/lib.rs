@@ -381,8 +381,10 @@ pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
 pub mod chrono_converters;
 
 // Re-export optional dependencies so generated codecs can name the types
-// without the consumer adding them directly. Feature-gated codec methods
-// (into_<field>_as_compact_str, etc.) use these paths.
+// without the consumer adding them directly. The matching codec methods
+// (into_<field>_as_compact_str, etc.) are emitted only when the generator
+// itself was built with the feature, so enable it on ergo-sbe in **both**
+// `[build-dependencies]` and `[dependencies]`.
 #[cfg(feature = "bytes")]
 pub use bytes;
 #[cfg(feature = "compact_str")]

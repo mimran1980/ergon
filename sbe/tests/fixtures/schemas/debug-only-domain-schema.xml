@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A composite used both as a top-level field and inside a group, so a
+     domain type mapped onto it exercises the message-level Debug body and
+     the group-entry Display body. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="debug_only_domain" id="94" version="0"
+    byteOrder="littleEndian" headerType="messageHeader">
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <composite name="groupSizeEncoding">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="numInGroup" primitiveType="uint16"/>
+  </composite>
+  <composite name="Amount">
+    <type name="mantissa" primitiveType="int64"/>
+    <type name="exponent" primitiveType="int8"/>
+  </composite>
+</types>
+<sbe:message name="Order" id="1">
+  <field name="total" id="1" type="Amount"/>
+  <group name="legs" id="2" dimensionType="groupSizeEncoding">
+    <field name="amount" id="3" type="Amount"/>
+  </group>
+</sbe:message>
+</sbe:messageSchema>

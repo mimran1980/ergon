@@ -1,5 +1,19 @@
 //! Shared test helpers for `ergon` integration tests.
 //!
+//! # Never set `CARGO_NET_OFFLINE` on the scratch-crate builds
+//!
+//! The `compile_and_run*` helpers write a throwaway crate and `cargo build`
+//! it. That crate resolves its own dependency graph (`chrono`, `rust_decimal`,
+//! `proptest`, …), whose transitive closure is **not** a subset of this
+//! workspace's — so a CI runner's cargo cache does not contain it. Forcing
+//! offline therefore fails on whichever transitive crate happens to be
+//! missing, while passing on any developer machine with a warm `~/.cargo`.
+//!
+//! That exact bug turned `CI` red on every release commit from 0.1.19 to
+//! 0.1.22 (`bit-set v0.8.0`, then `ahash v0.7.8`), and was only half-fixed
+//! in `dade81f7`, which cleared the flag in the proptest harness but left it
+//! in the four builders here. Do not reintroduce it.
+//!
 //! # Codegen bug workaround
 //!
 //! The current codegen emits several known-compile errors. `patch_source()`
@@ -241,7 +255,6 @@ pub fn compile_fails_with_diagnostics(
         .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         // A compile-fail fixture asserts that a lint or type error FIRES. Ambient
         // RUSTFLAGS can silence exactly that: `cargo mutants` runs with
         // `cap_lints = true` (.cargo/mutants.toml), which caps every lint to
@@ -335,7 +348,6 @@ fn _compile_and_run(
         .args(&args)
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 
@@ -458,7 +470,6 @@ ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "
         .args(["run", "--quiet"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed to start");
 
@@ -576,7 +587,6 @@ pub fn compile_and_run_two_modules(
         .args(["run"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .expect("cargo run failed");
 

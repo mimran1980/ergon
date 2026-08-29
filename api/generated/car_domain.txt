@@ -1,15 +1,3 @@
-# [cfg (feature = "bytes")] CarDecoderAfterManufacturer::fn into_model_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "bytes")] CarDecoderAfterModel::fn into_activation_code_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError >
-# [cfg (feature = "bytes")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "bytes")] FuelFiguresEntryDecoder::fn into_usage_description_as_bytes (self ,) -> Result < (ergo_sbe :: bytes :: Bytes , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "compact_str")] CarDecoderAfterManufacturer::fn into_model_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "compact_str")] CarDecoderAfterModel::fn into_activation_code_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "compact_str")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "compact_str")] FuelFiguresEntryDecoder::fn into_usage_description_as_compact_str (self ,) -> Result < (ergo_sbe :: compact_str :: CompactString , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "smol_str")] CarDecoderAfterManufacturer::fn into_model_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderAfterModel < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "smol_str")] CarDecoderAfterModel::fn into_activation_code_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "smol_str")] CarDecoderAfterPerformanceFigures::fn into_manufacturer_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError , >
-# [cfg (feature = "smol_str")] FuelFiguresEntryDecoder::fn into_usage_description_as_smol_str (self ,) -> Result < (ergo_sbe :: smol_str :: SmolStr , FuelFiguresEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError , >
 # [must_use = "complete the nested shape or call finish_empty()"] struct CarFuelFiguresUniformEncodedLength {  }
 # [must_use = "complete the nested shape or call finish_empty()"] struct CarPerformanceFiguresUniformEncodedLength {  }
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CarDecoder< 'a > {  }

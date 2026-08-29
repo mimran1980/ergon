@@ -354,52 +354,68 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         }
 
-        // Optional crate accessors. Always emitted, cfg-gated on the consumer
-        // so generator `--all-features` does not change the default compile.
+        // Optional-crate accessors. Emitted only when the *generator* was built
+        // with the matching feature — a consumer who did not ask for
+        // `compact_str` gets no `compact_str` code at all. (Emitting them
+        // unconditionally behind `#[cfg(feature = ...)]` put the gate on the
+        // consumer crate's own feature set, where it silently never matched.)
         {
-            let as_compact_ident =
-                syn::Ident::new(&format!("into_{}_as_compact_str", vd.accessor_snake), span);
-            let as_smol_ident =
-                syn::Ident::new(&format!("into_{}_as_smol_str", vd.accessor_snake), span);
-            let as_bytes_ident =
-                syn::Ident::new(&format!("into_{}_as_bytes", vd.accessor_snake), span);
+            #[cfg(any(feature = "compact_str", feature = "smol_str", feature = "bytes"))]
             let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
-            ts.extend(quote::quote! {
-                impl<'a> #current_stage<'a> {
-                    /// Consume this stage, read the next var-data field as a
-                    /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
-                    #[cfg(feature = "compact_str")]
-                    #[inline]
-                    pub fn #as_compact_ident(self) -> Result<(ergo_sbe::compact_str::CompactString, #next_stage<'a>), sbe_rt::DecodeError> {
-                        let (bytes, next) = self.#into_ident()?;
-                        let s = core::str::from_utf8(bytes).map_err(|e| {
-                            sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
-                        })?;
-                        Ok((ergo_sbe::compact_str::CompactString::new(s), next))
+            #[cfg(feature = "compact_str")]
+            {
+                let as_compact_ident =
+                    syn::Ident::new(&format!("into_{}_as_compact_str", vd.accessor_snake), span);
+                ts.extend(quote::quote! {
+                    impl<'a> #current_stage<'a> {
+                        /// Consume this stage, read the next var-data field as a
+                        /// [`ergo_sbe::compact_str::CompactString`] (≤24 bytes inline), and advance.
+                        #[inline]
+                        pub fn #as_compact_ident(self) -> Result<(ergo_sbe::compact_str::CompactString, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (bytes, next) = self.#into_ident()?;
+                            let s = core::str::from_utf8(bytes).map_err(|e| {
+                                sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
+                            })?;
+                            Ok((ergo_sbe::compact_str::CompactString::new(s), next))
+                        }
                     }
-
-                    /// Consume this stage, read the next var-data field as a
-                    /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
-                    #[cfg(feature = "smol_str")]
-                    #[inline]
-                    pub fn #as_smol_ident(self) -> Result<(ergo_sbe::smol_str::SmolStr, #next_stage<'a>), sbe_rt::DecodeError> {
-                        let (bytes, next) = self.#into_ident()?;
-                        let s = core::str::from_utf8(bytes).map_err(|e| {
-                            sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
-                        })?;
-                        Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
+                });
+            }
+            #[cfg(feature = "smol_str")]
+            {
+                let as_smol_ident =
+                    syn::Ident::new(&format!("into_{}_as_smol_str", vd.accessor_snake), span);
+                ts.extend(quote::quote! {
+                    impl<'a> #current_stage<'a> {
+                        /// Consume this stage, read the next var-data field as a
+                        /// [`ergo_sbe::smol_str::SmolStr`] (O(1) clone), and advance.
+                        #[inline]
+                        pub fn #as_smol_ident(self) -> Result<(ergo_sbe::smol_str::SmolStr, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (bytes, next) = self.#into_ident()?;
+                            let s = core::str::from_utf8(bytes).map_err(|e| {
+                                sbe_rt::DecodeError::InvalidUtf8 { field: #vd_name_lit, error: e }
+                            })?;
+                            Ok((ergo_sbe::smol_str::SmolStr::new(s), next))
+                        }
                     }
-
-                    /// Consume this stage, read the next var-data field as
-                    /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
-                    #[cfg(feature = "bytes")]
-                    #[inline]
-                    pub fn #as_bytes_ident(self) -> Result<(ergo_sbe::bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
-                        let (data, next) = self.#into_ident()?;
-                        Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
+                });
+            }
+            #[cfg(feature = "bytes")]
+            {
+                let as_bytes_ident =
+                    syn::Ident::new(&format!("into_{}_as_bytes", vd.accessor_snake), span);
+                ts.extend(quote::quote! {
+                    impl<'a> #current_stage<'a> {
+                        /// Consume this stage, read the next var-data field as
+                        /// [`ergo_sbe::bytes::Bytes`] (one copy from wire, then shared ownership), and advance.
+                        #[inline]
+                        pub fn #as_bytes_ident(self) -> Result<(ergo_sbe::bytes::Bytes, #next_stage<'a>), sbe_rt::DecodeError> {
+                            let (data, next) = self.#into_ident()?;
+                            Ok((ergo_sbe::bytes::Bytes::copy_from_slice(data), next))
+                        }
                     }
-                }
-            });
+                });
+            }
         }
 
         // Scoped fallible combinator: try_<data> always available.

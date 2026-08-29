@@ -14,9 +14,13 @@ your hot path needs, keep compilation lean otherwise.
 
 See [Measured performance](#measured-performance) below for the full benchmark table.
 
-Add features in your `Cargo.toml`:
+Add features in your `Cargo.toml`. The generator decides what to emit from its
+own feature set, so declare them on **both** entries:
 
 ```toml
+[build-dependencies]
+ergo-sbe = { version = "0.1", features = ["compact_str", "chrono"] }
+
 [dependencies]
 ergo-sbe = { version = "0.1", features = ["compact_str", "chrono"] }
 ```
@@ -56,7 +60,9 @@ pub struct QuoteDomain {
 ### Codec accessors
 
 When `compact_str` is enabled, every text var-data consuming stage gains an
-`into_<field>_as_compact_str()` method:
+`into_<field>_as_compact_str()` method. The generator decides at generation
+time, so enable the feature on `ergo-sbe` in both `[build-dependencies]` and
+`[dependencies]` — a build-dependency without it produces no accessor:
 
 ```rust,ignore
 let stage = dec.fuel_figures()?;
@@ -208,6 +214,9 @@ Run: `cargo bench -p ergo-sbe-benchmarks --bench chrono_converter_bench --all-fe
 All four features are independent — enable any subset:
 
 ```toml
+[build-dependencies]
+ergo-sbe = { version = "0.1", features = ["compact_str", "bytes", "chrono"] }
+
 [dependencies]
 ergo-sbe = { version = "0.1", features = ["compact_str", "bytes", "chrono"] }
 ```

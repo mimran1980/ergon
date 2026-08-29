@@ -21,10 +21,19 @@ use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Sc
 /// `deprecated`, `must_use`) — preserved on the item rather than causing it
 /// to be dropped. One line per item/field/variant/method, matching the
 /// previous names-only granularity so a change localises the same way.
+///
+/// The optional-crate var-data accessors are excluded: the generator emits
+/// them only when it was itself built with `compact_str` / `smol_str` /
+/// `bytes`, so keeping them would make the snapshot differ between
+/// `cargo test` and `cargo test --all-features`. Same trade-off as the golden
+/// (see `scripts/regenerate-golden.sh`); they are covered by
+/// `ordered_decoder_stages_test::optional_crate_var_data_accessors_run`.
 fn public_surface(source: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    const FEATURE_GATED: [&str; 3] = ["_as_compact_str (", "_as_smol_str (", "_as_bytes ("];
     let file = syn::parse_file(source)?;
     let mut out = Vec::new();
     collect("", &file.items, &mut out);
+    out.retain(|line| !FEATURE_GATED.iter().any(|s| line.contains(s)));
     out.sort();
     out.dedup();
     Ok(out)

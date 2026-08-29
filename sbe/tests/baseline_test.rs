@@ -2837,6 +2837,62 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// A caller's domain type is only ever required to be `Debug` — the generated
+/// `Display`/`Debug` bodies must never format one with `{}`. `Range<i64>` is
+/// `Debug` but deliberately **not** `Display`, so this fails to compile if any
+/// formatting site regresses. Mapped onto a composite used both top-level and
+/// inside a group, covering the message-level and group-entry bodies.
+#[test]
+fn debug_only_domain_type_formats_without_display() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/debug-only-domain-schema.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "debug_only_dt", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Amount"),
+            "std::ops::Range<i64>",
+        )
+    });
+    compile_and_run(
+        "debug_only_dt",
+        &src,
+        r#"
+        impl TryFromSbe<self::Amount> for std::ops::Range<i64> {
+            type Error = &'static str;
+            fn try_from_sbe(wire: self::Amount) -> Result<Self, Self::Error> {
+                Ok(wire.mantissa()..wire.mantissa() + wire.exponent() as i64)
+            }
+        }
+        impl TryToSbe<self::Amount> for std::ops::Range<i64> {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<self::Amount, Self::Error> {
+                Ok(self::Amount::new(self.start, (self.end - self.start) as i8))
+            }
+        }
+
+        let mut buf = [0u8; 128];
+        let len = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&OrderFixedFields { total: self::Amount::new(0, 0) })
+            .legs(1, |legs| {
+                legs.add(|leg| {
+                    leg.try_amount(7i64..9i64).map_err(|reason| {
+                        sbe_rt::EncodeError::DomainConversionFailed { field: "amount", reason }
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+
+        let dec = OrderDecoder::try_decode(&buf[..len], 0)?;
+        let rendered = format!("{dec:?}");
+        assert!(rendered.contains("7..9"), "group entry domain value missing: {rendered}");
+        "#,
+    );
+    Ok(())
+}
+
 /// `DomainImpl::Manual` gets the same concrete `try_price(...)?` /
 /// `try_price()?` signatures as `DomainImpl::Generated`, but ergo-sbe does
 /// not generate the `TryFromSbe`/`TryToSbe` impl for the built-in

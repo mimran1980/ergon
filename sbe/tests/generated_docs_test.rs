@@ -284,7 +284,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ergo-sbe = {{ path = "{}" }}
+ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#,
             sbe.display()
         ),

@@ -215,6 +215,59 @@ fn multiple_var_data_strings_coexist() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// The optional-crate var-data accessors are generated only when the
+/// *generator* has the feature — and when it does, they must compile and run.
+/// They used to be emitted unconditionally behind `#[cfg(feature = "…")]`,
+/// which resolved against the consumer crate's own feature set and so never
+/// matched: dead code in every generated module, and no test could reach it.
+#[test]
+#[cfg(feature = "compact_str")]
+fn optional_crate_var_data_accessors_run() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "opt_crate_vd");
+    assert!(
+        src.contains("into_manufacturer_as_compact_str"),
+        "compact_str feature on: accessor must be generated"
+    );
+    compile_and_run(
+        "opt_crate_vd",
+        &src,
+        r#"
+        let mut buf = [0u8; 4096];
+        let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 0,
+                available: BooleanType::F,
+                code: Model::NullVal,
+                some_numbers: [0u32; 4],
+                vehicle_code: [0u8; 6],
+                extras: OptionalExtras::default(),
+                engine: Engine::new(0, 0, [0, 0, 0], 0i8, BooleanType::F, Booster::new(BoostType::NullVal, 0)),
+            })
+            .fuel_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .performance_figures(0, |_| -> Result<(), sbe_rt::EncodeError> { Ok(()) })?
+            .manufacturer(b"Honda")?
+            .model(b"Civic VTi")?
+            .activation_code(b"abcdef")?
+            .as_bytes_with_header()
+            .to_vec();
+
+        let after_perf = CarDecoder::try_decode(&encoded, 0)?
+            .into_fuel_figures()?
+            .finish()?
+            .into_performance_figures()?
+            .finish()?;
+        let (mfr, next) = after_perf.into_manufacturer_as_compact_str()?;
+        let (model, next) = next.into_model_as_smol_str()?;
+        let (code, _done) = next.into_activation_code_as_bytes()?;
+        assert_eq!(mfr, "Honda");
+        assert_eq!(model, "Civic VTi");
+        assert_eq!(&code[..], b"abcdef");
+    "#,
+    );
+    Ok(())
+}
+
 /// Empty groups and empty var-data still traverse through the same stages.
 #[test]
 fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Error>> {

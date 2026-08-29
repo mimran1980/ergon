@@ -38,6 +38,7 @@ pub(crate) fn generate_group_decoder(
     enable_dispatch: bool,
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,
+    enable_display_debug: bool,
 ) -> proc_macro2::TokenStream {
     let mut ts = proc_macro2::TokenStream::new();
     let mu = must_use_observer();
@@ -1675,14 +1676,17 @@ pub(crate) fn generate_group_decoder(
                 let f_value =
                     syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
                 if let Some(domain_path) = find_domain_type(f, domain_types) {
-                    let fmt_str = format!("{sep}{}: {{}}", f.name);
+                    // A caller's domain type is only ever required to be
+                    // `Debug` — never assume `Display`.
+                    let fmt_str = format!("{sep}{}: {{:?}}", f.name);
+                    let err_fmt = format!("{sep}{}: <?>", f.name);
                     let domain_ty: syn::Type = syn::parse_str(domain_path).unwrap();
                     entry_display_body.extend(quote::quote! {
                         {
                             let raw = self.#f_value();
                             match <#domain_ty as TryFromSbe<_>>::try_from_sbe(raw) {
                                 Ok(v) => write!(f, #fmt_str, v)?,
-                                Err(_) => write!(f, #fmt_str, "<?>")?,
+                                Err(_) => write!(f, #err_fmt)?,
                             }
                         }
                     });
@@ -1781,15 +1785,20 @@ pub(crate) fn generate_group_decoder(
         impl<'a> #entry_decoder_ident<'a> {
             #entry_body
         }
-
-        impl<'a> core::fmt::Display for #entry_decoder_ident<'a> {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                write!(f, "{{ ")?;
-                #entry_display_body
-                write!(f, " }}")
-            }
-        }
     });
+    // Same gate as the message decoder's Display: `with_display_debug(false)`
+    // must not emit formatting code anywhere, entries included.
+    if enable_display_debug {
+        ts.extend(quote::quote! {
+            impl<'a> core::fmt::Display for #entry_decoder_ident<'a> {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    write!(f, "{{ ")?;
+                    #entry_display_body
+                    write!(f, " }}")
+                }
+            }
+        });
+    }
 
     // Recursively generate nested group decoders — scope under parent group name
     // to avoid collisions when different parent groups have same-named children
@@ -1806,6 +1815,7 @@ pub(crate) fn generate_group_decoder(
             enable_dispatch,
             null_as_option,
             all_enums_as_option,
+            enable_display_debug,
         ));
     }
 
