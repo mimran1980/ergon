@@ -88,3 +88,10 @@ carries the *exact* impl `DomainImpl::Generated` would have written — copy it
 out and adjust. `sbe/tests/baseline_test.rs`'s
 `domain_type_manual_impl_doc_comment_has_generated_snippet` asserts this
 snippet is present in the generated source.
+
+### What your domain type must implement
+
+Only `Debug`. The generated `Display`/`Debug` bodies format domain values with
+`{:?}`, so a plain `#[derive(Debug)]` struct works — `Display` is never
+required. Note that `TryFromSbe::Error` / `TryToSbe::Error` is a separate
+associated type and *does* need `Debug + Display`; `&'static str` satisfies it.

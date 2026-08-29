@@ -168,10 +168,12 @@ pub(crate) fn generate_decoder_display(
                 if find_domain_type(f, domain_types).is_some() {
                     let try_ident =
                         syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site());
+                    // A caller's domain type is only ever required to be
+                    // `Debug` — never assume `Display`.
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             if let Ok(v) = self.#try_ident() {
-                                d.field(#name_lit, &format_args!("{}", v));
+                                d.field(#name_lit, &v);
                             }
                         }
                     });

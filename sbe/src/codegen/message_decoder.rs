@@ -1855,6 +1855,7 @@ pub(crate) fn generate_message_decoder(
             enable_dispatch,
             null_as_option,
             all_enums_as_option,
+            enable_display_debug,
         ));
     }
 

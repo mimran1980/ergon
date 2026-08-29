@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.1.23] — 2026-08-28
+
+### Fixed
+- Generated `Display`/`Debug` bodies no longer assume a `with_domain_type`
+  target implements `Display`. Domain values format with `{:?}`, so a domain
+  type only has to be `Debug`.
+- `with_display_debug(false)` now also omits the group entry decoder's
+  `Display` impl, which was emitted unconditionally.
+
+### Changed
+- **Breaking:** optional var-data accessors (`into_*_as_compact_str`,
+  `into_*_as_smol_str`, `into_*_as_bytes`) are emitted only when the
+  *generator* was built with the matching `compact_str` / `smol_str` / `bytes`
+  feature — reverting the 0.1.x switch to gating them on the consumer's own
+  features. That gate was a `#[cfg(feature = "…")]` in the emitted source,
+  which resolved against the consumer crate's feature table; consumer crates do
+  not declare features by those names, so the accessors were unreachable dead
+  code in every generated module. Enable the feature on `ergo-sbe` in both
+  `[build-dependencies]` and `[dependencies]`.
+- The generated public-API snapshots no longer record those accessors, since
+  their presence now depends on the generator's feature set.
+
 ## [0.1.22] — 2026-08-27
 
 ### Added
