@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Fixed
+- Scratch-crate test helpers no longer force `--offline` / `CARGO_NET_OFFLINE`,
+  and they strip that flag when inherited from `cargo llvm-cov`. Nested
+  compile-and-run crates can download extra transitives (`bit-set`, `ahash`)
+  that are not in the workspace lock — the cause of red `test`/`coverage`
+  jobs on 0.1.19–0.1.22 and Dependabot PRs.
+- The coverage job timeout is 120 minutes (was 30). Instrumented
+  compile-and-run tests cannot finish in half an hour; the 0.1.23 coverage
+  job was cancelled mid-run.
+- Nightly `cargo fuzz` pins `x86_64-unknown-linux-gnu`. cargo-fuzz's Linux
+  default is musl+ASAN, which fails on a minimal nightly without that target.
+- Group-dimension IR extraction matches the required `blockLength` and
+  `numInGroup` members by exact name. Padding fields such as `account`,
+  `countPadding`, or `blockLengthPadding` no longer overwrite the layout.
+- Generated group-entry `Display` formats a domain-mapped set through
+  `try_*` and `{:?}`. The raw accessor is `*_wire`; calling `self.<field>()`
+  failed to compile.
+- `poll_connect_until_done` idles with work-count 0 while the handshake is
+  still in progress. `AsyncClusterConnect::poll`'s `true` means more polling
+  is needed, not that Aeron performed work; a positive count reset backoff
+  and pinned a core.
+- `parse_ingress_endpoints` rejects empty comma-separated entries (leading,
+  trailing, or repeated commas) instead of skipping them.
+- `write_module_set` restore after a mid-commit failure replaces an
+  already-promoted destination (Windows-safe) and surfaces restore errors
+  rather than discarding them. Successful publication fails if a `.bak`
+  backup cannot be removed.
+
+### Changed
+- Hook `FieldInfo::rust_type` for groups and var-data is a real type
+  (`LevelsDecoder`, `&[u8]`) instead of the sentinels `"group"` / `"data"`.
+  `FieldInfo::kind()` returns `FieldKind` (`Fixed`, `Group`, or `Data`).
+- CI, `just test`, and the local product gates run
+  `cargo test -p ergo-aeron-cluster` (integration tests, compile-fail API
+  suite) rather than `--lib` only.
+- Generated public-API freeze records trait associated-type bounds,
+  defaults, generics, where-clauses, and semver attributes.
+
 ## [0.1.23] — 2026-08-28
 
 ### Fixed

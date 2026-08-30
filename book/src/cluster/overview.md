@@ -39,7 +39,7 @@ excluded from the published crate package.
 ## Verify the crate
 
 ```sh
-cargo test -p ergo-aeron-cluster --lib
+cargo test -p ergo-aeron-cluster
 cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 cargo bench -p ergo-aeron-cluster --no-run

@@ -16,11 +16,16 @@ pub struct IngressEndpoint {
 
 /// Parse `"0=host:9002,1=host:9003"` into ordered entries.
 pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, ClusterError> {
+    if map.trim().is_empty() {
+        return Err(ClusterError::connect("ingress_endpoints is empty"));
+    }
     let mut out = Vec::new();
     for part in map.split(',') {
         let part = part.trim();
         if part.is_empty() {
-            continue;
+            return Err(ClusterError::connect(
+                "ingress_endpoints empty entry (leading, trailing, or repeated comma)",
+            ));
         }
         let (id_s, ep) = part
             .split_once('=')
@@ -36,9 +41,6 @@ pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, Cluste
             )));
         }
         out.push(IngressEndpoint { member_id, endpoint });
-    }
-    if out.is_empty() {
-        return Err(ClusterError::connect("ingress_endpoints is empty"));
     }
     out.sort_by_key(|e| e.member_id);
     // Detect duplicate member IDs after sorting.
@@ -103,6 +105,19 @@ mod tests {
         let v = parse_ingress_endpoints("0=a:1,1=b:2,2=c:3")?;
         assert_eq!(v.len(), 3);
         assert_eq!(v[2].member_id, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_empty_comma_separated_entries() -> Result<(), Box<dyn std::error::Error>> {
+        for bad in ["0=a:1,,1=b:2", ",0=a:1", "0=a:1,", "0=a:1, ,1=b:2"] {
+            let err = parse_ingress_endpoints(bad).expect_err(bad);
+            let s = err.to_string();
+            assert!(
+                s.contains("empty") || s.contains("empty entry"),
+                "expected empty-entry error for {bad:?}, got {s}"
+            );
+        }
         Ok(())
     }
 }

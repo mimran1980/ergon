@@ -93,7 +93,7 @@ check-local: policy
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --doc
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
@@ -117,7 +117,7 @@ check-products: policy
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster -- --test-threads=1
     cargo test -p ergo-aeron-cluster --doc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     ./scripts/check-book-fences.sh
@@ -280,7 +280,7 @@ test: policy
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
     cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster -- --test-threads=1
     @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
@@ -307,7 +307,7 @@ test: policy
 # Workspace unit tests only.
 test-unit: policy
     cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
-    cargo test -p ergo-aeron-cluster --lib
+    cargo test -p ergo-aeron-cluster -- --test-threads=1
 
 # Every test gate: standard suite + Miri UB detection + fuzz corpus replay.
 # A green `just test-all` means every test ran and every test passed.

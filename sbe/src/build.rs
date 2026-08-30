@@ -483,9 +483,19 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
     };
 
     if let Some(err) = commit_err {
-        // Restore every destination we backed up.
-        for (backup, dest) in &backed_up {
-            let _ = fs::rename(backup, dest);
+        // Restore every destination we backed up. Prefer a restore error
+        // over the original commit error: a half-applied graph is worse
+        // than a failed promote.
+        if let Err(restore_err) = restore_backed_up(&backed_up) {
+            let backed_up_dests: std::collections::HashSet<&Path> =
+                backed_up.iter().map(|(_, d)| d.as_path()).collect();
+            for sw in &promoted {
+                if !backed_up_dests.contains(sw.dest.as_path()) {
+                    let _ = fs::remove_file(&sw.dest);
+                }
+            }
+            remove_staged_temps(&staged);
+            return Err(restore_err);
         }
         // A promoted file that had NO backup did not exist before this call
         // — remove it so a failed generation leaves no partial output.
@@ -500,9 +510,16 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
         return Err(err);
     }
 
-    // Success: drop backups and report warnings only after commit.
+    // Success: drop backups. A leftover `.bak` is debris; fail the
+    // publication rather than report success with stray files.
     for (backup, _) in &backed_up {
-        let _ = fs::remove_file(backup);
+        if let Err(source) = fs::remove_file(backup) {
+            println!(
+                "cargo::warning=failed to remove backup {}: {source}",
+                backup.display()
+            );
+            return Err(io_err("remove generated module backup", backup, source));
+        }
     }
     for w in modules.warnings() {
         println!("cargo::warning={w}");
@@ -513,6 +530,45 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
 fn remove_staged_temps(staged: &[StagedWrite]) {
     for sw in staged {
         let _ = fs::remove_file(&sw.temp);
+    }
+}
+
+/// Put `backup` back at `dest`, replacing an already-promoted file.
+/// Windows `rename` will not replace an existing destination, so delete first.
+fn restore_destination(backup: &Path, dest: &Path) -> Result<(), BuildError> {
+    if dest.exists() {
+        if dest.is_dir() {
+            return Err(io_err(
+                "restore generated module",
+                dest,
+                std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "destination is a directory",
+                ),
+            ));
+        }
+        fs::remove_file(dest).map_err(|source| {
+            io_err(
+                "remove promoted generated module during restore",
+                dest,
+                source,
+            )
+        })?;
+    }
+    fs::rename(backup, dest).map_err(|source| io_err("restore generated module", dest, source))?;
+    Ok(())
+}
+
+fn restore_backed_up(backed_up: &[(PathBuf, PathBuf)]) -> Result<(), BuildError> {
+    let mut first_err = None;
+    for (backup, dest) in backed_up {
+        if let Err(e) = restore_destination(backup, dest) {
+            first_err = first_err.or(Some(e));
+        }
+    }
+    match first_err {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 
@@ -1231,5 +1287,44 @@ mod tests {
         ));
         fs::create_dir_all(&dir)?;
         Ok(dir)
+    }
+
+    #[test]
+    fn restore_destination_replaces_already_promoted_file() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile_dir()?;
+        let dest = dir.join("mod.rs");
+        let backup = dir.join("mod.rs.bak");
+        fs::write(&dest, b"promoted")?;
+        fs::write(&backup, b"original")?;
+        restore_destination(&backup, &dest)?;
+        assert_eq!(fs::read(&dest)?, b"original");
+        assert!(!backup.exists(), "rename consumes the backup");
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn restore_destination_errors_when_dest_is_a_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        let dest = dir.join("mod.rs");
+        let backup = dir.join("mod.rs.bak");
+        fs::create_dir_all(&dest)?;
+        fs::write(&backup, b"original")?;
+        let err = restore_destination(&backup, &dest).expect_err("dir dest");
+        match err {
+            BuildError::Io { action, path, .. } => {
+                assert!(
+                    action.contains("restore") || action.contains("remove"),
+                    "{action}"
+                );
+                assert_eq!(path, dest);
+            }
+            other => unreachable!("expected Io, got {other:?}"),
+        }
+        assert!(backup.exists(), "failed restore must leave the backup");
+        fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 }

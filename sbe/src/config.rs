@@ -199,12 +199,25 @@ pub struct SetChoiceInfo {
     pub description: Option<String>,
 }
 
+/// Kind of SBE field described by [`FieldInfo`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldKind {
+    /// Fixed-block scalar, array, composite, enum, or set.
+    Fixed,
+    /// Repeating group.
+    Group,
+    /// Variable-length data.
+    Data,
+}
+
 /// One field for hook introspection.
 #[derive(Clone, Debug)]
 pub struct FieldInfo {
     /// Field name in snake_case.
     pub name: String,
-    /// Rust type (e.g. "i64", "u8", "EventCode").
+    /// Rust type (e.g. "i64", "u8", "EventCode", "LevelsDecoder", "&[u8]").
+    /// Groups and var-data report a generated or slice type, never the
+    /// sentinels `"group"` / `"data"`. Use [`Self::kind`] to classify.
     pub rust_type: String,
     /// Byte offset from the message body start, when this is a fixed
     /// scalar/array/composite/enum/set field. `None` for groups and
@@ -222,6 +235,23 @@ pub struct FieldInfo {
     pub deprecated: bool,
     /// Schema description on the field, if present.
     pub description: Option<String>,
+}
+
+impl FieldInfo {
+    /// Classify this field as fixed, repeating group, or var-data.
+    #[must_use]
+    pub fn kind(&self) -> FieldKind {
+        if self.offset.is_some() {
+            return FieldKind::Fixed;
+        }
+        if self.rust_type.ends_with("Decoder")
+            || (self.rust_type.starts_with("Vec<") && self.rust_type.contains("Domain"))
+        {
+            FieldKind::Group
+        } else {
+            FieldKind::Data
+        }
+    }
 }
 
 /// Per-item context passed to hooks.

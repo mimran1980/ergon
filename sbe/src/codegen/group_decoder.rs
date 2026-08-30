@@ -1592,10 +1592,10 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
-    // A domain-typed primitive/enum field uses the fallible `try_*` accessor
-    // for Display — the plain accessor is renamed to `*_wire` (or removed)
-    // once a domain type is registered, so it no longer exists under that
-    // name. Shared by the Primitive and Enum branches below.
+    // A domain-typed primitive/enum/set field uses the fallible `try_*`
+    // accessor for Display — the plain accessor is renamed to `*_wire` (or
+    // removed) once a domain type is registered, so it no longer exists
+    // under that name. Shared by the Primitive, Enum, and Set branches.
     fn domain_display_write(f_name: &str, field_name: &str, sep: &str) -> proc_macro2::TokenStream {
         let try_ident = syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
         let fmt_str = format!("{sep}{field_name}: {{:?}}");
@@ -1652,20 +1652,22 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                // Bitset's own Display is already pipe-separated flag names
-                // (A|B|C) — {} just forwards it. Versioned accessors return
-                // Option<T>, which isn't Display, so branch instead of
-                // relying on {:?} (that would show the raw derived Debug,
-                // not the pipe-separated names).
-                let fmt_str = format!("{sep}{}: {{}}", f.name);
-                if f.since_version > 0 {
-                    entry_display_body.extend(quote::quote! {
-                        if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
-                    });
+                // Domain-mapped sets rename the raw accessor to `*_wire` and
+                // only require Debug on the domain type — same rule as
+                // Primitive/Enum. The bitset's own Display is used otherwise.
+                if find_domain_type(f, domain_types).is_some() {
+                    entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
                 } else {
-                    entry_display_body.extend(quote::quote! {
-                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                    });
+                    let fmt_str = format!("{sep}{}: {{}}", f.name);
+                    if f.since_version > 0 {
+                        entry_display_body.extend(quote::quote! {
+                            if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
+                        });
+                    } else {
+                        entry_display_body.extend(quote::quote! {
+                            { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                        });
+                    }
                 }
                 entry_display_out_idx += 1;
             }

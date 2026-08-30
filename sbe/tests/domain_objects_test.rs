@@ -594,7 +594,7 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         "ver_dom",
         &src,
         r#"
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; VersionedEncoder::compute_length_with_header()];
         let mut enc = VersionedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.active_bool(true).extra(Extra::new(7, 99)).count(42);
         let dec = VersionedDecoder::try_decode(&buf, 0).unwrap();
@@ -608,7 +608,7 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         // must still equal encoded_length_with_header(), and that must be
         // exactly encoded_length() (body only) plus the header size — the
         // same contract a dynamic message honours.
-        let mut out = [0u8; 256];
+        let mut out = [0u8; VersionedEncoder::compute_length_with_header()];
         let written = d.encode(&mut out)?;
         assert_eq!(written, d.encoded_length_with_header()?);
         assert_eq!(
@@ -816,7 +816,16 @@ fn car_domain_required_bool_invalid_discriminant_is_typed_error()
         "car_dom_bad_bool",
         &src,
         r#"
-        let mut buf = [0u8; 2048];
+        let len = CarEncoder::compute_length()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(5)?
+            .model(5)?
+            .activation_code(1)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
@@ -920,7 +929,7 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
         "cov_edges_group_bool",
         &src,
         r#"
-        let mut buf = [0u8; 128];
+        let mut buf = [0u8; MsgAEncoder::compute_length_with_header(1)];
         let len = MsgAEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&MsgAFixedFields {})
             .items(1, |g| {

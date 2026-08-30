@@ -838,7 +838,7 @@ impl Generator {
         for g in &msg.groups {
             fields.push(crate::FieldInfo {
                 name: to_snake_case(&g.name),
-                rust_type: "group".to_string(),
+                rust_type: format!("{}Decoder", to_pascal_case(&g.name)),
                 offset: None,
                 since_version: g.since_version,
                 semantic_type: None,
@@ -851,7 +851,7 @@ impl Generator {
         for vd in &msg.var_data {
             fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),
-                rust_type: "data".to_string(),
+                rust_type: "&[u8]".to_string(),
                 offset: None,
                 since_version: vd.since_version,
                 semantic_type: None,

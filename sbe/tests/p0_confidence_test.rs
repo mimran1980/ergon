@@ -298,6 +298,64 @@ fn padded_dimension_composite_larger_than_32_bytes_round_trips()
 }
 
 #[test]
+fn padded_dimension_members_named_like_count_do_not_steal_num_in_group()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="dims" id="913" version="0" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16" offset="0"/>
+              <type name="numInGroup" primitiveType="uint16" offset="2"/>
+              <type name="account" primitiveType="uint32" offset="4"/>
+              <type name="countPadding" primitiveType="uint16" offset="8"/>
+              <type name="blockLengthPadding" primitiveType="uint16" offset="10"/>
+            </composite>
+          </types>
+          <message name="Dims" id="1">
+            <group name="rows" id="2" dimensionType="groupSizeEncoding">
+              <field name="value" id="3" type="uint32"/>
+            </group>
+          </message>
+        </messageSchema>"#;
+    let source = generate_xml(xml, "dims_count_pad")?;
+    compile_and_run(
+        "dims_count_pad",
+        &source,
+        r"
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&4u16.to_le_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+        let frame_len = DimsEncoder::try_compute_encoded_length_with_header(1)?;
+        let mut storage = vec![0u8; frame_len];
+        let len = DimsEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&DimsFixedFields {})
+            .rows(1, |rows| {
+                rows.add(|row| {
+                    row.value(0x0102_0304);
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, frame_len);
+        assert_eq!(&storage[DimsEncoder::HEADER_LENGTH..len], &expected);
+        DimsDecoder::verify(&storage[..len])?;
+        ",
+    );
+    Ok(())
+}
+
+#[test]
 fn over_limit_u64_group_count_is_a_typed_range_error() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
         <messageSchema package="dims" id="904" version="0" byteOrder="littleEndian">

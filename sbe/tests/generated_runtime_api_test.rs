@@ -408,7 +408,16 @@ fn decode_frame_rejects_declared_length_shorter_than_header()
             _ => panic!("expected Unknown for template 77"),
         }
 
-        let mut body = [0u8; 256];
+        let known_need = CarEncoder::compute_length()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(1)?
+            .model(1)?
+            .activation_code(1)?
+            .encoded_length_with_header();
+        let mut body = vec![0u8; known_need];
         let known_len = CarEncoder::wrap_and_apply_header(&mut body, 0)
             .fixed(&CarFixedFields {
                 serial_number: 7,

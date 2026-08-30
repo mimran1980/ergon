@@ -316,12 +316,13 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
     )
     .map_err(|e| e.to_string())?;
     let target_dir = tmp_root.join("target");
-    // Fetch first so a clean CI cache has optional/transitive crates
-    // (e.g. rust_decimal → ahash). Then check offline so a later registry
-    // blip cannot flake the compile.
+    // Fetch optional/transitive crates (e.g. rust_decimal → ahash) and
+    // clear inherited CARGO_NET_OFFLINE so llvm-cov / CI harnesses cannot
+    // force the scratch crate offline.
     let fetch = Command::new("cargo")
         .args(["fetch", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
+        .env_remove("CARGO_NET_OFFLINE")
         .output()
         .map_err(|e| format!("spawn cargo fetch: {e}"))?;
     if !fetch.status.success() {
@@ -336,7 +337,7 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(&target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
+        .env_remove("CARGO_NET_OFFLINE")
         .output()
         .map_err(|e| format!("spawn cargo: {e}"))?;
     if out.status.success() {
@@ -527,6 +528,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fetch = Command::new("cargo")
         .args(["fetch", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
+        .env_remove("CARGO_NET_OFFLINE")
         .status()?;
     assert!(fetch.success(), "docs_run cargo fetch failed");
     let status = Command::new("cargo")
@@ -534,7 +536,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(tmp.path().join("target"))
-        .env("CARGO_NET_OFFLINE", "true")
+        .env_remove("CARGO_NET_OFFLINE")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
     Ok(())

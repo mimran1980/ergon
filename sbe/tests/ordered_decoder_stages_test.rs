@@ -232,7 +232,16 @@ fn optional_crate_var_data_accessors_run() -> Result<(), Box<dyn std::error::Err
         "opt_crate_vd",
         &src,
         r#"
-        let mut buf = [0u8; 4096];
+        let len = CarEncoder::compute_length()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(5)?
+            .model(9)?
+            .activation_code(6)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&CarFixedFields {
                 serial_number: 1,

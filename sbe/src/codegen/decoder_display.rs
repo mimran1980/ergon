@@ -137,11 +137,20 @@ pub(crate) fn generate_decoder_display(
                 // reuse it via format_args! (Arguments: Debug delegates to
                 // Display) so the message-level Debug shows readable flags
                 // instead of raw bits, or silently omitting the field.
+                // Domain-mapped sets use fallible `try_*` and `{:?}`.
                 if f.presence == Presence::Constant {
                     continue;
                 }
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                if f.since_version > 0 {
+                if let Some(try_ident) = &domain_try {
+                    debug_body.extend(quote::quote! {
+                        if #in_bounds {
+                            if let Ok(v) = self.#try_ident() {
+                                d.field(#name_lit, &v);
+                            }
+                        }
+                    });
+                } else if f.since_version > 0 {
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             if let Some(v) = self.#f_ident() {
