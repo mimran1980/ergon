@@ -12,11 +12,11 @@ book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:15 — deliberate; see page context
 book/src/samples/l3-book.md:14 — deliberate; see page context
 book/src/sbe/configuration.md:14 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:27 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:39 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:45 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:60 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
-book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
+book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:70 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:85 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
+book/src/sbe/configuration/conversion-vs-domain.md:89 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
 book/src/sbe/configuration/feature-integrations.md:41 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:50 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:67 — deliberate; see page context
@@ -35,7 +35,7 @@ book/src/sbe/design-notes/nullval.md:17 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:45 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:76 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:90 — deliberate; see page context
-book/src/sbe/design-notes/nullval.md:103 — deliberate; see page context
+book/src/sbe/design-notes/nullval.md:104 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:10 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:51 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:7 — deliberate; see page context
@@ -66,6 +66,6 @@ book/src/sbe/recipes/timestamps.md:22 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:46 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:76 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:87 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:134 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:158 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:213 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:141 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:165 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:220 — deliberate; see page context

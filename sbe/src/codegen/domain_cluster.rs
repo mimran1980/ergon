@@ -5,7 +5,8 @@
 //! [`super::conversion_helpers`], [`super::runtime`], and `structured_ir` types.
 
 use super::conversion_helpers::{
-    domain_encode_setter_name, field_has_conversion_free, find_domain_type, message_field_infos,
+    domain_encode_setter_name, dto_domain_type, field_has_conversion_free, find_domain_type,
+    message_field_infos,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
@@ -28,6 +29,8 @@ pub(crate) fn generate_domain_objects(
     domain_var_data: crate::config::DomainVarData,
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
@@ -49,6 +52,8 @@ pub(crate) fn generate_domain_objects(
         false, // is_entry — this is a message, not a group entry
         hooks,
         schema,
+        null_as_option,
+        all_enums_as_option,
         &mut ts,
         span,
     );
@@ -158,6 +163,73 @@ pub(crate) fn domain_has_conversion(
     false
 }
 
+/// Push the DTO field, `from_decoder` expression, and encode statement for a
+/// field whose wire type is a generated named type (non-boolean enum, set).
+///
+/// With a domain type configured these go through the fallible `try_*`
+/// accessors, exactly as composites do; without one they use the generated type
+/// directly. `try_*` on a `sinceVersion > 0` field already returns
+/// `Result<Option<T>, E>`, so the versioned domain arm must not re-wrap in
+/// `Some(..)` — that is the `Option<Option<T>>` defect this file shipped twice.
+#[allow(clippy::too_many_arguments)]
+fn push_named_type_cell(
+    f: &MessageField,
+    f_ident: &syn::Ident,
+    f_snake: &str,
+    type_ident: &syn::Ident,
+    domain_ty: Option<&str>,
+    // The raw accessor already returns `Option<T>` independently of version
+    // (`null_as_option`), so the DTO field must be optional even at v0.
+    accessor_optional: bool,
+    span: proc_macro2::Span,
+    struct_fields: &mut Vec<proc_macro2::TokenStream>,
+    from_exprs: &mut Vec<proc_macro2::TokenStream>,
+    encode_stmts: &mut Vec<proc_macro2::TokenStream>,
+) {
+    let Some(dt) = domain_ty else {
+        if f.since_version > 0 || accessor_optional {
+            struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
+            from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+            encode_stmts
+                .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+        } else {
+            struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
+            from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+            encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
+        }
+        return;
+    };
+
+    let dt_ty: syn::Type = syn::parse_str(dt).unwrap();
+    let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
+    let field_lit = syn::LitStr::new(f_snake, span);
+    let decode = quote::quote! {
+        #f_ident: dec.#try_g().map_err(|_| {
+            sbe_rt::DecodeError::DomainConversionFailed {
+                field: #field_lit,
+                reason: "try_* conversion rejected wire value",
+            }
+        })?
+    };
+    let encode_one = quote::quote! {
+        enc.#try_g(v).map_err(|_| {
+            sbe_rt::EncodeError::DomainConversionFailed {
+                field: #field_lit,
+                reason: "try_* conversion rejected domain value",
+            }
+        })?;
+    };
+    if f.since_version > 0 || accessor_optional {
+        struct_fields.push(quote::quote! { pub #f_ident: Option<#dt_ty> });
+        from_exprs.push(decode);
+        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { #encode_one } });
+    } else {
+        struct_fields.push(quote::quote! { pub #f_ident: #dt_ty });
+        from_exprs.push(decode);
+        encode_stmts.push(quote::quote! { { let v = self.#f_ident; #encode_one } });
+    }
+}
+
 /// Emit a domain-object range check against schema min/max for integer wire types.
 /// Floats/doubles are skipped (IEEE null sentinels are not simple min/max ranges).
 pub(crate) fn dto_range_check_tokens(
@@ -230,6 +302,8 @@ pub(crate) fn generate_domain_recursive(
     is_entry: bool,
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
 ) {
@@ -255,28 +329,38 @@ pub(crate) fn generate_domain_recursive(
                 // Domain type for primitives with a semantic/named conversion
                 // (e.g. u64 UTCTimestamp → chrono::DateTime<Utc>). Only the
                 // scalar required case is converted; arrays/optional keep the
-                // wire type.
-                let scalar_domain = if length.is_none() && f.presence != Presence::Optional {
-                    find_domain_type(f, domain_types)
-                } else {
-                    None
-                };
+                // wire type. `dto_domain_type` is the shared predicate the
+                // encode setter uses too — they must never disagree.
+                let scalar_domain = dto_domain_type(f, domain_types, elements);
                 let scalar_ty: syn::Type = match scalar_domain {
                     Some(dt) => syn::parse_str(dt).unwrap(),
                     None => r_type.clone(),
                 };
                 let enc_setter = syn::Ident::new(
-                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake),
+                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake, elements),
                     span,
                 );
+                // Arrays and optional scalars keep the wire type, but a
+                // configured conversion/domain type renames the raw flyweight
+                // getter to `*_wire` — every raw read must use the same name
+                // the decoder actually emits.
+                let raw_getter = if field_has_conversion_free(f, conversions) {
+                    syn::Ident::new(&format!("{f_snake}_wire"), span)
+                } else {
+                    f_ident.clone()
+                };
                 if let Some(len) = length {
                     let len_lit = syn::LitInt::new(&len.to_string(), span);
+                    // A versioned array stays `[T; N]`: unlike scalars and
+                    // composites, its accessor returns a zero-filled array
+                    // rather than `Option` when the field predates the acting
+                    // version, at both message and group-entry level.
                     struct_fields.push(quote::quote! { pub #f_ident: [#r_type; #len_lit] });
-                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#raw_getter() });
                     encode_stmts.push(quote::quote! { enc.#enc_setter(self.#f_ident); });
                 } else if f.presence == Presence::Optional {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#r_type> });
-                    from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
+                    from_exprs.push(quote::quote! { #f_ident: dec.#raw_getter() });
                     let range_check = dto_range_check_tokens(f, *prim, quote::quote! { v }, span);
                     encode_stmts.push(quote::quote! {
                         if let Some(v) = self.#f_ident {
@@ -292,13 +376,17 @@ pub(crate) fn generate_domain_recursive(
                         if scalar_domain.is_some() {
                             let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
                             let field_lit = syn::LitStr::new(&f_snake, span);
+                            // `try_*` on a versioned field already yields
+                            // `Option<T>` (see `is_optional_domain_field`), so
+                            // do not wrap it in `Some(..)` — that would build
+                            // `Option<Option<T>>` for an `Option<T>` field.
                             from_exprs.push(quote::quote! {
-                                #f_ident: Some(dec.#try_g().map_err(|_| {
+                                #f_ident: dec.#try_g().map_err(|_| {
                                     sbe_rt::DecodeError::DomainConversionFailed {
                                         field: #field_lit,
                                         reason: "try_* conversion rejected wire value",
                                     }
-                                })?)
+                                })?
                             });
                             encode_stmts.push(quote::quote! {
                                 if let Some(v) = self.#f_ident {
@@ -379,7 +467,7 @@ pub(crate) fn generate_domain_recursive(
                 // domain type and reads/writes via the domain accessors.
                 let domain_ty = find_domain_type(f, domain_types);
                 let enc_setter = syn::Ident::new(
-                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake),
+                    &domain_encode_setter_name(f, conversions, domain_types, &f_snake, elements),
                     span,
                 );
                 let field_ty: proc_macro2::TokenStream = match domain_ty {
@@ -396,13 +484,17 @@ pub(crate) fn generate_domain_recursive(
                     if domain_ty.is_some() {
                         let try_g = syn::Ident::new(&format!("try_{f_snake}"), span);
                         let field_lit = syn::LitStr::new(&f_snake, span);
+                        // `try_*` on a versioned field already yields
+                        // `Option<T>` (see `is_optional_domain_field`), so do
+                        // not wrap it in `Some(..)` — that would build
+                        // `Option<Option<T>>` for an `Option<T>` field.
                         from_exprs.push(quote::quote! {
-                            #f_ident: Some(dec.#try_g().map_err(|_| {
+                            #f_ident: dec.#try_g().map_err(|_| {
                                 sbe_rt::DecodeError::DomainConversionFailed {
                                         field: #field_lit,
                                         reason: "try_* conversion rejected wire value",
                                     }
-                            })?)
+                            })?
                         });
                         encode_stmts.push(quote::quote! {
                             if let Some(v) = self.#f_ident {
@@ -450,37 +542,71 @@ pub(crate) fn generate_domain_recursive(
                 name: enum_name, ..
             } => {
                 if crate::structured_ir::is_bool_enum(elements, enum_name) {
-                    // bool enums → plain bool in DTO; NullVal rejected at decode time
-                    let try_bool_ident = syn::Ident::new(&format!("try_{f_snake}_bool"), span);
-                    let opt_bool_ident = syn::Ident::new(&format!("{f_snake}_bool"), span);
+                    // bool enums → plain bool in DTO; NullVal rejected at decode
+                    // time. The decoder getter is `try_*_bool` at every shape
+                    // and location; `{field}_bool` is the encoder setter.
+                    let get_bool = syn::Ident::new(&format!("try_{f_snake}_bool"), span);
+                    let set_bool = syn::Ident::new(&format!("{f_snake}_bool"), span);
+                    // Only version-gating makes the getter `Option`-returning.
+                    // `presence="optional"` does not (an optional enum carries
+                    // `NullVal` as a variant) and neither does `null_as_option`
+                    // — the boolean getter rejects `NullVal` either way.
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#opt_bool_ident()? });
-                        encode_stmts.push(quote::quote! { if let Some(v) = self.#f_ident { enc.#opt_bool_ident(v); } });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#get_bool()? });
+                        encode_stmts.push(
+                            quote::quote! { if let Some(v) = self.#f_ident { enc.#set_bool(v); } },
+                        );
                     } else {
                         struct_fields.push(quote::quote! { pub #f_ident: bool });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#try_bool_ident()? });
-                        encode_stmts.push(quote::quote! { enc.#opt_bool_ident(self.#f_ident); });
+                        from_exprs.push(quote::quote! { #f_ident: dec.#get_bool()? });
+                        encode_stmts.push(quote::quote! { enc.#set_bool(self.#f_ident); });
                     }
                 } else {
                     let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                    if f.since_version > 0 {
-                        struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                        encode_stmts.push(
-                            quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } },
+                    // `null_as_option` makes the raw enum accessor return
+                    // `Option<T>` regardless of version, so the DTO field must
+                    // be optional too — otherwise `from_decoder` assigns
+                    // `Option<Model>` to a `Model` field.
+                    let accessor_optional =
+                        crate::codegen::conversion_helpers::enum_uses_null_as_option(
+                            enum_name,
+                            null_as_option,
+                            all_enums_as_option,
                         );
-                    } else {
-                        struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
-                        from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-                        encode_stmts.push(quote::quote! { enc.#f_ident(self.#f_ident); });
-                    }
+                    push_named_type_cell(
+                        f,
+                        &f_ident,
+                        &f_snake,
+                        &type_ident,
+                        dto_domain_type(f, domain_types, elements),
+                        accessor_optional,
+                        span,
+                        &mut struct_fields,
+                        &mut from_exprs,
+                        &mut encode_stmts,
+                    );
                 }
             }
             FieldType::Set {
                 name: enum_name, ..
             } => {
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
+                if let Some(dt) = dto_domain_type(f, domain_types, elements) {
+                    push_named_type_cell(
+                        f,
+                        &f_ident,
+                        &f_snake,
+                        &type_ident,
+                        Some(dt),
+                        false,
+                        span,
+                        &mut struct_fields,
+                        &mut from_exprs,
+                        &mut encode_stmts,
+                    );
+                    continue;
+                }
                 if f.since_version > 0 {
                     struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
                     encode_stmts.push(
@@ -605,6 +731,8 @@ pub(crate) fn generate_domain_recursive(
             true,
             hooks,
             schema,
+            null_as_option,
+            all_enums_as_option,
             ts,
             span,
         );
@@ -849,6 +977,7 @@ pub(crate) fn generate_domain_recursive(
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&g.name),
                 rust_type: format!("Vec<{struct_prefix}{}EntryDomain>", to_pascal_case(&g.name)),
+                kind: crate::FieldKind::Group,
                 offset: None,
                 since_version: g.since_version,
                 semantic_type: None,
@@ -875,6 +1004,7 @@ pub(crate) fn generate_domain_recursive(
             ctx_fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),
                 rust_type: vd_ty.to_string(),
+                kind: crate::FieldKind::Data,
                 offset: None,
                 since_version: vd.since_version,
                 semantic_type: None,

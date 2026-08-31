@@ -219,8 +219,9 @@ impl SessionBuilder {
     ///
     /// # Errors
     ///
-    /// A missing `=`, non-numeric member ID, empty endpoint, empty map, or
-    /// duplicate member ID fails immediately instead of at `validate()` or
+    /// A missing `=`, non-numeric member ID, empty endpoint, empty map,
+    /// empty comma-separated entry (leading, trailing, or repeated comma),
+    /// or duplicate member ID fails immediately instead of at `validate()` or
     /// the first `poll()`.
     pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Result<Self, ClusterError> {
         let endpoints = endpoints.into();
@@ -334,10 +335,13 @@ mod tests {
     fn ingress_endpoints_rejects_malformed_maps_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
         for bad in [
             "",
-            "0localhost:9012",                   // missing '='
-            "x=localhost:9012",                  // non-numeric member id
-            "0=",                                // empty endpoint
-            "0=localhost:9012,0=localhost:9112", // duplicate member id
+            "0localhost:9012",                    // missing '='
+            "x=localhost:9012",                   // non-numeric member id
+            "0=",                                 // empty endpoint
+            "0=localhost:9012,,1=localhost:9112", // empty comma-separated entry
+            ",0=localhost:9012",                  // leading comma
+            "0=localhost:9012,",                  // trailing comma
+            "0=localhost:9012,0=localhost:9112",  // duplicate member id
         ] {
             assert!(
                 SessionBuilder::default().ingress_endpoints(bad).is_err(),

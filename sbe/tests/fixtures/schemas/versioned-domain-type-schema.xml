@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Versioned (sinceVersion > 0) fields carrying a configured domain type.
+     `try_*` on a versioned field returns Result<Option<T>, E>, so the domain
+     DTO's from_decoder expression must not re-wrap it in Some(..). Covers both
+     the composite branch and the primitive-scalar branch of
+     `codegen::domain_cluster`. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="versioned_domain_type"
+                   id="202"
+                   version="2"
+                   semanticVersion="5.2"
+                   description="Versioned fields with domain types"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="Extra">
+            <type name="flags" primitiveType="uint32"/>
+            <type name="score" primitiveType="int16"/>
+        </composite>
+        <type name="Mantissa" primitiveType="int64"/>
+    </types>
+    <sbe:message name="Versioned" id="1">
+        <!-- Versioned primitive scalar with a domain type. -->
+        <field name="scaled" id="1" type="Mantissa" sinceVersion="1" semanticType="ScaledPrice"/>
+        <!-- Versioned composite with a domain type. -->
+        <field name="extra" id="2" type="Extra" sinceVersion="2"/>
+        <!-- Unversioned control: must stay non-optional. -->
+        <field name="count" id="3" type="uint32"/>
+    </sbe:message>
+</sbe:messageSchema>

@@ -25,7 +25,9 @@ jobs:
         run: |
           bash scripts/tests/test-test-policy.sh
           bash scripts/tests/test-quality-ratchets.sh
+          bash scripts/tests/test-ci-network-and-coverage.sh
           ./scripts/check-test-policy.sh
+          ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh
 
   miri:
@@ -67,10 +69,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
+          targets: x86_64-unknown-linux-gnu
 
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
 
       - name: Fuzz checked-in corpus and new inputs for ten minutes
+        # cargo-fuzz's Linux default triple is musl+ASAN, which fails on a
+        # minimal nightly (`can't find crate for core`, crt-static).
         run: cd sbe/fuzz && cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=600 -timeout=10

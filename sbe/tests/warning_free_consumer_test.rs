@@ -3,10 +3,9 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;
 use std::fs;
-use std::process::Command;
 
 mod common;
-use common::{Paths, generate};
+use common::{Paths, generate, scratch_cargo};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
 /// Compile a minimal Lean + Full consumer with `-D warnings`.
@@ -107,11 +106,10 @@ ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes
         let target = dir.join("target_ci");
         // No RUSTFLAGS=-D warnings here: the crate itself has #![deny(warnings)]
         // with an explicit allowlist for unused/dead_code (supported lint set).
-        let out = Command::new("cargo")
+        let out = scratch_cargo()
             .args(["build"])
             .current_dir(&dir)
             .env("CARGO_TARGET_DIR", &target)
-            .env("CARGO_NET_OFFLINE", "true")
             // The fixture asserts warning-freedom via its own `#![deny(warnings)]`.
             // Ambient RUSTFLAGS (e.g. `cargo mutants` with cap_lints = true) would
             // cap those lints to `allow` and turn this into a no-op that always

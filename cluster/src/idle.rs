@@ -41,10 +41,21 @@ pub fn poll_connect_until_done(
     connect: &mut AsyncClusterConnect,
     idle: &mut impl IdleStrategy,
 ) -> Result<(), ClusterError> {
+    drive_connect_poll(|| connect.poll(), idle)
+}
+
+/// Drive a poll-until-done loop. `poll` matches
+/// [`AsyncClusterConnect::poll`]: `Ok(true)` means more polling is needed, not
+/// that Aeron performed work. Idle with work-count 0 so backoff is applied
+/// instead of pinning a core.
+fn drive_connect_poll(
+    mut poll: impl FnMut() -> Result<bool, ClusterError>,
+    idle: &mut impl IdleStrategy,
+) -> Result<(), ClusterError> {
     loop {
-        match connect.poll()? {
+        match poll()? {
             false => return Ok(()),
-            true => idle.idle(1),
+            true => idle.idle(0),
         }
     }
 }
@@ -53,12 +64,35 @@ pub fn poll_connect_until_done(
 mod tests {
     use super::*;
 
+    struct RecordingIdle {
+        calls: Vec<i32>,
+    }
+
+    impl IdleStrategy for RecordingIdle {
+        fn idle(&mut self, work_count: i32) {
+            self.calls.push(work_count);
+        }
+    }
+
     #[test]
     fn default_idle_constructs() -> Result<(), Box<dyn std::error::Error>> {
         let mut idle = default_idle();
         idle.idle(0);
         idle.idle(1);
         idle.reset();
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_polls_idle_with_zero_work() -> Result<(), Box<dyn std::error::Error>> {
+        let mut polls = vec![Ok(true), Ok(true), Ok(false)].into_iter();
+        let mut idle = RecordingIdle { calls: Vec::new() };
+        drive_connect_poll(|| polls.next().expect("poll sequence exhausted"), &mut idle)?;
+        assert_eq!(
+            idle.calls,
+            vec![0, 0],
+            "more-polling-needed is not Aeron work; a positive count would reset backoff and busy-spin"
+        );
         Ok(())
     }
 }

@@ -4,7 +4,7 @@
 use std::error::Error;
 
 mod common;
-use common::{Paths, compile_and_run};
+use common::{Paths, compile_and_run, scratch_cargo};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
 fn generate_with(
@@ -306,7 +306,6 @@ fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>>
 #[test]
 fn with_error_from_impls_deprecation_fires() -> Result<(), Box<dyn Error>> {
     use std::fs;
-    use std::process::Command;
 
     let sbe_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = std::env::temp_dir().join(format!(
@@ -337,11 +336,10 @@ fn main() {
 }
 "#,
     )?;
-    let out = Command::new("cargo")
-        .args(["build", "--offline"])
+    let out = scratch_cargo()
+        .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", dir.join("target_ci"))
-        .env("CARGO_NET_OFFLINE", "true")
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .output()?;

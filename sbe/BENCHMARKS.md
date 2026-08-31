@@ -31,6 +31,28 @@ with no noise tolerance.
 
 Quote a result by naming its run id, commit, and host — or do not quote it.
 
+## Recommended consumer build profile — enable LTO
+
+Build against ergo-sbe with link-time optimization on:
+
+```toml
+[profile.release]
+lto = true
+codegen-units = 1
+```
+
+Generated codecs are many small `#[inline]` methods spread across a generated
+module, and the decode path is dominated by wrapper construction and field
+address arithmetic that only fully collapses across codegen units. With LTO the
+generated code inlines into the caller and ergon's margin over sbe-tool is at
+its widest across every maintained scenario. Without it the margin narrows, and
+on the tightest scenario — `optional_enum_nullify`, a memory-bound two-byte-enum
+load with almost no work to hide — the two codecs land at parity.
+
+That is a profile recommendation, not a defect: ergon's own timing is stable
+across both profiles. Both profiles remain blocking gates precisely so this
+stays visible rather than being papered over by LTO.
+
 ## What the numbers actually measure
 
 Most of the measured difference between ergo-sbe and sbe-tool comes down to

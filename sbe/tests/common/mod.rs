@@ -10,9 +10,10 @@
 //! missing, while passing on any developer machine with a warm `~/.cargo`.
 //!
 //! That exact bug turned `CI` red on every release commit from 0.1.19 to
-//! 0.1.22 (`bit-set v0.8.0`, then `ahash v0.7.8`), and was only half-fixed
-//! in `dade81f7`, which cleared the flag in the proptest harness but left it
-//! in the four builders here. Do not reintroduce it.
+//! 0.1.22 (`bit-set v0.8.0`, then `ahash v0.7.8`) and on Dependabot PRs
+//! (`coverage` under `cargo llvm-cov` inherits `CARGO_NET_OFFLINE`). Always
+//! `env_remove("CARGO_NET_OFFLINE")` on scratch cargo. Do not reintroduce
+//! `--offline` on these helpers.
 //!
 //! # Codegen bug workaround
 //!
@@ -30,6 +31,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Cargo for a throwaway crate. Clears `CARGO_NET_OFFLINE` inherited from
+/// `cargo llvm-cov` (and similar harnesses) so extra scratch deps can download.
+pub fn scratch_cargo() -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.env_remove("CARGO_NET_OFFLINE");
+    cmd
+}
 
 use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
 
@@ -251,7 +260,7 @@ pub fn compile_fails_with_diagnostics(
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let target_dir = dir.join("target_ci");
-    let out = Command::new("cargo")
+    let out = scratch_cargo()
         .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
@@ -344,7 +353,7 @@ fn _compile_and_run(
         args.push(f);
     }
     let target_dir = dir.join("target_ci");
-    let out = Command::new("cargo")
+    let out = scratch_cargo()
         .args(&args)
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
@@ -466,7 +475,7 @@ ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let target_dir = dir.join("target_ci");
-    let out = Command::new("cargo")
+    let out = scratch_cargo()
         .args(["run", "--quiet"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
@@ -583,7 +592,7 @@ pub fn compile_and_run_two_modules(
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
 
     let target_dir = dir.join("target_ci");
-    let out = Command::new("cargo")
+    let out = scratch_cargo()
         .args(["run"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)

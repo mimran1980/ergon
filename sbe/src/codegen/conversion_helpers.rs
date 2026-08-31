@@ -151,31 +151,21 @@ pub(crate) fn message_field_infos(
         .iter()
         .filter(|f| f.presence != Presence::Constant)
         .map(|f| {
-            // Domain types apply to the DTO field only when the DTO
-            // generation actually uses them: required scalar primitives
-            // and boolean enums (the latter detected via is_bool_enum,
-            // matching the unconditional bool emission in DTO generation).
-            // Optional fields, arrays, composites/enums/sets without a
-            // domain config all keep the wire type.
+            // Report the type the DTO actually materialises. This must go
+            // through `dto_domain_type` rather than re-deriving the rule: a
+            // fourth independent copy of "is the domain type applied here?" is
+            // a fourth chance to drift. Boolean enums are the one addition —
+            // the DTO emits `bool` for them unconditionally, which
+            // `dto_domain_type` deliberately reports as "no domain type".
             let domain_ty = match &f.field_type {
-                FieldType::Primitive(_, length) => {
-                    if length.is_none() && f.presence == Presence::Required {
-                        find_domain_type(f, domain_types)
-                    } else {
-                        None
-                    }
-                }
                 FieldType::Enum {
                     name: enum_name, ..
-                } => {
-                    if elements.is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name))
-                    {
-                        Some("bool")
-                    } else {
-                        find_domain_type(f, domain_types)
-                    }
+                } if elements
+                    .is_some_and(|el| crate::structured_ir::is_bool_enum(el, enum_name)) =>
+                {
+                    Some("bool")
                 }
-                _ => None,
+                _ => elements.and_then(|el| dto_domain_type(f, domain_types, el)),
             };
             let rust_type = match domain_ty {
                 Some(dt) => dt.to_string(),
@@ -185,6 +175,7 @@ pub(crate) fn message_field_infos(
                 name: to_snake_case(&f.name),
                 rust_type,
                 offset: Some(f.offset),
+                kind: crate::FieldKind::Fixed,
                 since_version: f.since_version,
                 semantic_type: f.semantic_type.clone(),
                 presence: presence_str(f.presence),
@@ -333,44 +324,64 @@ pub(crate) fn warn_version_gated(
     ))
 }
 
-pub(crate) fn field_has_conversion_free(
-    field: &MessageField,
-    conversions: &[crate::ConversionSelector],
-) -> bool {
-    let type_name = match &field.field_type {
+/// The type name a [`ConversionSelector::NamedType`] compares against.
+fn selector_type_name(field: &MessageField) -> String {
+    match &field.field_type {
         FieldType::Composite { name, .. } => name.clone(),
         FieldType::Enum { name, .. } => name.clone(),
         FieldType::Set { name, .. } => name.clone(),
         FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-    };
-    conversions.iter().any(|sel| match sel {
-        crate::ConversionSelector::NamedType(n) => n == &type_name,
+    }
+}
+
+/// Does `sel` match `field`? One predicate so every resolver agrees on what a
+/// selector means — in particular that `FieldPath` matches at all, which it did
+/// not until 0.1.24.
+pub(crate) fn selector_matches(sel: &crate::ConversionSelector, field: &MessageField) -> bool {
+    match sel {
+        crate::ConversionSelector::FieldPath(p) => p == &field.path,
         crate::ConversionSelector::SemanticType(st) => {
             field.semantic_type.as_deref() == Some(st.as_str())
         }
-        _ => false,
-    })
+        crate::ConversionSelector::NamedType(n) => n == &selector_type_name(field),
+    }
+}
+
+/// Documented precedence when several selectors match one field
+/// (see [`ConversionSelector`](crate::ConversionSelector)): exact `FieldPath`,
+/// then `SemanticType`, then `NamedType`. Resolution used to be "first match in
+/// registration order", so precedence silently depended on call order.
+fn selector_rank(sel: &crate::ConversionSelector) -> u8 {
+    match sel {
+        crate::ConversionSelector::FieldPath(_) => 0,
+        crate::ConversionSelector::SemanticType(_) => 1,
+        crate::ConversionSelector::NamedType(_) => 2,
+    }
+}
+
+/// Highest-precedence entry whose selector matches `field`.
+fn best_match<'a, T>(
+    field: &MessageField,
+    entries: &'a [(crate::ConversionSelector, T)],
+) -> Option<&'a (crate::ConversionSelector, T)> {
+    entries
+        .iter()
+        .filter(|(sel, _)| selector_matches(sel, field))
+        .min_by_key(|(sel, _)| selector_rank(sel))
+}
+
+pub(crate) fn field_has_conversion_free(
+    field: &MessageField,
+    conversions: &[crate::ConversionSelector],
+) -> bool {
+    conversions.iter().any(|sel| selector_matches(sel, field))
 }
 
 pub(crate) fn find_domain_type<'a>(
     field: &MessageField,
     domain_types: &'a [(crate::ConversionSelector, String)],
 ) -> Option<&'a str> {
-    let type_name = match &field.field_type {
-        FieldType::Composite { name, .. } => name.clone(),
-        FieldType::Enum { name, .. } => name.clone(),
-        FieldType::Set { name, .. } => name.clone(),
-        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-    };
-    domain_types.iter().find_map(|(sel, ty)| match sel {
-        crate::ConversionSelector::NamedType(n) if n == &type_name => Some(ty.as_str()),
-        crate::ConversionSelector::SemanticType(st)
-            if field.semantic_type.as_deref() == Some(st.as_str()) =>
-        {
-            Some(ty.as_str())
-        }
-        _ => None,
-    })
+    best_match(field, domain_types).map(|(_, ty)| ty.as_str())
 }
 
 /// Same match as [`find_domain_type`], but returns the matched selector
@@ -380,21 +391,51 @@ pub(crate) fn find_domain_selector<'a>(
     field: &MessageField,
     domain_types: &'a [(crate::ConversionSelector, String)],
 ) -> Option<&'a crate::ConversionSelector> {
-    let type_name = match &field.field_type {
-        FieldType::Composite { name, .. } => name.clone(),
-        FieldType::Enum { name, .. } => name.clone(),
-        FieldType::Set { name, .. } => name.clone(),
-        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
-    };
-    domain_types.iter().find_map(|(sel, _)| match sel {
-        crate::ConversionSelector::NamedType(n) if n == &type_name => Some(sel),
-        crate::ConversionSelector::SemanticType(st)
-            if field.semantic_type.as_deref() == Some(st.as_str()) =>
-        {
-            Some(sel)
+    best_match(field, domain_types).map(|(sel, _)| sel)
+}
+
+/// The domain type a **DTO field** actually materialises as, or `None` when the
+/// DTO keeps the wire type despite a matching selector.
+///
+/// This is the single source of truth for "is the domain type applied here?".
+/// It must stay the one predicate: when the DTO field type, the `from_decoder`
+/// expression, and the encode setter each decided this independently they
+/// drifted apart and produced modules that did not compile — an array field
+/// typed `[u8; 4]` written through a `try_*` setter taking the domain type, and
+/// an optional scalar typed `Option<i64>` written through one taking `Decimal`.
+///
+/// Arrays and optional scalars deliberately keep the wire type. Composites,
+/// non-boolean enums, and sets use the domain type.
+///
+/// Boolean enums are excluded: they already materialise as `bool` through
+/// `*_bool` accessors, and `with_bool_domain_type` registers `bool` as their
+/// domain type — routing them here would send the DTO down the `try_*` path
+/// while the field branch still emitted `*_bool`, which is exactly the drift
+/// this predicate exists to prevent.
+pub(crate) fn dto_domain_type<'a>(
+    field: &MessageField,
+    domain_types: &'a [(crate::ConversionSelector, String)],
+    elements: &crate::structured_ir::SchemaElements,
+) -> Option<&'a str> {
+    match &field.field_type {
+        FieldType::Primitive(_, length) => {
+            if length.is_none() && field.presence != Presence::Optional {
+                find_domain_type(field, domain_types)
+            } else {
+                None
+            }
         }
-        _ => None,
-    })
+        FieldType::Composite { .. } | FieldType::Set { .. } => {
+            find_domain_type(field, domain_types)
+        }
+        FieldType::Enum { name, .. } => {
+            if crate::structured_ir::is_bool_enum(elements, name) {
+                None
+            } else {
+                find_domain_type(field, domain_types)
+            }
+        }
+    }
 }
 
 /// Encoder setter name used by domain DTOs.
@@ -407,8 +448,9 @@ pub(crate) fn domain_encode_setter_name(
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],
     field_snake: &str,
+    elements: &crate::structured_ir::SchemaElements,
 ) -> String {
-    if find_domain_type(field, domain_types).is_some() {
+    if dto_domain_type(field, domain_types, elements).is_some() {
         format!("try_{field_snake}")
     } else if field_has_conversion_free(field, conversions) {
         format!("{field_snake}_wire")

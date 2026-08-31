@@ -6,7 +6,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// One generated Rust test body.
 #[derive(Clone, Debug)]
@@ -90,10 +89,9 @@ path = "src/lib.rs"
 
     fs::write(tmp.join("src").join("lib.rs"), lib_rs)?;
 
-    let output = Command::new("cargo")
+    let output = super::scratch_cargo()
         .args(["test", "--", "--test-threads=1"])
         .current_dir(&tmp)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .map_err(|e| format!("failed to run cargo test: {e}"))?;
 

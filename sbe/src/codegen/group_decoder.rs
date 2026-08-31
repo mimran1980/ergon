@@ -1188,27 +1188,36 @@ pub(crate) fn generate_group_decoder(
                 }
 
                 if crate::structured_ir::is_bool_enum(elements, enum_name) {
+                    // Group entries name every boolean accessor `try_*`, unlike
+                    // message level where an `Option`-returning one drops the
+                    // prefix. Consumers depend on these names, so the domain
+                    // DTO adapts to the location rather than the names moving.
                     let bool_ident = quote::format_ident!("try_{}_bool", f_name);
                     let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                    // `null_as_option` makes the raw enum accessor return
+                    // `Option<T>`; `.as_bool()` cannot be called on that
+                    // directly. `NullVal` stays rejected either way.
+                    let plain_bool_read =
+                        if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option)
+                        {
+                            quote::quote! { self.#f_name_ident().and_then(|v| v.as_bool()) }
+                        } else {
+                            quote::quote! { self.#f_name_ident().as_bool() }
+                        };
                     // ── Boolean matrix for group entries (same contract as message-level) ──
-                    if f.presence == Presence::Optional {
-                        // None = version absence OR schema null value; a
-                        // present non-boolean discriminant → InvalidBoolean.
-                        entry_body.extend(quote::quote! {
-                            #[inline]
-                            pub fn #bool_ident(&self) -> Result<Option<bool>, sbe_rt::DecodeError> {
-                                match self.#f_name_ident() {
-                                    None => Ok(None),
-                                    Some(v) => v.as_bool().map(Some).ok_or(
-                                        sbe_rt::DecodeError::InvalidBoolean {
-                                            field: #f_name_lit,
-                                            discriminant: v as u64,
-                                        }
-                                    ),
-                                }
-                            }
-                        });
-                    } else if f.since_version > 0 {
+                    // `presence="optional"` alone does NOT make the raw enum
+                    // accessor `Option`: an optional enum carries `NullVal` as
+                    // a variant. Only version-gating (or `null_as_option`)
+                    // does. Treating optional as `Option` here matched on a
+                    // plain `BooleanType` and did not compile.
+                    // Only version-gating makes the boolean accessor
+                    // `Option`-returning, at group-entry level exactly as at
+                    // message level. `presence="optional"` does not (an
+                    // optional enum carries `NullVal` as a variant) and neither
+                    // does `null_as_option` — the boolean accessor still
+                    // rejects `NullVal`; `plain_bool_read` unwraps the
+                    // `Option<T>` raw accessor that option produces.
+                    if f.since_version > 0 {
                         // Required but not yet present → None means
                         // absent from the acting version. A present
                         // non-boolean value → InvalidBoolean.
@@ -1233,7 +1242,7 @@ pub(crate) fn generate_group_decoder(
                         entry_body.extend(quote::quote! {
                             #[inline]
                             pub fn #bool_ident(&self) -> Result<bool, sbe_rt::DecodeError> {
-                                self.#f_name_ident().as_bool().ok_or(
+                                #plain_bool_read.ok_or(
                                     sbe_rt::DecodeError::InvalidBoolean {
                                         field: #f_name_lit,
                                         discriminant: self.#raw_ident() as u64,
@@ -1592,10 +1601,10 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
-    // A domain-typed primitive/enum field uses the fallible `try_*` accessor
-    // for Display — the plain accessor is renamed to `*_wire` (or removed)
-    // once a domain type is registered, so it no longer exists under that
-    // name. Shared by the Primitive and Enum branches below.
+    // A domain-typed primitive/enum/set field uses the fallible `try_*`
+    // accessor for Display — the plain accessor is renamed to `*_wire` (or
+    // removed) once a domain type is registered, so it no longer exists
+    // under that name. Shared by the Primitive, Enum, and Set branches.
     fn domain_display_write(f_name: &str, field_name: &str, sep: &str) -> proc_macro2::TokenStream {
         let try_ident = syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
         let fmt_str = format!("{sep}{field_name}: {{:?}}");
@@ -1622,9 +1631,16 @@ pub(crate) fn generate_group_decoder(
                 if find_domain_type(f, domain_types).is_some() {
                     entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
                 } else {
+                    // A conversion renames the raw getter to `*_wire` even
+                    // without a domain type, so the bare name may not exist.
+                    let raw_ident = if field_has_conversion_free(f, conversions) {
+                        syn::Ident::new(&format!("{f_name}_wire"), proc_macro2::Span::call_site())
+                    } else {
+                        f_ident.clone()
+                    };
                     let fmt_str = format!("{sep}{}: {{:?}}", f.name);
                     entry_display_body.extend(quote::quote! {
-                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                        { let v = self.#raw_ident(); write!(f, #fmt_str, v)?; }
                     });
                 }
                 entry_display_out_idx += 1;
@@ -1652,20 +1668,22 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant {
                     continue;
                 }
-                // Bitset's own Display is already pipe-separated flag names
-                // (A|B|C) — {} just forwards it. Versioned accessors return
-                // Option<T>, which isn't Display, so branch instead of
-                // relying on {:?} (that would show the raw derived Debug,
-                // not the pipe-separated names).
-                let fmt_str = format!("{sep}{}: {{}}", f.name);
-                if f.since_version > 0 {
-                    entry_display_body.extend(quote::quote! {
-                        if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
-                    });
+                // Domain-mapped sets rename the raw accessor to `*_wire` and
+                // only require Debug on the domain type — same rule as
+                // Primitive/Enum. The bitset's own Display is used otherwise.
+                if find_domain_type(f, domain_types).is_some() {
+                    entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
                 } else {
-                    entry_display_body.extend(quote::quote! {
-                        { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
-                    });
+                    let fmt_str = format!("{sep}{}: {{}}", f.name);
+                    if f.since_version > 0 {
+                        entry_display_body.extend(quote::quote! {
+                            if let Some(v) = self.#f_ident() { write!(f, #fmt_str, v)?; }
+                        });
+                    } else {
+                        entry_display_body.extend(quote::quote! {
+                            { let v = self.#f_ident(); write!(f, #fmt_str, v)?; }
+                        });
+                    }
                 }
                 entry_display_out_idx += 1;
             }
@@ -1675,21 +1693,34 @@ pub(crate) fn generate_group_decoder(
                 }
                 let f_value =
                     syn::Ident::new(&format!("{}_value", f_name), proc_macro2::Span::call_site());
-                if let Some(domain_path) = find_domain_type(f, domain_types) {
+                if find_domain_type(f, domain_types).is_some() {
                     // A caller's domain type is only ever required to be
                     // `Debug` — never assume `Display`.
                     let fmt_str = format!("{sep}{}: {{:?}}", f.name);
                     let err_fmt = format!("{sep}{}: <?>", f.name);
-                    let domain_ty: syn::Type = syn::parse_str(domain_path).unwrap();
-                    entry_display_body.extend(quote::quote! {
-                        {
-                            let raw = self.#f_value();
-                            match <#domain_ty as TryFromSbe<_>>::try_from_sbe(raw) {
+                    // Go through the generated `try_*` accessor rather than
+                    // re-deriving the conversion here. Re-deriving fed it the
+                    // raw `*_value()`, which is `Option<T>` for a
+                    // `sinceVersion > 0` composite — no `TryFromSbe<Option<T>>`
+                    // impl exists and the entry would not compile.
+                    let try_ident =
+                        syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+                    if f.since_version > 0 {
+                        entry_display_body.extend(quote::quote! {
+                            match self.#try_ident() {
+                                Ok(Some(v)) => write!(f, #fmt_str, v)?,
+                                Ok(None) => {}
+                                Err(_) => write!(f, #err_fmt)?,
+                            }
+                        });
+                    } else {
+                        entry_display_body.extend(quote::quote! {
+                            match self.#try_ident() {
                                 Ok(v) => write!(f, #fmt_str, v)?,
                                 Err(_) => write!(f, #err_fmt)?,
                             }
-                        }
-                    });
+                        });
+                    }
                 } else {
                     let fmt_str = format!("{sep}{}: {{:?}}", f.name);
                     entry_display_body.extend(quote::quote! {

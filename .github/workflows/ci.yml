@@ -34,9 +34,11 @@ jobs:
         run: |
           bash scripts/tests/test-test-policy.sh
           bash scripts/tests/test-quality-ratchets.sh
+          bash scripts/tests/test-ci-network-and-coverage.sh
           bash scripts/tests/test-repository-hygiene.sh
           bash scripts/tests/test-public-api.sh
           ./scripts/check-test-policy.sh
+          ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh
 
   lint:
@@ -107,13 +109,14 @@ jobs:
           java-version: "17"
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev
 
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
       - run: ./scripts/regenerate-golden.sh --check
+      - run: ./scripts/regenerate-codegen-matrix-fixture.py --check
       - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=2
-      - run: cargo test -p ergo-aeron-cluster --lib
-      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster-test-harness
+      - run: cargo test -p ergo-aeron-cluster -- --test-threads=1
+      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
 
   # Fail-fast gate: downstream jobs need this, so if policy, lint, or test
   # fails the gate is skipped and everything else is cancelled.
@@ -127,7 +130,9 @@ jobs:
   coverage:
     needs: gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # llvm-cov re-runs the ergo-sbe compile-and-run suite under
+    # instrumentation. 30m cancelled the 0.1.23 job mid-run.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:

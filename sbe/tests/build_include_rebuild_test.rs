@@ -93,10 +93,10 @@ ergo-sbe = {{ path = "{sbe}" }}
     let target = dir.join("target_ci");
     let cargo = |dir: &std::path::Path, target: &std::path::Path| {
         Command::new("cargo")
-            .args(["build", "--offline"])
+            .args(["build"])
             .current_dir(dir)
             .env("CARGO_TARGET_DIR", target)
-            .env("CARGO_NET_OFFLINE", "true")
+            .env_remove("CARGO_NET_OFFLINE")
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .output()

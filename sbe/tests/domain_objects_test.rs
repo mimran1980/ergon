@@ -594,7 +594,7 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         "ver_dom",
         &src,
         r#"
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; VersionedEncoder::compute_length_with_header()];
         let mut enc = VersionedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.active_bool(true).extra(Extra::new(7, 99)).count(42);
         let dec = VersionedDecoder::try_decode(&buf, 0).unwrap();
@@ -608,7 +608,7 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
         // must still equal encoded_length_with_header(), and that must be
         // exactly encoded_length() (body only) plus the header size — the
         // same contract a dynamic message honours.
-        let mut out = [0u8; 256];
+        let mut out = [0u8; VersionedEncoder::compute_length_with_header()];
         let written = d.encode(&mut out)?;
         assert_eq!(written, d.encoded_length_with_header()?);
         assert_eq!(
@@ -616,6 +616,274 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
             d.encoded_length()? + VersionedEncoder::HEADER_LENGTH
         );
     "#,
+    );
+    Ok(())
+}
+
+fn versioned_domain_type_schema() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/versioned-domain-type-schema.xml"
+    ))
+}
+
+/// A versioned (`sinceVersion > 0`) field carrying a domain type — composite or
+/// primitive scalar — must materialise into the DTO exactly once.
+///
+/// `try_*` on a versioned field already returns `Result<Option<T>, E>` (see
+/// `converter_impls::is_optional_domain_field`), so the DTO's `from_decoder`
+/// expression must **not** wrap it in `Some(..)` again — that yields
+/// `Option<Option<T>>` against an `Option<T>` field and the generated module
+/// does not compile. Reported against 0.1.22/0.1.23: `with_domain_type`
+/// alongside `with_domain_objects` was unusable on any schema with a
+/// composite-typed field at `sinceVersion > 0`.
+#[test]
+fn domain_versioned_fields_with_domain_type_materialise_single_option()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate_domain_with(&versioned_domain_type_schema(), "ver_dom_dt", |c| {
+        c.with_domain_objects(DomainVarData::Bytes)
+            .with_manual_domain_type(
+                ergo_sbe::ConversionSelector::named_type("Extra"),
+                "rust_decimal::Decimal",
+            )
+            .with_manual_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("ScaledPrice"),
+                "rust_decimal::Decimal",
+            )
+    });
+    assert!(
+        src.contains("pub extra: Option<rust_decimal::Decimal>"),
+        "sinceVersion=2 composite with a domain type must be Option<Decimal>: {src}"
+    );
+    assert!(
+        src.contains("pub scaled: Option<rust_decimal::Decimal>"),
+        "sinceVersion=1 primitive scalar with a domain type must be Option<Decimal>: {src}"
+    );
+    assert!(
+        src.contains("pub count: u32"),
+        "sinceVersion=0 field must stay non-optional: {src}"
+    );
+    common::compile_and_run_with_deps(
+        "ver_dom_dt",
+        &src,
+        r#"
+        use rust_decimal::Decimal;
+
+        impl TryFromSbe<Extra> for Decimal {
+            type Error = &'static str;
+            fn try_from_sbe(wire: Extra) -> Result<Self, Self::Error> {
+                Ok(Decimal::new(wire.flags() as i64, wire.score() as u32))
+            }
+        }
+        impl TryToSbe<Extra> for Decimal {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<Extra, Self::Error> {
+                Ok(Extra::new(self.mantissa() as u32, self.scale() as i16))
+            }
+        }
+        impl TryFromSbe<i64> for Decimal {
+            type Error = &'static str;
+            fn try_from_sbe(wire: i64) -> Result<Self, Self::Error> {
+                Ok(Decimal::new(wire, 3))
+            }
+        }
+        impl TryToSbe<i64> for Decimal {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<i64, Self::Error> {
+                Ok(self.mantissa() as i64)
+            }
+        }
+
+        let mut buf = [0u8; VersionedEncoder::compute_length_with_header()];
+        let mut enc = VersionedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
+        enc.try_scaled(Decimal::new(12345, 3))?
+            .try_extra(Decimal::new(799, 2))?
+            .count(42);
+        let dec = VersionedDecoder::try_decode(&buf, 0).unwrap();
+
+        let d: VersionedDomain = VersionedDomain::try_from_decoder(dec)?;
+        // Exactly one level of Option — `Some(Some(..))` would not type-check.
+        assert_eq!(d.extra, Some(Decimal::new(799, 2)));
+        assert_eq!(d.scaled, Some(Decimal::new(12345, 3)));
+        assert_eq!(d.count, 42);
+
+        let mut out = [0u8; VersionedEncoder::compute_length_with_header()];
+        let written = d.encode(&mut out)?;
+        assert_eq!(written, d.encoded_length_with_header()?);
+        assert_eq!(&out[..written], &buf[..written]);
+        "#,
+        "rust_decimal = \"1\"\n",
+    );
+    Ok(())
+}
+
+fn domain_dto_matrix_schema() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/domain-dto-matrix-schema.xml"
+    ))
+}
+
+/// Every branch of `codegen::domain_cluster`'s DTO field materialisation, as a
+/// cross product of field kind x presence x `sinceVersion` x domain-type.
+///
+/// The `Option<Option<T>>` defect shipped in 0.1.22/0.1.23 because the only
+/// coverage for these branches asserted on *source strings*, which stay green
+/// while the generated module fails to compile. This test asserts the DTO field
+/// type of every cell **and** compiles and round-trips the result, so a cell
+/// that produces uncompilable code cannot pass.
+#[test]
+fn domain_dto_field_type_matrix() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate_domain_with(&domain_dto_matrix_schema(), "dto_matrix", |c| {
+        c.with_domain_objects(DomainVarData::Bytes)
+            .with_manual_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("ScaledPrice"),
+                "rust_decimal::Decimal",
+            )
+            .with_manual_domain_type(
+                ergo_sbe::ConversionSelector::named_type("Money"),
+                "rust_decimal::Decimal",
+            )
+            // A fixed array's wire type is `[u8; 4]`, not `u8` — a domain type
+            // on an array field must generate converters against the array.
+            .with_manual_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("TagText"),
+                "u32",
+            )
+    });
+
+    // (declared field, expected DTO field type, branch under test)
+    let cells: &[(&str, &str, &str)] = &[
+        (
+            "prim_dom",
+            "rust_decimal::Decimal",
+            "primitive scalar, since=0, domain",
+        ),
+        (
+            "prim_dom_v",
+            "Option<rust_decimal::Decimal>",
+            "primitive scalar, since>0, domain",
+        ),
+        ("prim_plain", "u32", "primitive scalar, since=0, no domain"),
+        (
+            "prim_plain_v",
+            "Option<u32>",
+            "primitive scalar, since>0, no domain",
+        ),
+        (
+            "prim_opt",
+            "Option<i64>",
+            "primitive scalar, optional — domain not applied",
+        ),
+        (
+            "prim_arr",
+            "[u8; 4]",
+            "primitive array — domain not applied",
+        ),
+        (
+            "comp_dom",
+            "rust_decimal::Decimal",
+            "composite, since=0, domain",
+        ),
+        (
+            "comp_dom_v",
+            "Option<rust_decimal::Decimal>",
+            "composite, since>0, domain",
+        ),
+        ("comp_plain", "Pair", "composite, since=0, no domain"),
+        (
+            "comp_plain_v",
+            "Option<Pair>",
+            "composite, since>0, no domain",
+        ),
+        ("enum_bool", "bool", "bool enum, since=0"),
+        ("enum_bool_v", "Option<bool>", "bool enum, since>0"),
+        ("enum_norm", "Model", "non-bool enum, since=0"),
+        ("enum_norm_v", "Option<Model>", "non-bool enum, since>0"),
+        ("set_plain", "Opts", "set, since=0"),
+        ("set_plain_v", "Option<Opts>", "set, since>0"),
+    ];
+    let mut missing = Vec::new();
+    for (field, ty, branch) in cells {
+        if !src.contains(&format!("pub {field}: {ty},")) {
+            missing.push(format!("  {branch}: expected `pub {field}: {ty},`"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "DTO field types wrong for {} matrix cell(s):\n{}\n--- generated ---\n{src}",
+        missing.len(),
+        missing.join("\n")
+    );
+    assert!(
+        !src.contains("pub const_model:"),
+        "a constant-presence field must not appear in the DTO: {src}"
+    );
+
+    common::compile_and_run_with_deps(
+        "dto_matrix",
+        &src,
+        r#"
+        use rust_decimal::Decimal;
+
+        impl TryFromSbe<i64> for Decimal {
+            type Error = &'static str;
+            fn try_from_sbe(wire: i64) -> Result<Self, Self::Error> { Ok(Decimal::new(wire, 3)) }
+        }
+        impl TryToSbe<i64> for Decimal {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<i64, Self::Error> { Ok(self.mantissa() as i64) }
+        }
+        impl TryFromSbe<[u8; 4]> for u32 {
+            type Error = &'static str;
+            fn try_from_sbe(wire: [u8; 4]) -> Result<Self, Self::Error> { Ok(u32::from_le_bytes(wire)) }
+        }
+        impl TryToSbe<[u8; 4]> for u32 {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<[u8; 4], Self::Error> { Ok(self.to_le_bytes()) }
+        }
+        impl TryFromSbe<Money> for Decimal {
+            type Error = &'static str;
+            fn try_from_sbe(wire: Money) -> Result<Self, Self::Error> {
+                Ok(Decimal::new(wire.mantissa(), (-wire.exponent()) as u32))
+            }
+        }
+        impl TryToSbe<Money> for Decimal {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<Money, Self::Error> {
+                Ok(Money::new(self.mantissa() as i64, -(self.scale() as i8)))
+            }
+        }
+
+        let dto = MatrixDomain {
+            prim_dom: Decimal::new(1234, 3),
+            prim_dom_v: Some(Decimal::new(5678, 3)),
+            prim_plain: 7,
+            prim_plain_v: Some(8),
+            prim_opt: Some(9),
+            prim_arr: *b"ABCD",
+            comp_dom: Decimal::new(150, 2),
+            comp_dom_v: Some(Decimal::new(250, 2)),
+            comp_plain: Pair::new(1, 2),
+            comp_plain_v: Some(Pair::new(3, 4)),
+            enum_bool: true,
+            enum_bool_v: Some(false),
+            enum_norm: Model::A,
+            enum_norm_v: Some(Model::B),
+            set_plain: Opts::default(),
+            set_plain_v: Some(Opts::default()),
+        };
+
+        let mut buf = [0u8; MatrixEncoder::compute_length_with_header()];
+        let written = dto.encode(&mut buf)?;
+        assert_eq!(written, dto.encoded_length_with_header()?);
+
+        // Round-trip: every cell must survive encode -> decode unchanged.
+        let dec = MatrixDecoder::try_decode(&buf[..written], 0)?;
+        let back: MatrixDomain = MatrixDomain::try_from_decoder(dec)?;
+        assert_eq!(back, dto);
+        "#,
+        "rust_decimal = \"1\"\n",
     );
     Ok(())
 }
@@ -816,7 +1084,16 @@ fn car_domain_required_bool_invalid_discriminant_is_typed_error()
         "car_dom_bad_bool",
         &src,
         r#"
-        let mut buf = [0u8; 2048];
+        let len = CarEncoder::compute_length()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(5)?
+            .model(5)?
+            .activation_code(1)?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
         let mut extras = OptionalExtras::default();
         extras.cruise_control(true);
         let encoded = CarEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
@@ -920,7 +1197,7 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
         "cov_edges_group_bool",
         &src,
         r#"
-        let mut buf = [0u8; 128];
+        let mut buf = [0u8; MsgAEncoder::compute_length_with_header(1)];
         let len = MsgAEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&MsgAFixedFields {})
             .items(1, |g| {

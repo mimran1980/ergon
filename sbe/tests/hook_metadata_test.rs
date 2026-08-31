@@ -31,6 +31,10 @@ enum Captured {
         name: String,
         fields: Vec<(String, String)>,
     },
+    MessageDecoder {
+        name: String,
+        fields: Vec<(String, String, ergo_sbe::FieldKind)>,
+    },
 }
 
 #[allow(clippy::type_complexity)]
@@ -56,6 +60,13 @@ fn capture_hook(
             ItemContext::DomainStruct { name, fields, .. } => Some(Captured::Domain {
                 name: name.clone(),
                 fields: field_pairs(fields),
+            }),
+            ItemContext::MessageDecoder { name, fields, .. } => Some(Captured::MessageDecoder {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.rust_type.clone(), f.kind()))
+                    .collect(),
             }),
             _ => None,
         };
@@ -188,6 +199,52 @@ fn composite_hook_reports_real_fields_not_containers() -> Result<(), Box<dyn std
         3,
         "Outer has exactly 3 members, got: {outer:?}"
     );
+    Ok(())
+}
+
+/// Message decoder hook metadata must report groups and var-data as real Rust
+/// types, classified by [`ergo_sbe::FieldKind`] — never the sentinels `"group"`
+/// / `"data"`.
+#[test]
+fn message_decoder_hook_reports_group_and_data_as_real_types()
+-> Result<(), Box<dyn std::error::Error>> {
+    let captured = capture_all()?;
+    let fields = captured
+        .iter()
+        .find_map(|c| match c {
+            Captured::MessageDecoder { name, fields } if name == "MsgDecoder" => Some(fields),
+            _ => None,
+        })
+        .expect("MsgDecoder context must be emitted");
+    let levels = fields
+        .iter()
+        .find(|(n, _, _)| n == "levels")
+        .expect("levels group must appear");
+    assert_ne!(
+        levels.1, "group",
+        "group rust_type must not be a kind sentinel, got {fields:?}"
+    );
+    assert_eq!(levels.2, ergo_sbe::FieldKind::Group);
+    assert!(
+        levels.1.contains("Decoder") || levels.1.contains("Levels"),
+        "group rust_type must name a generated type, got {}",
+        levels.1
+    );
+    let note = fields
+        .iter()
+        .find(|(n, _, _)| n == "note")
+        .expect("note var-data must appear");
+    assert_ne!(
+        note.1, "data",
+        "var-data rust_type must not be a kind sentinel"
+    );
+    assert_eq!(note.2, ergo_sbe::FieldKind::Data);
+    assert_eq!(note.1, "&[u8]");
+    let code = fields
+        .iter()
+        .find(|(n, _, _)| n == "code")
+        .expect("fixed field must appear");
+    assert_eq!(code.2, ergo_sbe::FieldKind::Fixed);
     Ok(())
 }
 
