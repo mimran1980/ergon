@@ -15,10 +15,53 @@ use crate::structured_ir::{FieldType, MessageField, MessageGroup, MessageStructu
 /// stays plain and wrapping it here would produce a type mismatch
 /// (`Some`/`None` on a non-`Option`). Shared by the message-level and
 /// group-entry codegen paths so the rule can't drift between them.
-fn is_optional_domain_field(f: &MessageField) -> bool {
-    f.since_version > 0
-        || (f.presence == crate::ir::Presence::Optional
-            && !matches!(f.field_type, FieldType::Composite { .. }))
+fn is_optional_domain_field(
+    f: &MessageField,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
+) -> bool {
+    match &f.field_type {
+        // A fixed array accessor is never `Option`: when the field predates the
+        // acting version it returns a zero-filled array, not `None`.
+        FieldType::Primitive(_, Some(_)) => false,
+        // A scalar primitive null-maps to `Option` when declared optional.
+        FieldType::Primitive(_, None) => {
+            f.since_version > 0 || f.presence == crate::ir::Presence::Optional
+        }
+        // An enum carries absence *in band* — an optional enum has a
+        // `NullVal` variant, so its accessor stays plain unless
+        // `null_as_option` maps that variant to `None`.
+        FieldType::Enum { name, .. } => {
+            f.since_version > 0
+                || super::conversion_helpers::enum_uses_null_as_option(
+                    name,
+                    null_as_option,
+                    all_enums_as_option,
+                )
+        }
+        // A composite has no null image; a set has no null variant.
+        FieldType::Composite { .. } | FieldType::Set { .. } => f.since_version > 0,
+    }
+}
+
+/// A generated named type (composite/enum/set) as a `syn::Type`.
+fn pascal_type(name: &str, span: proc_macro2::Span) -> syn::Type {
+    let ident = syn::Ident::new(&to_pascal_case(name), span);
+    syn::parse_quote!(#ident)
+}
+
+/// The wire type a converter converts from/to. A fixed array field's wire type
+/// is `[T; N]`, not the element type — generating converters against `T` for an
+/// array field produces a module that does not compile.
+fn primitive_wire_type(rust_name: &str, length: Option<usize>) -> syn::Type {
+    let elem = syn::Ident::new(rust_name, proc_macro2::Span::call_site());
+    match length {
+        Some(n) => {
+            let n = syn::LitInt::new(&n.to_string(), proc_macro2::Span::call_site());
+            syn::parse_quote!([#elem; #n])
+        }
+        None => syn::parse_quote!(#elem),
+    }
 }
 
 /// Generate `*_as`/`*_from` conversion methods for fields matching the
@@ -30,6 +73,8 @@ pub(crate) fn generate_converter_impls(
     domain_types: &[(crate::ConversionSelector, String)],
     manual_impl_snippets: &[(crate::ConversionSelector, String)],
     _multi_message: bool,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> String {
     let span = proc_macro2::Span::call_site();
     let msg_name = to_pascal_case(&msg.name);
@@ -40,20 +85,24 @@ pub(crate) fn generate_converter_impls(
     let mut encoder_methods = proc_macro2::TokenStream::new();
 
     for f in &msg.fields {
+        // A constant field has no wire storage: no `*_wire` setter and no
+        // raw getter to convert through, and it is excluded from the DTO. A
+        // selector that happens to match its type must not generate accessors
+        // against setters that do not exist.
+        if f.presence == crate::ir::Presence::Constant {
+            continue;
+        }
         // Determine if this field has a conversion, and what the wire type is.
-        let (type_name, wire_type_ident): (String, syn::Ident) = match &f.field_type {
-            FieldType::Composite { name, .. } => {
-                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
-            }
-            FieldType::Enum { name, .. } => {
-                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
-            }
-            FieldType::Set { name, .. } => {
-                (name.clone(), syn::Ident::new(&to_pascal_case(name), span))
-            }
-            FieldType::Primitive(pt, _) => {
+        let (type_name, wire_type_ident): (String, syn::Type) = match &f.field_type {
+            FieldType::Composite { name, .. } => (name.clone(), pascal_type(name, span)),
+            FieldType::Enum { name, .. } => (name.clone(), pascal_type(name, span)),
+            FieldType::Set { name, .. } => (name.clone(), pascal_type(name, span)),
+            FieldType::Primitive(pt, length) => {
                 let rust_name = rust_type(*pt);
-                (rust_name.to_string(), syn::Ident::new(rust_name, span))
+                (
+                    rust_name.to_string(),
+                    primitive_wire_type(rust_name, *length),
+                )
             }
         };
         let has_conversion = field_has_conversion_free(f, conversions);
@@ -80,7 +129,7 @@ pub(crate) fn generate_converter_impls(
 
             // checked domain accessors are fallible — no `.expect`.
             let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-            let is_optional = is_optional_domain_field(f);
+            let is_optional = is_optional_domain_field(f, null_as_option, all_enums_as_option);
             // DomainImpl::Manual doc comment: a ready-to-paste starting point,
             // shown on both the decoder and encoder accessor (IDE hover /
             // `cargo doc`) so a missing-impl compile error has somewhere to
@@ -146,11 +195,27 @@ pub(crate) fn generate_converter_impls(
             let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
             let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
 
-            decoder_methods.extend(quote::quote! {
-                #[inline]
-                #[must_use]
-                pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
-                    T::try_from_sbe(self.#raw_decoder_getter())
+            // Same `Option` rule as the domain `try_*` path: when the raw
+            // getter yields `Option<W>` the converter must unwrap it, or the
+            // generated body feeds `Option<W>` to `TryFromSbe<W>`.
+            decoder_methods.extend(if is_optional_domain_field(f, null_as_option, all_enums_as_option) {
+                quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<Option<T>, T::Error> {
+                        match self.#raw_decoder_getter() {
+                            Some(wire) => T::try_from_sbe(wire).map(Some),
+                            None => Ok(None),
+                        }
+                    }
+                }
+            } else {
+                quote::quote! {
+                    #[inline]
+                    #[must_use]
+                    pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
+                        T::try_from_sbe(self.#raw_decoder_getter())
+                    }
                 }
             });
 
@@ -173,6 +238,8 @@ pub(crate) fn generate_converter_impls(
         g: &MessageGroup,
         conversions: &[crate::ConversionSelector],
         domain_types: &[(crate::ConversionSelector, String)],
+        null_as_option: &[crate::ConversionSelector],
+        all_enums_as_option: bool,
         out: &mut String,
     ) {
         let span = proc_macro2::Span::call_site();
@@ -182,15 +249,22 @@ pub(crate) fn generate_converter_impls(
         let mut dec_methods = proc_macro2::TokenStream::new();
         let mut enc_methods = proc_macro2::TokenStream::new();
         for f in &g.fields {
+            // A constant field has no wire storage: no `*_wire` setter and no
+            // raw getter to convert through, and it is excluded from the DTO. A
+            // selector that happens to match its type must not generate accessors
+            // against setters that do not exist.
+            if f.presence == crate::ir::Presence::Constant {
+                continue;
+            }
             if !field_has_conversion_free(f, conversions) {
                 continue;
             }
             let field_snake = to_snake_case(&f.name);
-            let wire_type_ident = match &f.field_type {
-                FieldType::Composite { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
-                FieldType::Enum { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
-                FieldType::Set { name, .. } => syn::Ident::new(&to_pascal_case(name), span),
-                FieldType::Primitive(pt, _) => syn::Ident::new(rust_type(*pt), span),
+            let wire_type_ident: syn::Type = match &f.field_type {
+                FieldType::Composite { name, .. } => pascal_type(name, span),
+                FieldType::Enum { name, .. } => pascal_type(name, span),
+                FieldType::Set { name, .. } => pascal_type(name, span),
+                FieldType::Primitive(pt, length) => primitive_wire_type(rust_type(*pt), *length),
             };
             let raw_decoder_getter = if matches!(f.field_type, FieldType::Composite { .. }) {
                 syn::Ident::new(&format!("{field_snake}_value"), span)
@@ -204,7 +278,7 @@ pub(crate) fn generate_converter_impls(
                     syn::parse_str(dt).unwrap_or_else(|_| panic!("invalid domain type path: {dt}"));
                 let domain_ident = syn::Ident::new(&field_snake, span);
                 let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
-                let is_optional = is_optional_domain_field(f);
+                let is_optional = is_optional_domain_field(f, null_as_option, all_enums_as_option);
                 if is_optional {
                     dec_methods.extend(quote::quote! {
                         #[inline]
@@ -243,11 +317,24 @@ pub(crate) fn generate_converter_impls(
             } else {
                 let as_ident = syn::Ident::new(&format!("{field_snake}_as"), span);
                 let from_ident = syn::Ident::new(&format!("{field_snake}_from"), span);
-                dec_methods.extend(quote::quote! {
-                    #[inline]
-                    #[must_use]
-                    pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
-                        T::try_from_sbe(self.#raw_decoder_getter())
+                dec_methods.extend(if is_optional_domain_field(f, null_as_option, all_enums_as_option) {
+                    quote::quote! {
+                        #[inline]
+                        #[must_use]
+                        pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<Option<T>, T::Error> {
+                            match self.#raw_decoder_getter() {
+                                Some(wire) => T::try_from_sbe(wire).map(Some),
+                                None => Ok(None),
+                            }
+                        }
+                    }
+                } else {
+                    quote::quote! {
+                        #[inline]
+                        #[must_use]
+                        pub fn #as_ident<T: TryFromSbe<#wire_type_ident>>(&self) -> Result<T, T::Error> {
+                            T::try_from_sbe(self.#raw_decoder_getter())
+                        }
                     }
                 });
                 enc_methods.extend(quote::quote! {
@@ -273,7 +360,15 @@ pub(crate) fn generate_converter_impls(
             out.push_str(&ts.to_string());
         }
         for ng in &g.groups {
-            emit_group_entry_impls(&scoped, ng, &conversions, domain_types, out);
+            emit_group_entry_impls(
+                &scoped,
+                ng,
+                &conversions,
+                domain_types,
+                null_as_option,
+                all_enums_as_option,
+                out,
+            );
         }
     }
 
@@ -289,6 +384,8 @@ pub(crate) fn generate_converter_impls(
             g,
             &conversions,
             domain_types,
+            null_as_option,
+            all_enums_as_option,
             &mut entry_impls,
         );
     }

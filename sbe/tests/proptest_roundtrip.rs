@@ -15,9 +15,8 @@
 #![allow(unused)]
 
 mod common;
-use common::{Paths, generate, patch_source};
+use common::{Paths, generate, patch_source, scratch_cargo};
 use std::fs;
-use std::process::Command;
 
 /// Like `compile_and_run` but creates a proper crate with `proptest` as a
 /// dev-dependency so that the test code can use the `proptest!` macro.
@@ -72,11 +71,10 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     fs::write(dir.join("Cargo.toml"), &cargo_toml).unwrap();
 
     let target_dir = dir.join("target_ci");
-    let out = Command::new("cargo")
-        .args(["test", "--offline"])
+    let out = scratch_cargo()
+        .args(["test"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 

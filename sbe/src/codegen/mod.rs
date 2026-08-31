@@ -838,7 +838,8 @@ impl Generator {
         for g in &msg.groups {
             fields.push(crate::FieldInfo {
                 name: to_snake_case(&g.name),
-                rust_type: "group".to_string(),
+                rust_type: format!("{}Decoder", to_pascal_case(&g.name)),
+                kind: crate::FieldKind::Group,
                 offset: None,
                 since_version: g.since_version,
                 semantic_type: None,
@@ -851,7 +852,8 @@ impl Generator {
         for vd in &msg.var_data {
             fields.push(crate::FieldInfo {
                 name: to_snake_case(&vd.name),
-                rust_type: "data".to_string(),
+                rust_type: "&[u8]".to_string(),
+                kind: crate::FieldKind::Data,
                 offset: None,
                 since_version: vd.since_version,
                 semantic_type: None,
@@ -965,6 +967,7 @@ impl Generator {
                     name: to_snake_case(&m.name),
                     rust_type,
                     offset: Some(m.offset),
+                    kind: crate::FieldKind::Fixed,
                     since_version: m.since_version,
                     semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
@@ -1245,6 +1248,8 @@ impl Generator {
                     domain_types,
                     &manual_impl_snippets,
                     multi,
+                    &self.config.null_as_option,
+                    self.config.all_enums_as_option,
                 );
                 src.push_str(&converter_ts);
             }
@@ -1913,6 +1918,7 @@ mod tests {
         use crate::structured_ir::{FieldType, MessageField};
         let field = MessageField {
             name: "exchangeTimestamp".into(),
+            path: "Quote.exchangeTimestamp".into(),
             id: Some(1),
             offset: 0,
             presence: Presence::Required,

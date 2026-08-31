@@ -48,11 +48,21 @@ self-comparison caught it.
 
 ## Gate profiles
 
+Both profiles are **blocking**. `scripts/check-bench-gate.sh` runs the same
+literal `1.00` ceiling against each, and `just bench` fails if either fails.
+
 - **no-LTO** (`CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1`) —
-  the **canonical hard gate**. Every maintained comparison must stay ≤ 1.00×.
-- **LTO** — informational only (soft warning). LTO ratios are sensitive to
-  thermal/code-layout variance on shared hardware; a single high ratio should
-  be re-run before investigation.
+  the profile that catches missing `#[inline]` on generated hot paths, which LTO
+  hides. It is also the tightest: without cross-unit inlining, ergon's margin
+  over sbe-tool narrows, and the scenarios with the least work to hide sit close
+  to 1.00×. Ratios here are sensitive to thermal and code-layout variance on
+  shared hardware — re-run on an idle machine before investigating a single
+  high ratio, and check Criterion's confidence intervals for overlap.
+- **LTO** — the profile consumers should actually build with (see
+  [Benchmark Results](../benchmarks.md)), and where ergon's margin is widest.
+
+Neither profile is a soft warning. A ratio above 1.00 in either is a blocking
+benchmark or codegen defect; the fix is never to raise the ceiling.
 
 ## Scenarios
 

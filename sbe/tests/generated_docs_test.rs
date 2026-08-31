@@ -3,7 +3,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 mod common;
-use common::{Paths, generate};
+use common::{Paths, generate, scratch_cargo};
 use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
 
 /// Walk public items and return `(path, has_doc)`.
@@ -258,7 +258,6 @@ fn multi_schema_public_surface_is_documented() -> Result<(), Box<dyn std::error:
 #[test]
 fn deny_missing_docs_consumer_compiles() {
     use std::fs;
-    use std::process::Command;
     let (_, src) = generate(&Paths::example_schema(), "docs_deny");
     let dir = std::env::temp_dir().join(format!("ergo_docs_deny_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -290,11 +289,10 @@ ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes", "chro
         ),
     )
     .unwrap();
-    let out = Command::new("cargo")
-        .args(["build", "--offline"])
+    let out = scratch_cargo()
+        .args(["build"])
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", dir.join("target_ci"))
-        .env("CARGO_NET_OFFLINE", "true")
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .output()

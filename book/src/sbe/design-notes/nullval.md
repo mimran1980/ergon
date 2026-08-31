@@ -97,16 +97,20 @@ The `as_option()` method is also generated on every enum for manual use:
 
 ## Null-aware accessors on BooleanType
 
-For `BooleanType` fields, ergon emits a `_bool()` accessor alongside the
-standard enum getter:
+For `BooleanType` fields, ergon emits a `try_*_bool()` accessor alongside the
+standard enum getter. One name at every shape and location — the `try_`
+prefix marks the fallible decode, and `{field}_bool` is the *encoder* setter:
 
 ```rust,ignore
 // Standard getter — returns the enum variant (raw wire discriminant).
 pub fn available_wire(&self) -> BooleanType { … }
 
 // Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
-// Required fields → Result<bool, DecodeError>; optional → Option<bool>.
 pub fn try_available_bool(&self) -> Result<bool, DecodeError> { … }
+
+// A `sinceVersion > 0` field can also be absent, so its getter adds the
+// `Option` layer — the only shape difference, at message and group level:
+pub fn try_added_later_bool(&self) -> Result<Option<bool>, DecodeError> { … }
 ```
 
 For enums and other types, the `NullVal` variant remains the default.

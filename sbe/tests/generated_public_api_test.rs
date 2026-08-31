@@ -77,6 +77,29 @@ fn where_str(g: &syn::Generics) -> String {
         .unwrap_or_default()
 }
 
+fn trait_assoc_type_str(ty: &syn::TraitItemType) -> String {
+    let generics = generics_str(&ty.generics);
+    let bounds = if ty.bounds.is_empty() {
+        String::new()
+    } else {
+        let b = &ty.bounds;
+        format!(": {}", quote::quote!(#b))
+    };
+    let default = ty
+        .default
+        .as_ref()
+        .map(|(_, t)| format!(" = {}", quote::quote!(#t)))
+        .unwrap_or_default();
+    format!(
+        "type {}{}{}{}{}",
+        ty.ident,
+        generics,
+        bounds,
+        where_str(&ty.generics),
+        default
+    )
+}
+
 /// `filter_visibility`: struct fields need an individual `pub` to be part of
 /// the public surface. Enum variant fields have no visibility syntax at all
 /// — they are implicitly as public as the variant — so filtering them by
@@ -214,7 +237,12 @@ fn collect(prefix: &str, items: &[syn::Item], out: &mut Vec<String>) {
                             ));
                         }
                         syn::TraitItem::Type(ty) => {
-                            out.push(format!("{prefix}trait {}::type {}", t.ident, ty.ident));
+                            out.push(format!(
+                                "{}{prefix}trait {}::{}",
+                                semver_attrs(&ty.attrs),
+                                t.ident,
+                                trait_assoc_type_str(ty)
+                            ));
                         }
                         syn::TraitItem::Const(c) => {
                             let const_ty = &c.ty;
@@ -449,6 +477,40 @@ fn assert_snapshot(fix: &Fixture, body: &str) -> Result<(), Box<dyn Error>> {
         "generated public API snapshot {} drifted. Review the diff and run \
          UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test",
         fix.name
+    );
+    Ok(())
+}
+
+#[test]
+fn trait_associated_types_record_bounds_defaults_generics_and_semver_attrs()
+-> Result<(), Box<dyn Error>> {
+    let src = r#"
+        pub trait Example {
+            #[must_use]
+            type Output: Send + 'static = ();
+            type Item<T>: Clone where T: Default;
+        }
+    "#;
+    let lines = public_surface(src)?;
+    let output = lines
+        .iter()
+        .find(|l| l.contains("trait Example::type Output"))
+        .ok_or("missing Output associated type")?;
+    assert!(
+        output.contains("Send") && output.contains("'static") && output.contains("= ()"),
+        "associated type must record bounds and default, got {output}"
+    );
+    assert!(
+        output.contains("must_use"),
+        "associated type must record semver attrs, got {output}"
+    );
+    let item = lines
+        .iter()
+        .find(|l| l.contains("trait Example::type Item"))
+        .ok_or("missing Item associated type")?;
+    assert!(
+        item.contains("Clone") && item.contains("<") && item.contains("where"),
+        "associated type must record generics, bounds, and where-clause, got {item}"
     );
     Ok(())
 }

@@ -152,6 +152,13 @@ pub(crate) struct MessageStructure {
 #[derive(Clone)]
 pub(crate) struct MessageField {
     pub(crate) name: String,
+    /// Dotted path this field is reachable at, for
+    /// [`ConversionSelector::FieldPath`](crate::ConversionSelector::FieldPath):
+    /// `"Message.field"` at message level, `"Message.group.field"` inside a
+    /// group, one segment per nesting level below that. Stamped by
+    /// [`parse_message_structure`] — the parser has no message context, which
+    /// is why `FieldPath` selectors used to match nothing at all.
+    pub(crate) path: String,
     pub(crate) id: Option<u16>,
     pub(crate) offset: usize,
     pub(crate) presence: Presence,
@@ -325,6 +332,16 @@ pub(crate) fn parse_message_structure(
         }
     }
 
+    // Stamp `FieldPath` paths now that the owning message name is known. The
+    // field parser has no message context, so doing it here is what makes
+    // `ConversionSelector::FieldPath` resolvable at all.
+    for f in &mut fields {
+        f.path = format!("{name}.{}", f.name);
+    }
+    for g in &mut groups {
+        stamp_group_field_paths(g, &name);
+    }
+
     MessageStructure {
         name,
         id,
@@ -336,6 +353,17 @@ pub(crate) fn parse_message_structure(
         fields,
         groups,
         var_data,
+    }
+}
+
+/// Recursively stamp `Message.group[.group…].field` onto a group's fields.
+fn stamp_group_field_paths(group: &mut MessageGroup, prefix: &str) {
+    let scope = format!("{prefix}.{}", group.name);
+    for f in &mut group.fields {
+        f.path = format!("{scope}.{}", f.name);
+    }
+    for nested in &mut group.groups {
+        stamp_group_field_paths(nested, &scope);
     }
 }
 
@@ -413,6 +441,8 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
 
     MessageField {
         name,
+        // Stamped with the owning message/group path by `parse_message_structure`.
+        path: String::new(),
         id,
         offset,
         presence,
@@ -722,10 +752,9 @@ pub(crate) fn get_dimension_info(
         size = comp[0].encoding.offset.unwrap_or(4);
         let members = parse_composite_members(comp);
         for m in members {
-            let lower = m.name.to_lowercase();
-            if lower.contains("blocklength") {
+            if m.name == "blockLength" {
                 bl = to_snake_case(&m.name);
-            } else if lower.contains("numingroup") || lower.contains("count") {
+            } else if m.name == "numInGroup" {
                 num = to_snake_case(&m.name);
             }
         }
@@ -748,8 +777,7 @@ pub(crate) fn get_dim_num_layout(
     if let Some(comp) = elements.composites.iter().find(|c| c[0].name == raw_name) {
         let members = parse_composite_members(comp);
         for m in members {
-            let lower = m.name.to_lowercase();
-            if lower.contains("numingroup") || lower.contains("count") {
+            if m.name == "numInGroup" {
                 offset = m.offset;
                 if let MemberType::Primitive {
                     prim: p, length, ..
@@ -780,7 +808,7 @@ pub(crate) fn get_dim_block_layout(
         .find(|composite| composite[0].name == dim_type)
     {
         for member in parse_composite_members(comp) {
-            if member.name.to_lowercase().contains("blocklength") {
+            if member.name == "blockLength" {
                 offset = member.offset;
                 if let MemberType::Primitive {
                     prim: primitive,
@@ -964,5 +992,71 @@ mod tests {
 
         let canonical = enum_elements("BooleanType", None, &[("Zero", 0), ("One", 1)]);
         assert!(is_bool_enum(&canonical, "BooleanType"));
+    }
+
+    fn dimension_elements(members: &[(&str, usize, PrimitiveType)], size: usize) -> SchemaElements {
+        let mut tokens = vec![token(
+            "groupSizeEncoding",
+            Signal::BeginComposite,
+            Encoding {
+                offset: Some(size),
+                ..Encoding::default()
+            },
+        )];
+        for &(name, offset, prim) in members {
+            tokens.push(token(
+                name,
+                Signal::BeginField,
+                Encoding {
+                    primitive_type: Some(prim),
+                    offset: Some(offset),
+                    ..Encoding::default()
+                },
+            ));
+            tokens.push(token(name, Signal::EndField, Encoding::default()));
+        }
+        tokens.push(token(
+            "groupSizeEncoding",
+            Signal::EndComposite,
+            Encoding::default(),
+        ));
+        SchemaElements {
+            composites: vec![tokens],
+            enums: Vec::new(),
+            sets: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dimension_layout_ignores_padding_names_that_contain_required_substrings() {
+        // `account` contains "count"; `countPadding` / `blockLengthPadding`
+        // contain the required member names. Substring matching would pick
+        // the later padding field and emit the wrong wire offsets.
+        let elements = dimension_elements(
+            &[
+                ("blockLength", 0, PrimitiveType::UInt16),
+                ("numInGroup", 2, PrimitiveType::UInt16),
+                ("account", 4, PrimitiveType::UInt32),
+                ("countPadding", 8, PrimitiveType::UInt16),
+                ("blockLengthPadding", 10, PrimitiveType::UInt16),
+            ],
+            12,
+        );
+        let (num_off, num_size, num_prim) = get_dim_num_layout(&elements, "groupSizeEncoding");
+        assert_eq!(
+            (num_off, num_size, num_prim),
+            (2, 2, PrimitiveType::UInt16),
+            "numInGroup must stay at offset 2, not a later *count* padding field"
+        );
+        let (bl_off, bl_size, bl_prim) = get_dim_block_layout(&elements, "groupSizeEncoding");
+        assert_eq!(
+            (bl_off, bl_size, bl_prim),
+            (0, 2, PrimitiveType::UInt16),
+            "blockLength must stay at offset 0, not a later *blockLength* padding field"
+        );
+        let (_, _, bl_name, num_name) = get_dimension_info(&elements, "groupSizeEncoding");
+        assert_eq!(bl_name, "block_length");
+        assert_eq!(num_name, "num_in_group");
     }
 }

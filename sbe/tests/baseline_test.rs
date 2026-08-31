@@ -2871,7 +2871,7 @@ fn debug_only_domain_type_formats_without_display() -> Result<(), Box<dyn std::e
             }
         }
 
-        let mut buf = [0u8; 128];
+        let mut buf = [0u8; OrderEncoder::compute_length_with_header(1)];
         let len = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&OrderFixedFields { total: self::Amount::new(0, 0) })
             .legs(1, |legs| {
@@ -2888,6 +2888,90 @@ fn debug_only_domain_type_formats_without_display() -> Result<(), Box<dyn std::e
         let dec = OrderDecoder::try_decode(&buf[..len], 0)?;
         let rendered = format!("{dec:?}");
         assert!(rendered.contains("7..9"), "group entry domain value missing: {rendered}");
+        "#,
+    );
+    Ok(())
+}
+
+/// A domain-mapped set inside a group used to emit `self.<field>()` in the
+/// entry `Display` impl after the raw accessor was renamed to `*_wire`, so
+/// the generated crate failed to compile. Domain values only need `Debug`.
+#[test]
+fn group_entry_domain_mapped_set_formats_with_debug() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="group_set_domain" id="95" version="0"
+    byteOrder="littleEndian" headerType="messageHeader">
+<types>
+  <composite name="messageHeader">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="templateId" primitiveType="uint16"/>
+    <type name="schemaId" primitiveType="uint16"/>
+    <type name="version" primitiveType="uint16"/>
+  </composite>
+  <composite name="groupSizeEncoding">
+    <type name="blockLength" primitiveType="uint16"/>
+    <type name="numInGroup" primitiveType="uint16"/>
+  </composite>
+  <set name="Flags" encodingType="uint8">
+    <choice name="A">0</choice>
+    <choice name="B">1</choice>
+  </set>
+</types>
+<sbe:message name="Batch" id="1">
+  <group name="rows" id="2" dimensionType="groupSizeEncoding">
+    <field name="flags" id="3" type="Flags"/>
+  </group>
+</sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(
+        ergo_sbe::GenerationConfig::new("group_set_domain").with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Flags"),
+            "std::ops::Range<u8>",
+        ),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .ok_or("no generated module")?
+    .source
+    .clone();
+    compile_and_run(
+        "group_set_domain",
+        &src,
+        r#"
+        impl TryFromSbe<self::Flags> for std::ops::Range<u8> {
+            type Error = &'static str;
+            fn try_from_sbe(wire: self::Flags) -> Result<Self, Self::Error> {
+                Ok(0..wire.0)
+            }
+        }
+        impl TryToSbe<self::Flags> for std::ops::Range<u8> {
+            type Error = &'static str;
+            fn try_to_sbe(&self) -> Result<self::Flags, Self::Error> {
+                Ok(self::Flags(self.end))
+            }
+        }
+
+        let frame_len = BatchEncoder::compute_length_with_header(1);
+        let mut buf = [0u8; BatchEncoder::compute_length_with_header(1)];
+        let len = BatchEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&BatchFixedFields {})
+            .rows(1, |rows| {
+                rows.add(|row| {
+                    row.try_flags(0..1).map_err(|reason| {
+                        sbe_rt::EncodeError::DomainConversionFailed { field: "flags", reason }
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, frame_len);
+        let dec = BatchDecoder::try_decode(&buf[..len], 0)?;
+        let rendered = format!("{}", dec.into_rows()?.next().ok_or("missing row")?);
+        assert!(rendered.contains("0..1"), "group entry domain set missing: {rendered}");
         "#,
     );
     Ok(())
@@ -3935,7 +4019,7 @@ fn group_entry_optional_domain_type_field_compiles_and_round_trips()
         "group_opt_domain_type",
         &src,
         r#"
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; BatchEncoder::compute_length_with_header(2)];
         let len = BatchEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&BatchFixedFields {})
             .entries(2, |g| {

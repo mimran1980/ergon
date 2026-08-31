@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Cross product of every branch in `codegen::domain_cluster`'s DTO field
+     materialisation: field kind x presence x sinceVersion x domain-type.
+     Each field name encodes its cell so a failure names the exact branch.
+
+     Naming: <kind>_<variant>[_v] where the `_v` suffix means sinceVersion > 0.
+     `dom` in the name means a domain type is configured for that field's type. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="domain_dto_matrix"
+                   id="203"
+                   version="3"
+                   semanticVersion="5.2"
+                   description="Domain DTO branch matrix"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+
+        <!-- Composite carrying a configured domain type. -->
+        <composite name="Money">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8"/>
+        </composite>
+        <!-- Composite with no domain type: stays the generated struct. -->
+        <composite name="Pair">
+            <type name="lo" primitiveType="uint32"/>
+            <type name="hi" primitiveType="uint32"/>
+        </composite>
+
+        <enum name="BooleanType" encodingType="uint8">
+            <validValue name="F">0</validValue>
+            <validValue name="T">1</validValue>
+        </enum>
+        <enum name="Model" encodingType="char">
+            <validValue name="A">A</validValue>
+            <validValue name="B">B</validValue>
+        </enum>
+        <set name="Opts" encodingType="uint8">
+            <choice name="fast">0</choice>
+            <choice name="safe">1</choice>
+        </set>
+
+        <type name="Scaled" primitiveType="int64"/>
+        <type name="OptScaled" primitiveType="int64" presence="optional"/>
+        <type name="Tag" primitiveType="char" length="4"/>
+    </types>
+
+    <sbe:message name="Matrix" id="1">
+        <!-- primitive scalar, required -->
+        <field name="primDom" id="1" type="Scaled" semanticType="ScaledPrice"/>
+        <field name="primDomV" id="2" type="Scaled" semanticType="ScaledPrice" sinceVersion="1"/>
+        <field name="primPlain" id="3" type="uint32"/>
+        <field name="primPlainV" id="4" type="uint32" sinceVersion="1"/>
+        <!-- primitive scalar, optional: domain type intentionally not applied -->
+        <field name="primOpt" id="5" type="OptScaled" semanticType="ScaledPrice"/>
+        <!-- primitive array: domain type intentionally not applied -->
+        <field name="primArr" id="6" type="Tag" semanticType="TagText"/>
+        <!-- composite -->
+        <field name="compDom" id="7" type="Money"/>
+        <field name="compDomV" id="8" type="Money" sinceVersion="2"/>
+        <field name="compPlain" id="9" type="Pair"/>
+        <field name="compPlainV" id="10" type="Pair" sinceVersion="2"/>
+        <!-- bool enum -->
+        <field name="enumBool" id="11" type="BooleanType"/>
+        <field name="enumBoolV" id="12" type="BooleanType" sinceVersion="1"/>
+        <!-- non-bool enum -->
+        <field name="enumNorm" id="13" type="Model"/>
+        <field name="enumNormV" id="14" type="Model" sinceVersion="1"/>
+        <!-- set -->
+        <field name="setPlain" id="15" type="Opts"/>
+        <field name="setPlainV" id="16" type="Opts" sinceVersion="1"/>
+        <!-- constant: excluded from the DTO entirely -->
+        <field name="constModel" id="17" type="Model" presence="constant" valueRef="Model.B"/>
+    </sbe:message>
+</sbe:messageSchema>
