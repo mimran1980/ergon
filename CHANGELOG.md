@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.24] — 2026-08-31
+## [Unreleased]
 
 ### Fixed
 - **Domain objects + domain types generate compilable code again.** Fifteen
