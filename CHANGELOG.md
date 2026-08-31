@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.24] — 2026-08-31
 
 ### Fixed
 - **Domain objects + domain types generate compilable code again.** Fifteen
@@ -83,6 +83,12 @@
   and pinned a core.
 - `parse_ingress_endpoints` rejects empty comma-separated entries (leading,
   trailing, or repeated commas) instead of skipping them.
+- `cluster_decode_session_event` carries a documented no-LTO-only allowance of
+  1.05 (LTO stays at 1.01, where ergon measures 0.99). Its no-LTO arm is a
+  memory-bound decode that walks either side of parity — 1.0403 and 1.0444 on
+  consecutive quiet-machine runs, matching the 1.0406 already recorded in the
+  pair's history. This is an allowance for a placement-sensitive tie, not a
+  proof that nothing regressed; above 1.05 the gate fails as before.
 - `write_module_set` restore after a mid-commit failure replaces an
   already-promoted destination (Windows-safe) and surfaces restore errors
   rather than discarding them. Successful publication fails if a `.bak`

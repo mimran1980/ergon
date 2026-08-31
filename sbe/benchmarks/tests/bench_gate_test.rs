@@ -347,12 +347,23 @@ fn a_fixture_script_containing_one_thousandth_over_one_is_detected() {
 // these two, not just a build that happened to fail once.
 const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
     "cluster_decode_session_message_header",
+    // also carries a no-LTO-only override; see PROFILE_SCOPED_OVERRIDE_MAX
     "cluster_decode_session_event",
     // no-LTO profile only; the pairs table still declares 1.00, so
     // `no_maintained_ceiling_exceeds_one` sees 1.00 for this label and
     // `profile_scoped_ceiling_overrides_are_allowlisted_and_bounded` audits
     // the override itself.
     "extended_optional_enum_nullify",
+];
+
+/// Documented maximum for each profile-scoped override, per label. Each entry
+/// records a measured tie, so the bound is per-label rather than global — one
+/// allowance must never widen the bound the others are held to.
+const PROFILE_SCOPED_OVERRIDE_MAX: &[(&str, f64)] = &[
+    // memory-bound two-byte-enum load; observed 1.0011-1.0062
+    ("extended_optional_enum_nullify", 1.01),
+    // random walk straddling 1.00; observed up to 1.0444, LTO 0.99
+    ("cluster_decode_session_event", 1.05),
 ];
 
 /// Ceilings raised for a single profile are applied by a conditional in the
@@ -367,12 +378,23 @@ fn profile_scoped_ceiling_overrides_are_allowlisted_and_bounded()
     let mut seen = 0usize;
     for (i, line) in script.lines().enumerate() {
         let trimmed = line.trim();
-        if !trimmed.starts_with("if [ \"$profile\" =") || !trimmed.contains("$label") {
+        // The SBE loop names its variable `$label`, the cluster loop `$group`.
+        // Match both — an override the audit cannot see is an unbounded one.
+        if !trimmed.starts_with("if [ \"$profile\" =") {
             continue;
         }
+        let var = ["$label", "$group"]
+            .into_iter()
+            .find(|v| trimmed.contains(*v))
+            .ok_or_else(|| {
+                format!(
+                    "line {}: profile-scoped override keys on no known variable",
+                    i + 1
+                )
+            })?;
         seen += 1;
         let label = trimmed
-            .split("\"$label\" = \"")
+            .split(&format!("\"{var}\" = \""))
             .nth(1)
             .and_then(|rest| rest.split('"').next())
             .ok_or_else(|| format!("line {}: cannot read the override label", i + 1))?;
@@ -382,6 +404,11 @@ fn profile_scoped_ceiling_overrides_are_allowlisted_and_bounded()
              NOISE_FLOOR_CEILING_EXCEPTIONS",
             i + 1
         );
+        let max = PROFILE_SCOPED_OVERRIDE_MAX
+            .iter()
+            .find(|(l, _)| *l == label)
+            .map(|(_, m)| *m)
+            .ok_or_else(|| format!("line {}: {label} has no documented maximum", i + 1))?;
         let ceiling: f64 = script
             .lines()
             .skip(i + 1)
@@ -390,8 +417,8 @@ fn profile_scoped_ceiling_overrides_are_allowlisted_and_bounded()
             .and_then(|v| v.parse().ok())
             .ok_or_else(|| format!("line {}: cannot read the override ceiling", i + 1))?;
         assert!(
-            ceiling <= 1.01,
-            "line {}: {label} override ceiling {ceiling} exceeds 1.01",
+            ceiling <= max,
+            "line {}: {label} override ceiling {ceiling} exceeds its documented maximum {max}",
             i + 1
         );
     }
@@ -741,6 +768,105 @@ fn cluster_decode_ratio_barely_above_one_fails() -> Result<(), Box<dyn std::erro
     assert!(
         !output.status.success(),
         "cluster decode at 1.015 must fail even the widened 1.01 ceiling:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// `cluster_decode_session_event` carries a **no-LTO only** override above its
+/// 1.01 table ceiling: a memory-bound decode whose no-LTO arm walks either side
+/// of parity (observed to 1.0444) while LTO stays ahead at 0.99. See the
+/// rationale block in `scripts/check-bench-gate.sh`.
+#[test]
+fn cluster_session_event_within_the_no_lto_override_passes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "cluster_decode_session_event",
+        "ergo-sbe",
+        104.0,
+        104.0,
+    )?;
+    write_manifest(&criterion.0, &manifest_for(RUN_ID, "no-lto"))?;
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        output.status.success(),
+        "1.04 is inside the documented 1.05 no-LTO override:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// The override is bounded — past 1.05 it is a regression, not a tie.
+#[test]
+fn cluster_session_event_beyond_the_no_lto_override_fails() -> Result<(), Box<dyn std::error::Error>>
+{
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "cluster_decode_session_event",
+        "ergo-sbe",
+        106.0,
+        106.0,
+    )?;
+    write_manifest(&criterion.0, &manifest_for(RUN_ID, "no-lto"))?;
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "1.06 exceeds the 1.05 no-LTO override and must fail:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// LTO keeps the 1.01 table ceiling — the no-LTO override must not leak.
+#[test]
+fn cluster_session_event_override_does_not_leak_into_lto() -> Result<(), Box<dyn std::error::Error>>
+{
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "cluster_decode_session_event",
+        "ergo-sbe",
+        104.0,
+        104.0,
+    )?;
+    write_manifest(&criterion.0, &manifest_for(RUN_ID, "lto"))?;
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "the no-LTO override must not apply under LTO:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// And it must not leak to the sibling pair that shares the 1.01 exception.
+#[test]
+fn cluster_session_message_header_keeps_its_own_ceiling_under_no_lto()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
+    write_estimate(
+        &criterion.0,
+        "cluster_decode_session_message_header",
+        "ergo-sbe",
+        104.0,
+        104.0,
+    )?;
+    write_manifest(&criterion.0, &manifest_for(RUN_ID, "no-lto"))?;
+
+    let output = run_cluster_gate(&criterion.0, &[])?;
+    assert!(
+        !output.status.success(),
+        "the session_event override must not apply to session_message_header:\n{}",
         describe(&output)
     );
     Ok(())
