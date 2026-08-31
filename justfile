@@ -81,6 +81,7 @@ preflight:
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
     ./scripts/regenerate-sbe-benchmark-reference.sh --check
+    ./scripts/regenerate-codegen-matrix-fixture.py --check
     @echo "=== config ==="
     ./scripts/check-mutation-config.sh
     @echo ""
@@ -92,9 +93,9 @@ check-local: policy
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
-    cargo test -p ergo-aeron-cluster --doc
     cd samples/exchange-example && cargo fmt --check
     cd samples/exchange-example && cargo clippy --all-targets --all-features -- -D warnings
     cd samples/exchange-example && cargo test -- --test-threads=1
@@ -117,8 +118,8 @@ check-products: policy
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
+    # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
-    cargo test -p ergo-aeron-cluster --doc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     ./scripts/check-book-fences.sh
 
@@ -277,15 +278,16 @@ test: policy
     @echo "=== 3/7 unit + integration tests ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
+    ./scripts/regenerate-codegen-matrix-fixture.py --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
     @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
-    cargo test -p ergo-aeron-cluster --doc
+    # cluster doctests already ran in 3/7 via `cargo test -p ergo-aeron-cluster`
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     @echo "=== 5/7 sample tests ==="
     cd samples/l3-book && cargo test -- --test-threads=1
@@ -306,7 +308,7 @@ test: policy
 
 # Workspace unit tests only.
 test-unit: policy
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
 
 # Every test gate: standard suite + Miri UB detection + fuzz corpus replay.

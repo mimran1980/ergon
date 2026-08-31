@@ -1,6 +1,8 @@
 //! `Display` / `Debug` impl codegen for message decoders.
 
-use super::conversion_helpers::{DECODER_RESERVED, find_domain_type, resolve_field_ident};
+use super::conversion_helpers::{
+    DECODER_RESERVED, field_has_conversion_free, find_domain_type, resolve_field_ident,
+};
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::Presence;
 use crate::structured_ir::{FieldType, MessageStructure};
@@ -9,6 +11,7 @@ use crate::structured_ir::{FieldType, MessageStructure};
 pub(crate) fn generate_decoder_display(
     msg: &MessageStructure,
     domain_types: &[(crate::ConversionSelector, String)],
+    conversions: &[crate::ConversionSelector],
 ) -> proc_macro2::TokenStream {
     let name = to_pascal_case(&msg.name);
     let decoder_ident =
@@ -25,7 +28,10 @@ pub(crate) fn generate_decoder_display(
     for f in &msg.fields {
         let snake = to_snake_case(&f.name);
         // Domain-converted fields use fallible `try_<name>` for Display.
-        let wire_name = find_domain_type(f, domain_types).map(|_| format!("{snake}_wire"));
+        // The raw getter is renamed to `*_wire` by *any* conversion, not only
+        // by a domain type — keying this off `find_domain_type` made Display
+        // read a getter that conversion-only configs had already renamed.
+        let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
         // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
         let domain_try = find_domain_type(f, domain_types)

@@ -12,6 +12,31 @@ Do **not** call both for the same selector — domain type already enables conve
 | **Raw wire** | `price_value()` / `price_wire(...)` | same when conversion is active |
 | **Sample** | [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [demo_conversion_only](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
 
+### Which fields a selector reaches, and what shape you get
+
+A selector matches by precedence — exact `FieldPath`, then `SemanticType`, then
+`NamedType` — so a blanket mapping plus one per-field override behaves the way
+it reads, whatever order you register them in. Paths are `"Message.field"`,
+extended with group names inside a group (`"Order.legs.price"`).
+
+What the accessor gives you depends on the field's shape, because it mirrors
+the raw accessor it delegates to:
+
+| Field | `with_conversion` | `with_domain_type` |
+|-------|-------------------|--------------------|
+| Required, `sinceVersion=0` | `price_as::<T>() -> Result<T, _>` | `try_price() -> Result<T, _>` |
+| `sinceVersion > 0` | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
+| `presence="optional"` scalar | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
+
+The `Option` layer means "no value on the wire" — absent at this version, or
+the schema null value. It is never used to report a bad value; an invalid wire
+value is the `Err`.
+
+Composites, enums, and sets all take domain types. **Fixed arrays and optional
+scalars keep their wire type in a domain DTO** even when a selector matches
+them — the flyweight still gets the converted accessor, but the owned struct
+stores `[u8; N]` / `Option<i64>`.
+
 ### Option A — you choose the app type (`Cents`)
 
 ```rust,no_run

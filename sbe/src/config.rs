@@ -219,6 +219,11 @@ pub struct FieldInfo {
     /// Groups and var-data report a generated or slice type, never the
     /// sentinels `"group"` / `"data"`. Use [`Self::kind`] to classify.
     pub rust_type: String,
+    /// Whether this field is a fixed-block field, a repeating group, or
+    /// var-data. Recorded when the field is built, never inferred from
+    /// [`Self::rust_type`] — renaming a generated type must not be able to
+    /// change a field's meaning.
+    pub kind: FieldKind,
     /// Byte offset from the message body start, when this is a fixed
     /// scalar/array/composite/enum/set field. `None` for groups and
     /// var-data fields, which have no single wire offset.
@@ -241,16 +246,7 @@ impl FieldInfo {
     /// Classify this field as fixed, repeating group, or var-data.
     #[must_use]
     pub fn kind(&self) -> FieldKind {
-        if self.offset.is_some() {
-            return FieldKind::Fixed;
-        }
-        if self.rust_type.ends_with("Decoder")
-            || (self.rust_type.starts_with("Vec<") && self.rust_type.contains("Domain"))
-        {
-            FieldKind::Group
-        } else {
-            FieldKind::Data
-        }
+        self.kind
     }
 }
 

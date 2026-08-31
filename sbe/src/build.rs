@@ -399,6 +399,16 @@ struct StagedWrite {
 /// written, back up existing destinations and promote the staged set. Any
 /// failure in staging or commit rolls back — restoring backups and removing
 /// promoted/temp files — before returning the path-aware [`BuildError::Io`].
+/// A cleanup step that itself fails is reported in preference to the failure
+/// that triggered it: silently swallowing it would claim a rollback that left
+/// debris behind.
+///
+/// The final step — deleting the backups of a *successful* commit — is past
+/// the point of no return and does not roll back: the new outputs are
+/// installed and correct. It removes every backup it can and then fails the
+/// publication naming the first it could not, so success is never reported
+/// with stray `.bak` files on disk.
+///
 /// This guarantees rollback for a failure reported to this process, not
 /// crash-atomicity across power loss.
 fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), BuildError> {
@@ -438,11 +448,11 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
         if let Some(parent) = temp.parent()
             && let Err(source) = fs::create_dir_all(parent)
         {
-            remove_staged_temps(&staged);
+            remove_staged_temps(&staged)?;
             return Err(io_err("create output directory", parent, source));
         }
         if let Err(source) = fs::write(&temp, &m.source) {
-            remove_staged_temps(&staged);
+            remove_staged_temps(&staged)?;
             return Err(io_err("write generated module", &temp, source));
         }
         staged.push(StagedWrite {
@@ -483,43 +493,35 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
     };
 
     if let Some(err) = commit_err {
-        // Restore every destination we backed up. Prefer a restore error
-        // over the original commit error: a half-applied graph is worse
-        // than a failed promote.
-        if let Err(restore_err) = restore_backed_up(&backed_up) {
-            let backed_up_dests: std::collections::HashSet<&Path> =
-                backed_up.iter().map(|(_, d)| d.as_path()).collect();
-            for sw in &promoted {
-                if !backed_up_dests.contains(sw.dest.as_path()) {
-                    let _ = fs::remove_file(&sw.dest);
-                }
-            }
-            remove_staged_temps(&staged);
-            return Err(restore_err);
-        }
-        // A promoted file that had NO backup did not exist before this call
-        // — remove it so a failed generation leaves no partial output.
-        let backed_up_dests: std::collections::HashSet<&Path> =
-            backed_up.iter().map(|(_, d)| d.as_path()).collect();
-        for sw in &promoted {
-            if !backed_up_dests.contains(sw.dest.as_path()) {
-                let _ = fs::remove_file(&sw.dest);
-            }
-        }
-        remove_staged_temps(&staged);
-        return Err(err);
+        // Restore every destination we backed up, then remove promotions that
+        // had no backup and every staged temp. Prefer a rollback error over
+        // the original commit error: a half-applied graph or leftover debris
+        // is worse than a failed promote, and the rollback error names the
+        // exact path still needing attention.
+        let rollback_err = first_err(
+            [
+                restore_backed_up(&backed_up),
+                remove_unbacked_promotions(&promoted, &backed_up),
+                remove_staged_temps(&staged),
+            ]
+            .into_iter(),
+        );
+        return Err(rollback_err.err().unwrap_or(err));
     }
 
-    // Success: drop backups. A leftover `.bak` is debris; fail the
-    // publication rather than report success with stray files.
+    // Success: drop backups. The new outputs are installed and correct, so
+    // there is nothing to roll back — but a leftover `.bak` is debris. Remove
+    // every backup we can, then fail the publication naming the first we
+    // could not, rather than report success with stray files.
+    let mut backup_err = None;
     for (backup, _) in &backed_up {
-        if let Err(source) = fs::remove_file(backup) {
-            println!(
-                "cargo::warning=failed to remove backup {}: {source}",
-                backup.display()
-            );
-            return Err(io_err("remove generated module backup", backup, source));
+        if let Err(err) = remove_if_present(backup, "remove generated module backup") {
+            println!("cargo::warning={err}");
+            backup_err = backup_err.or(Some(err));
         }
+    }
+    if let Some(err) = backup_err {
+        return Err(err);
     }
     for w in modules.warnings() {
         println!("cargo::warning={w}");
@@ -527,10 +529,55 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
     Ok(())
 }
 
-fn remove_staged_temps(staged: &[StagedWrite]) {
-    for sw in staged {
-        let _ = fs::remove_file(&sw.temp);
+/// Remove `path`, treating an already-absent file as success. A staged temp
+/// that was promoted, or a destination the commit never reached, is simply not
+/// there; any other error is real debris and must not be hidden behind a
+/// rollback that reports itself as clean.
+fn remove_if_present(path: &Path, action: &'static str) -> Result<(), BuildError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(io_err(action, path, source)),
     }
+}
+
+fn remove_staged_temps(staged: &[StagedWrite]) -> Result<(), BuildError> {
+    first_err(
+        staged.iter().map(|sw| {
+            remove_if_present(&sw.temp, "remove staged generated module during rollback")
+        }),
+    )
+}
+
+/// A promoted file that had NO backup did not exist before this call — remove
+/// it so a failed generation leaves no partial output.
+fn remove_unbacked_promotions(
+    promoted: &[&StagedWrite],
+    backed_up: &[(PathBuf, PathBuf)],
+) -> Result<(), BuildError> {
+    let backed_up_dests: std::collections::HashSet<&Path> =
+        backed_up.iter().map(|(_, d)| d.as_path()).collect();
+    first_err(
+        promoted
+            .iter()
+            .filter(|sw| !backed_up_dests.contains(sw.dest.as_path()))
+            .map(|sw| {
+                remove_if_present(&sw.dest, "remove promoted generated module during rollback")
+            }),
+    )
+}
+
+/// Drain `results` and report the first failure. Deliberately *not*
+/// `try_fold`: short-circuiting would strand the rest of the debris behind
+/// one unremovable path.
+fn first_err(results: impl Iterator<Item = Result<(), BuildError>>) -> Result<(), BuildError> {
+    let mut first = None;
+    for r in results {
+        if let Err(e) = r {
+            first = first.or(Some(e));
+        }
+    }
+    first.map_or(Ok(()), Err)
 }
 
 /// Put `backup` back at `dest`, replacing an already-promoted file.
@@ -560,16 +607,11 @@ fn restore_destination(backup: &Path, dest: &Path) -> Result<(), BuildError> {
 }
 
 fn restore_backed_up(backed_up: &[(PathBuf, PathBuf)]) -> Result<(), BuildError> {
-    let mut first_err = None;
-    for (backup, dest) in backed_up {
-        if let Err(e) = restore_destination(backup, dest) {
-            first_err = first_err.or(Some(e));
-        }
-    }
-    match first_err {
-        Some(err) => Err(err),
-        None => Ok(()),
-    }
+    first_err(
+        backed_up
+            .iter()
+            .map(|(backup, dest)| restore_destination(backup, dest)),
+    )
 }
 
 /// Include a module written by [`generate_to_out_dir`] / [`generate_str_to_out_dir`].
@@ -1129,6 +1171,75 @@ mod tests {
             debris.is_empty(),
             "no leftover temp/backup files: {debris:?}"
         );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// The commit succeeds, but deleting one backup afterwards fails. The new
+    /// outputs are installed and correct, so there is nothing to roll back —
+    /// but the publication must still fail naming the backup it could not
+    /// remove, and must have removed every *other* backup rather than
+    /// abandoning the tail on the first error.
+    #[test]
+    fn generate_multi_backup_cleanup_failure_is_reported_not_swallowed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        write_multi_schemas(&dir)?;
+        let out = dir.join("out");
+        fs::create_dir_all(&out)?;
+
+        // Module one's destination is a *directory*. It counts as
+        // pre-existing, so commit renames it aside to `common_types.rs.bak.
+        // {pid}` — which succeeds — and promotes the staged file into the
+        // vacated name. Only the final backup delete trips: `remove_file` on
+        // a directory is EISDIR/EPERM.
+        fs::create_dir_all(out.join("common_types.rs"))?;
+        // Module two's destination is an ordinary pre-existing file, so its
+        // backup must be deleted normally even though module one's failed.
+        fs::write(out.join("orders.rs"), b"// original orders.rs\n")?;
+
+        let pid = std::process::id();
+        let err = generate_multi_to_dir(
+            SchemaFile::new(&dir.join("common-types.xml"), "common_types"),
+            &[SchemaFile::new(&dir.join("orders.xml"), "orders")],
+            GenerationConfig::new("common_types"),
+            &out,
+        )
+        .expect_err("undeletable backup must fail the publication");
+        match &err {
+            BuildError::Io { action, path, .. } => {
+                assert_eq!(*action, "remove generated module backup");
+                assert_eq!(path, &out.join(format!("common_types.rs.bak.{pid}")));
+            }
+            other => unreachable!("expected BuildError::Io, got {other:?}"),
+        }
+        assert!(
+            !out.join(format!("orders.rs.bak.{pid}")).exists(),
+            "module two's backup must still be removed — one undeletable \
+             backup must not strand the rest of the debris"
+        );
+
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// Cleanup tolerates an already-absent file — a staged temp that was
+    /// promoted is legitimately gone — but never swallows a real failure.
+    #[test]
+    fn remove_if_present_tolerates_missing_but_reports_real_failures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile_dir()?;
+        remove_if_present(&dir.join("never-existed.rs"), "remove x")?;
+
+        let blocked = dir.join("blocked.rs");
+        fs::create_dir_all(&blocked)?;
+        match remove_if_present(&blocked, "remove x").expect_err("directory is not removable") {
+            BuildError::Io { action, path, .. } => {
+                assert_eq!(action, "remove x");
+                assert_eq!(path, blocked);
+            }
+            other => unreachable!("expected Io, got {other:?}"),
+        }
         fs::remove_dir_all(&dir)?;
         Ok(())
     }

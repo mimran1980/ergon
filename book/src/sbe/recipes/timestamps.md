@@ -100,7 +100,14 @@ This is why `UTCTimestamp` and `UTCTimestampMicros` need **separate**
 `UTCTimestamp` field to the *same* schema needs no config change at all.
 [`ConversionSelector::field_path`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.ConversionSelector.html)
 is the escape hatch when one specific field needs to differ from its
-semantic-type siblings.
+semantic-type siblings. It works because selectors resolve by **precedence,
+not registration order**: an exact `FieldPath` beats a `SemanticType`, which
+beats a `NamedType`. So a blanket `semantic_type("UTCTimestamp")` mapping plus
+one `field_path("Order.settledAt")` override does what it reads like,
+regardless of which you register first.
+
+Paths are `"Message.field"`, extended with the group names for fields inside a
+group: `"Order.legs.settledAt"`.
 
 ## Mixed precisions, one app type — `DomainImpl::Manual`
 

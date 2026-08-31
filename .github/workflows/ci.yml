@@ -113,9 +113,10 @@ jobs:
 
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
       - run: ./scripts/regenerate-golden.sh --check
+      - run: ./scripts/regenerate-codegen-matrix-fixture.py --check
       - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=2
       - run: cargo test -p ergo-aeron-cluster -- --test-threads=1
-      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster-test-harness
+      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
 
   # Fail-fast gate: downstream jobs need this, so if policy, lint, or test
   # fails the gate is skipped and everything else is cancelled.

@@ -152,6 +152,13 @@ pub(crate) struct MessageStructure {
 #[derive(Clone)]
 pub(crate) struct MessageField {
     pub(crate) name: String,
+    /// Dotted path this field is reachable at, for
+    /// [`ConversionSelector::FieldPath`](crate::ConversionSelector::FieldPath):
+    /// `"Message.field"` at message level, `"Message.group.field"` inside a
+    /// group, one segment per nesting level below that. Stamped by
+    /// [`parse_message_structure`] — the parser has no message context, which
+    /// is why `FieldPath` selectors used to match nothing at all.
+    pub(crate) path: String,
     pub(crate) id: Option<u16>,
     pub(crate) offset: usize,
     pub(crate) presence: Presence,
@@ -325,6 +332,16 @@ pub(crate) fn parse_message_structure(
         }
     }
 
+    // Stamp `FieldPath` paths now that the owning message name is known. The
+    // field parser has no message context, so doing it here is what makes
+    // `ConversionSelector::FieldPath` resolvable at all.
+    for f in &mut fields {
+        f.path = format!("{name}.{}", f.name);
+    }
+    for g in &mut groups {
+        stamp_group_field_paths(g, &name);
+    }
+
     MessageStructure {
         name,
         id,
@@ -336,6 +353,17 @@ pub(crate) fn parse_message_structure(
         fields,
         groups,
         var_data,
+    }
+}
+
+/// Recursively stamp `Message.group[.group…].field` onto a group's fields.
+fn stamp_group_field_paths(group: &mut MessageGroup, prefix: &str) {
+    let scope = format!("{prefix}.{}", group.name);
+    for f in &mut group.fields {
+        f.path = format!("{scope}.{}", f.name);
+    }
+    for nested in &mut group.groups {
+        stamp_group_field_paths(nested, &scope);
     }
 }
 
@@ -413,6 +441,8 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
 
     MessageField {
         name,
+        // Stamped with the owning message/group path by `parse_message_structure`.
+        path: String::new(),
         id,
         offset,
         presence,
