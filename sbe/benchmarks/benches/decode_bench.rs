@@ -93,13 +93,50 @@ fn bench_group_iteration(c: &mut Criterion) {
                 .unwrap()
                 .into_fuel_figures()
                 .unwrap();
-            let n = ff.remaining();
+            let n = ff.remaining_entries();
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
             while let Some(Ok(entry)) = ff.next() {
                 sum_speed += entry.speed() as u64;
                 sum_mpg += entry.mpg() as f64;
             }
+            black_box((n, sum_speed, sum_mpg));
+        });
+    });
+    group.bench_function("fuel_figures_visit_entries", |b| {
+        b.iter(|| {
+            let ff = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .into_fuel_figures()
+                .unwrap();
+            let n = ff.remaining_entries();
+            let mut sum_speed: u64 = 0;
+            let mut sum_mpg: f64 = 0.0;
+            let _ = ff
+                .visit_entries(
+                    |entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
+                        sum_speed += entry.speed() as u64;
+                        sum_mpg += entry.mpg() as f64;
+                        entry.into_usage_description().map(|(_, complete)| complete)
+                    },
+                )
+                .unwrap();
+            black_box((n, sum_speed, sum_mpg));
+        });
+    });
+    group.bench_function("fuel_figures_mutable_ordered", |b| {
+        b.iter(|| {
+            let mut car = CarDecoder::try_from(black_box(BASELINE)).unwrap().ordered();
+            let ff = car.fuel_figures().unwrap();
+            let n = ff.remaining_entries();
+            let mut sum_speed: u64 = 0;
+            let mut sum_mpg: f64 = 0.0;
+            ff.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                sum_speed += entry.speed() as u64;
+                sum_mpg += entry.mpg() as f64;
+                Ok(())
+            })
+            .unwrap();
             black_box((n, sum_speed, sum_mpg));
         });
     });

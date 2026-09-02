@@ -103,9 +103,13 @@ pub(crate) fn generate_group_decoder(
     // resolved once at wrap and stored, so the per-entry cost in the iteration
     // hot path is one subtraction and one comparison, not a re-run of the
     // version-branch chain in `min_readable_fixed_extent`.
-    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g
-        .has_dynamic_entries()
-    {
+    let (
+        dyn_extent_field,
+        dyn_extent_decl,
+        dyn_extent_init,
+        dyn_extent_reinit,
+        dyn_extent_init_absent,
+    ) = if g.has_dynamic_entries() {
         (
             quote::quote! { min_entry_extent: usize, },
             quote::quote! {
@@ -113,11 +117,13 @@ pub(crate) fn generate_group_decoder(
             },
             quote::quote! { min_entry_extent, },
             quote::quote! { min_entry_extent: attached.min_entry_extent, },
+            quote::quote! { min_entry_extent: 0, },
         )
     } else {
         // A fixed-stride group proves its whole entry region at wrap time, so
         // it needs no per-entry extent and carries no field for one.
         (
+            proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
@@ -270,10 +276,52 @@ pub(crate) fn generate_group_decoder(
                 })
             }
 
+            /// Attached decoder for a group that is not in the acting version:
+            /// zero entries, zero bytes, immediately complete.
+            ///
+            /// # Safety
+            /// `parent_pos` and `parent_block_length` must describe the message
+            /// body this group is nested in, and `offset` must be the byte
+            /// position where this group would have started had it been present.
+            #[inline]
+            unsafe fn wrap_absent_parent(
+                buf: &'a [u8],
+                offset: usize,
+                acting_version: u16,
+                parent_pos: usize,
+                parent_block_length: usize,
+            ) -> #decoder_ident<'a, sbe_rt::Attached> {
+                #decoder_ident {
+                    buf,
+                    offset,
+                    count: 0,
+                    start: offset,
+                    total: 0,
+                    acting_version,
+                    acting_block_length: 0,
+                    parent_pos,
+                    parent_block_length,
+                    #poison_init
+                    #dyn_extent_init_absent
+                    _context: core::marker::PhantomData,
+                }
+            }
+
             #mu
             #[inline]
             pub fn is_empty(&self) -> bool {
                 self.count == 0
+            }
+
+            /// Wire-declared entries not yet consumed.
+            ///
+            /// O(1): `into_*` already read the SBE dimension header containing
+            /// `numInGroup`. This does not promise that remaining entries will
+            /// decode, so dynamic groups are not [`core::iter::ExactSizeIterator`].
+            #mu
+            #[inline]
+            pub const fn remaining_entries(&self) -> usize {
+                self.count
             }
         }
 
@@ -341,10 +389,12 @@ pub(crate) fn generate_group_decoder(
         impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
             /// Entries not yet advanced (count), not a byte slice.
             /// For message-level byte tails use `get_metadata().remaining()`.
+            /// Prefer [`Self::remaining_entries`] at call sites that mean
+            /// group cardinality rather than a byte tail.
             #mu
             #[inline]
             pub const fn remaining(&self) -> usize {
-                self.count
+                self.remaining_entries()
             }
 
             /// Dimension wrap after the caller has proven
@@ -1355,10 +1405,24 @@ pub(crate) fn generate_group_decoder(
 
         let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
         let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
+        let version_skip = if ng.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &ng.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Ok(start);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_fn()?;
+                #version_skip
                 if start + #dim_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len().saturating_sub(start) });
                 }
@@ -1394,10 +1458,24 @@ pub(crate) fn generate_group_decoder(
 
         let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
         let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
+        let version_skip = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Ok(start);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_fn()?;
+                #version_skip
                 if #prefix_size_lit > self.buf.len().saturating_sub(start) {
                     return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len().saturating_sub(start) });
                 }
@@ -1427,6 +1505,24 @@ pub(crate) fn generate_group_decoder(
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        let ng_snake_str = ng_snake.clone();
+        let version_check = if ng.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &ng.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #ng_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #since_lit,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
                 // `Iterator::next` cached the complete validated entry extent,
@@ -1447,6 +1543,7 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #version_check
                 #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
                 if self.tail_end.get().is_some() {
@@ -1473,6 +1570,24 @@ pub(crate) fn generate_group_decoder(
         let vd_snake = to_snake_case(&vd.name);
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
+        let vd_snake_str = vd_snake.clone();
+        let version_check = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #vd_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #since_lit,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         if nvd_idx + 1 == total_tail {
             let cached_first_tail = if nvd_idx == 0 {
                 quote::quote! {
@@ -1493,6 +1608,7 @@ pub(crate) fn generate_group_decoder(
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #version_check
                     #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
                     if let Some(end) = self.tail_end.get() {
@@ -1528,6 +1644,7 @@ pub(crate) fn generate_group_decoder(
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #version_check
                     let offset = self.#tail_nvd_fn()?;
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);

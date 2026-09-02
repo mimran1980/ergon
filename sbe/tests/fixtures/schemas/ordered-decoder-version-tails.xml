@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="ordertails"
+                   id="77"
+                   version="1"
+                   semanticVersion="1.0"
+                   description="Versioned groups and var-data for the ordered one-pass decoder"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint8"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+    </types>
+    <sbe:message name="VersionedTails" id="1" blockLength="4">
+        <field name="seq" id="1" type="uint32"/>
+        <group name="figures" id="10" dimensionType="groupSizeEncoding" blockLength="2">
+            <field name="speed" id="11" type="uint16"/>
+            <group name="extras" id="12" dimensionType="groupSizeEncoding" sinceVersion="1" blockLength="1">
+                <field name="flag" id="13" type="uint8"/>
+            </group>
+            <data name="label" id="14" type="varStringEncoding"/>
+        </group>
+        <group name="extraFigures" id="20" dimensionType="groupSizeEncoding" sinceVersion="1" blockLength="2">
+            <field name="amp" id="21" type="uint16"/>
+        </group>
+        <data name="note" id="30" type="varStringEncoding"/>
+        <data name="extraNote" id="31" type="varStringEncoding" sinceVersion="1"/>
+    </sbe:message>
+</sbe:messageSchema>

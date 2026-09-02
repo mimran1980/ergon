@@ -76,6 +76,8 @@ pub(crate) mod group_decoder;
 pub(crate) use group_decoder::generate_group_decoder;
 pub(crate) mod tail_stages;
 pub(crate) use tail_stages::*;
+pub(crate) mod ordered_decoder;
+pub(crate) use ordered_decoder::generate_ordered_decoder;
 pub(crate) mod message_decoder;
 pub(crate) use message_decoder::generate_message_decoder;
 pub(crate) mod message_encoder;
@@ -1433,39 +1435,71 @@ fn attrs_have_doc(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("doc"))
 }
 
-fn fallback_public_doc(kind: &str, name: &str) -> syn::Attribute {
-    let text = format!("Generated {kind} `{name}`.");
+/// The concrete value of a literal expression (optionally negated), for use
+/// in a fallback doc. `None` for anything else — callers fall back to
+/// restating the item's name in that case.
+fn literal_value(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit { lit, .. }) => literal_text(lit),
+        syn::Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => literal_value(expr).map(|v| format!("-{v}")),
+        // A sentinel constant like `AVAILABLE_NULL: BooleanType = BooleanType::NullVal`
+        // — the path itself is the value worth showing.
+        syn::Expr::Path(syn::ExprPath { path, .. }) => Some(
+            path.segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::"),
+        ),
+        _ => None,
+    }
+}
+
+fn literal_text(lit: &syn::Lit) -> Option<String> {
+    match lit {
+        syn::Lit::Int(i) => Some(i.base10_digits().to_string()),
+        syn::Lit::Float(f) => Some(f.base10_digits().to_string()),
+        syn::Lit::Bool(b) => Some(b.value.to_string()),
+        syn::Lit::Byte(b) => Some(b.value().to_string()),
+        syn::Lit::Char(c) => Some(format!("{:?}", c.value())),
+        syn::Lit::Str(s) => Some(format!("{:?}", s.value())),
+        _ => None,
+    }
+}
+
+/// Fallback doc for a public item with no schema-derived description.
+///
+/// A bare `"Generated {kind} \`x\`."` restates the identifier and tells the
+/// reader nothing the signature didn't already — and drowns out real
+/// descriptions when scanning a large generated file or its rustdoc page.
+/// When the item's own value is a literal (a constant's assigned value, an
+/// enum variant's wire discriminant), show that instead: real information a
+/// reader can't get from the signature alone. Only an item with no such
+/// value falls back to the bare kind/name restatement.
+fn fallback_public_doc(kind: &str, name: &str, value: Option<&str>) -> syn::Attribute {
+    let text = match value {
+        Some(v) => format!("`{name}` = {v}."),
+        None => format!("Generated {kind} `{name}`."),
+    };
     syn::parse_quote!(#[doc = #text])
 }
 
-fn doc_is_placeholder(attr: &syn::Attribute) -> bool {
-    if !attr.path().is_ident("doc") {
-        return false;
-    }
-    let syn::Meta::NameValue(nv) = &attr.meta else {
-        return false;
-    };
-    let syn::Expr::Lit(syn::ExprLit {
-        lit: syn::Lit::Str(s),
-        ..
-    }) = &nv.value
-    else {
-        return false;
-    };
-    s.value().trim() == "Generated public API."
+fn ensure_public_doc(attrs: &mut Vec<syn::Attribute>, kind: &str, name: &str) {
+    ensure_public_doc_with_value(attrs, kind, name, None);
 }
 
-fn ensure_public_doc(attrs: &mut Vec<syn::Attribute>, kind: &str, name: &str) {
-    if attrs.iter().any(doc_is_placeholder)
-        && attrs
-            .iter()
-            .filter(|a| a.path().is_ident("doc"))
-            .all(doc_is_placeholder)
-    {
-        attrs.retain(|a| !doc_is_placeholder(a));
-    }
+fn ensure_public_doc_with_value(
+    attrs: &mut Vec<syn::Attribute>,
+    kind: &str,
+    name: &str,
+    value: Option<&str>,
+) {
     if !attrs_have_doc(attrs) {
-        attrs.insert(0, fallback_public_doc(kind, name));
+        attrs.insert(0, fallback_public_doc(kind, name, value));
     }
 }
 
@@ -1500,7 +1534,17 @@ fn annotate_item(item: &mut syn::Item) {
             let name = e.ident.to_string();
             ensure_public_doc(&mut e.attrs, "enum", &name);
             for variant in &mut e.variants {
-                ensure_public_doc(&mut variant.attrs, "variant", &variant.ident.to_string());
+                let variant_name = variant.ident.to_string();
+                let value = variant
+                    .discriminant
+                    .as_ref()
+                    .and_then(|(_, expr)| literal_value(expr));
+                ensure_public_doc_with_value(
+                    &mut variant.attrs,
+                    "variant",
+                    &variant_name,
+                    value.as_deref(),
+                );
                 for field in &mut variant.fields {
                     if let Some(ident) = &field.ident {
                         ensure_public_doc(&mut field.attrs, "field", &ident.to_string());
@@ -1512,7 +1556,9 @@ fn annotate_item(item: &mut syn::Item) {
             ensure_public_doc(&mut f.attrs, "function", &f.sig.ident.to_string());
         }
         syn::Item::Const(c) if item_is_public(&c.vis) => {
-            ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
+            let name = c.ident.to_string();
+            let value = literal_value(&c.expr);
+            ensure_public_doc_with_value(&mut c.attrs, "constant", &name, value.as_deref());
         }
         syn::Item::Type(t) if item_is_public(&t.vis) => {
             ensure_public_doc(&mut t.attrs, "type", &t.ident.to_string());
@@ -1526,7 +1572,14 @@ fn annotate_item(item: &mut syn::Item) {
                         ensure_public_doc(&mut f.attrs, "method", &f.sig.ident.to_string());
                     }
                     syn::TraitItem::Const(c) => {
-                        ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
+                        let name = c.ident.to_string();
+                        let value = c.default.as_ref().and_then(|(_, expr)| literal_value(expr));
+                        ensure_public_doc_with_value(
+                            &mut c.attrs,
+                            "constant",
+                            &name,
+                            value.as_deref(),
+                        );
                     }
                     syn::TraitItem::Type(ty) => {
                         ensure_public_doc(&mut ty.attrs, "type", &ty.ident.to_string());
@@ -1542,7 +1595,14 @@ fn annotate_item(item: &mut syn::Item) {
                         ensure_public_doc(&mut f.attrs, "method", &f.sig.ident.to_string());
                     }
                     syn::ImplItem::Const(c) if item_is_public(&c.vis) => {
-                        ensure_public_doc(&mut c.attrs, "constant", &c.ident.to_string());
+                        let name = c.ident.to_string();
+                        let value = literal_value(&c.expr);
+                        ensure_public_doc_with_value(
+                            &mut c.attrs,
+                            "constant",
+                            &name,
+                            value.as_deref(),
+                        );
                     }
                     syn::ImplItem::Type(t) if item_is_public(&t.vis) => {
                         ensure_public_doc(&mut t.attrs, "type", &t.ident.to_string());

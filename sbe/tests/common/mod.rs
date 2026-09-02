@@ -133,6 +133,11 @@ impl Paths {
         Self::fixtures_dir().join("l3-orderbook-schema.xml")
     }
 
+    /// Versioned groups and var-data used by the ordered one-pass decoder tests.
+    pub fn ordered_decoder_version_tails_schema() -> PathBuf {
+        Self::fixtures_dir().join("ordered-decoder-version-tails.xml")
+    }
+
     pub fn bool_semantic_schema() -> PathBuf {
         Self::fixtures_dir().join("bool-semantic-schema.xml")
     }

@@ -236,7 +236,9 @@ fn car_full_generated_source_size_budget() -> Result<(), Box<dyn Error>> {
     let bytes = src.len();
     // Full Car has historically been hundreds of KiB of pretty source. Bound
     // growth without inventing a tiny number that fails on every docstring.
-    const MAX_BYTES: usize = 400_000;
+    // The mutable ordered lane (`CarOrderedDecoder` + group guards) is always
+    // generated and is the bulk of the post-400 KiB growth.
+    const MAX_BYTES: usize = 450_000;
     const MIN_BYTES: usize = 20_000;
     assert!(
         bytes <= MAX_BYTES,

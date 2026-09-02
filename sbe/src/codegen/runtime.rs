@@ -35,6 +35,12 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 InvalidBoolean { field: &'static str, discriminant: u64 },
                 /// Domain `try_*` conversion failed.
                 DomainConversionFailed { field: &'static str, reason: &'static str },
+                /// Mutable ordered decoder called a dynamic tail out of schema order.
+                OutOfOrder {
+                    owner: &'static str,
+                    expected: &'static str,
+                    requested: &'static str,
+                },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -52,6 +58,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
                         Self::InvalidBoolean { field, discriminant } => write!(f, "field '{}': invalid boolean (discriminant {discriminant:#x})", field),
                         Self::DomainConversionFailed { field, reason } => write!(f, "field '{}': domain conversion failed: {}", field, reason),
+                        Self::OutOfOrder { owner, expected, requested } => write!(f, "{owner}: expected '{expected}', requested '{requested}'"),
                     }
                 }
             }
@@ -1151,6 +1158,17 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 if matches!(self, Self::NullVal) { None } else { Some(self) }
             }
 
+            /// Variant name as a `&'static str` — no allocation, unlike
+            /// `.to_string()` through [`core::fmt::Display`].
+            #[must_use = "discarding this value is almost always a mistake"]
+            #[inline]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    #(Self::#variant_names => stringify!(#variant_names),)*
+                    Self::NullVal => "NullVal",
+                }
+            }
+
             #as_bool_method
         }
 
@@ -1170,10 +1188,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
 
         impl core::fmt::Display for #name_ident {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                match self {
-                    #(Self::#variant_names => f.write_str(stringify!(#variant_names)),)*
-                    Self::NullVal => f.write_str("NullVal"),
-                }
+                f.write_str(self.as_str())
             }
         }
 

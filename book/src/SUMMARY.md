@@ -16,7 +16,7 @@
 - [Feature Tour](./sbe/feature-tour.md)
   - [Exact Sizing](./sbe/feature-tour/exact-sizing.md)
   - [Bulk Arrays](./sbe/feature-tour/bulk-arrays.md)
-  - [Consuming Decode Stages](./sbe/feature-tour/decode-stages.md)
+  - [Decoder Lanes](./sbe/feature-tour/decode-stages.md)
   - [What Generated Code Looks Like](./sbe/feature-tour/generated-code.md)
   - [Trust Boundaries](./sbe/feature-tour/trust-boundaries.md)
   - [Domain Objects (DTOs)](./sbe/feature-tour/domain-objects.md)

@@ -19,6 +19,7 @@ use super::conversion_helpers::{
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
+use super::ordered_decoder::generate_ordered_decoder;
 use super::runtime::{
     constant_value_expr, deprecated_attr_tokens, doc_attr_tokens, emit_field_consts,
     schema_marker_ident, to_pascal_case, to_snake_case,
@@ -1156,10 +1157,22 @@ pub(crate) fn generate_message_decoder(
             proc_macro2::Span::call_site(),
         );
 
+        let version_skip = if g.since_version > 0 {
+            let since_lit =
+                syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Ok(start);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         impl_body.extend(quote::quote! {
             #[inline]
             fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_ident()?;
+                #version_skip
                 if start + #dim_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #gn_lit,
@@ -1199,10 +1212,24 @@ pub(crate) fn generate_message_decoder(
         let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
         let tail_k_ident = quote::format_ident!("tail_offset_{}", k);
         let tail_k1_ident = quote::format_ident!("tail_offset_{}", k + 1);
+        let version_skip = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Ok(start);
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         impl_body.extend(quote::quote! {
             #[inline]
             fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
                 let start = self.#tail_k_ident()?;
+                #version_skip
                 if #prefix_size_lit > self.buf.len().saturating_sub(start) {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #vd_name_lit,
@@ -1256,8 +1283,9 @@ pub(crate) fn generate_message_decoder(
             quote::quote! {}
         };
         impl_body.extend(quote::quote! {
+            #mu
             #[inline]
-            fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+            pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#tail_offset_ident()?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
@@ -1890,6 +1918,20 @@ pub(crate) fn generate_message_decoder(
         multi_message,
         &group_unique_names,
         enable_dispatch,
+    ));
+    ts.extend(generate_ordered_decoder(
+        msg,
+        elements,
+        &name,
+        header_size,
+        byte_order,
+        multi_message,
+        &group_unique_names,
+        conversions,
+        domain_types,
+        enable_dispatch,
+        null_as_option,
+        all_enums_as_option,
     ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)

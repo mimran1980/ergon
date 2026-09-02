@@ -224,6 +224,8 @@ pub(crate) const DECODER_RESERVED: &[&str] = &[
     "acting_block_length",
     // Consuming stage transition (self → Self) when the message has tails.
     "rewind",
+    // Mutable ordered-decoder conversion.
+    "ordered",
 ];
 
 /// Inherent methods on the **message encoder** that force a `_field` rename.

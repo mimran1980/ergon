@@ -871,6 +871,7 @@ pub(crate) fn decoder_stage_after_ident(
 
 /// One tail group component of an owner (message or entry), resolved for codegen.
 pub(crate) struct OwnerTailGroup {
+    pub(crate) name: String,
     pub(crate) accessor_snake: String,
     pub(crate) field_pascal: String,
     pub(crate) group_decoder_ident: String,
@@ -879,6 +880,9 @@ pub(crate) struct OwnerTailGroup {
     /// stride: it decodes entry lengths as it walks, and can therefore be
     /// poisoned by a malformed entry.
     pub(crate) entries_have_tails: bool,
+    /// Schema `sinceVersion`. Below this acting version the group occupies
+    /// zero bytes and is immediately complete (empty, no dimension header).
+    pub(crate) since_version: u16,
 }
 
 /// One tail var-data component of an owner, resolved for codegen.
@@ -892,6 +896,9 @@ pub(crate) struct OwnerTailVarData {
     pub(crate) max_length: Option<usize>,
     pub(crate) name: String,
     pub(crate) character_encoding: Option<String>,
+    /// Schema `sinceVersion`. Below this acting version the field returns an
+    /// empty slice without advancing.
+    pub(crate) since_version: u16,
 }
 
 #[cfg(test)]

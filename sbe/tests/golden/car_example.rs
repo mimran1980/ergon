@@ -99,6 +99,15 @@ pub mod sbe_rt {
             ///Generated field `reason`.
             reason: &'static str,
         },
+        /// Mutable ordered decoder called a dynamic tail out of schema order.
+        OutOfOrder {
+            ///Generated field `owner`.
+            owner: &'static str,
+            ///Generated field `expected`.
+            expected: &'static str,
+            ///Generated field `requested`.
+            requested: &'static str,
+        },
     }
     impl core::fmt::Display for DecodeError {
         #[cold]
@@ -163,6 +172,9 @@ pub mod sbe_rt {
                 }
                 Self::DomainConversionFailed { field, reason } => {
                     write!(f, "field '{}': domain conversion failed: {}", field, reason)
+                }
+                Self::OutOfOrder { owner, expected, requested } => {
+                    write!(f, "{owner}: expected '{expected}', requested '{requested}'")
                 }
             }
         }
@@ -692,6 +704,17 @@ impl BooleanType {
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
     }
+    /// Variant name as a `&'static str` — no allocation, unlike
+    /// `.to_string()` through [`core::fmt::Display`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::F => stringify!(F),
+            Self::T => stringify!(T),
+            Self::NullVal => "NullVal",
+        }
+    }
     /// Returns `Some(true)` / `Some(false)` for the valid boolean
     /// values. Returns `None` for `NullVal` or any unknown raw
     /// discriminant — the SBE boolean wire type is tri-state
@@ -721,11 +744,7 @@ impl From<u8> for BooleanType {
 }
 impl core::fmt::Display for BooleanType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::F => f.write_str(stringify!(F)),
-            Self::T => f.write_str(stringify!(T)),
-            Self::NullVal => f.write_str("NullVal"),
-        }
+        f.write_str(self.as_str())
     }
 }
 impl core::str::FromStr for BooleanType {
@@ -756,11 +775,11 @@ impl TryFrom<BooleanType> for bool {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Model {
-    ///Generated variant `A`.
+    ///`A` = 65.
     A = b'A',
-    ///Generated variant `B`.
+    ///`B` = 66.
     B = b'B',
-    ///Generated variant `C`.
+    ///`C` = 67.
     C = b'C',
     /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal = 0,
@@ -788,6 +807,18 @@ impl Model {
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
     }
+    /// Variant name as a `&'static str` — no allocation, unlike
+    /// `.to_string()` through [`core::fmt::Display`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::A => stringify!(A),
+            Self::B => stringify!(B),
+            Self::C => stringify!(C),
+            Self::NullVal => "NullVal",
+        }
+    }
 }
 impl From<Model> for u8 {
     #[inline]
@@ -803,12 +834,7 @@ impl From<u8> for Model {
 }
 impl core::fmt::Display for Model {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::A => f.write_str(stringify!(A)),
-            Self::B => f.write_str(stringify!(B)),
-            Self::C => f.write_str(stringify!(C)),
-            Self::NullVal => f.write_str("NullVal"),
-        }
+        f.write_str(self.as_str())
     }
 }
 impl core::str::FromStr for Model {
@@ -827,13 +853,13 @@ impl core::str::FromStr for Model {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BoostType {
-    ///Generated variant `TURBO`.
+    ///`TURBO` = 84.
     TURBO = b'T',
-    ///Generated variant `SUPERCHARGER`.
+    ///`SUPERCHARGER` = 83.
     SUPERCHARGER = b'S',
-    ///Generated variant `NITROUS`.
+    ///`NITROUS` = 78.
     NITROUS = b'N',
-    ///Generated variant `KERS`.
+    ///`KERS` = 75.
     KERS = b'K',
     /// Unknown enum value — the wire discriminant did not match any known variant.
     NullVal = 0,
@@ -862,6 +888,19 @@ impl BoostType {
     pub const fn as_option(self) -> Option<Self> {
         if matches!(self, Self::NullVal) { None } else { Some(self) }
     }
+    /// Variant name as a `&'static str` — no allocation, unlike
+    /// `.to_string()` through [`core::fmt::Display`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TURBO => stringify!(TURBO),
+            Self::SUPERCHARGER => stringify!(SUPERCHARGER),
+            Self::NITROUS => stringify!(NITROUS),
+            Self::KERS => stringify!(KERS),
+            Self::NullVal => "NullVal",
+        }
+    }
 }
 impl From<BoostType> for u8 {
     #[inline]
@@ -877,13 +916,7 @@ impl From<u8> for BoostType {
 }
 impl core::fmt::Display for BoostType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::TURBO => f.write_str(stringify!(TURBO)),
-            Self::SUPERCHARGER => f.write_str(stringify!(SUPERCHARGER)),
-            Self::NITROUS => f.write_str(stringify!(NITROUS)),
-            Self::KERS => f.write_str(stringify!(KERS)),
-            Self::NullVal => f.write_str("NullVal"),
-        }
+        f.write_str(self.as_str())
     }
 }
 impl core::str::FromStr for BoostType {
@@ -1689,15 +1722,15 @@ impl<'a> EngineDecoder<'a> {
 )]
 pub struct CarSchema;
 impl CarSchema {
-    ///Generated constant `SCHEMA_ID`.
+    ///`SCHEMA_ID` = 1.
     pub const SCHEMA_ID: u16 = 1;
-    ///Generated constant `SCHEMA_VERSION`.
+    ///`SCHEMA_VERSION` = 0.
     pub const SCHEMA_VERSION: u16 = 0;
-    ///Generated constant `TEMPLATE_ID`.
+    ///`TEMPLATE_ID` = 1.
     pub const TEMPLATE_ID: u16 = 1;
-    ///Generated constant `BLOCK_LENGTH`.
+    ///`BLOCK_LENGTH` = 45.
     pub const BLOCK_LENGTH: usize = 45;
-    ///Generated constant `HEADER_LENGTH`.
+    ///`HEADER_LENGTH` = 8.
     pub const HEADER_LENGTH: usize = 8;
     /// Full structural verification of a buffer: validates header,
     /// block-length extent, group dimension headers, entry strides,
@@ -1822,13 +1855,13 @@ impl<'a> CarDecoder<'a> {
             decoder: self,
         }
     }
-    ///Generated constant `SCHEMA_ID`.
+    ///`SCHEMA_ID` = 1.
     pub const SCHEMA_ID: u16 = 1;
-    ///Generated constant `SCHEMA_VERSION`.
+    ///`SCHEMA_VERSION` = 0.
     pub const SCHEMA_VERSION: u16 = 0;
-    ///Generated constant `TEMPLATE_ID`.
+    ///`TEMPLATE_ID` = 1.
     pub const TEMPLATE_ID: u16 = 1;
-    ///Generated constant `BLOCK_LENGTH`.
+    ///`BLOCK_LENGTH` = 45.
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
@@ -2118,13 +2151,13 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<8>(self.buf, self.offset + 0)
         })
     }
-    ///Generated constant `SERIAL_NUMBER_ID`.
+    ///`SERIAL_NUMBER_ID` = 1.
     pub const SERIAL_NUMBER_ID: u16 = 1;
-    ///Generated constant `SERIAL_NUMBER_SINCE_VERSION`.
+    ///`SERIAL_NUMBER_SINCE_VERSION` = 0.
     pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SERIAL_NUMBER_ENCODING_OFFSET`.
+    ///`SERIAL_NUMBER_ENCODING_OFFSET` = 0.
     pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
-    ///Generated constant `SERIAL_NUMBER_ENCODING_LENGTH`.
+    ///`SERIAL_NUMBER_ENCODING_LENGTH` = 8.
     pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
     ///Generated method `serial_number_meta_attribute`.
     #[inline]
@@ -2138,11 +2171,11 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `SERIAL_NUMBER_NULL`.
+    ///`SERIAL_NUMBER_NULL` = 18446744073709551615.
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
-    ///Generated constant `SERIAL_NUMBER_MIN`.
+    ///`SERIAL_NUMBER_MIN` = 0.
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
-    ///Generated constant `SERIAL_NUMBER_MAX`.
+    ///`SERIAL_NUMBER_MAX` = 18446744073709551614.
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
     ///Generated method `model_year`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2152,13 +2185,13 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<2>(self.buf, self.offset + 8)
         })
     }
-    ///Generated constant `MODEL_YEAR_ID`.
+    ///`MODEL_YEAR_ID` = 2.
     pub const MODEL_YEAR_ID: u16 = 2;
-    ///Generated constant `MODEL_YEAR_SINCE_VERSION`.
+    ///`MODEL_YEAR_SINCE_VERSION` = 0.
     pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
-    ///Generated constant `MODEL_YEAR_ENCODING_OFFSET`.
+    ///`MODEL_YEAR_ENCODING_OFFSET` = 8.
     pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
-    ///Generated constant `MODEL_YEAR_ENCODING_LENGTH`.
+    ///`MODEL_YEAR_ENCODING_LENGTH` = 2.
     pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
     ///Generated method `model_year_meta_attribute`.
     #[inline]
@@ -2172,11 +2205,11 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `MODEL_YEAR_NULL`.
+    ///`MODEL_YEAR_NULL` = 65535.
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
-    ///Generated constant `MODEL_YEAR_MIN`.
+    ///`MODEL_YEAR_MIN` = 0.
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
-    ///Generated constant `MODEL_YEAR_MAX`.
+    ///`MODEL_YEAR_MAX` = 65534.
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
     ///Generated method `available`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2209,13 +2242,13 @@ impl<'a> CarDecoder<'a> {
                 discriminant: self.raw_available() as u64,
             })
     }
-    ///Generated constant `AVAILABLE_ID`.
+    ///`AVAILABLE_ID` = 3.
     pub const AVAILABLE_ID: u16 = 3;
-    ///Generated constant `AVAILABLE_SINCE_VERSION`.
+    ///`AVAILABLE_SINCE_VERSION` = 0.
     pub const AVAILABLE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `AVAILABLE_ENCODING_OFFSET`.
+    ///`AVAILABLE_ENCODING_OFFSET` = 10.
     pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
-    ///Generated constant `AVAILABLE_ENCODING_LENGTH`.
+    ///`AVAILABLE_ENCODING_LENGTH` = 1.
     pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
     ///Generated method `available_meta_attribute`.
     #[inline]
@@ -2229,7 +2262,7 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `AVAILABLE_NULL`.
+    ///`AVAILABLE_NULL` = BooleanType::NullVal.
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
     ///Generated method `code`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2250,13 +2283,13 @@ impl<'a> CarDecoder<'a> {
             read_bytes_unchecked::<1>(self.buf, self.offset + 11)
         })
     }
-    ///Generated constant `CODE_ID`.
+    ///`CODE_ID` = 4.
     pub const CODE_ID: u16 = 4;
-    ///Generated constant `CODE_SINCE_VERSION`.
+    ///`CODE_SINCE_VERSION` = 0.
     pub const CODE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `CODE_ENCODING_OFFSET`.
+    ///`CODE_ENCODING_OFFSET` = 11.
     pub const CODE_ENCODING_OFFSET: usize = 11;
-    ///Generated constant `CODE_ENCODING_LENGTH`.
+    ///`CODE_ENCODING_LENGTH` = 1.
     pub const CODE_ENCODING_LENGTH: usize = 1;
     ///Generated method `code_meta_attribute`.
     #[inline]
@@ -2270,7 +2303,7 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `CODE_NULL`.
+    ///`CODE_NULL` = Model::NullVal.
     pub const CODE_NULL: Model = Model::NullVal;
     ///Generated method `some_numbers`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2289,13 +2322,13 @@ impl<'a> CarDecoder<'a> {
             u32::from_le_bytes([all[12usize], all[13usize], all[14usize], all[15usize]]),
         ]
     }
-    ///Generated constant `SOME_NUMBERS_ID`.
+    ///`SOME_NUMBERS_ID` = 5.
     pub const SOME_NUMBERS_ID: u16 = 5;
-    ///Generated constant `SOME_NUMBERS_SINCE_VERSION`.
+    ///`SOME_NUMBERS_SINCE_VERSION` = 0.
     pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SOME_NUMBERS_ENCODING_OFFSET`.
+    ///`SOME_NUMBERS_ENCODING_OFFSET` = 12.
     pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
-    ///Generated constant `SOME_NUMBERS_ENCODING_LENGTH`.
+    ///`SOME_NUMBERS_ENCODING_LENGTH` = 16.
     pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
     ///Generated method `some_numbers_meta_attribute`.
     #[inline]
@@ -2309,11 +2342,11 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `SOME_NUMBERS_NULL`.
+    ///`SOME_NUMBERS_NULL` = 4294967295.
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
-    ///Generated constant `SOME_NUMBERS_MIN`.
+    ///`SOME_NUMBERS_MIN` = 0.
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
-    ///Generated constant `SOME_NUMBERS_MAX`.
+    ///`SOME_NUMBERS_MAX` = 4294967294.
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
     ///Generated method `vehicle_code`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2340,13 +2373,13 @@ impl<'a> CarDecoder<'a> {
         }
         n
     }
-    ///Generated constant `VEHICLE_CODE_ID`.
+    ///`VEHICLE_CODE_ID` = 6.
     pub const VEHICLE_CODE_ID: u16 = 6;
-    ///Generated constant `VEHICLE_CODE_SINCE_VERSION`.
+    ///`VEHICLE_CODE_SINCE_VERSION` = 0.
     pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `VEHICLE_CODE_ENCODING_OFFSET`.
+    ///`VEHICLE_CODE_ENCODING_OFFSET` = 28.
     pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
-    ///Generated constant `VEHICLE_CODE_ENCODING_LENGTH`.
+    ///`VEHICLE_CODE_ENCODING_LENGTH` = 6.
     pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
     ///Generated method `vehicle_code_meta_attribute`.
     #[inline]
@@ -2360,11 +2393,11 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `VEHICLE_CODE_NULL`.
+    ///`VEHICLE_CODE_NULL` = 0.
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
-    ///Generated constant `VEHICLE_CODE_MIN`.
+    ///`VEHICLE_CODE_MIN` = 32.
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
-    ///Generated constant `VEHICLE_CODE_MAX`.
+    ///`VEHICLE_CODE_MAX` = 126.
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
     ///Generated method `extras`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2376,13 +2409,13 @@ impl<'a> CarDecoder<'a> {
             }),
         )
     }
-    ///Generated constant `EXTRAS_ID`.
+    ///`EXTRAS_ID` = 7.
     pub const EXTRAS_ID: u16 = 7;
-    ///Generated constant `EXTRAS_SINCE_VERSION`.
+    ///`EXTRAS_SINCE_VERSION` = 0.
     pub const EXTRAS_SINCE_VERSION: u16 = 0;
-    ///Generated constant `EXTRAS_ENCODING_OFFSET`.
+    ///`EXTRAS_ENCODING_OFFSET` = 34.
     pub const EXTRAS_ENCODING_OFFSET: usize = 34;
-    ///Generated constant `EXTRAS_ENCODING_LENGTH`.
+    ///`EXTRAS_ENCODING_LENGTH` = 1.
     pub const EXTRAS_ENCODING_LENGTH: usize = 1;
     ///Generated method `extras_meta_attribute`.
     #[inline]
@@ -2402,13 +2435,13 @@ impl<'a> CarDecoder<'a> {
     pub const fn discounted_model(&self) -> Model {
         Model::C
     }
-    ///Generated constant `DISCOUNTED_MODEL_ID`.
+    ///`DISCOUNTED_MODEL_ID` = 8.
     pub const DISCOUNTED_MODEL_ID: u16 = 8;
-    ///Generated constant `DISCOUNTED_MODEL_SINCE_VERSION`.
+    ///`DISCOUNTED_MODEL_SINCE_VERSION` = 0.
     pub const DISCOUNTED_MODEL_SINCE_VERSION: u16 = 0;
-    ///Generated constant `DISCOUNTED_MODEL_ENCODING_OFFSET`.
+    ///`DISCOUNTED_MODEL_ENCODING_OFFSET` = 35.
     pub const DISCOUNTED_MODEL_ENCODING_OFFSET: usize = 35;
-    ///Generated constant `DISCOUNTED_MODEL_ENCODING_LENGTH`.
+    ///`DISCOUNTED_MODEL_ENCODING_LENGTH` = 1.
     pub const DISCOUNTED_MODEL_ENCODING_LENGTH: usize = 1;
     ///Generated method `discounted_model_meta_attribute`.
     #[inline]
@@ -2422,7 +2455,7 @@ impl<'a> CarDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("constant"),
         }
     }
-    ///Generated constant `DISCOUNTED_MODEL_NULL`.
+    ///`DISCOUNTED_MODEL_NULL` = Model::NullVal.
     pub const DISCOUNTED_MODEL_NULL: Model = Model::NullVal;
     ///Generated method `engine`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2439,13 +2472,13 @@ impl<'a> CarDecoder<'a> {
     pub fn engine_value(&self) -> Engine {
         Engine(unsafe { read_bytes_unchecked::<10>(self.buf, self.offset + 35) })
     }
-    ///Generated constant `ENGINE_ID`.
+    ///`ENGINE_ID` = 9.
     pub const ENGINE_ID: u16 = 9;
-    ///Generated constant `ENGINE_SINCE_VERSION`.
+    ///`ENGINE_SINCE_VERSION` = 0.
     pub const ENGINE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `ENGINE_ENCODING_OFFSET`.
+    ///`ENGINE_ENCODING_OFFSET` = 35.
     pub const ENGINE_ENCODING_OFFSET: usize = 35;
-    ///Generated constant `ENGINE_ENCODING_LENGTH`.
+    ///`ENGINE_ENCODING_LENGTH` = 10.
     pub const ENGINE_ENCODING_LENGTH: usize = 10;
     ///Generated method `engine_meta_attribute`.
     #[inline]
@@ -2600,13 +2633,17 @@ impl<'a> CarDecoder<'a> {
         )?;
         Ok(data_end)
     }
+    ///Generated method `fuel_figures`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+    pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
+    ///Generated method `performance_figures`.
+    #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    fn performance_figures(
+    pub fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_1()?;
@@ -3188,15 +3225,55 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    /// Attached decoder for a group that is not in the acting version:
+    /// zero entries, zero bytes, immediately complete.
+    ///
+    /// # Safety
+    /// `parent_pos` and `parent_block_length` must describe the message
+    /// body this group is nested in, and `offset` must be the byte
+    /// position where this group would have started had it been present.
+    #[inline]
+    unsafe fn wrap_absent_parent(
+        buf: &'a [u8],
+        offset: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> FuelFiguresDecoder<'a, sbe_rt::Attached> {
+        FuelFiguresDecoder {
+            buf,
+            offset,
+            count: 0,
+            start: offset,
+            total: 0,
+            acting_version,
+            acting_block_length: 0,
+            parent_pos,
+            parent_block_length,
+            poisoned: None,
+            min_entry_extent: 0,
+            _context: core::marker::PhantomData,
+        }
+    }
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+    /// Wire-declared entries not yet consumed.
+    ///
+    /// O(1): `into_*` already read the SBE dimension header containing
+    /// `numInGroup`. This does not promise that remaining entries will
+    /// decode, so dynamic groups are not [`core::iter::ExactSizeIterator`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
 }
 impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -3253,10 +3330,12 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    /// Prefer [`Self::remaining_entries`] at call sites that mean
+    /// group cardinality rather than a byte tail.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        self.remaining_entries()
     }
     /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
@@ -3487,7 +3566,7 @@ pub struct FuelFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator has proven extents.
     ///
@@ -3516,13 +3595,13 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let offset = self.offset + 0;
         u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
     }
-    ///Generated constant `SPEED_ID`.
+    ///`SPEED_ID` = 11.
     pub const SPEED_ID: u16 = 11;
-    ///Generated constant `SPEED_SINCE_VERSION`.
+    ///`SPEED_SINCE_VERSION` = 0.
     pub const SPEED_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SPEED_ENCODING_OFFSET`.
+    ///`SPEED_ENCODING_OFFSET` = 0.
     pub const SPEED_ENCODING_OFFSET: usize = 0;
-    ///Generated constant `SPEED_ENCODING_LENGTH`.
+    ///`SPEED_ENCODING_LENGTH` = 2.
     pub const SPEED_ENCODING_LENGTH: usize = 2;
     ///Generated method `speed_meta_attribute`.
     #[inline]
@@ -3536,11 +3615,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `SPEED_NULL`.
+    ///`SPEED_NULL` = 65535.
     pub const SPEED_NULL: u16 = 65535_u16;
-    ///Generated constant `SPEED_MIN`.
+    ///`SPEED_MIN` = 0.
     pub const SPEED_MIN: u16 = 0_u16;
-    ///Generated constant `SPEED_MAX`.
+    ///`SPEED_MAX` = 65534.
     pub const SPEED_MAX: u16 = 65534_u16;
     ///Generated method `mpg`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -3549,13 +3628,13 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let offset = self.offset + 2;
         f32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
     }
-    ///Generated constant `MPG_ID`.
+    ///`MPG_ID` = 12.
     pub const MPG_ID: u16 = 12;
-    ///Generated constant `MPG_SINCE_VERSION`.
+    ///`MPG_SINCE_VERSION` = 0.
     pub const MPG_SINCE_VERSION: u16 = 0;
-    ///Generated constant `MPG_ENCODING_OFFSET`.
+    ///`MPG_ENCODING_OFFSET` = 2.
     pub const MPG_ENCODING_OFFSET: usize = 2;
-    ///Generated constant `MPG_ENCODING_LENGTH`.
+    ///`MPG_ENCODING_LENGTH` = 4.
     pub const MPG_ENCODING_LENGTH: usize = 4;
     ///Generated method `mpg_meta_attribute`.
     #[inline]
@@ -4006,15 +4085,55 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    /// Attached decoder for a group that is not in the acting version:
+    /// zero entries, zero bytes, immediately complete.
+    ///
+    /// # Safety
+    /// `parent_pos` and `parent_block_length` must describe the message
+    /// body this group is nested in, and `offset` must be the byte
+    /// position where this group would have started had it been present.
+    #[inline]
+    unsafe fn wrap_absent_parent(
+        buf: &'a [u8],
+        offset: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
+        PerformanceFiguresDecoder {
+            buf,
+            offset,
+            count: 0,
+            start: offset,
+            total: 0,
+            acting_version,
+            acting_block_length: 0,
+            parent_pos,
+            parent_block_length,
+            poisoned: None,
+            min_entry_extent: 0,
+            _context: core::marker::PhantomData,
+        }
+    }
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+    /// Wire-declared entries not yet consumed.
+    ///
+    /// O(1): `into_*` already read the SBE dimension header containing
+    /// `numInGroup`. This does not promise that remaining entries will
+    /// decode, so dynamic groups are not [`core::iter::ExactSizeIterator`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 1.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -4071,10 +4190,12 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    /// Prefer [`Self::remaining_entries`] at call sites that mean
+    /// group cardinality rather than a byte tail.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        self.remaining_entries()
     }
     /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
@@ -4317,7 +4438,7 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 1.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group iterator has proven extents.
     ///
@@ -4346,13 +4467,13 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let offset = self.offset + 0;
         u8::from_le_bytes(unsafe { read_bytes_unchecked::<1>(self.buf, offset) })
     }
-    ///Generated constant `OCTANE_RATING_ID`.
+    ///`OCTANE_RATING_ID` = 14.
     pub const OCTANE_RATING_ID: u16 = 14;
-    ///Generated constant `OCTANE_RATING_SINCE_VERSION`.
+    ///`OCTANE_RATING_SINCE_VERSION` = 0.
     pub const OCTANE_RATING_SINCE_VERSION: u16 = 0;
-    ///Generated constant `OCTANE_RATING_ENCODING_OFFSET`.
+    ///`OCTANE_RATING_ENCODING_OFFSET` = 0.
     pub const OCTANE_RATING_ENCODING_OFFSET: usize = 0;
-    ///Generated constant `OCTANE_RATING_ENCODING_LENGTH`.
+    ///`OCTANE_RATING_ENCODING_LENGTH` = 1.
     pub const OCTANE_RATING_ENCODING_LENGTH: usize = 1;
     ///Generated method `octane_rating_meta_attribute`.
     #[inline]
@@ -4366,11 +4487,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `OCTANE_RATING_NULL`.
+    ///`OCTANE_RATING_NULL` = 255.
     pub const OCTANE_RATING_NULL: u8 = 255_u8;
-    ///Generated constant `OCTANE_RATING_MIN`.
+    ///`OCTANE_RATING_MIN` = 90.
     pub const OCTANE_RATING_MIN: u8 = 90_u8;
-    ///Generated constant `OCTANE_RATING_MAX`.
+    ///`OCTANE_RATING_MAX` = 110.
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
     fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -4601,15 +4722,53 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             _context: core::marker::PhantomData,
         })
     }
+    /// Attached decoder for a group that is not in the acting version:
+    /// zero entries, zero bytes, immediately complete.
+    ///
+    /// # Safety
+    /// `parent_pos` and `parent_block_length` must describe the message
+    /// body this group is nested in, and `offset` must be the byte
+    /// position where this group would have started had it been present.
+    #[inline]
+    unsafe fn wrap_absent_parent(
+        buf: &'a [u8],
+        offset: usize,
+        acting_version: u16,
+        parent_pos: usize,
+        parent_block_length: usize,
+    ) -> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
+        PerformanceFiguresAccelerationDecoder {
+            buf,
+            offset,
+            count: 0,
+            start: offset,
+            total: 0,
+            acting_version,
+            acting_block_length: 0,
+            parent_pos,
+            parent_block_length,
+            _context: core::marker::PhantomData,
+        }
+    }
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+    /// Wire-declared entries not yet consumed.
+    ///
+    /// O(1): `into_*` already read the SBE dimension header containing
+    /// `numInGroup`. This does not promise that remaining entries will
+    /// decode, so dynamic groups are not [`core::iter::ExactSizeIterator`].
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Detached> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Minimum entry bytes needed to safely read every **required**
     /// fixed field present at `acting_version`.
@@ -4667,10 +4826,12 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     /// Entries not yet advanced (count), not a byte slice.
     /// For message-level byte tails use `get_metadata().remaining()`.
+    /// Prefer [`Self::remaining_entries`] at call sites that mean
+    /// group cardinality rather than a byte tail.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn remaining(&self) -> usize {
-        self.count
+        self.remaining_entries()
     }
     /// Dimension wrap after the caller has proven
     /// the dimension header (and, for fixed groups, the full entry
@@ -4883,7 +5044,7 @@ pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator (or equivalent)
     /// has proven the acting fixed block is in-bounds at `offset`.
@@ -4913,13 +5074,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         let offset = self.offset + 0;
         u16::from_le_bytes(unsafe { read_bytes_unchecked::<2>(self.buf, offset) })
     }
-    ///Generated constant `MPH_ID`.
+    ///`MPH_ID` = 16.
     pub const MPH_ID: u16 = 16;
-    ///Generated constant `MPH_SINCE_VERSION`.
+    ///`MPH_SINCE_VERSION` = 0.
     pub const MPH_SINCE_VERSION: u16 = 0;
-    ///Generated constant `MPH_ENCODING_OFFSET`.
+    ///`MPH_ENCODING_OFFSET` = 0.
     pub const MPH_ENCODING_OFFSET: usize = 0;
-    ///Generated constant `MPH_ENCODING_LENGTH`.
+    ///`MPH_ENCODING_LENGTH` = 2.
     pub const MPH_ENCODING_LENGTH: usize = 2;
     ///Generated method `mph_meta_attribute`.
     #[inline]
@@ -4933,11 +5094,11 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `MPH_NULL`.
+    ///`MPH_NULL` = 65535.
     pub const MPH_NULL: u16 = 65535_u16;
-    ///Generated constant `MPH_MIN`.
+    ///`MPH_MIN` = 0.
     pub const MPH_MIN: u16 = 0_u16;
-    ///Generated constant `MPH_MAX`.
+    ///`MPH_MAX` = 65534.
     pub const MPH_MAX: u16 = 65534_u16;
     ///Generated method `seconds`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -4946,13 +5107,13 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         let offset = self.offset + 2;
         f32::from_le_bytes(unsafe { read_bytes_unchecked::<4>(self.buf, offset) })
     }
-    ///Generated constant `SECONDS_ID`.
+    ///`SECONDS_ID` = 17.
     pub const SECONDS_ID: u16 = 17;
-    ///Generated constant `SECONDS_SINCE_VERSION`.
+    ///`SECONDS_SINCE_VERSION` = 0.
     pub const SECONDS_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SECONDS_ENCODING_OFFSET`.
+    ///`SECONDS_ENCODING_OFFSET` = 2.
     pub const SECONDS_ENCODING_OFFSET: usize = 2;
-    ///Generated constant `SECONDS_ENCODING_LENGTH`.
+    ///`SECONDS_ENCODING_LENGTH` = 4.
     pub const SECONDS_ENCODING_LENGTH: usize = 4;
     ///Generated method `seconds_meta_attribute`.
     #[inline]
@@ -5073,6 +5234,19 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
+    #[inline]
+    fn into_parent_stage(
+        self,
+        tail_start: usize,
+    ) -> PerformanceFiguresEntryDecoderComplete<'a> {
+        PerformanceFiguresEntryDecoderComplete {
+            buf: self.buf,
+            offset: self.parent_pos,
+            tail_start,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        }
+    }
     /// Scan past any unread entries (including nested tails) in wire
     /// order and return the next decoder stage.
     ///
@@ -5095,13 +5269,7 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
             )?;
             remaining -= 1;
         }
-        Ok(PerformanceFiguresEntryDecoderComplete {
-            buf: self.buf,
-            offset: self.parent_pos,
-            tail_start: offset,
-            acting_version: self.acting_version,
-            acting_block_length: self.parent_block_length,
-        })
+        Ok(self.into_parent_stage(offset))
     }
     /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
@@ -5109,6 +5277,39 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
         self,
     ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
         self.finish()
+    }
+    /// Consume every remaining entry in one pass and return the next
+    /// parent stage.
+    ///
+    /// Fixed-stride entries advance by the acting block length.
+    /// Empty groups invoke the callback zero times.
+    ///
+    /// A callback or decoding error consumes this ordered stage and
+    /// returns no continuation.
+    #[inline]
+    pub fn visit_entries<E, F>(
+        mut self,
+        mut visit: F,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(PerformanceFiguresAccelerationEntryDecoder<'a>) -> Result<(), E>,
+    {
+        while self.count > 0 {
+            let entry = unsafe {
+                PerformanceFiguresAccelerationEntryDecoder::wrap(
+                    self.buf,
+                    self.offset,
+                    self.acting_block_length,
+                    self.acting_version,
+                )
+            };
+            visit(entry)?;
+            self.offset += self.acting_block_length;
+            self.count -= 1;
+        }
+        let tail_start = self.offset;
+        Ok(self.into_parent_stage(tail_start))
     }
 }
 impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
@@ -5785,6 +5986,16 @@ impl<'a> CarDecoderAfterModel<'a> {
     }
 }
 impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
+    #[inline]
+    fn into_parent_stage(self, tail_start: usize) -> CarDecoderAfterFuelFigures<'a> {
+        CarDecoderAfterFuelFigures {
+            buf: self.buf,
+            offset: self.parent_pos,
+            tail_start,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        }
+    }
     /// Scan past any unread entries (including nested tails) in wire
     /// order and return the next decoder stage.
     ///
@@ -5808,13 +6019,7 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
             )?;
             remaining -= 1;
         }
-        Ok(CarDecoderAfterFuelFigures {
-            buf: self.buf,
-            offset: self.parent_pos,
-            tail_start: offset,
-            acting_version: self.acting_version,
-            acting_block_length: self.parent_block_length,
-        })
+        Ok(self.into_parent_stage(offset))
     }
     /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
@@ -5823,8 +6028,81 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
     ) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
         self.finish()
     }
+    /// Consume every remaining entry in one pass and return the next
+    /// parent stage.
+    ///
+    /// The callback must return this entry's generated completion
+    /// stage. Dynamic `visit_entries` does not pre-scan
+    /// `encoded_length()`; the next cursor comes from that
+    /// completion. Empty groups invoke the callback zero times.
+    ///
+    /// A callback or decoding error consumes this ordered stage and
+    /// returns no continuation. Returning a completion that does
+    /// not belong to the supplied entry panics.
+    #[inline]
+    pub fn visit_entries<E, F>(
+        mut self,
+        mut visit: F,
+    ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            FuelFiguresEntryDecoder<'a>,
+        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+    {
+        if let Some(error) = self.poisoned {
+            return Err(E::from(error));
+        }
+        while self.count > 0 {
+            let available = self.buf.len().saturating_sub(self.offset);
+            if self.min_entry_extent > available {
+                return Err(
+                    E::from(sbe_rt::DecodeError::BufferTooShort {
+                        field: "fuelFigures",
+                        needed: self.min_entry_extent,
+                        available,
+                    }),
+                );
+            }
+            let entry = unsafe {
+                FuelFiguresEntryDecoder::wrap(
+                    self.buf,
+                    self.offset,
+                    self.acting_block_length,
+                    self.acting_version,
+                )
+            };
+            let complete = visit(entry)?;
+            if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
+                || complete.buf.len() != self.buf.len() || complete.offset != self.offset
+                || complete.acting_version != self.acting_version
+                || complete.acting_block_length != self.acting_block_length
+            {
+                panic!(
+                    "visit_entries callback returned a completion that does not belong to the supplied entry"
+                );
+            }
+            self.offset = complete.tail_start;
+            self.count -= 1;
+        }
+        let tail_start = self.offset;
+        Ok(self.into_parent_stage(tail_start))
+    }
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
+    #[inline]
+    fn into_parent_stage(
+        self,
+        tail_start: usize,
+    ) -> CarDecoderAfterPerformanceFigures<'a> {
+        CarDecoderAfterPerformanceFigures {
+            buf: self.buf,
+            offset: self.parent_pos,
+            tail_start,
+            acting_version: self.acting_version,
+            acting_block_length: self.parent_block_length,
+        }
+    }
     /// Scan past any unread entries (including nested tails) in wire
     /// order and return the next decoder stage.
     ///
@@ -5850,13 +6128,7 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
             )?;
             remaining -= 1;
         }
-        Ok(CarDecoderAfterPerformanceFigures {
-            buf: self.buf,
-            offset: self.parent_pos,
-            tail_start: offset,
-            acting_version: self.acting_version,
-            acting_block_length: self.parent_block_length,
-        })
+        Ok(self.into_parent_stage(offset))
     }
     /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
@@ -5864,6 +6136,66 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         self,
     ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
         self.finish()
+    }
+    /// Consume every remaining entry in one pass and return the next
+    /// parent stage.
+    ///
+    /// The callback must return this entry's generated completion
+    /// stage. Dynamic `visit_entries` does not pre-scan
+    /// `encoded_length()`; the next cursor comes from that
+    /// completion. Empty groups invoke the callback zero times.
+    ///
+    /// A callback or decoding error consumes this ordered stage and
+    /// returns no continuation. Returning a completion that does
+    /// not belong to the supplied entry panics.
+    #[inline]
+    pub fn visit_entries<E, F>(
+        mut self,
+        mut visit: F,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            PerformanceFiguresEntryDecoder<'a>,
+        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
+    {
+        if let Some(error) = self.poisoned {
+            return Err(E::from(error));
+        }
+        while self.count > 0 {
+            let available = self.buf.len().saturating_sub(self.offset);
+            if self.min_entry_extent > available {
+                return Err(
+                    E::from(sbe_rt::DecodeError::BufferTooShort {
+                        field: "performanceFigures",
+                        needed: self.min_entry_extent,
+                        available,
+                    }),
+                );
+            }
+            let entry = unsafe {
+                PerformanceFiguresEntryDecoder::wrap(
+                    self.buf,
+                    self.offset,
+                    self.acting_block_length,
+                    self.acting_version,
+                )
+            };
+            let complete = visit(entry)?;
+            if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
+                || complete.buf.len() != self.buf.len() || complete.offset != self.offset
+                || complete.acting_version != self.acting_version
+                || complete.acting_block_length != self.acting_block_length
+            {
+                panic!(
+                    "visit_entries callback returned a completion that does not belong to the supplied entry"
+                );
+            }
+            self.offset = complete.tail_start;
+            self.count -= 1;
+        }
+        let tail_start = self.offset;
+        Ok(self.into_parent_stage(tail_start))
     }
 }
 impl<'a> CarDecoderComplete<'a> {
@@ -5899,6 +6231,1161 @@ impl<'a> CarDecoderComplete<'a> {
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
+    }
+}
+impl<'a> CarDecoder<'a> {
+    /// Convert this flyweight into a mutable ordered cursor.
+    ///
+    /// Group and var-data methods must then be called in schema order;
+    /// a wrong call returns [`sbe_rt::DecodeError::OutOfOrder`] and
+    /// leaves the cursor unchanged. Fixed fields stay random-access.
+    #[inline]
+    pub fn ordered(self) -> CarOrderedDecoder<'a> {
+        let tail_offset = self.offset + self.acting_block_length;
+        CarOrderedDecoder {
+            inner: self,
+            tail_offset,
+            next_ordinal: 0,
+        }
+    }
+}
+/// Mutable ordered decoder — sequential dynamic tails, random-access
+/// fixed fields, runtime order checks.
+#[must_use = "decoder must be read or advanced; dropping is fine only after use"]
+pub struct CarOrderedDecoder<'a> {
+    inner: CarDecoder<'a>,
+    tail_offset: usize,
+    next_ordinal: u16,
+}
+impl<'a> CarOrderedDecoder<'a> {
+    /// Schema version from the message header (or wrap args).
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    /// Block length from the wire header / wrap args.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Placement utilities. Does not expose random-access dynamic tails.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
+        self.inner.get_metadata()
+    }
+    ///Generated method `serial_number`.
+    #[inline]
+    pub fn serial_number(&self) -> u64 {
+        self.inner.serial_number()
+    }
+    ///Generated method `model_year`.
+    #[inline]
+    pub fn model_year(&self) -> u16 {
+        self.inner.model_year()
+    }
+    ///Generated method `available`.
+    #[inline]
+    pub fn available(&self) -> BooleanType {
+        self.inner.available()
+    }
+    ///Generated method `code`.
+    #[inline]
+    pub fn code(&self) -> Model {
+        self.inner.code()
+    }
+    ///Generated method `some_numbers`.
+    #[inline]
+    pub fn some_numbers(&self) -> [u32; 4] {
+        self.inner.some_numbers()
+    }
+    ///Generated method `vehicle_code`.
+    #[inline]
+    pub fn vehicle_code(&self) -> [u8; 6] {
+        self.inner.vehicle_code()
+    }
+    ///Generated method `extras`.
+    #[inline]
+    pub fn extras(&self) -> OptionalExtras {
+        self.inner.extras()
+    }
+    ///Generated method `discounted_model`.
+    #[inline]
+    pub fn discounted_model(&self) -> Model {
+        self.inner.discounted_model()
+    }
+    ///Generated method `engine`.
+    #[inline]
+    pub fn engine(&self) -> EngineDecoder<'_> {
+        self.inner.engine()
+    }
+    ///Generated method `engine_value`.
+    #[inline]
+    pub fn engine_value(&self) -> Engine {
+        self.inner.engine_value()
+    }
+}
+impl<'a> CarOrderedDecoder<'a> {
+    #[inline]
+    fn expect(
+        &self,
+        ordinal: u16,
+        requested: &'static str,
+    ) -> Result<(), sbe_rt::DecodeError> {
+        const NAMES: &[&str] = &[
+            "fuelFigures",
+            "performanceFigures",
+            "manufacturer",
+            "model",
+            "activationCode",
+        ];
+        let expected = if (self.next_ordinal as usize) < NAMES.len() {
+            NAMES[self.next_ordinal as usize]
+        } else {
+            "<complete>"
+        };
+        if self.next_ordinal != ordinal {
+            return Err(sbe_rt::DecodeError::OutOfOrder {
+                owner: "Car",
+                expected,
+                requested,
+            });
+        }
+        Ok(())
+    }
+    ///Generated method `fuel_figures`.
+    #[inline]
+    pub fn fuel_figures(
+        &mut self,
+    ) -> Result<FuelFiguresOrderedDecoder<'_, 'a>, sbe_rt::DecodeError> {
+        self.expect(0, "fuelFigures")?;
+        FuelFiguresOrderedDecoder::begin(self)
+    }
+    ///Generated method `performance_figures`.
+    #[inline]
+    pub fn performance_figures(
+        &mut self,
+    ) -> Result<PerformanceFiguresOrderedDecoder<'_, 'a>, sbe_rt::DecodeError> {
+        self.expect(1, "performanceFigures")?;
+        PerformanceFiguresOrderedDecoder::begin(self)
+    }
+    ///Generated method `manufacturer`.
+    #[inline]
+    pub fn manufacturer(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.expect(2, "manufacturer")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "manufacturer",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "manufacturer",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "manufacturer",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(data)
+    }
+    ///Generated method `manufacturer_as_str`.
+    #[inline]
+    pub fn manufacturer_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
+        self.expect(2, "manufacturer")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "manufacturer",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "manufacturer",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "manufacturer",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let s = core::str::from_utf8(data)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "manufacturer",
+                    error: e,
+                }
+            })?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(s)
+    }
+    ///Generated method `manufacturer_as_message`.
+    #[inline]
+    pub fn manufacturer_as_message(
+        &mut self,
+    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+        self.expect(2, "manufacturer")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "manufacturer",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "manufacturer",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "manufacturer",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(frame)
+    }
+    ///Generated method `model`.
+    #[inline]
+    pub fn model(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.expect(3, "model")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "model",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "model",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "model",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(data)
+    }
+    ///Generated method `model_as_str`.
+    #[inline]
+    pub fn model_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
+        self.expect(3, "model")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "model",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "model",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "model",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let s = core::str::from_utf8(data)
+            .map_err(|e| {
+                sbe_rt::DecodeError::InvalidUtf8 {
+                    field: "model",
+                    error: e,
+                }
+            })?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(s)
+    }
+    ///Generated method `model_as_message`.
+    #[inline]
+    pub fn model_as_message(&mut self) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+        self.expect(3, "model")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "model",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "model",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "model",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(frame)
+    }
+    ///Generated method `activation_code`.
+    #[inline]
+    pub fn activation_code(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.expect(4, "activationCode")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "activationCode",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "activationCode",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "activationCode",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(data)
+    }
+    ///Generated method `activation_code_as_str`.
+    #[inline]
+    pub fn activation_code_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
+        self.expect(4, "activationCode")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "activationCode",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "activationCode",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "activationCode",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        if !data.is_ascii() {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "activationCode",
+            });
+        }
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(unsafe { core::str::from_utf8_unchecked(data) })
+    }
+    ///Generated method `activation_code_as_message`.
+    #[inline]
+    pub fn activation_code_as_message(
+        &mut self,
+    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+        self.expect(4, "activationCode")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "activationCode",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "activationCode",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "activationCode",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(frame)
+    }
+    /// Skip any unconsumed suffix and return the complete stage.
+    #[inline]
+    pub fn finish(mut self) -> Result<CarDecoderComplete<'a>, sbe_rt::DecodeError> {
+        while (self.next_ordinal as usize) < 5 {
+            match self.next_ordinal {
+                0 => self.fuel_figures()?.skip_remaining()?,
+                1 => self.performance_figures()?.skip_remaining()?,
+                2 => {
+                    let _ = self.manufacturer()?;
+                }
+                3 => {
+                    let _ = self.model()?;
+                }
+                4 => {
+                    let _ = self.activation_code()?;
+                }
+                _ => break,
+            }
+        }
+        Ok(CarDecoderComplete {
+            buf: self.inner.buf,
+            offset: self.inner.offset,
+            tail_start: self.tail_offset,
+            acting_version: self.inner.acting_version,
+            acting_block_length: self.inner.acting_block_length,
+        })
+    }
+}
+///Generated struct `FuelFiguresOrderedDecoder`.
+pub struct FuelFiguresOrderedDecoder<'p, 'a> {
+    buf: &'a [u8],
+    offset: usize,
+    count: usize,
+    acting_block_length: usize,
+    acting_version: u16,
+    min_entry_extent: usize,
+    parent: &'p mut CarOrderedDecoder<'a>,
+}
+impl<'p, 'a> FuelFiguresOrderedDecoder<'p, 'a> {
+    #[inline]
+    fn begin(
+        parent: &'p mut CarOrderedDecoder<'a>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        let start = parent.tail_offset;
+        if 4 > parent.inner.buf.len().saturating_sub(start) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: 4,
+                available: parent.inner.buf.len().saturating_sub(start),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
+        let header = GroupSizeEncoding(bytes);
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
+        let min_fixed = <FuelFiguresDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(parent.inner.acting_version);
+        let min_entry_extent = if block_length > min_fixed {
+            block_length
+        } else {
+            min_fixed
+        };
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
+        Ok(Self {
+            buf: parent.inner.buf,
+            offset: start + 4,
+            count,
+            acting_block_length: block_length,
+            acting_version: parent.inner.acting_version,
+            min_entry_extent,
+            parent,
+        })
+    }
+    ///Generated method `remaining_entries`.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
+    ///Generated method `is_empty`.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    ///Generated method `visit_entries`.
+    #[inline]
+    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(&mut FuelFiguresEntryOrderedDecoder<'a>) -> Result<(), E>,
+    {
+        while self.count > 0 {
+            let available = self.buf.len().saturating_sub(self.offset);
+            if self.min_entry_extent > available {
+                return Err(
+                    E::from(sbe_rt::DecodeError::BufferTooShort {
+                        field: "fuelFigures",
+                        needed: self.min_entry_extent,
+                        available,
+                    }),
+                );
+            }
+            let mut entry = FuelFiguresEntryOrderedDecoder::at(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            );
+            visit(&mut entry)?;
+            self.offset = entry.finish_unread()?;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `finish`.
+    #[inline]
+    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
+        while self.count > 0 {
+            self.offset = FuelFiguresEntryDecoder::skip(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            )?;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `skip_remaining`.
+    #[inline]
+    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
+        self.finish()
+    }
+    #[inline]
+    fn commit(self) {
+        self.parent.tail_offset = self.offset;
+        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
+    }
+}
+///Generated struct `FuelFiguresEntryOrderedDecoder`.
+pub struct FuelFiguresEntryOrderedDecoder<'a> {
+    inner: FuelFiguresEntryDecoder<'a>,
+    tail_offset: usize,
+    next_ordinal: u16,
+}
+impl<'a> FuelFiguresEntryOrderedDecoder<'a> {
+    #[inline]
+    fn at(
+        buf: &'a [u8],
+        offset: usize,
+        acting_block_length: usize,
+        acting_version: u16,
+    ) -> Self {
+        Self {
+            inner: unsafe {
+                FuelFiguresEntryDecoder::wrap(
+                    buf,
+                    offset,
+                    acting_block_length,
+                    acting_version,
+                )
+            },
+            tail_offset: offset + acting_block_length,
+            next_ordinal: 0,
+        }
+    }
+    #[inline]
+    fn expect(
+        &self,
+        ordinal: u16,
+        requested: &'static str,
+    ) -> Result<(), sbe_rt::DecodeError> {
+        const NAMES: &[&str] = &["usageDescription"];
+        let expected = if (self.next_ordinal as usize) < NAMES.len() {
+            NAMES[self.next_ordinal as usize]
+        } else {
+            "<complete>"
+        };
+        if self.next_ordinal != ordinal {
+            return Err(sbe_rt::DecodeError::OutOfOrder {
+                owner: "FuelFigures",
+                expected,
+                requested,
+            });
+        }
+        Ok(())
+    }
+    ///Generated method `speed`.
+    #[inline]
+    pub fn speed(&self) -> u16 {
+        self.inner.speed()
+    }
+    ///Generated method `mpg`.
+    #[inline]
+    pub fn mpg(&self) -> f32 {
+        self.inner.mpg()
+    }
+    ///Generated method `usage_description`.
+    #[inline]
+    pub fn usage_description(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        self.expect(0, "usageDescription")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "usageDescription",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "usageDescription",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "usageDescription",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(data)
+    }
+    ///Generated method `usage_description_as_str`.
+    #[inline]
+    pub fn usage_description_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
+        self.expect(0, "usageDescription")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "usageDescription",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "usageDescription",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "usageDescription",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        if !data.is_ascii() {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "usageDescription",
+            });
+        }
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(unsafe { core::str::from_utf8_unchecked(data) })
+    }
+    ///Generated method `usage_description_as_message`.
+    #[inline]
+    pub fn usage_description_as_message(
+        &mut self,
+    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
+        self.expect(0, "usageDescription")?;
+        let (data, end) = {
+            let offset = self.tail_offset;
+            if offset + 4 > self.inner.buf.len() {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "usageDescription",
+                    needed: 4,
+                    available: self.inner.buf.len().saturating_sub(offset),
+                });
+            }
+            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
+            let len = u32::from_le_bytes(bytes) as u64;
+            if len > 1073741824 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: "usageDescription",
+                    length: len,
+                    max_length: 1073741824 as u64,
+                });
+            }
+            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                "usageDescription",
+                offset,
+                4,
+                len,
+                self.inner.buf.len(),
+            )?;
+            (&self.inner.buf[data_start..data_end], data_end)
+        };
+        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
+        self.tail_offset = end;
+        self.next_ordinal = self.next_ordinal.saturating_add(1);
+        Ok(frame)
+    }
+    #[inline]
+    fn finish_unread(mut self) -> Result<usize, sbe_rt::DecodeError> {
+        while (self.next_ordinal as usize) < 1 {
+            match self.next_ordinal {
+                0 => {
+                    let _ = self.usage_description()?;
+                }
+                _ => break,
+            }
+        }
+        Ok(self.tail_offset)
+    }
+}
+///Generated struct `PerformanceFiguresOrderedDecoder`.
+pub struct PerformanceFiguresOrderedDecoder<'p, 'a> {
+    buf: &'a [u8],
+    offset: usize,
+    count: usize,
+    acting_block_length: usize,
+    acting_version: u16,
+    min_entry_extent: usize,
+    parent: &'p mut CarOrderedDecoder<'a>,
+}
+impl<'p, 'a> PerformanceFiguresOrderedDecoder<'p, 'a> {
+    #[inline]
+    fn begin(
+        parent: &'p mut CarOrderedDecoder<'a>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        let start = parent.tail_offset;
+        if 4 > parent.inner.buf.len().saturating_sub(start) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: 4,
+                available: parent.inner.buf.len().saturating_sub(start),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
+        let header = GroupSizeEncoding(bytes);
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
+        let min_fixed = <PerformanceFiguresDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(parent.inner.acting_version);
+        let min_entry_extent = if block_length > min_fixed {
+            block_length
+        } else {
+            min_fixed
+        };
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
+        Ok(Self {
+            buf: parent.inner.buf,
+            offset: start + 4,
+            count,
+            acting_block_length: block_length,
+            acting_version: parent.inner.acting_version,
+            min_entry_extent,
+            parent,
+        })
+    }
+    ///Generated method `remaining_entries`.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
+    ///Generated method `is_empty`.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    ///Generated method `visit_entries`.
+    #[inline]
+    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(&mut PerformanceFiguresEntryOrderedDecoder<'a>) -> Result<(), E>,
+    {
+        while self.count > 0 {
+            let available = self.buf.len().saturating_sub(self.offset);
+            if self.min_entry_extent > available {
+                return Err(
+                    E::from(sbe_rt::DecodeError::BufferTooShort {
+                        field: "performanceFigures",
+                        needed: self.min_entry_extent,
+                        available,
+                    }),
+                );
+            }
+            let mut entry = PerformanceFiguresEntryOrderedDecoder::at(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            );
+            visit(&mut entry)?;
+            self.offset = entry.finish_unread()?;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `finish`.
+    #[inline]
+    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
+        while self.count > 0 {
+            self.offset = PerformanceFiguresEntryDecoder::skip(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            )?;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `skip_remaining`.
+    #[inline]
+    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
+        self.finish()
+    }
+    #[inline]
+    fn commit(self) {
+        self.parent.tail_offset = self.offset;
+        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
+    }
+}
+///Generated struct `PerformanceFiguresEntryOrderedDecoder`.
+pub struct PerformanceFiguresEntryOrderedDecoder<'a> {
+    inner: PerformanceFiguresEntryDecoder<'a>,
+    tail_offset: usize,
+    next_ordinal: u16,
+}
+impl<'a> PerformanceFiguresEntryOrderedDecoder<'a> {
+    #[inline]
+    fn at(
+        buf: &'a [u8],
+        offset: usize,
+        acting_block_length: usize,
+        acting_version: u16,
+    ) -> Self {
+        Self {
+            inner: unsafe {
+                PerformanceFiguresEntryDecoder::wrap(
+                    buf,
+                    offset,
+                    acting_block_length,
+                    acting_version,
+                )
+            },
+            tail_offset: offset + acting_block_length,
+            next_ordinal: 0,
+        }
+    }
+    #[inline]
+    fn expect(
+        &self,
+        ordinal: u16,
+        requested: &'static str,
+    ) -> Result<(), sbe_rt::DecodeError> {
+        const NAMES: &[&str] = &["acceleration"];
+        let expected = if (self.next_ordinal as usize) < NAMES.len() {
+            NAMES[self.next_ordinal as usize]
+        } else {
+            "<complete>"
+        };
+        if self.next_ordinal != ordinal {
+            return Err(sbe_rt::DecodeError::OutOfOrder {
+                owner: "PerformanceFigures",
+                expected,
+                requested,
+            });
+        }
+        Ok(())
+    }
+    ///Generated method `octane_rating`.
+    #[inline]
+    pub fn octane_rating(&self) -> u8 {
+        self.inner.octane_rating()
+    }
+    ///Generated method `acceleration`.
+    #[inline]
+    pub fn acceleration(
+        &mut self,
+    ) -> Result<
+        PerformanceFiguresAccelerationOrderedDecoder<'_, 'a>,
+        sbe_rt::DecodeError,
+    > {
+        self.expect(0, "acceleration")?;
+        PerformanceFiguresAccelerationOrderedDecoder::begin_entry(self)
+    }
+    #[inline]
+    fn finish_unread(mut self) -> Result<usize, sbe_rt::DecodeError> {
+        while (self.next_ordinal as usize) < 1 {
+            match self.next_ordinal {
+                0 => {
+                    self.acceleration()?.skip_remaining()?;
+                }
+                _ => break,
+            }
+        }
+        Ok(self.tail_offset)
+    }
+}
+///Generated struct `PerformanceFiguresAccelerationOrderedDecoder`.
+pub struct PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
+    buf: &'a [u8],
+    offset: usize,
+    count: usize,
+    acting_block_length: usize,
+    acting_version: u16,
+    min_entry_extent: usize,
+    parent: &'p mut PerformanceFiguresEntryOrderedDecoder<'a>,
+}
+impl<'p, 'a> PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
+    #[inline]
+    fn begin_entry(
+        parent: &'p mut PerformanceFiguresEntryOrderedDecoder<'a>,
+    ) -> Result<Self, sbe_rt::DecodeError> {
+        let start = parent.tail_offset;
+        if 4 > parent.inner.buf.len().saturating_sub(start) {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: 4,
+                available: parent.inner.buf.len().saturating_sub(start),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
+        let header = GroupSizeEncoding(bytes);
+        let count = sbe_rt::checked_group_count(
+            "numInGroup",
+            header.num_in_group() as u64,
+        )?;
+        let block_length = sbe_rt::checked_header_usize(
+            "blockLength",
+            header.block_length() as u64,
+        )?;
+        let min_entry_extent = 0usize;
+        Ok(Self {
+            buf: parent.inner.buf,
+            offset: start + 4,
+            count,
+            acting_block_length: block_length,
+            acting_version: parent.inner.acting_version,
+            min_entry_extent,
+            parent,
+        })
+    }
+    ///Generated method `remaining_entries`.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.count
+    }
+    ///Generated method `is_empty`.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    ///Generated method `visit_entries`.
+    #[inline]
+    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            &mut PerformanceFiguresAccelerationEntryOrderedDecoder<'a>,
+        ) -> Result<(), E>,
+    {
+        while self.count > 0 {
+            let mut entry = PerformanceFiguresAccelerationEntryOrderedDecoder::at(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            );
+            visit(&mut entry)?;
+            self.offset += self.acting_block_length;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `finish`.
+    #[inline]
+    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
+        while self.count > 0 {
+            self.offset = PerformanceFiguresAccelerationEntryDecoder::skip(
+                self.buf,
+                self.offset,
+                self.acting_block_length,
+                self.acting_version,
+            )?;
+            self.count -= 1;
+        }
+        self.commit();
+        Ok(())
+    }
+    ///Generated method `skip_remaining`.
+    #[inline]
+    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
+        self.finish()
+    }
+    #[inline]
+    fn commit(self) {
+        self.parent.tail_offset = self.offset;
+        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
+    }
+}
+///Generated struct `PerformanceFiguresAccelerationEntryOrderedDecoder`.
+pub struct PerformanceFiguresAccelerationEntryOrderedDecoder<'a> {
+    inner: PerformanceFiguresAccelerationEntryDecoder<'a>,
+}
+impl<'a> PerformanceFiguresAccelerationEntryOrderedDecoder<'a> {
+    #[inline]
+    fn at(
+        buf: &'a [u8],
+        offset: usize,
+        acting_block_length: usize,
+        acting_version: u16,
+    ) -> Self {
+        Self {
+            inner: unsafe {
+                PerformanceFiguresAccelerationEntryDecoder::wrap(
+                    buf,
+                    offset,
+                    acting_block_length,
+                    acting_version,
+                )
+            },
+        }
+    }
+    ///Generated method `mph`.
+    #[inline]
+    pub fn mph(&self) -> u16 {
+        self.inner.mph()
+    }
+    ///Generated method `seconds`.
+    #[inline]
+    pub fn seconds(&self) -> f32 {
+        self.inner.seconds()
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -6785,13 +8272,13 @@ impl<'a> CarRawFixedWriter<'a> {
     }
 }
 impl<'a> CarEncoder<'a> {
-    ///Generated constant `SCHEMA_ID`.
+    ///`SCHEMA_ID` = 1.
     pub const SCHEMA_ID: u16 = 1;
-    ///Generated constant `SCHEMA_VERSION`.
+    ///`SCHEMA_VERSION` = 0.
     pub const SCHEMA_VERSION: u16 = 0;
-    ///Generated constant `TEMPLATE_ID`.
+    ///`TEMPLATE_ID` = 1.
     pub const TEMPLATE_ID: u16 = 1;
-    ///Generated constant `BLOCK_LENGTH`.
+    ///`BLOCK_LENGTH` = 45.
     pub const BLOCK_LENGTH: usize = 45;
     const _BLOCK_LEN: () = assert!(Self::BLOCK_LENGTH == 45);
     /// Schema-declared message header size in bytes.
@@ -6930,13 +8417,13 @@ impl<'a> CarEncoder<'a> {
             _fields: core::marker::PhantomData,
         }
     }
-    ///Generated constant `SERIAL_NUMBER_ID`.
+    ///`SERIAL_NUMBER_ID` = 1.
     pub const SERIAL_NUMBER_ID: u16 = 1;
-    ///Generated constant `SERIAL_NUMBER_SINCE_VERSION`.
+    ///`SERIAL_NUMBER_SINCE_VERSION` = 0.
     pub const SERIAL_NUMBER_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SERIAL_NUMBER_ENCODING_OFFSET`.
+    ///`SERIAL_NUMBER_ENCODING_OFFSET` = 0.
     pub const SERIAL_NUMBER_ENCODING_OFFSET: usize = 0;
-    ///Generated constant `SERIAL_NUMBER_ENCODING_LENGTH`.
+    ///`SERIAL_NUMBER_ENCODING_LENGTH` = 8.
     pub const SERIAL_NUMBER_ENCODING_LENGTH: usize = 8;
     ///Generated method `serial_number_meta_attribute`.
     #[inline]
@@ -6950,19 +8437,19 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `SERIAL_NUMBER_NULL`.
+    ///`SERIAL_NUMBER_NULL` = 18446744073709551615.
     pub const SERIAL_NUMBER_NULL: u64 = 18446744073709551615_u64;
-    ///Generated constant `SERIAL_NUMBER_MIN`.
+    ///`SERIAL_NUMBER_MIN` = 0.
     pub const SERIAL_NUMBER_MIN: u64 = 0_u64;
-    ///Generated constant `SERIAL_NUMBER_MAX`.
+    ///`SERIAL_NUMBER_MAX` = 18446744073709551614.
     pub const SERIAL_NUMBER_MAX: u64 = 18446744073709551614_u64;
-    ///Generated constant `MODEL_YEAR_ID`.
+    ///`MODEL_YEAR_ID` = 2.
     pub const MODEL_YEAR_ID: u16 = 2;
-    ///Generated constant `MODEL_YEAR_SINCE_VERSION`.
+    ///`MODEL_YEAR_SINCE_VERSION` = 0.
     pub const MODEL_YEAR_SINCE_VERSION: u16 = 0;
-    ///Generated constant `MODEL_YEAR_ENCODING_OFFSET`.
+    ///`MODEL_YEAR_ENCODING_OFFSET` = 8.
     pub const MODEL_YEAR_ENCODING_OFFSET: usize = 8;
-    ///Generated constant `MODEL_YEAR_ENCODING_LENGTH`.
+    ///`MODEL_YEAR_ENCODING_LENGTH` = 2.
     pub const MODEL_YEAR_ENCODING_LENGTH: usize = 2;
     ///Generated method `model_year_meta_attribute`.
     #[inline]
@@ -6976,19 +8463,19 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `MODEL_YEAR_NULL`.
+    ///`MODEL_YEAR_NULL` = 65535.
     pub const MODEL_YEAR_NULL: u16 = 65535_u16;
-    ///Generated constant `MODEL_YEAR_MIN`.
+    ///`MODEL_YEAR_MIN` = 0.
     pub const MODEL_YEAR_MIN: u16 = 0_u16;
-    ///Generated constant `MODEL_YEAR_MAX`.
+    ///`MODEL_YEAR_MAX` = 65534.
     pub const MODEL_YEAR_MAX: u16 = 65534_u16;
-    ///Generated constant `AVAILABLE_ID`.
+    ///`AVAILABLE_ID` = 3.
     pub const AVAILABLE_ID: u16 = 3;
-    ///Generated constant `AVAILABLE_SINCE_VERSION`.
+    ///`AVAILABLE_SINCE_VERSION` = 0.
     pub const AVAILABLE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `AVAILABLE_ENCODING_OFFSET`.
+    ///`AVAILABLE_ENCODING_OFFSET` = 10.
     pub const AVAILABLE_ENCODING_OFFSET: usize = 10;
-    ///Generated constant `AVAILABLE_ENCODING_LENGTH`.
+    ///`AVAILABLE_ENCODING_LENGTH` = 1.
     pub const AVAILABLE_ENCODING_LENGTH: usize = 1;
     ///Generated method `available_meta_attribute`.
     #[inline]
@@ -7002,15 +8489,15 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `AVAILABLE_NULL`.
+    ///`AVAILABLE_NULL` = BooleanType::NullVal.
     pub const AVAILABLE_NULL: BooleanType = BooleanType::NullVal;
-    ///Generated constant `CODE_ID`.
+    ///`CODE_ID` = 4.
     pub const CODE_ID: u16 = 4;
-    ///Generated constant `CODE_SINCE_VERSION`.
+    ///`CODE_SINCE_VERSION` = 0.
     pub const CODE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `CODE_ENCODING_OFFSET`.
+    ///`CODE_ENCODING_OFFSET` = 11.
     pub const CODE_ENCODING_OFFSET: usize = 11;
-    ///Generated constant `CODE_ENCODING_LENGTH`.
+    ///`CODE_ENCODING_LENGTH` = 1.
     pub const CODE_ENCODING_LENGTH: usize = 1;
     ///Generated method `code_meta_attribute`.
     #[inline]
@@ -7024,15 +8511,15 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `CODE_NULL`.
+    ///`CODE_NULL` = Model::NullVal.
     pub const CODE_NULL: Model = Model::NullVal;
-    ///Generated constant `SOME_NUMBERS_ID`.
+    ///`SOME_NUMBERS_ID` = 5.
     pub const SOME_NUMBERS_ID: u16 = 5;
-    ///Generated constant `SOME_NUMBERS_SINCE_VERSION`.
+    ///`SOME_NUMBERS_SINCE_VERSION` = 0.
     pub const SOME_NUMBERS_SINCE_VERSION: u16 = 0;
-    ///Generated constant `SOME_NUMBERS_ENCODING_OFFSET`.
+    ///`SOME_NUMBERS_ENCODING_OFFSET` = 12.
     pub const SOME_NUMBERS_ENCODING_OFFSET: usize = 12;
-    ///Generated constant `SOME_NUMBERS_ENCODING_LENGTH`.
+    ///`SOME_NUMBERS_ENCODING_LENGTH` = 16.
     pub const SOME_NUMBERS_ENCODING_LENGTH: usize = 16;
     ///Generated method `some_numbers_meta_attribute`.
     #[inline]
@@ -7046,19 +8533,19 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `SOME_NUMBERS_NULL`.
+    ///`SOME_NUMBERS_NULL` = 4294967295.
     pub const SOME_NUMBERS_NULL: u32 = 4294967295_u32;
-    ///Generated constant `SOME_NUMBERS_MIN`.
+    ///`SOME_NUMBERS_MIN` = 0.
     pub const SOME_NUMBERS_MIN: u32 = 0_u32;
-    ///Generated constant `SOME_NUMBERS_MAX`.
+    ///`SOME_NUMBERS_MAX` = 4294967294.
     pub const SOME_NUMBERS_MAX: u32 = 4294967294_u32;
-    ///Generated constant `VEHICLE_CODE_ID`.
+    ///`VEHICLE_CODE_ID` = 6.
     pub const VEHICLE_CODE_ID: u16 = 6;
-    ///Generated constant `VEHICLE_CODE_SINCE_VERSION`.
+    ///`VEHICLE_CODE_SINCE_VERSION` = 0.
     pub const VEHICLE_CODE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `VEHICLE_CODE_ENCODING_OFFSET`.
+    ///`VEHICLE_CODE_ENCODING_OFFSET` = 28.
     pub const VEHICLE_CODE_ENCODING_OFFSET: usize = 28;
-    ///Generated constant `VEHICLE_CODE_ENCODING_LENGTH`.
+    ///`VEHICLE_CODE_ENCODING_LENGTH` = 6.
     pub const VEHICLE_CODE_ENCODING_LENGTH: usize = 6;
     ///Generated method `vehicle_code_meta_attribute`.
     #[inline]
@@ -7072,19 +8559,19 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `VEHICLE_CODE_NULL`.
+    ///`VEHICLE_CODE_NULL` = 0.
     pub const VEHICLE_CODE_NULL: u8 = 0_u8;
-    ///Generated constant `VEHICLE_CODE_MIN`.
+    ///`VEHICLE_CODE_MIN` = 32.
     pub const VEHICLE_CODE_MIN: u8 = 32_u8;
-    ///Generated constant `VEHICLE_CODE_MAX`.
+    ///`VEHICLE_CODE_MAX` = 126.
     pub const VEHICLE_CODE_MAX: u8 = 126_u8;
-    ///Generated constant `EXTRAS_ID`.
+    ///`EXTRAS_ID` = 7.
     pub const EXTRAS_ID: u16 = 7;
-    ///Generated constant `EXTRAS_SINCE_VERSION`.
+    ///`EXTRAS_SINCE_VERSION` = 0.
     pub const EXTRAS_SINCE_VERSION: u16 = 0;
-    ///Generated constant `EXTRAS_ENCODING_OFFSET`.
+    ///`EXTRAS_ENCODING_OFFSET` = 34.
     pub const EXTRAS_ENCODING_OFFSET: usize = 34;
-    ///Generated constant `EXTRAS_ENCODING_LENGTH`.
+    ///`EXTRAS_ENCODING_LENGTH` = 1.
     pub const EXTRAS_ENCODING_LENGTH: usize = 1;
     ///Generated method `extras_meta_attribute`.
     #[inline]
@@ -7098,13 +8585,13 @@ impl<'a> CarEncoder<'a> {
             sbe_rt::MetaAttribute::Presence => Some("required"),
         }
     }
-    ///Generated constant `ENGINE_ID`.
+    ///`ENGINE_ID` = 9.
     pub const ENGINE_ID: u16 = 9;
-    ///Generated constant `ENGINE_SINCE_VERSION`.
+    ///`ENGINE_SINCE_VERSION` = 0.
     pub const ENGINE_SINCE_VERSION: u16 = 0;
-    ///Generated constant `ENGINE_ENCODING_OFFSET`.
+    ///`ENGINE_ENCODING_OFFSET` = 35.
     pub const ENGINE_ENCODING_OFFSET: usize = 35;
-    ///Generated constant `ENGINE_ENCODING_LENGTH`.
+    ///`ENGINE_ENCODING_LENGTH` = 10.
     pub const ENGINE_ENCODING_LENGTH: usize = 10;
     ///Generated method `engine_meta_attribute`.
     #[inline]
@@ -8290,7 +9777,7 @@ pub struct FuelFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> FuelFiguresEntryEncoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -8494,7 +9981,7 @@ pub struct PerformanceFiguresEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresEntryEncoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 1.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -8942,7 +10429,7 @@ pub struct PerformanceFiguresAccelerationEntryEncoder<'a> {
     offset: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
-    ///Generated constant `ENTRY_BLOCK_LENGTH`.
+    ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group encoder proved the fixed block
     /// region fits (via `add` / `start_entry` capacity checks).
@@ -8990,9 +10477,9 @@ pub struct CarEncodedLength {
     state: EncodedLengthAccumulator,
 }
 impl CarEncodedLength {
-    ///Generated constant `BLOCK_LENGTH`.
+    ///`BLOCK_LENGTH` = 45.
     pub const BLOCK_LENGTH: usize = 45;
-    ///Generated constant `HEADER_LENGTH`.
+    ///`HEADER_LENGTH` = 8.
     pub const HEADER_LENGTH: usize = 8;
     /// Start computing the encoded length.
     #[inline]
@@ -9003,17 +10490,17 @@ impl CarEncodedLength {
     }
 }
 impl CarEncodedLength {
-    ///Generated constant `FUELFIGURES_USAGEDESCRIPTION_PREFIX`.
+    ///`FUELFIGURES_USAGEDESCRIPTION_PREFIX` = 4.
     pub const FUELFIGURES_USAGEDESCRIPTION_PREFIX: usize = 4;
-    ///Generated constant `PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM`.
+    ///`PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM` = 4.
     pub const PERFORMANCEFIGURES_ACCELERATION_GROUP_DIM: usize = 4;
-    ///Generated constant `PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK`.
+    ///`PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK` = 6.
     pub const PERFORMANCEFIGURES_ACCELERATION_ENTRY_BLOCK: usize = 6;
-    ///Generated constant `MANUFACTURER_PREFIX`.
+    ///`MANUFACTURER_PREFIX` = 4.
     pub const MANUFACTURER_PREFIX: usize = 4;
-    ///Generated constant `MODEL_PREFIX`.
+    ///`MODEL_PREFIX` = 4.
     pub const MODEL_PREFIX: usize = 4;
-    ///Generated constant `ACTIVATIONCODE_PREFIX`.
+    ///`ACTIVATIONCODE_PREFIX` = 4.
     pub const ACTIVATIONCODE_PREFIX: usize = 4;
 }
 /// Schema-specific ragged entry builder — field-named methods bake in
@@ -9941,9 +11428,9 @@ impl RaggedEntryBuilder {
         Ok(())
     }
 }
-///Generated constant `SEMANTIC_VERSION`.
+///`SEMANTIC_VERSION` = "5.2".
 pub const SEMANTIC_VERSION: &str = "5.2";
-///Generated constant `SCHEMA_HASH`.
+///`SCHEMA_HASH` = 11133254787130522899.
 pub const SCHEMA_HASH: u64 = 11133254787130522899;
 ///Generated constant `SCHEMA_SHA256`.
 pub const SCHEMA_SHA256: [u8; 32] = [
@@ -9951,11 +11438,11 @@ pub const SCHEMA_SHA256: [u8; 32] = [
     0x6d, 0x66, 0xa4, 0xf5, 0xc3, 0x03, 0x4d, 0xc7, 0x4d, 0x37, 0xed, 0x93, 0x11, 0xb0,
     0xf9, 0x87, 0xa2, 0x51,
 ];
-///Generated constant `SCHEMA_SHA256_HEX`.
+///`SCHEMA_SHA256_HEX` = "7848970c368e7af48eddc08e75ef6d66a4f5c3034dc74d37ed9311b0f987a251".
 pub const SCHEMA_SHA256_HEX: &str = "7848970c368e7af48eddc08e75ef6d66a4f5c3034dc74d37ed9311b0f987a251";
-///Generated constant `SCHEMA_ID`.
+///`SCHEMA_ID` = 1.
 pub const SCHEMA_ID: u16 = 1;
-///Generated constant `SCHEMA_VERSION`.
+///`SCHEMA_VERSION` = 0.
 pub const SCHEMA_VERSION: u16 = 0;
 ///Generated module `prelude`.
 pub mod prelude {

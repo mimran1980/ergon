@@ -178,6 +178,163 @@ fn assert_decode_parity() {
     );
 }
 
+fn assert_ordered_decode_parity() {
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+    assert!(
+        CarDecoder::try_wrap(BASELINE, 0, bl_e, ver_e).is_ok(),
+        "baseline must pass the version-aware fixed extent proof"
+    );
+
+    let car = unsafe { CarDecoder::wrap_unchecked(BASELINE, 0, bl_e, ver_e) };
+    let mut fuel_rows = Vec::new();
+    let after_fuel = car
+        .into_fuel_figures()
+        .unwrap()
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            let speed = entry.speed();
+            let mpg = entry.mpg().to_bits();
+            let (usage, complete) = entry.into_usage_description()?;
+            fuel_rows.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        })
+        .unwrap();
+
+    let mut perf_rows = Vec::new();
+    let after_perf = after_fuel
+        .into_performance_figures()
+        .unwrap()
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            let octane = entry.octane_rating();
+            let mut acc = Vec::new();
+            let complete = entry.into_acceleration()?.visit_entries(
+                |a| -> Result<(), sbe_rt::DecodeError> {
+                    acc.push((a.mph(), a.seconds().to_bits()));
+                    Ok(())
+                },
+            )?;
+            perf_rows.push((octane, acc));
+            Ok(complete)
+        })
+        .unwrap();
+    let (manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
+    let (model, after_model) = after_manufacturer.into_model().unwrap();
+    let (activation_code, _) = after_model.into_activation_code().unwrap();
+
+    let mut ergon_fuel = CarDecoder::try_from(BASELINE)
+        .unwrap()
+        .into_fuel_figures()
+        .unwrap();
+    let mut expected_fuel = Vec::new();
+    while let Some(entry) = ergon_fuel.next() {
+        let entry = entry.unwrap();
+        expected_fuel.push((
+            entry.speed(),
+            entry.mpg().to_bits(),
+            entry.usage_description().unwrap().to_vec(),
+        ));
+    }
+    let after_fuel = ergon_fuel.finish().unwrap();
+    let mut ergon_perf = after_fuel.into_performance_figures().unwrap();
+    let mut expected_perf = Vec::new();
+    while let Some(entry) = ergon_perf.next() {
+        let entry = entry.unwrap();
+        let acc: Vec<_> = entry
+            .acceleration()
+            .unwrap()
+            .map(|a| (a.mph(), a.seconds().to_bits()))
+            .collect();
+        expected_perf.push((entry.octane_rating(), acc));
+    }
+    let after_perf = ergon_perf.finish().unwrap();
+    let (expected_manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
+    let (expected_model, after_model) = after_manufacturer.into_model().unwrap();
+    let (expected_activation, _) = after_model.into_activation_code().unwrap();
+
+    assert_eq!(fuel_rows, expected_fuel);
+    assert_eq!(perf_rows, expected_perf);
+    assert_eq!(manufacturer, expected_manufacturer);
+    assert_eq!(model, expected_model);
+    assert_eq!(activation_code, expected_activation);
+}
+
+fn assert_mutable_ordered_decode_parity() {
+    let (bl_e, ver_e) = ergo_sbe_header_fields();
+    assert!(
+        CarDecoder::try_wrap(BASELINE, 0, bl_e, ver_e).is_ok(),
+        "baseline must pass the version-aware fixed extent proof"
+    );
+
+    let mut car = unsafe { CarDecoder::wrap_unchecked(BASELINE, 0, bl_e, ver_e) }.ordered();
+    let mut fuel_rows = Vec::new();
+    car.fuel_figures()
+        .unwrap()
+        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            fuel_rows.push((
+                entry.speed(),
+                entry.mpg().to_bits(),
+                entry.usage_description()?.to_vec(),
+            ));
+            Ok(())
+        })
+        .unwrap();
+
+    let mut perf_rows = Vec::new();
+    car.performance_figures()
+        .unwrap()
+        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            let octane = entry.octane_rating();
+            let mut acc = Vec::new();
+            entry
+                .acceleration()?
+                .visit_entries(|a| -> Result<(), sbe_rt::DecodeError> {
+                    acc.push((a.mph(), a.seconds().to_bits()));
+                    Ok(())
+                })?;
+            perf_rows.push((octane, acc));
+            Ok(())
+        })
+        .unwrap();
+    let manufacturer = car.manufacturer().unwrap();
+    let model = car.model().unwrap();
+    let activation_code = car.activation_code().unwrap();
+
+    let mut ergon_fuel = CarDecoder::try_from(BASELINE)
+        .unwrap()
+        .into_fuel_figures()
+        .unwrap();
+    let mut expected_fuel = Vec::new();
+    while let Some(entry) = ergon_fuel.next() {
+        let entry = entry.unwrap();
+        expected_fuel.push((
+            entry.speed(),
+            entry.mpg().to_bits(),
+            entry.usage_description().unwrap().to_vec(),
+        ));
+    }
+    let after_fuel = ergon_fuel.finish().unwrap();
+    let mut ergon_perf = after_fuel.into_performance_figures().unwrap();
+    let mut expected_perf = Vec::new();
+    while let Some(entry) = ergon_perf.next() {
+        let entry = entry.unwrap();
+        let acc: Vec<_> = entry
+            .acceleration()
+            .unwrap()
+            .map(|a| (a.mph(), a.seconds().to_bits()))
+            .collect();
+        expected_perf.push((entry.octane_rating(), acc));
+    }
+    let after_perf = ergon_perf.finish().unwrap();
+    let (expected_manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
+    let (expected_model, after_model) = after_manufacturer.into_model().unwrap();
+    let (expected_activation, _) = after_model.into_activation_code().unwrap();
+
+    assert_eq!(fuel_rows, expected_fuel);
+    assert_eq!(perf_rows, expected_perf);
+    assert_eq!(manufacturer, expected_manufacturer);
+    assert_eq!(model, expected_model);
+    assert_eq!(activation_code, expected_activation);
+}
+
 fn bench_decode_entry_point(c: &mut Criterion) {
     assert_decode_parity();
     let bl = sbe_tool_block_length();
@@ -732,111 +889,277 @@ fn bench_encode_throughput(c: &mut Criterion) {
 }
 
 fn bench_decode_consuming_full(c: &mut Criterion) {
-    // Fair three-way full-message decode over the same BASELINE buffer. All
+    // Fair five-way full-message decode over the same BASELINE buffer. All
     // arms read all encoded fixed fields, both composite levels, every fuel entry
     // (speed, mpg, usage_description), every performance entry (octane_rating +
     // nested acceleration mph/seconds), and all message-level var-data. Constants
     // are excluded because they do not read the wire. sbe-tool's advance() does
     // not skip per-entry tails, so every codec must traverse the same dynamic
-    // members to advance.
+    // members to advance. Extents are proven once outside the timed region;
+    // timed wraps use the unchecked constructor.
+    assert_decode_parity();
+    assert_ordered_decode_parity();
+    assert_mutable_ordered_decode_parity();
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
     let mut group = c.benchmark_group("parity/decode/full_message");
-    group.throughput(Throughput::Elements(1));
+    group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
+
+    group.bench_function("ergo-sbe_random", |b| {
+        b.iter(|| {
+            for _ in 0..MICRO_BATCH_SIZE {
+                let car =
+                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) };
+                black_box((
+                    car.serial_number(),
+                    car.model_year(),
+                    car.available(),
+                    car.code(),
+                    car.some_numbers(),
+                    car.vehicle_code(),
+                    car.extras(),
+                ));
+                let engine = car.engine();
+                let booster = engine.booster();
+                black_box((
+                    engine.capacity(),
+                    engine.num_cylinders(),
+                    engine.manufacturer_code(),
+                    engine.efficiency(),
+                    engine.booster_enabled(),
+                    booster.boost_type(),
+                    booster.horse_power(),
+                ));
+                let mut fuel = car.fuel_figures().unwrap();
+                while let Some(Ok(e)) = fuel.next() {
+                    black_box((e.speed(), e.mpg()));
+                    black_box(e.usage_description().unwrap());
+                }
+                let mut perf = car.performance_figures().unwrap();
+                while let Some(Ok(e)) = perf.next() {
+                    black_box(e.octane_rating());
+                    for a in e.acceleration().unwrap() {
+                        black_box((a.mph(), a.seconds()));
+                    }
+                }
+                black_box((
+                    car.manufacturer().unwrap(),
+                    car.model().unwrap(),
+                    car.activation_code().unwrap(),
+                ));
+            }
+        });
+    });
 
     group.bench_function("ergo-sbe_consuming", |b| {
         b.iter(|| {
-            let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
-            black_box((
-                car.serial_number(),
-                car.model_year(),
-                car.available(),
-                car.code(),
-                car.some_numbers(),
-                car.vehicle_code(),
-                car.extras(),
-            ));
-            let engine = car.engine();
-            let booster = engine.booster();
-            black_box((
-                engine.capacity(),
-                engine.num_cylinders(),
-                engine.manufacturer_code(),
-                engine.efficiency(),
-                engine.booster_enabled(),
-                booster.boost_type(),
-                booster.horse_power(),
-            ));
-            let mut fuel = car.into_fuel_figures().unwrap();
-            while let Some(Ok(e)) = fuel.next() {
-                black_box((e.speed(), e.mpg()));
-                black_box(e.usage_description().unwrap());
-            }
-            let after_fuel = fuel.finish().unwrap();
-            let mut perf = after_fuel.into_performance_figures().unwrap();
-            while let Some(Ok(e)) = perf.next() {
-                black_box(e.octane_rating());
-                for a in e.acceleration().unwrap() {
-                    black_box((a.mph(), a.seconds()));
+            for _ in 0..MICRO_BATCH_SIZE {
+                let car =
+                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) };
+                black_box((
+                    car.serial_number(),
+                    car.model_year(),
+                    car.available(),
+                    car.code(),
+                    car.some_numbers(),
+                    car.vehicle_code(),
+                    car.extras(),
+                ));
+                let engine = car.engine();
+                let booster = engine.booster();
+                black_box((
+                    engine.capacity(),
+                    engine.num_cylinders(),
+                    engine.manufacturer_code(),
+                    engine.efficiency(),
+                    engine.booster_enabled(),
+                    booster.boost_type(),
+                    booster.horse_power(),
+                ));
+                let mut fuel = car.into_fuel_figures().unwrap();
+                while let Some(Ok(e)) = fuel.next() {
+                    black_box((e.speed(), e.mpg()));
+                    black_box(e.usage_description().unwrap());
                 }
+                let after_fuel = fuel.finish().unwrap();
+                let mut perf = after_fuel.into_performance_figures().unwrap();
+                while let Some(Ok(e)) = perf.next() {
+                    black_box(e.octane_rating());
+                    for a in e.acceleration().unwrap() {
+                        black_box((a.mph(), a.seconds()));
+                    }
+                }
+                let after_perf = perf.finish().unwrap();
+                let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+                let (model, a2) = a1.into_model().unwrap();
+                let (code, _done) = a2.into_activation_code().unwrap();
+                black_box((mfr, model, code));
             }
-            let after_perf = perf.finish().unwrap();
-            let (mfr, a1) = after_perf.into_manufacturer().unwrap();
-            let (model, a2) = a1.into_model().unwrap();
-            let (code, _done) = a2.into_activation_code().unwrap();
-            black_box((mfr, model, code));
+        });
+    });
+
+    group.bench_function("ergo-sbe_ordered", |b| {
+        b.iter(|| {
+            for _ in 0..MICRO_BATCH_SIZE {
+                let car =
+                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) };
+                black_box((
+                    car.serial_number(),
+                    car.model_year(),
+                    car.available(),
+                    car.code(),
+                    car.some_numbers(),
+                    car.vehicle_code(),
+                    car.extras(),
+                ));
+                let engine = car.engine();
+                let booster = engine.booster();
+                black_box((
+                    engine.capacity(),
+                    engine.num_cylinders(),
+                    engine.manufacturer_code(),
+                    engine.efficiency(),
+                    engine.booster_enabled(),
+                    booster.boost_type(),
+                    booster.horse_power(),
+                ));
+                let after_fuel = car
+                    .into_fuel_figures()
+                    .unwrap()
+                    .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+                        black_box((entry.speed(), entry.mpg()));
+                        let (usage, complete) = entry.into_usage_description()?;
+                        black_box(usage);
+                        Ok(complete)
+                    })
+                    .unwrap();
+                let after_perf = after_fuel
+                    .into_performance_figures()
+                    .unwrap()
+                    .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+                        black_box(entry.octane_rating());
+                        entry.into_acceleration()?.visit_entries(
+                            |a| -> Result<(), sbe_rt::DecodeError> {
+                                black_box((a.mph(), a.seconds()));
+                                Ok(())
+                            },
+                        )
+                    })
+                    .unwrap();
+                let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+                let (model, a2) = a1.into_model().unwrap();
+                let (code, _done) = a2.into_activation_code().unwrap();
+                black_box((mfr, model, code));
+            }
+        });
+    });
+
+    group.bench_function("ergo-sbe_mutable_ordered", |b| {
+        b.iter(|| {
+            for _ in 0..MICRO_BATCH_SIZE {
+                let mut car =
+                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) }
+                        .ordered();
+                black_box((
+                    car.serial_number(),
+                    car.model_year(),
+                    car.available(),
+                    car.code(),
+                    car.some_numbers(),
+                    car.vehicle_code(),
+                    car.extras(),
+                ));
+                let engine = car.engine();
+                let booster = engine.booster();
+                black_box((
+                    engine.capacity(),
+                    engine.num_cylinders(),
+                    engine.manufacturer_code(),
+                    engine.efficiency(),
+                    engine.booster_enabled(),
+                    booster.boost_type(),
+                    booster.horse_power(),
+                ));
+                car.fuel_figures()
+                    .unwrap()
+                    .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                        black_box((entry.speed(), entry.mpg()));
+                        black_box(entry.usage_description()?);
+                        Ok(())
+                    })
+                    .unwrap();
+                car.performance_figures()
+                    .unwrap()
+                    .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                        black_box(entry.octane_rating());
+                        entry.acceleration()?.visit_entries(
+                            |a| -> Result<(), sbe_rt::DecodeError> {
+                                black_box((a.mph(), a.seconds()));
+                                Ok(())
+                            },
+                        )
+                    })
+                    .unwrap();
+                black_box((
+                    car.manufacturer().unwrap(),
+                    car.model().unwrap(),
+                    car.activation_code().unwrap(),
+                ));
+            }
         });
     });
 
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            let mut car = sbe_tool_car_body_decoder(black_box(BASELINE), 0, bl, ver);
-            black_box((
-                car.serial_number(),
-                car.model_year(),
-                car.available(),
-                car.code(),
-                car.some_numbers(),
-                car.vehicle_code(),
-                car.extras(),
-            ));
-            let engine = car.engine_decoder();
-            black_box((
-                engine.capacity(),
-                engine.num_cylinders(),
-                engine.manufacturer_code(),
-                engine.efficiency(),
-                engine.booster_enabled(),
-            ));
-            let mut booster = engine.booster_decoder();
-            black_box((booster.boost_type(), booster.horse_power()));
-            let mut engine = booster.parent().unwrap();
-            car = engine.parent().unwrap();
-            let mut ff = car.fuel_figures_decoder();
-            while let Some(_) = ff.advance().unwrap() {
-                black_box((ff.speed(), ff.mpg()));
-                let c = ff.usage_description_decoder();
-                black_box(ff.usage_description_slice(c));
-            }
-            car = ff.parent().unwrap();
-            let mut pf = car.performance_figures_decoder();
-            while let Some(_) = pf.advance().unwrap() {
-                black_box(pf.octane_rating());
-                let mut acc = pf.acceleration_decoder();
-                while let Some(_) = acc.advance().unwrap() {
-                    black_box((acc.mph(), acc.seconds()));
+            for _ in 0..MICRO_BATCH_SIZE {
+                let mut car = sbe_tool_car_body_decoder(black_box(BASELINE), 0, bl, ver);
+                black_box((
+                    car.serial_number(),
+                    car.model_year(),
+                    car.available(),
+                    car.code(),
+                    car.some_numbers(),
+                    car.vehicle_code(),
+                    car.extras(),
+                ));
+                let engine = car.engine_decoder();
+                black_box((
+                    engine.capacity(),
+                    engine.num_cylinders(),
+                    engine.manufacturer_code(),
+                    engine.efficiency(),
+                    engine.booster_enabled(),
+                ));
+                let mut booster = engine.booster_decoder();
+                black_box((booster.boost_type(), booster.horse_power()));
+                let mut engine = booster.parent().unwrap();
+                car = engine.parent().unwrap();
+                let mut ff = car.fuel_figures_decoder();
+                while let Some(_) = ff.advance().unwrap() {
+                    black_box((ff.speed(), ff.mpg()));
+                    let c = ff.usage_description_decoder();
+                    black_box(ff.usage_description_slice(c));
                 }
-                pf = acc.parent().unwrap();
+                car = ff.parent().unwrap();
+                let mut pf = car.performance_figures_decoder();
+                while let Some(_) = pf.advance().unwrap() {
+                    black_box(pf.octane_rating());
+                    let mut acc = pf.acceleration_decoder();
+                    while let Some(_) = acc.advance().unwrap() {
+                        black_box((acc.mph(), acc.seconds()));
+                    }
+                    pf = acc.parent().unwrap();
+                }
+                car = pf.parent().unwrap();
+                let mfr = car.manufacturer_decoder();
+                black_box(car.manufacturer_slice(mfr));
+                let model = car.model_decoder();
+                black_box(car.model_slice(model));
+                let code = car.activation_code_decoder();
+                black_box(car.activation_code_slice(code));
             }
-            car = pf.parent().unwrap();
-            let mfr = car.manufacturer_decoder();
-            black_box(car.manufacturer_slice(mfr));
-            let model = car.model_decoder();
-            black_box(car.model_slice(model));
-            let code = car.activation_code_decoder();
-            black_box(car.activation_code_slice(code));
         });
     });
 

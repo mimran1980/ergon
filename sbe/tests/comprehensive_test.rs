@@ -50,6 +50,108 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(BooleanType::from_raw(0), BooleanType::F);
         assert!(matches!(BooleanType::from_raw(99), BooleanType::NullVal));
         assert_eq!(car2.discounted_model(), Model::C);
+
+        // as_str(): &'static str, no allocation, same text Display writes.
+        let s: &'static str = car2.available().as_str();
+        assert_eq!(s, "T");
+        assert_eq!(Model::A.as_str(), "A");
+        assert_eq!(BooleanType::NullVal.as_str(), "NullVal");
+        assert_eq!(car2.available().as_str(), car2.available().to_string());
+        assert_eq!(Model::A.as_str(), format!("{}", Model::A));
+    "#,
+    );
+
+    Ok(())
+}
+
+/// Fixed-block fields are randomly accessible: every accessor reads from a
+/// literal, compile-time byte offset relative to the message/entry start
+/// (`self.offset + N`, `N` a `usize` constant baked in at codegen time — see
+/// the golden file). There is no cursor that a read advances or consumes, so
+/// access order can never change the result, and reading a field twice with
+/// unrelated reads in between must give the same answer both times. This
+/// mirrors sbe-tool's own generated accessors exactly (same
+/// `self.offset + N` shape) — official-SBE fixed blocks are order-independent
+/// on both sides, not an ergon-only property.
+#[test]
+fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "field_order");
+    compile_and_run(
+        "field_order",
+        &src,
+        r#"
+        let mut buf = [0u8; 256];
+        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
+            .unwrap()
+            .fixed(&CarFixedFields {
+                serial_number: 123_456_789,
+                model_year: 2024,
+                available: BooleanType::T,
+                code: Model::B,
+                some_numbers: [10, 20, 30, 40],
+                vehicle_code: *b"ABCDEF",
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1200, 6, [1, 2, 3], -5i8, BooleanType::T, Booster::new(BoostType::SUPERCHARGER, 7)),
+            });
+        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
+        let car = car.performance_figures(0, |_| Ok(())).unwrap();
+        let car = car.manufacturer(b"").unwrap();
+        let car = car.model(b"").unwrap();
+        let car = car.activation_code(b"").unwrap();
+        let encoded = car.as_bytes_with_header();
+
+        // Declaration (forward) order, on a fresh decode.
+        let fwd = CarDecoder::try_decode(encoded, 0).unwrap();
+        let serial = fwd.serial_number();
+        let year = fwd.model_year();
+        let avail = fwd.available();
+        let code = fwd.code();
+        let nums = fwd.some_numbers();
+        let vcode = fwd.vehicle_code();
+        let cap = fwd.engine().capacity();
+
+        // Exact reverse order, on a SEPARATE fresh decode — same buffer.
+        let rev = CarDecoder::try_decode(encoded, 0).unwrap();
+        assert_eq!(rev.engine().capacity(), cap);
+        assert_eq!(rev.vehicle_code(), vcode);
+        assert_eq!(rev.some_numbers(), nums);
+        assert_eq!(rev.code(), code);
+        assert_eq!(rev.available(), avail);
+        assert_eq!(rev.model_year(), year);
+        assert_eq!(rev.serial_number(), serial);
+
+        // Scrambled order, on a THIRD fresh decode — deliberately not
+        // ascending, not descending, not the schema's own field order.
+        let mix = CarDecoder::try_decode(encoded, 0).unwrap();
+        assert_eq!(mix.code(), code);
+        assert_eq!(mix.serial_number(), serial);
+        assert_eq!(mix.engine().capacity(), cap);
+        assert_eq!(mix.available(), avail);
+        assert_eq!(mix.vehicle_code(), vcode);
+        assert_eq!(mix.model_year(), year);
+        assert_eq!(mix.some_numbers(), nums);
+
+        // Idempotent re-read: the same field read twice, with unrelated
+        // reads sandwiched between, must agree both times. If a fixed-field
+        // read consumed or advanced any hidden state, this would be the
+        // first place it broke.
+        let d = CarDecoder::try_decode(encoded, 0).unwrap();
+        let code_first = d.code();
+        let _ = d.serial_number();
+        let _ = d.engine();
+        let _ = d.some_numbers();
+        let code_second = d.code();
+        assert_eq!(code_first, code_second);
+        assert_eq!(code_first, Model::B);
+
+        // Values themselves, for good measure.
+        assert_eq!(serial, 123_456_789);
+        assert_eq!(year, 2024);
+        assert_eq!(avail, BooleanType::T);
+        assert_eq!(code, Model::B);
+        assert_eq!(nums, [10, 20, 30, 40]);
+        assert_eq!(vcode, *b"ABCDEF");
+        assert_eq!(cap, 1200);
     "#,
     );
 
@@ -1087,6 +1189,14 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
     assert!(src.contains("fn skip_n"), "missing group skip_n()");
     assert!(src.contains("fn rewind"), "missing group rewind()");
     assert!(src.contains("fn remaining"), "missing group remaining()");
+    assert!(
+        src.contains("fn remaining_entries"),
+        "missing group remaining_entries()"
+    );
+    assert!(
+        src.contains("fn visit_entries"),
+        "missing group visit_entries()"
+    );
 
     // Composite value type methods (engine_value returns Engine with fields)
     // Note: most Engine accessors are now pub fn (non-const) after read_bytes change

@@ -1572,6 +1572,16 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
             .any(|s| s.contains("fn is_empty(")),
         "group decoder `is_empty` missing #[inline]"
     );
+    assert!(
+        inline_followed_by
+            .iter()
+            .any(|s| s.contains("fn remaining_entries(")),
+        "group decoder `remaining_entries` missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn visit_entries"),
+        "attached group decoder `visit_entries` missing #[inline]"
+    );
     // Group decoder wrap — #[inline] precedes `pub fn wrap(`, but acting_version
     // is on a subsequent line when prettyplease breaks the signature. Check
     // that within 4 lines after #[inline], one line has `fn wrap(` and another

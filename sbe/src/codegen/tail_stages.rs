@@ -112,6 +112,31 @@ pub(crate) fn generate_owner_consuming_stages(
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let se = start_expr(i);
         let pp = parent_pos_expr(i);
+        let absent_group = if tg.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &tg.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    // SAFETY: this stage was reached in wire order, so `#pp`
+                    // and `self.acting_block_length` describe the real parent
+                    // body. The group is not on the wire at this version: it
+                    // occupies zero bytes and is immediately complete.
+                    return Ok(unsafe {
+                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_absent_parent(
+                            self.buf,
+                            group_start,
+                            self.acting_version,
+                            #pp,
+                            self.acting_block_length,
+                        )
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Consume this stage and start decoding the next tail group,
@@ -122,6 +147,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     self,
                 ) -> Result<#g_decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                     let group_start = #se;
+                    #absent_group
                     // SAFETY: this stage was reached by consuming the message in
                     // wire order, so `#pp` and `self.acting_block_length`
                     // describe the real parent body and `group_start` is this
@@ -208,12 +234,33 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
             });
         }
+        let absent_vardata = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    let next = #next_stage {
+                        buf: self.buf,
+                        offset: #pp,
+                        tail_start: #se,
+                        acting_version: self.acting_version,
+                        acting_block_length: self.acting_block_length,
+                    };
+                    return Ok((&[][..], next));
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         ts.extend(quote::quote! {
             impl<'a> #current_stage<'a> {
                 /// Consume this stage, read the next var-data field, and advance
                 /// to the following stage. Wire order is enforced by consumption.
                 #[inline]
                 pub fn #into_ident(self) -> Result<(&'a [u8], #next_stage<'a>), sbe_rt::DecodeError> {
+                    #absent_vardata
                     let offset = #se;
                     if offset + #prefix_size_lit > self.buf.len() {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -482,6 +529,7 @@ pub(crate) fn generate_owner_consuming_stages(
         let next_stage = stage_after_ident(i);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
+        let g_name_lit = syn::LitStr::new(&tg.name, span);
         let poisoned_finish_guard = if tg.entries_have_tails {
             quote::quote! {
                 if let Some(error) = self.poisoned {
@@ -491,8 +539,132 @@ pub(crate) fn generate_owner_consuming_stages(
         } else {
             proc_macro2::TokenStream::new()
         };
+        let poisoned_visit_guard = if tg.entries_have_tails {
+            quote::quote! {
+                if let Some(error) = self.poisoned {
+                    return Err(E::from(error));
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
+        let visit_entries_body = if tg.entries_have_tails {
+            let entry_complete_ident =
+                syn::Ident::new(&format!("{entry_decoder_ident}Complete",), span);
+            quote::quote! {
+                /// Consume every remaining entry in one pass and return the next
+                /// parent stage.
+                ///
+                /// The callback must return this entry's generated completion
+                /// stage. Dynamic `visit_entries` does not pre-scan
+                /// `encoded_length()`; the next cursor comes from that
+                /// completion. Empty groups invoke the callback zero times.
+                ///
+                /// A callback or decoding error consumes this ordered stage and
+                /// returns no continuation. Returning a completion that does
+                /// not belong to the supplied entry panics.
+                #[inline]
+                pub fn visit_entries<E, F>(
+                    mut self,
+                    mut visit: F,
+                ) -> Result<#next_stage<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnMut(
+                        #entry_decoder_ident<'a>,
+                    ) -> Result<#entry_complete_ident<'a>, E>,
+                {
+                    #poisoned_visit_guard
+                    while self.count > 0 {
+                        let available = self.buf.len().saturating_sub(self.offset);
+                        if self.min_entry_extent > available {
+                            return Err(E::from(sbe_rt::DecodeError::BufferTooShort {
+                                field: #g_name_lit,
+                                needed: self.min_entry_extent,
+                                available,
+                            }));
+                        }
+                        // SAFETY: acting fixed block proven in-bounds above.
+                        // The callback walks the dynamic tail; the next cursor
+                        // is the returned completion's `tail_start`.
+                        let entry = unsafe {
+                            #entry_decoder_ident::wrap(
+                                self.buf,
+                                self.offset,
+                                self.acting_block_length,
+                                self.acting_version,
+                            )
+                        };
+                        let complete = visit(entry)?;
+                        if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
+                            || complete.buf.len() != self.buf.len()
+                            || complete.offset != self.offset
+                            || complete.acting_version != self.acting_version
+                            || complete.acting_block_length != self.acting_block_length
+                        {
+                            panic!(
+                                "visit_entries callback returned a completion that does not belong to the supplied entry"
+                            );
+                        }
+                        self.offset = complete.tail_start;
+                        self.count -= 1;
+                    }
+                    let tail_start = self.offset;
+                    Ok(self.into_parent_stage(tail_start))
+                }
+            }
+        } else {
+            quote::quote! {
+                /// Consume every remaining entry in one pass and return the next
+                /// parent stage.
+                ///
+                /// Fixed-stride entries advance by the acting block length.
+                /// Empty groups invoke the callback zero times.
+                ///
+                /// A callback or decoding error consumes this ordered stage and
+                /// returns no continuation.
+                #[inline]
+                pub fn visit_entries<E, F>(
+                    mut self,
+                    mut visit: F,
+                ) -> Result<#next_stage<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnMut(#entry_decoder_ident<'a>) -> Result<(), E>,
+                {
+                    while self.count > 0 {
+                        // SAFETY: wrap_with_parent proved the whole
+                        // count × acting-block-length region for this
+                        // fixed-stride group.
+                        let entry = unsafe {
+                            #entry_decoder_ident::wrap(
+                                self.buf,
+                                self.offset,
+                                self.acting_block_length,
+                                self.acting_version,
+                            )
+                        };
+                        visit(entry)?;
+                        self.offset += self.acting_block_length;
+                        self.count -= 1;
+                    }
+                    let tail_start = self.offset;
+                    Ok(self.into_parent_stage(tail_start))
+                }
+            }
+        };
         ts.extend(quote::quote! {
             impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
+                #[inline]
+                fn into_parent_stage(self, tail_start: usize) -> #next_stage<'a> {
+                    #next_stage {
+                        buf: self.buf,
+                        offset: self.parent_pos,
+                        tail_start,
+                        acting_version: self.acting_version,
+                        acting_block_length: self.parent_block_length,
+                    }
+                }
                 /// Scan past any unread entries (including nested tails) in wire
                 /// order and return the next decoder stage.
                 ///
@@ -512,19 +684,14 @@ pub(crate) fn generate_owner_consuming_stages(
                         offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
                         remaining -= 1;
                     }
-                    Ok(#next_stage {
-                        buf: self.buf,
-                        offset: self.parent_pos,
-                        tail_start: offset,
-                        acting_version: self.acting_version,
-                        acting_block_length: self.parent_block_length,
-                    })
+                    Ok(self.into_parent_stage(offset))
                 }
                 /// Explicit sequential spelling of "advance past the rest of this group".
                 #[inline]
                 pub fn skip_remaining(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
                     self.finish()
                 }
+                #visit_entries_body
             }
         });
     }
@@ -595,11 +762,13 @@ pub(crate) fn generate_decoder_consuming_stages(
         .iter()
         .enumerate()
         .map(|(gi, g)| OwnerTailGroup {
+            name: g.name.clone(),
             accessor_snake: to_snake_case(&g.name),
             field_pascal: to_pascal_case(&g.name),
             group_decoder_ident: format!("{}Decoder", group_unique_names[gi]),
             entry_decoder_ident: format!("{}EntryDecoder", group_unique_names[gi]),
             entries_have_tails: g.has_dynamic_entries(),
+            since_version: g.since_version,
         })
         .collect();
     let vardata: Vec<OwnerTailVarData> = msg
@@ -618,6 +787,7 @@ pub(crate) fn generate_decoder_consuming_stages(
                 max_length: vd.max_length,
                 name: vd.name.clone(),
                 character_encoding: vd.character_encoding.clone(),
+                since_version: vd.since_version,
             }
         })
         .collect();
@@ -652,11 +822,13 @@ pub(crate) fn generate_entry_consuming_stages(
         .map(|ng| {
             let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
             OwnerTailGroup {
+                name: ng.name.clone(),
                 accessor_snake: to_snake_case(&ng.name),
                 field_pascal: to_pascal_case(&ng.name),
                 group_decoder_ident: format!("{ng_pascal}Decoder"),
                 entries_have_tails: ng.has_dynamic_entries(),
                 entry_decoder_ident: format!("{ng_pascal}EntryDecoder"),
+                since_version: ng.since_version,
             }
         })
         .collect();
@@ -676,6 +848,7 @@ pub(crate) fn generate_entry_consuming_stages(
                 max_length: vd.max_length,
                 name: vd.name.clone(),
                 character_encoding: vd.character_encoding.clone(),
+                since_version: vd.since_version,
             }
         })
         .collect();

@@ -10,7 +10,10 @@
 //! |------|---------|
 //! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
-//! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
+//! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` groups → var-data) |
+//! | [`demo_car_visit_entries`] | Staged one-pass `visit_entries` + `remaining_entries` |
+//! | [`demo_car_random_access`] | Random-access lane (any-order dynamic getters) |
+//! | [`demo_car_mutable_ordered`] | Mutable ordered lane (`ordered()` + runtime order checks) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
@@ -305,6 +308,92 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 // ANCHOR_END: demo_car_decode_stages
+
+/// Walk Car through the ordered one-pass group path.
+// ANCHOR: demo_car_visit_entries
+pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_decode(wire, 0)?;
+    let figures = car.into_fuel_figures()?;
+    let count = figures.remaining_entries();
+    assert!(count > 0);
+    assert!(!figures.is_empty());
+
+    let mut speeds = Vec::new();
+    let mut octanes = Vec::new();
+    let (mfr, car) = figures
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            speeds.push(entry.speed());
+            let (_usage, complete) = entry.into_usage_description()?;
+            Ok(complete)
+        })?
+        .into_performance_figures()?
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            octanes.push(entry.octane_rating());
+            entry
+                .into_acceleration()?
+                .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+        })?
+        .into_manufacturer_as_str()?;
+    let (model, car) = car.into_model_as_str()?;
+    let (code, _) = car.into_activation_code_as_str()?;
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(octanes, vec![95]);
+    assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
+    Ok(())
+}
+// ANCHOR_END: demo_car_visit_entries
+
+/// Random-access lane: dynamic getters may be called in any order.
+// ANCHOR: demo_car_random_access
+pub fn demo_car_random_access(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_decode(wire, 0)?;
+    // Manufacturer is the first var-data field, after both groups — still legal
+    // here because random access rescan preceding tails.
+    assert_eq!(car.manufacturer()?, b"Honda");
+    assert_eq!(car.serial_number(), 1234);
+    let mut speeds = Vec::new();
+    for entry in car.fuel_figures()? {
+        speeds.push(entry?.speed());
+    }
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(car.model()?, b"Civic VTi");
+    Ok(())
+}
+// ANCHOR_END: demo_car_random_access
+
+/// Mutable ordered lane: one cursor, schema-order tails, runtime OutOfOrder.
+// ANCHOR: demo_car_mutable_ordered
+pub fn demo_car_mutable_ordered(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut car = CarDecoder::try_decode(wire, 0)?.ordered();
+    assert_eq!(car.serial_number(), 1234);
+    let figures = car.fuel_figures()?;
+    assert!(figures.remaining_entries() > 0);
+    let mut speeds = Vec::new();
+    figures.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+        speeds.push(entry.speed());
+        let _usage = entry.usage_description()?;
+        Ok(())
+    })?;
+    car.performance_figures()?
+        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            let _ = entry.octane_rating();
+            entry
+                .acceleration()?
+                .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
+            Ok(())
+        })?;
+    let manufacturer = car.manufacturer_as_str()?;
+    let model = car.model_as_str()?;
+    let code = car.activation_code_as_str()?;
+    let _complete = car.finish()?;
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(
+        (manufacturer, model, code),
+        ("Honda", "Civic VTi", "abcdef")
+    );
+    Ok(())
+}
+// ANCHOR_END: demo_car_mutable_ordered
 
 // ─── 4. Domain DTO ─────────────────────────────────────────────────────────
 
@@ -679,6 +768,18 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("3) Car decode consuming stages");
     demo_car_decode_stages(&car)?;
+    println!("   ok\n");
+
+    println!("3b) Car ordered visit_entries");
+    demo_car_visit_entries(&car)?;
+    println!("   ok\n");
+
+    println!("3c) Car random-access lane");
+    demo_car_random_access(&car)?;
+    println!("   ok\n");
+
+    println!("3d) Car mutable ordered lane");
+    demo_car_mutable_ordered(&car)?;
     println!("   ok\n");
 
     println!("4) CarDomain DTO round-trip");
