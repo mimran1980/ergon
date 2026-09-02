@@ -17,7 +17,13 @@ exclude = [
     "tests/",
     "benches/",
     "examples/",
+    "probes.tsv",
 ]
+# Both files under benches/ are declared explicitly below (one [[bench]], one
+# [[bin]]). Without this, auto-discovery ALSO registers cluster_perf_probe.rs
+# as a bench (any *.rs under benches/ qualifies), colliding with its explicit
+# [[bin]] declaration on the same path.
+autobenches = false
 
 [dependencies]
 rusteron-client = { workspace = true }
@@ -48,3 +54,10 @@ missing_docs = "warn"
 [[bench]]
 name = "cluster_codec_bench"
 harness = false
+
+# Mechanism-level probe binary — see cluster_perf_probe.rs. Not a criterion
+# bench (no `harness = false` timing use); driven by
+# scripts/run-cluster-instruction-probes.sh under raw Callgrind.
+[[bin]]
+name = "cluster_perf_probe"
+path = "benches/cluster_perf_probe.rs"

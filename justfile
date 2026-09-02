@@ -423,6 +423,13 @@ bench-cold:
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 
+# Same mechanism-level evidence as `bench-instructions`, for cluster codec
+# pairs — currently `cluster_decode_session_event`, the pair carrying a
+# documented no-LTO-only wall-clock allowance (see check-bench-gate.sh).
+# Same Linux/Valgrind/llvm-objdump requirement and fail-closed contract.
+bench-cluster-instructions:
+    ./scripts/run-cluster-instruction-probes.sh --all-profiles
+
 # Regenerate the two sbe-tool comparators the head-to-head benches measure
 # against, from the pinned simple-binary-encoding submodule.
 update-bench-reference:

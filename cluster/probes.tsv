@@ -1,0 +1,3 @@
+symbol	arm	pair	topic	operations
+ergo_probe_decode_session_event	ergon	cluster_decode_session_event	decode	10000
+tool_probe_decode_session_event	sbe-tool	cluster_decode_session_event	decode	10000
