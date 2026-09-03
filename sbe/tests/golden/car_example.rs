@@ -2502,8 +2502,7 @@ impl<'a> CarDecoder<'a> {
         Ok(self.byte_offset() + self.acting_block_length)
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_0()?;
+    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
@@ -2535,8 +2534,7 @@ impl<'a> CarDecoder<'a> {
         Ok(offset)
     }
     #[inline]
-    fn tail_offset_2(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_1()?;
+    fn walk_tail_1(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
@@ -2568,8 +2566,7 @@ impl<'a> CarDecoder<'a> {
         Ok(offset)
     }
     #[inline]
-    fn tail_offset_3(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_2()?;
+    fn walk_tail_2(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "manufacturer",
@@ -2590,8 +2587,7 @@ impl<'a> CarDecoder<'a> {
         Ok(data_end)
     }
     #[inline]
-    fn tail_offset_4(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_3()?;
+    fn walk_tail_3(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "model",
@@ -2612,8 +2608,7 @@ impl<'a> CarDecoder<'a> {
         Ok(data_end)
     }
     #[inline]
-    fn tail_offset_5(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_4()?;
+    fn walk_tail_4(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "activationCode",
@@ -2632,6 +2627,31 @@ impl<'a> CarDecoder<'a> {
             self.buf.len(),
         )?;
         Ok(data_end)
+    }
+    #[inline]
+    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_0()?;
+        self.walk_tail_0(start)
+    }
+    #[inline]
+    fn tail_offset_2(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_1()?;
+        self.walk_tail_1(start)
+    }
+    #[inline]
+    fn tail_offset_3(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_2()?;
+        self.walk_tail_2(start)
+    }
+    #[inline]
+    fn tail_offset_4(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_3()?;
+        self.walk_tail_3(start)
+    }
+    #[inline]
+    fn tail_offset_5(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_4()?;
+        self.walk_tail_4(start)
     }
     ///Generated method `fuel_figures`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2818,7 +2838,12 @@ impl<'a> CarDecoder<'a> {
     /// message position. The consumed stage cannot be reused.
     #[inline]
     pub fn rewind(self) -> Self {
-        self
+        Self {
+            buf: self.buf,
+            offset: self.offset,
+            acting_version: self.acting_version,
+            acting_block_length: self.acting_block_length,
+        }
     }
     ///Generated method `encoded_length`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -3561,8 +3586,9 @@ pub struct FuelFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by
-    /// `encoded_length`, reused by the last var-data accessor.
+    /// One-shot entry-extent cache: filled by `encoded_length`,
+    /// reused by the last var-data accessor. `Cell` keeps `&self`
+    /// getters and makes the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -3666,8 +3692,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Ok(self.offset + self.acting_block_length)
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_0()?;
+    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "usageDescription",
@@ -3686,6 +3711,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             self.buf.len(),
         )?;
         Ok(data_end)
+    }
+    #[inline]
+    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_0()?;
+        self.walk_tail_0(start)
     }
     ///Generated method `usage_description`.
     #[inline]
@@ -3839,10 +3869,6 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     ///Cheaper than [`Self::into_usage_description`] when only the bytes are needed.
     #[inline]
     pub fn usage_description_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        if let Some(end) = self.tail_end.get() {
-            let data_offset = self.offset + self.acting_block_length + 4;
-            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-        }
         let offset = self.offset + self.acting_block_length;
         if offset + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -4433,8 +4459,9 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by
-    /// `encoded_length`, reused by the last var-data accessor.
+    /// One-shot entry-extent cache: filled by `encoded_length`,
+    /// reused by the last var-data accessor. `Cell` keeps `&self`
+    /// getters and makes the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
@@ -4505,8 +4532,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         Ok(self.offset + self.acting_block_length)
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_0()?;
+    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
@@ -4536,6 +4562,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             idx += 1;
         }
         Ok(offset)
+    }
+    #[inline]
+    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_0()?;
+        self.walk_tail_0(start)
     }
     ///Generated method `acceleration`.
     #[inline]

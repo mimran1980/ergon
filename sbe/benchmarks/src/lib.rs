@@ -38,6 +38,14 @@ ergo_sbe::sbe_mod!(pub codec_matrix_custom_header = "codec_matrix_custom_header_
 ergo_sbe::sbe_mod!(pub orderbook = "orderbook_bench");
 // Orderbook with Decimal composite (price: mantissa+exponent, qty: mantissa+exponent).
 ergo_sbe::sbe_mod!(pub orderbook_decimal = "orderbook_decimal_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3_v0 = "versioned_l3_v0_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3_v1 = "versioned_l3_v1_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3_v2 = "versioned_l3_v2_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3 = "versioned_l3_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3_compact = "versioned_l3_compact_bench");
+ergo_sbe::sbe_mod!(pub versioned_l3_uncached = "versioned_l3_uncached_bench");
+// Shared dense/sparse/empty L3 book plus one encoder per acting version.
+pub mod versioned_l3_fixture;
 // L2 orderbook with Decimal (rust_decimal conversion) for converter benchmarks.
 ergo_sbe::sbe_mod!(pub l2book = "l2book_bench");
 // Null/optional field benchmark schema.

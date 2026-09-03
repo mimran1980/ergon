@@ -208,6 +208,62 @@ const VARIANTS: &[Variant] = &[
         build: |c| with_matrix_domain_types(c.profile(GenerationProfile::Lean)),
     },
     Variant {
+        name: "flyweight_compact_tail_offsets",
+        domain_impls: false,
+        build: |c| {
+            c.with_memoized_tail_offsets(true)
+                .with_compact_tail_offsets(true)
+        },
+    },
+    Variant {
+        name: "flyweight_encode_version_0",
+        domain_impls: false,
+        build: |c| c.with_encode_version(0),
+    },
+    Variant {
+        name: "flyweight_uncached_tail_offsets",
+        domain_impls: false,
+        build: |c| c.with_memoized_tail_offsets(false),
+    },
+    // Memoization is off by default, so the cache path needs its own cells.
+    Variant {
+        name: "flyweight_memoized_tail_offsets",
+        domain_impls: false,
+        build: |c| c.with_memoized_tail_offsets(true),
+    },
+    Variant {
+        name: "flyweight_memoized_encode_version_0",
+        domain_impls: false,
+        build: |c| c.with_memoized_tail_offsets(true).with_encode_version(0),
+    },
+    // The two tail-offset knobs are independent: compact storage only has
+    // meaning when a cache exists, so this cell proves turning memoization off
+    // wins rather than emitting a compact cache nothing reads.
+    Variant {
+        name: "flyweight_uncached_overrides_compact",
+        domain_impls: false,
+        build: |c| {
+            c.with_compact_tail_offsets(true)
+                .with_memoized_tail_offsets(false)
+        },
+    },
+    Variant {
+        name: "domain_objects_uncached_tail_offsets",
+        domain_impls: true,
+        build: |c| {
+            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
+                .with_memoized_tail_offsets(false)
+        },
+    },
+    Variant {
+        name: "domain_objects_memoized_tail_offsets",
+        domain_impls: true,
+        build: |c| {
+            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
+                .with_memoized_tail_offsets(true)
+        },
+    },
+    Variant {
         name: "domain_objects_null_as_option",
         domain_impls: true,
         build: |c| {

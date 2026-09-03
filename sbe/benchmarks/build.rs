@@ -4,7 +4,39 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn generate_versioned_l3(sbe_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let schema = sbe_root.join("tests/fixtures/schemas/versioned-l3-v3.xml");
+    for version in 0u16..=3 {
+        let module = if version == 3 {
+            "versioned_l3_bench".to_string()
+        } else {
+            format!("versioned_l3_v{version}_bench")
+        };
+        // The cache arm: memoization is opt-in, and these modules are what the
+        // cache tests and the memoization benchmark measure.
+        let mut cfg = ergo_sbe::GenerationConfig::new(&module).with_memoized_tail_offsets(true);
+        if version < 3 {
+            cfg = cfg.with_encode_version(version);
+        }
+        ergo_sbe::generate_to_out_dir(&schema, cfg)?;
+    }
+    ergo_sbe::generate_to_out_dir(
+        &schema,
+        ergo_sbe::GenerationConfig::new("versioned_l3_compact_bench")
+            .with_memoized_tail_offsets(true)
+            .with_compact_tail_offsets(true),
+    )?;
+    // The other side of `with_memoized_tail_offsets`: same schema, the default
+    // uncached decoder.
+    ergo_sbe::generate_to_out_dir(
+        &schema,
+        ergo_sbe::GenerationConfig::new("versioned_l3_uncached_bench"),
+    )?;
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/versioned-l3-v3.xml");
+    Ok(())
+}
 
 /// Generate the codecs the Criterion benches compile against.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,6 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &matrix_custom_header_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_custom_header_bench"),
     )?;
+
+    generate_versioned_l3(sbe_root)?;
 
     println!("cargo:rerun-if-changed=../src/codegen");
     println!("cargo:rerun-if-changed=../src/codegen/mod.rs");

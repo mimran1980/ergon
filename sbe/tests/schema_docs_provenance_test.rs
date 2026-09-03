@@ -248,9 +248,22 @@ fn single_line_description_html_chars_are_escaped() -> Result<(), Box<dyn std::e
         src.contains("A &amp; B"),
         "ampersand must be escaped once, not left raw or double-escaped: {src}"
     );
+    // Scoped to doc lines: only `#[doc]` content is rustdoc-parsed, and the
+    // generated runtime legitimately contains ordinary Rust whose signatures
+    // read as `Option<u32>` (`CompactTailOffset::encode`). A whole-file
+    // substring scan cannot tell schema prose from code, so it would fail on
+    // unrelated generator changes while still missing an unescaped
+    // description emitted on any item this test does not name.
+    let unescaped: Vec<&str> = src
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("///") || line.starts_with("#[doc"))
+        .filter(|line| line.contains("Option<u32>") || line.contains(" A & B"))
+        .collect();
     assert!(
-        !src.contains("Option<u32>"),
-        "must not contain unescaped angle brackets that rustdoc would parse as an HTML tag"
+        unescaped.is_empty(),
+        "doc lines must not contain unescaped angle brackets or ampersands that \
+         rustdoc would parse as HTML: {unescaped:#?}"
     );
 
     Ok(())

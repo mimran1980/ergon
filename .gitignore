@@ -23,3 +23,4 @@ aeron-cluster-[0-9]/
 docs/superpowers/
 mutants.out*/
 .cargo-home/
+/release-assets/

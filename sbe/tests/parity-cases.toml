@@ -274,6 +274,13 @@ cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
 endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
+[[case]]
+key = "versioned_l3"
+exact_encode = ["versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool"]
+cross_decode = ["versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = ["versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version"]
+
 [[feature]]
 name = "big_endian"
 tests = ["all_types_be_big_endian", "bigendian_car_empty"]

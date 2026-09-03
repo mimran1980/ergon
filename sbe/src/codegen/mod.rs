@@ -77,6 +77,7 @@ pub(crate) use group_decoder::generate_group_decoder;
 pub(crate) mod tail_stages;
 pub(crate) use tail_stages::*;
 pub(crate) mod ordered_decoder;
+pub(crate) mod tail_cache;
 pub(crate) use ordered_decoder::generate_ordered_decoder;
 pub(crate) mod message_decoder;
 pub(crate) use message_decoder::generate_message_decoder;
@@ -537,6 +538,49 @@ impl Generator {
         Ok(())
     }
 
+    fn validate_encode_version(&self, schema: &Schema) -> Result<(), GenerateError> {
+        let Some(version) = self.config.encode_version else {
+            return Ok(());
+        };
+        if version > schema.version {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "encode_version".into(),
+                value: version.to_string(),
+                reason: format!("exceeds schema version {}", schema.version),
+            });
+        }
+        if version < schema.version
+            && (self.config.domain_objects
+                || !self.config.conversions.is_empty()
+                || !self.config.domain_types.is_empty())
+        {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "encode_version".into(),
+                value: version.to_string(),
+                reason: "cannot drop members while generating domain objects or conversions".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Run `f` with every codegen-wide config knob installed in its
+    /// thread-local. Both public entry points go through here so a knob can
+    /// never be in scope for one of them and not the other.
+    fn with_config_scope<R>(&self, f: impl FnOnce() -> R) -> R {
+        with_keyword_append(&self.config.keyword_append_token, || {
+            with_deprecated_attrs(self.config.deprecated_attrs, || {
+                with_compact_tail_offsets(self.config.compact_tail_offsets, || {
+                    with_memoized_tail_offsets(self.config.memoized_tail_offsets, || {
+                        with_encode_version_cap(
+                            Some(self.config.encode_version.unwrap_or(u16::MAX)),
+                            f,
+                        )
+                    })
+                })
+            })
+        })
+    }
+
     #[allow(missing_docs)]
     fn effective_domain_types(
         &self,
@@ -567,19 +611,18 @@ impl Generator {
     /// [`GenerateError`] if conversion selectors match nothing or collide.
     pub fn generate(&self, schema: &Schema) -> Result<GeneratedModuleSet, GenerateError> {
         let effective = self.effective_domain_types(&[(schema, "")]);
-        with_keyword_append(&self.config.keyword_append_token, || {
-            with_deprecated_attrs(self.config.deprecated_attrs, || {
-                self.validate_header_values(schema)?;
-                self.validate_conversions(schema)?;
-                self.validate_paths()?;
-                let mut modules = GeneratedModuleSet::default();
-                let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective)?;
-                modules.push(GeneratedModule {
-                    path: format!("{}.rs", self.config.module_name),
-                    source: src,
-                });
-                Ok(modules)
-            })
+        self.with_config_scope(|| {
+            self.validate_header_values(schema)?;
+            self.validate_conversions(schema)?;
+            self.validate_paths()?;
+            self.validate_encode_version(schema)?;
+            let mut modules = GeneratedModuleSet::default();
+            let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective)?;
+            modules.push(GeneratedModule {
+                path: format!("{}.rs", self.config.module_name),
+                source: src,
+            });
+            Ok(modules)
         })
     }
 
@@ -599,11 +642,12 @@ impl Generator {
         schemas: &[(&Schema, &str)],
     ) -> Result<GeneratedModuleSet, GenerateError> {
         let effective = self.effective_domain_types(schemas);
-        with_keyword_append(&self.config.keyword_append_token, || {
-            with_deprecated_attrs(self.config.deprecated_attrs, || {
-                self.validate_paths()?;
-                self.generate_multi_inner(schemas, &effective)
-            })
+        self.with_config_scope(|| {
+            self.validate_paths()?;
+            for (schema, _) in schemas {
+                self.validate_encode_version(schema)?;
+            }
+            self.generate_multi_inner(schemas, &effective)
         })
     }
 
@@ -1216,12 +1260,14 @@ impl Generator {
                 let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
                 self.run_hooks(&ctx, &mut src);
             }
+            let encode_version = self.config.encode_version.unwrap_or(ir.version);
+            let encoder_msg = msg.for_encode(encode_version);
             let encoder_ts = generate_message_encoder(
-                msg,
+                &encoder_msg,
                 &elements,
                 ir.byte_order,
                 ir.id,
-                ir.version,
+                encode_version,
                 &ir.header_type,
                 multi,
                 &conv_sels,
@@ -1233,7 +1279,8 @@ impl Generator {
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder
             if self.config.has_hooks() {
-                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageEncoder, schema);
+                let ctx =
+                    Self::build_message_ctx(&encoder_msg, crate::ItemKind::MessageEncoder, schema);
                 self.run_hooks(&ctx, &mut src);
             }
 

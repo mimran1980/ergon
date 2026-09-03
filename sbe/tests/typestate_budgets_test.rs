@@ -4,7 +4,9 @@
 use std::error::Error;
 
 mod common;
-use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
+use common::{
+    Paths, compile_and_run, compile_fails_with_diagnostics, generate, generate_domain_with,
+};
 
 /// Wrong group order: encode asks before bids must not compile.
 #[test]
@@ -130,18 +132,62 @@ fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
         assert_send_sync::<CarEncoder<'_>>();
         assert_send_sync::<CarComplete<'_>>();
 
-        // Decoder: buf + pos + acting_block_length + acting_version (no stage tag).
+        // Decoder at the default config: buf + pos + acting_block_length +
+        // acting_version, nothing else. Memoization is opt-in, so the default
+        // decoder carries no `Cell` cache and stays `Sync`.
+        // `memoized_decoder_pays_one_boundary_cache` pins the other side.
         let dec = size_of::<CarDecoder<'_>>();
+        let carrier = size_of::<(*const u8, usize, usize, u16)>() + 8;
         assert!(
-            dec <= size_of::<(*const u8, usize, usize, u16)>() + 8,
-            "decoder unexpectedly large: {dec}"
+            dec <= carrier,
+            "default decoder larger than its carrier: {dec} > {carrier}"
         );
         assert_send_sync::<CarDecoder<'_>>();
+        // Entry decoders with tails keep the one-shot extent cache in BOTH
+        // modes, so they are `Send` and never `Sync`. Only the message
+        // decoder's `Sync`-ness tracks `with_memoized_tail_offsets`.
+        fn assert_send<T: Send>() {}
+        assert_send::<FuelFiguresEntryDecoder<'_>>();
 
         // Drop is pure (no custom Drop with heap).
         assert!(!std::mem::needs_drop::<CarEncoder<'_>>());
         assert!(!std::mem::needs_drop::<CarDecoder<'_>>());
         let _ = align_of::<CarEncoder<'_>>();
+    "#,
+    );
+    Ok(())
+}
+
+/// The other side of [`GenerationConfig::with_memoized_tail_offsets`].
+///
+/// Opting in must cost exactly one boundary cache and no more, and it is what
+/// makes the decoder `Send` but not `Sync` (`Cell` interior mutability). The
+/// default budget is pinned in `size_of_send_sync_stage_budgets`, so the two
+/// tests together bound both sides of the knob rather than relaxing either.
+#[test]
+fn memoized_decoder_pays_one_boundary_cache() -> Result<(), Box<dyn Error>> {
+    let (_schema, src) = generate_domain_with(&Paths::example_schema(), "ts_size_memoized", |c| {
+        c.with_memoized_tail_offsets(true)
+    });
+    compile_and_run(
+        "ts_size_memoized",
+        &src,
+        r#"
+        use core::mem::size_of;
+
+        fn assert_send<T: Send>() {}
+
+        let dec = size_of::<CarDecoder<'_>>();
+        let carrier = size_of::<(*const u8, usize, usize, u16)>() + 8;
+        let cache = size_of::<sbe_rt::TailBoundaryCache<5>>();
+        assert!(
+            dec <= carrier + cache,
+            "decoder larger than carrier + one boundary cache: {dec} > {carrier} + {cache}"
+        );
+        assert!(dec > carrier, "memoized decoder must actually carry a cache");
+
+        assert_send::<CarDecoder<'_>>();
+        assert!(!std::mem::needs_drop::<CarDecoder<'_>>());
     "#,
     );
     Ok(())

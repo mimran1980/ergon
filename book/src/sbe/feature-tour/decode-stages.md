@@ -19,8 +19,13 @@ be consumed in schema order in the staged and mutable ordered lanes.
 ## Random access
 
 Simplest for sparse or genuinely out-of-order reads. You can ask for
-`manufacturer` before walking `fuelFigures`; the accessor rescan preceding
-groups and var-data to find the field.
+`manufacturer` before walking `fuelFigures`. By default every dynamic-tail
+getter re-walks from the fixed block. With
+[`with_memoized_tail_offsets(true)`](../configuration/generation-config.md#tail-offset-memoization)
+the getters lazily memoize discovered boundaries on the decoder (`Cell`, so
+the flyweight becomes `Send` and not `Sync`): the first access walks from the
+frontier, later accesses reuse it. Construction and fixed-field reads stay
+constant-time either way.
 
 **Advantages**
 
@@ -30,9 +35,18 @@ groups and var-data to find the field.
 
 **Disadvantages**
 
-- Each dynamic accessor may rescan preceding tails
 - Nothing stops you from reading tails twice or skipping a required walk
 - Full-message decode of nested groups is the slowest of the three lanes
+- With memoization on, the decoder is larger and, because the cache uses
+  `Cell`, `Send` but not `Sync` — one instance per thread over shareable
+  immutable bytes
+
+Reading tails twice is the case memoization exists for: the second read
+becomes a cache hit instead of a fresh walk, and repeated or reverse-order
+root reads improve by an order of magnitude. What it does *not* buy you is a
+single cold jump to the last tail — that pays to publish every boundary it
+skips past, and is faster with the cache off. `just bench-diagnostics` runs
+`versioned_l3_bench`, which measures both shapes.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_random_access}}

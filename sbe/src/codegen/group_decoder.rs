@@ -63,9 +63,12 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
+    let memoized = super::runtime::memoized_tail_offsets_enabled();
+    let entry_cache_ty = super::tail_cache::cache_type_tokens(total_tail);
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
     let bulk_decode_eligible = g.has_fixed_stride()
+        && super::runtime::encodable_at(g.since_version)
         && g.fields.iter().all(|f| {
             f.presence == Presence::Constant
                 || (f.presence != Presence::Optional && f.since_version == 0)
@@ -518,6 +521,9 @@ pub(crate) fn generate_group_decoder(
         // every valid acting version: flat, required, since-v0 fields. An
         // optional or versioned field has no representation in a plain struct,
         // so a bulk row would have to fabricate a value for something absent.
+        // Groups the configured `encode_version` drops are excluded: their
+        // encoder is not generated, and it owns the `{Group}Entry` struct that
+        // `bulk_decode` names. Under default generation every group qualifies.
         let bulk_methods = if bulk_decode_eligible {
             quote::quote! {
                 /// Bulk-decode all remaining entries into a caller-owned `Vec`.
@@ -827,6 +833,31 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
+    // Both modes cache; they differ in how much. Memoized keeps one slot per
+    // dynamic tail. Uncached keeps the pre-memoization *one-shot* extent: the
+    // group iterator computes each entry's end to advance, and the last
+    // var-data accessor reuses it instead of re-reading its length header.
+    // Emitting nothing here would make the uncached entry decoder slower than
+    // it has ever been, which is what the `decode_full_message` gate measures.
+    let entry_cache_init = if memoized {
+        quote::quote! { cache: sbe_rt::TailBoundaryCache::new(), }
+    } else {
+        quote::quote! { tail_end: core::cell::Cell::new(None), }
+    };
+    let entry_cache_field = if memoized {
+        quote::quote! {
+            /// Progressive cache of this entry's dynamic-tail ends.
+            /// `Cell` keeps `&self` getters and makes the entry `Send` + `!Sync`.
+            cache: #entry_cache_ty,
+        }
+    } else {
+        quote::quote! {
+            /// One-shot entry-extent cache: filled by `encoded_length`,
+            /// reused by the last var-data accessor. `Cell` keeps `&self`
+            /// getters and makes the entry `Send` + `!Sync`.
+            tail_end: core::cell::Cell<Option<usize>>,
+        }
+    };
 
     // wrap() method header. Entries with tail components carry a one-shot
     // tail-end cache: the group iterator computes the entry extent to
@@ -879,7 +910,7 @@ pub(crate) fn generate_group_decoder(
                     offset,
                     acting_version,
                     acting_block_length,
-                    tail_end: core::cell::Cell::new(None),
+                    #entry_cache_init
                 }
             }
         });
@@ -1377,9 +1408,20 @@ pub(crate) fn generate_group_decoder(
         }
     }
 
-    entry_body.extend(quote::quote! {
-        #[inline]
-        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    let nested_entry_skip: Vec<syn::Ident> = g
+        .groups
+        .iter()
+        .map(|ng| {
+            let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
+            quote::format_ident!("{}EntryDecoder", ng_pascal)
+        })
+        .collect();
+    entry_body.extend(super::tail_cache::emit_tail_offsets(
+        &g.groups,
+        &g.var_data,
+        elements,
+        &nested_entry_skip,
+        quote::quote! {
             if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "group entry",
@@ -1388,112 +1430,9 @@ pub(crate) fn generate_group_decoder(
                 });
             }
             Ok(self.offset + self.acting_block_length)
-        }
-    });
-
-    let mut k = 0usize;
-    for ng in &g.groups {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &ng.dimension_type);
-        let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
-        let ng_decoder_entry_ident = quote::format_ident!("{}EntryDecoder", ng_pascal);
-        let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let ng_name_lit = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
-
-        let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
-        let version_skip = if ng.since_version > 0 {
-            let since_lit = syn::LitInt::new(
-                &ng.since_version.to_string(),
-                proc_macro2::Span::call_site(),
-            );
-            quote::quote! {
-                if self.acting_version < #since_lit {
-                    return Ok(start);
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
-        entry_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_fn()?;
-                #version_skip
-                if start + #dim_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len().saturating_sub(start) });
-                }
-                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
-                let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_len = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
-                let mut offset = start + #dim_size_lit;
-                let mut idx = 0;
-                while idx < count {
-                    offset = #ng_decoder_entry_ident::skip(self.buf, offset, block_len, self.acting_version)?;
-                    idx += 1;
-                }
-                Ok(offset)
-            }
-        });
-        k += 1;
-    }
-
-    for vd in &g.var_data {
-        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let prefix_size_lit =
-            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
-
-        let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
-        let version_skip = if vd.since_version > 0 {
-            let since_lit = syn::LitInt::new(
-                &vd.since_version.to_string(),
-                proc_macro2::Span::call_site(),
-            );
-            quote::quote! {
-                if self.acting_version < #since_lit {
-                    return Ok(start);
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
-        entry_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_fn()?;
-                #version_skip
-                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len().saturating_sub(start) });
-                }
-                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, start);
-                let header = #type_pascal_ident(bytes);
-                let wire_length = header.#len_field_ident() as u64;
-                let (_, data_end) = sbe_rt::checked_var_data_bounds(
-                    #vd_name_lit,
-                    start,
-                    #prefix_size_lit,
-                    wire_length,
-                    self.buf.len(),
-                )?;
-                Ok(data_end)
-            }
-        });
-        k += 1;
-    }
+        },
+        quote::quote! { self.offset },
+    ));
 
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;
@@ -1523,13 +1462,21 @@ pub(crate) fn generate_group_decoder(
         } else {
             proc_macro2::TokenStream::new()
         };
+        // A warm entry cache proves the whole entry extent was validated, so
+        // the nested dim header is known in-bounds and `wrap_trusted` is sound
+        // here. The two modes spell "warm" differently; both are one load.
+        let entry_extent_known = if memoized {
+            quote::quote! { self.cache.is_complete() }
+        } else {
+            quote::quote! { self.tail_end.get().is_some() }
+        };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
                 // `Iterator::next` cached the complete validated entry extent,
                 // so this first-tail offset cannot overflow or exceed `buf`.
-                if self.tail_end.get().is_some() {
+                if #entry_extent_known {
                     let offset = self.offset + self.acting_block_length;
-                    // SAFETY: tail_end proves the nested group dim is in-bounds.
+                    // SAFETY: a warm entry cache proves the nested dim is in-bounds.
                     return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
@@ -1540,20 +1487,23 @@ pub(crate) fn generate_group_decoder(
         } else {
             quote::quote! {}
         };
+        let trusted_ng_wrap = quote::quote! {
+            if #entry_extent_known {
+                // SAFETY: tail_offset_* validated the nested dim header region.
+                return unsafe {
+                    #ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    )
+                };
+            }
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
                 #version_check
                 #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
-                if self.tail_end.get().is_some() {
-                    // SAFETY: tail_offset_* validated the nested dim header region.
-                    return unsafe {
-                        #ng_decoder_ident::wrap_trusted(
-                            self.buf, offset, self.acting_version, 0, 0,
-                        )
-                    };
-                }
+                #trusted_ng_wrap
                 #ng_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
         });
@@ -1589,11 +1539,20 @@ pub(crate) fn generate_group_decoder(
             proc_macro2::TokenStream::new()
         };
         if nvd_idx + 1 == total_tail {
+            let last_slot = syn::LitInt::new(
+                &(total_tail.saturating_sub(1)).to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            let warm_entry_end = if memoized {
+                quote::quote! { self.cache.end_of(#last_slot, self.offset) }
+            } else {
+                quote::quote! { self.tail_end.get() }
+            };
             let cached_first_tail = if nvd_idx == 0 {
                 quote::quote! {
                     // `Iterator::next` cached the complete validated entry
                     // extent, including this prefix and payload.
-                    if let Some(end) = self.tail_end.get() {
+                    if let Some(end) = #warm_entry_end {
                         let data_offset =
                             self.offset + self.acting_block_length + #prefix_size_lit;
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
@@ -1602,31 +1561,52 @@ pub(crate) fn generate_group_decoder(
             } else {
                 quote::quote! {}
             };
-            // Last tail component: a warm tail-end cache (filled by the
-            // iterator's encoded_length) gives the slice end directly —
-            // no second length-header read, bounds already validated.
+            // Last tail component: a warm cache (filled by the iterator's
+            // encoded_length) gives the slice end directly — no second
+            // length-header read, bounds already validated.
+            let nvd_slot = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
+            let (nvd_cache_hit_last, nvd_cache_publish) = if memoized {
+                (
+                    quote::quote! {
+                        if let Some(end) = self.cache.end_of(#nvd_slot, self.offset) {
+                            let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
+                                sbe_rt::DecodeError::BufferTooShort {
+                                    field: stringify!(#vd_snake_ident),
+                                    needed: usize::MAX,
+                                    available: self.buf.len().saturating_sub(offset),
+                                },
+                            )?;
+                            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                        }
+                    },
+                    quote::quote! {
+                        let _ = self.cache.publish(#nvd_slot, data_end, self.offset);
+                    },
+                )
+            } else {
+                (
+                    quote::quote! {
+                        if let Some(end) = self.tail_end.get() {
+                            let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
+                                sbe_rt::DecodeError::BufferTooShort {
+                                    field: stringify!(#vd_snake_ident),
+                                    needed: usize::MAX,
+                                    available: self.buf.len().saturating_sub(offset),
+                                },
+                            )?;
+                            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                        }
+                    },
+                    proc_macro2::TokenStream::new(),
+                )
+            };
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #version_check
                     #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
-                    if let Some(end) = self.tail_end.get() {
-                        let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
-                            sbe_rt::DecodeError::BufferTooShort {
-                                field: stringify!(#vd_snake_ident),
-                                needed: usize::MAX,
-                                available: self.buf.len().saturating_sub(offset),
-                            },
-                        )?;
-                        // SAFETY: `tail_end` is only ever set by
-                        // `encoded_length` from `tail_offset_N`, which
-                        // bounds-checked `end <= buf.len()` and
-                        // `data_offset <= end` before caching. Same
-                        // invariant class as the existing generated
-                        // `from_raw_parts` accessors.
-                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-                    }
+                    #nvd_cache_hit_last
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
@@ -1637,15 +1617,35 @@ pub(crate) fn generate_group_decoder(
                         wire_length,
                         self.buf.len(),
                     )?;
+                    #nvd_cache_publish
                     Ok(&self.buf[data_start..data_end])
                 }
             });
         } else {
+            let nvd_slot = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
+            let (nvd_cache_hit_mid, nvd_cache_publish) = if memoized {
+                (
+                    quote::quote! {
+                        if let Some(end) = self.cache.end_of(#nvd_slot, self.offset) {
+                            return Ok(&self.buf[offset + #prefix_size_lit..end]);
+                        }
+                    },
+                    quote::quote! {
+                        let _ = self.cache.publish(#nvd_slot, data_end, self.offset);
+                    },
+                )
+            } else {
+                (
+                    proc_macro2::TokenStream::new(),
+                    proc_macro2::TokenStream::new(),
+                )
+            };
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #version_check
                     let offset = self.#tail_nvd_fn()?;
+                    #nvd_cache_hit_mid
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
@@ -1656,6 +1656,7 @@ pub(crate) fn generate_group_decoder(
                         wire_length,
                         self.buf.len(),
                     )?;
+                    #nvd_cache_publish
                     Ok(&self.buf[data_start..data_end])
                 }
             });
@@ -1666,6 +1667,27 @@ pub(crate) fn generate_group_decoder(
     // encoded_length, skip — tail shape is a compile-time constant;
     // emit only the live path (no dead branch in the generated source).
     let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
+    let entry_len_cache_hit = if memoized {
+        quote::quote! {
+            let last = (#total_tail as usize).saturating_sub(1);
+            if let Some(end) = self.cache.end_of(last, self.offset) {
+                return Ok(end - self.offset);
+            }
+        }
+    } else {
+        quote::quote! {
+            if let Some(end) = self.tail_end.get() {
+                return Ok(end - self.offset);
+            }
+        }
+    };
+    // Memoized publishes inside `tail_offset_*`; the one-shot cache is filled
+    // here, by the iterator call that computes the entry extent to advance.
+    let entry_len_cache_publish = if memoized {
+        proc_macro2::TokenStream::new()
+    } else {
+        quote::quote! { self.tail_end.set(Some(end)); }
+    };
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
             #mu
@@ -1689,11 +1711,9 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-                if let Some(end) = self.tail_end.get() {
-                    return Ok(end - self.offset);
-                }
+                #entry_len_cache_hit
                 let end = self.#tail_total_fn()?;
-                self.tail_end.set(Some(end));
+                #entry_len_cache_publish
                 Ok(end - self.offset)
             }
             #[inline]
@@ -1923,9 +1943,7 @@ pub(crate) fn generate_group_decoder(
                 offset: usize,
                 acting_version: u16,
                 acting_block_length: usize,
-                /// One-shot entry-extent cache: filled by
-                /// `encoded_length`, reused by the last var-data accessor.
-                tail_end: core::cell::Cell<Option<usize>>,
+                #entry_cache_field
             }
         });
     }
@@ -1950,21 +1968,30 @@ pub(crate) fn generate_group_decoder(
 
     // Recursively generate nested group decoders — scope under parent group name
     // to avoid collisions when different parent groups have same-named children
+    // A group the encoder dropped drops its whole subtree, so nested decoders
+    // generated underneath it must not name encoder-owned entry structs either.
+    let nested_cap = if super::runtime::encodable_at(g.since_version) {
+        super::runtime::encode_version_cap()
+    } else {
+        None
+    };
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        ts.extend(generate_group_decoder(
-            ng,
-            elements,
-            byte_order,
-            &nested_name,
-            &conversions,
-            domain_types,
-            enable_meta_attributes,
-            enable_dispatch,
-            null_as_option,
-            all_enums_as_option,
-            enable_display_debug,
-        ));
+        ts.extend(super::runtime::with_encode_version_cap(nested_cap, || {
+            generate_group_decoder(
+                ng,
+                elements,
+                byte_order,
+                &nested_name,
+                &conversions,
+                domain_types,
+                enable_meta_attributes,
+                enable_dispatch,
+                null_as_option,
+                all_enums_as_option,
+                enable_display_debug,
+            )
+        }));
     }
 
     // Consuming entry-level tail stages for entries with nested groups and/or

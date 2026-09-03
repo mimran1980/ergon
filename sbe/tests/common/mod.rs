@@ -133,6 +133,10 @@ impl Paths {
         Self::fixtures_dir().join("l3-orderbook-schema.xml")
     }
 
+    pub fn versioned_l3_schema(version: u8) -> PathBuf {
+        Self::fixtures_dir().join(format!("versioned-l3-v{version}.xml"))
+    }
+
     /// Versioned groups and var-data used by the ordered one-pass decoder tests.
     pub fn ordered_decoder_version_tails_schema() -> PathBuf {
         Self::fixtures_dir().join("ordered-decoder-version-tails.xml")
@@ -401,6 +405,25 @@ pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
 /// and call `assert_frames_eq`.
 pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &str) {
     let (_, ergo_src) = generate(schema, "ergo");
+    dual_encode_run_modules(test_name, &[("ergo", &ergo_src)], tool_key, code);
+}
+
+/// Like [`dual_encode_run`] but with several ergo-sbe modules in one crate —
+/// e.g. the same schema generated at different `with_encode_version` settings,
+/// so one sbe-tool oracle can be given wire from every acting version.
+///
+/// The first module is also glob-imported (`use <first>::*;`) so single-module
+/// bodies read the same as [`dual_encode_run`].
+pub fn dual_encode_run_modules(
+    test_name: &str,
+    modules: &[(&str, &str)],
+    tool_key: &str,
+    code: &str,
+) {
+    assert!(
+        !modules.is_empty(),
+        "dual_encode_run_modules({test_name}) requires at least one module"
+    );
     let tool_path = Paths::sbe_tool_reference(tool_key);
     assert!(
         tool_path.join("Cargo.toml").is_file(),
@@ -421,13 +444,16 @@ pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &st
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
 
-    let patched = patch_source(&ergo_src);
-    fs::write(src.join("ergo.rs"), &patched).unwrap();
+    let mut mod_decls = String::new();
+    for (name, source) in modules {
+        fs::write(src.join(format!("{name}.rs")), patch_source(source)).unwrap();
+        mod_decls.push_str(&format!("mod {name};\n"));
+    }
+    mod_decls.push_str(&format!("use {}::*;\n", modules[0].0));
 
     let main = format!(
         r#"#![allow(dead_code, unused_imports, unused_variables, unused_mut, unused_assignments, clippy::all)]
-mod ergo;
-use ergo::*;
+{mod_decls}
 
 fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
     assert_eq!(ergo.len(), tool.len(), "{{label}}: encoded length mismatch — ergon={{}}, sbe_tool={{}}", ergo.len(), tool.len());
@@ -568,18 +594,35 @@ pub fn compile_and_run_two_modules(
     source_b: &str,
     code: &str,
 ) {
+    compile_and_run_modules(
+        test_name,
+        &[(module_a, source_a), (module_b, source_b)],
+        code,
+    );
+}
+
+/// Generate `modules` (name, source) into one temp crate, compile, and run.
+/// `code` goes inside `main()` and can `use` every named module.
+pub fn compile_and_run_modules(test_name: &str, modules: &[(&str, &str)], code: &str) {
+    assert!(
+        !modules.is_empty(),
+        "compile_and_run_modules({test_name}) requires at least one module"
+    );
     let dir = std::env::temp_dir().join(format!("ergo_test_{test_name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
 
-    fs::write(src.join(format!("{module_a}.rs")), source_a).unwrap();
-    fs::write(src.join(format!("{module_b}.rs")), source_b).unwrap();
+    let mut mod_decls = String::new();
+    for (name, source) in modules {
+        fs::write(src.join(format!("{name}.rs")), patch_source(source)).unwrap();
+        mod_decls.push_str(&format!("mod {name};\n"));
+    }
 
     let main = format!(
         "#![allow(dead_code,unused_imports,unused_variables)]\n\
-         mod {module_a};\nmod {module_b};\n\
+         {mod_decls}\
          fn main() -> Result<(), Box<dyn std::error::Error>> {{\n{code}\nOk(())\n}}\n"
     );
     fs::write(src.join("main.rs"), &main).unwrap();

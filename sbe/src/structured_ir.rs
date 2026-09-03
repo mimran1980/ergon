@@ -134,6 +134,7 @@ pub(crate) fn is_boolean_value_pair(a: &str, b: &str) -> bool {
         || upper.eq_ignore_ascii_case("f")
 }
 
+#[derive(Clone)]
 pub(crate) struct MessageStructure {
     pub(crate) name: String,
     pub(crate) id: u16,
@@ -238,7 +239,65 @@ pub(crate) struct MessageGroup {
     pub(crate) block_length: usize,
 }
 
+/// Block length for an encoder projected to an older acting version.
+///
+/// The retained fields' tight extent plus whatever trailing padding the schema
+/// declares beyond *every* field. Padding the historical schema declared and
+/// the current one does not is unrecoverable — see
+/// [`with_encode_version`](crate::GenerationConfig::with_encode_version).
+fn projected_block_length(
+    all: &[MessageField],
+    retained: &[MessageField],
+    declared: usize,
+) -> usize {
+    let extent = |fs: &[MessageField]| {
+        fs.iter()
+            .filter(|f| f.presence != Presence::Constant)
+            .map(|f| f.offset + f.field_type.size())
+            .max()
+            .unwrap_or(0)
+    };
+    let full = extent(all);
+    if full == extent(retained) {
+        // Nothing fixed was dropped: keep the schema's own blockLength.
+        return declared.max(full);
+    }
+    extent(retained) + declared.saturating_sub(full)
+}
+
 impl MessageGroup {
+    /// Encoder view at `encode_version`: drop members with `sinceVersion`
+    /// above that version (they occupy zero bytes on the older wire) and
+    /// shrink `blockLength` when later fixed fields were the only reason
+    /// for the compiled span.
+    pub(crate) fn for_encode(&self, encode_version: u16) -> Self {
+        let fields: Vec<MessageField> = self
+            .fields
+            .iter()
+            .filter(|f| f.since_version <= encode_version)
+            .cloned()
+            .collect();
+        let groups: Vec<MessageGroup> = self
+            .groups
+            .iter()
+            .filter(|g| g.since_version <= encode_version)
+            .map(|g| g.for_encode(encode_version))
+            .collect();
+        let var_data: Vec<MessageVarData> = self
+            .var_data
+            .iter()
+            .filter(|vd| vd.since_version <= encode_version)
+            .cloned()
+            .collect();
+        Self {
+            block_length: projected_block_length(&self.fields, &fields, self.block_length),
+            fields,
+            groups,
+            var_data,
+            ..self.clone()
+        }
+    }
+
     /// Block length effective at runtime: the max of the schema-declared
     /// `blockLength` and the tight span of the group's fixed fields.
     pub(crate) fn effective_block_length(&self) -> usize {
@@ -262,6 +321,37 @@ impl MessageGroup {
 }
 
 impl MessageStructure {
+    /// Encoder view at `encode_version`: drop members with `sinceVersion`
+    /// above that version so the encoder writes that acting version's layout
+    /// (later nested groups are omitted entirely, not written as count-zero).
+    pub(crate) fn for_encode(&self, encode_version: u16) -> Self {
+        let fields: Vec<MessageField> = self
+            .fields
+            .iter()
+            .filter(|f| f.since_version <= encode_version)
+            .cloned()
+            .collect();
+        let groups: Vec<MessageGroup> = self
+            .groups
+            .iter()
+            .filter(|g| g.since_version <= encode_version)
+            .map(|g| g.for_encode(encode_version))
+            .collect();
+        let var_data: Vec<MessageVarData> = self
+            .var_data
+            .iter()
+            .filter(|vd| vd.since_version <= encode_version)
+            .cloned()
+            .collect();
+        Self {
+            block_length: projected_block_length(&self.fields, &fields, self.block_length),
+            fields,
+            groups,
+            var_data,
+            ..self.clone()
+        }
+    }
+
     /// The message has groups or var-data beyond its fixed block.
     pub(crate) fn has_tails(&self) -> bool {
         !self.groups.is_empty() || !self.var_data.is_empty()
@@ -914,6 +1004,43 @@ mod tests {
             encoding,
             span: None,
         }
+    }
+
+    fn fixed_field(offset: usize, size: usize, since_version: u16) -> MessageField {
+        MessageField {
+            name: "f".into(),
+            path: "M.f".into(),
+            id: None,
+            offset,
+            presence: Presence::Required,
+            since_version,
+            null_value: None,
+            min_value: None,
+            max_value: None,
+            description: None,
+            deprecated: false,
+            semantic_type: None,
+            constant_value: None,
+            epoch: None,
+            time_unit: None,
+            character_encoding: None,
+            field_type: FieldType::Primitive(PrimitiveType::Char, Some(size)),
+        }
+    }
+
+    #[test]
+    fn projected_block_length_keeps_declared_trailing_padding() {
+        // v2 layout: 8-byte field at 0, 4-byte field added in v2 at 8, then
+        // 4 bytes of declared padding (blockLength 16 > extent 12).
+        let all = vec![fixed_field(0, 8, 0), fixed_field(8, 4, 2)];
+        // Nothing dropped: the schema's own blockLength wins.
+        assert_eq!(projected_block_length(&all, &all, 16), 16);
+        // v1 encoder: the v2 field goes, the declared padding stays.
+        let retained = vec![all[0].clone()];
+        assert_eq!(projected_block_length(&all, &retained, 16), 12);
+        // No declared padding: the retained fields' tight extent, which is what
+        // the genuine v1 schema declares.
+        assert_eq!(projected_block_length(&all, &retained, 12), 8);
     }
 
     #[test]

@@ -8,7 +8,204 @@ use quote::format_ident;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
 
+/// The progressive tail-boundary cache runtime. Only emitted when
+/// `with_memoized_tail_offsets(true)` selects it — otherwise no generated
+/// decoder names it, and ~180 lines of dead code stay out of every module.
+fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
+    if !memoized_tail_offsets_enabled() {
+        return proc_macro2::TokenStream::new();
+    }
+    quote::quote! {
+            /// How a progressive tail-boundary cache stores one discovered end
+            /// offset. Native stores absolute `usize`; compact stores a `u32`
+            /// relative to the owning decoder's base and falls back to an
+            /// uncached walk when a span cannot be represented.
+            pub trait TailOffsetKind: Copy + 'static {
+                /// Stored slot type.
+                type Stored: Copy;
+                /// Encode an absolute end. `None` means "do not cache this slot".
+                fn encode(base: usize, abs: usize) -> Option<Self::Stored>;
+                /// Reconstruct an absolute end. `None` is treated as a miss.
+                fn decode(base: usize, stored: Self::Stored) -> Option<usize>;
+            }
+
+            /// Absolute `usize` offsets — default representation.
+            #[derive(Clone, Copy)]
+            pub struct NativeTailOffset;
+            impl TailOffsetKind for NativeTailOffset {
+                type Stored = usize;
+                #[inline]
+                fn encode(_base: usize, abs: usize) -> Option<usize> {
+                    Some(abs)
+                }
+                #[inline]
+                fn decode(_base: usize, stored: usize) -> Option<usize> {
+                    Some(stored)
+                }
+            }
+
+            /// Compact relative `u32` offsets on 64-bit; native `usize` elsewhere.
+            #[derive(Clone, Copy)]
+            pub struct CompactTailOffset;
+            #[cfg(target_pointer_width = "64")]
+            impl TailOffsetKind for CompactTailOffset {
+                type Stored = u32;
+                #[inline]
+                fn encode(base: usize, abs: usize) -> Option<u32> {
+                    abs.checked_sub(base).and_then(|d| u32::try_from(d).ok())
+                }
+                #[inline]
+                fn decode(base: usize, stored: u32) -> Option<usize> {
+                    base.checked_add(stored as usize)
+                }
+            }
+            #[cfg(not(target_pointer_width = "64"))]
+            impl TailOffsetKind for CompactTailOffset {
+                type Stored = usize;
+                #[inline]
+                fn encode(_base: usize, abs: usize) -> Option<usize> {
+                    Some(abs)
+                }
+                #[inline]
+                fn decode(_base: usize, stored: usize) -> Option<usize> {
+                    Some(stored)
+                }
+            }
+
+            /// Progressive cache of dynamic-tail *end* offsets.
+            ///
+            /// Slot `i` is the absolute (or compact-relative) end of tail `i`
+            /// — the start of tail `i + 1`. `known_through` is the count of
+            /// published slots. Construction is O(1): unpublished slots stay
+            /// uninitialized and are never read.
+            ///
+            /// Decoding errors are never published. A compact encode failure
+            /// leaves the frontier at the representable prefix so the suffix
+            /// is walked uncached without rejecting the message.
+            pub struct TailBoundaryCache<const N: usize, Off: TailOffsetKind = NativeTailOffset> {
+                known_through: core::cell::Cell<usize>,
+                ends: [core::cell::Cell<core::mem::MaybeUninit<Off::Stored>>; N],
+                #[cfg(debug_assertions)]
+                hits: core::cell::Cell<u32>,
+                #[cfg(debug_assertions)]
+                misses: core::cell::Cell<u32>,
+                #[cfg(debug_assertions)]
+                boundary_calcs: core::cell::Cell<u32>,
+                #[cfg(debug_assertions)]
+                nested_walks: core::cell::Cell<u32>,
+            }
+
+            /// Debug-only counters for the memoized random-access prototype.
+            #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+            pub struct DecodeCacheStats {
+                /// Cached tail-start lookups.
+                pub hits: u32,
+                /// Lookups that walked from the frontier.
+                pub misses: u32,
+                /// Individual tail walks (group skip or var-data length read).
+                pub boundary_calcs: u32,
+                /// Nested group-entry skips performed while walking a group.
+                pub nested_walks: u32,
+                /// How far the contiguous frontier has advanced.
+                pub known_through: usize,
+            }
+
+            impl<const N: usize, Off: TailOffsetKind> TailBoundaryCache<N, Off> {
+                /// Empty cache. Slots past the frontier are uninitialized.
+                #[inline]
+                pub const fn new() -> Self {
+                    Self {
+                        known_through: core::cell::Cell::new(0),
+                        ends: [const { core::cell::Cell::new(core::mem::MaybeUninit::uninit()) }; N],
+                        #[cfg(debug_assertions)]
+                        hits: core::cell::Cell::new(0),
+                        #[cfg(debug_assertions)]
+                        misses: core::cell::Cell::new(0),
+                        #[cfg(debug_assertions)]
+                        boundary_calcs: core::cell::Cell::new(0),
+                        #[cfg(debug_assertions)]
+                        nested_walks: core::cell::Cell::new(0),
+                    }
+                }
+
+                /// Count of published tail ends (`0..=N`).
+                #[inline]
+                pub fn known_through(&self) -> usize {
+                    self.known_through.get()
+                }
+
+                /// True when every dynamic tail end has been published.
+                #[inline]
+                pub fn is_complete(&self) -> bool {
+                    self.known_through.get() == N
+                }
+
+                /// Absolute end of tail `idx` if the contiguous frontier covers it.
+                #[inline]
+                pub fn end_of(&self, idx: usize, base: usize) -> Option<usize> {
+                    if idx >= N || idx >= self.known_through.get() {
+                        return None;
+                    }
+                    // SAFETY: `idx < known_through`, so this slot was published.
+                    let stored = unsafe { self.ends[idx].get().assume_init() };
+                    Off::decode(base, stored)
+                }
+
+                /// Publish the end of tail `idx`. Must be the next frontier slot.
+                /// Returns `false` when compact storage cannot represent `abs_end`;
+                /// the frontier is left unchanged and the caller walks uncached.
+                #[inline]
+                pub fn publish(&self, idx: usize, abs_end: usize, base: usize) -> bool {
+                    if idx >= N || idx != self.known_through.get() {
+                        return true;
+                    }
+                    let Some(stored) = Off::encode(base, abs_end) else {
+                        return false;
+                    };
+                    self.ends[idx].set(core::mem::MaybeUninit::new(stored));
+                    self.known_through.set(idx + 1);
+                    true
+                }
+
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_hit(&self) {
+                    self.hits.set(self.hits.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_miss(&self) {
+                    self.misses.set(self.misses.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_boundary(&self) {
+                    self.boundary_calcs
+                        .set(self.boundary_calcs.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_nested_walk(&self) {
+                    self.nested_walks
+                        .set(self.nested_walks.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn stats(&self) -> DecodeCacheStats {
+                    DecodeCacheStats {
+                        hits: self.hits.get(),
+                        misses: self.misses.get(),
+                        boundary_calcs: self.boundary_calcs.get(),
+                        nested_walks: self.nested_walks.get(),
+                        known_through: self.known_through.get(),
+                    }
+                }
+            }
+    }
+}
+
 pub(crate) fn generate_sbe_rt_src() -> String {
+    let tail_boundary_cache = tail_boundary_cache_tokens();
     let module = quote::quote! {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +475,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 checked_header_usize(field, value)
             }
 
+            #tail_boundary_cache
+
+
             /// Narrow a group count for `GroupFull` / mismatch diagnostics.
             /// Errors instead of truncating when the count exceeds `u32::MAX`.
             #[inline]
@@ -477,6 +677,13 @@ pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
 
 thread_local! {
     static DEPRECATED_ATTRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static COMPACT_TAIL_OFFSETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MEMOIZED_TAIL_OFFSETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Highest `sinceVersion` the generated *encoder* still emits.
+    /// `Some(u16::MAX)` (the default) means every version in the schema is
+    /// encodable; `None` means the enclosing subtree has no encoder at all.
+    static ENCODE_VERSION_CAP: std::cell::Cell<Option<u16>> =
+        const { std::cell::Cell::new(Some(u16::MAX)) };
 }
 
 /// Run `f` with `#[deprecated]` emission enabled (`with_deprecated_attrs()`).
@@ -494,6 +701,60 @@ pub(crate) fn with_deprecated_attrs<R>(enabled: bool, f: impl FnOnce() -> R) -> 
 
 fn deprecated_attrs_enabled() -> bool {
     DEPRECATED_ATTRS.with(|c| c.get())
+}
+
+/// Run `f` with compact (`u32` relative) tail-offset storage in generated
+/// random-access decoders. Default is native `usize`.
+pub(crate) fn with_compact_tail_offsets<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
+    COMPACT_TAIL_OFFSETS.with(|cell| {
+        let prev = cell.get();
+        cell.set(enabled);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+pub(crate) fn compact_tail_offsets_enabled() -> bool {
+    COMPACT_TAIL_OFFSETS.with(|c| c.get())
+}
+
+/// Run `f` with the encoder's acting-version cap in scope. Decoder codegen
+/// reads it to avoid naming encoder-owned items that `for_encode` dropped.
+pub(crate) fn with_encode_version_cap<R>(cap: Option<u16>, f: impl FnOnce() -> R) -> R {
+    ENCODE_VERSION_CAP.with(|cell| {
+        let prev = cell.get();
+        cell.set(cap);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+pub(crate) fn encode_version_cap() -> Option<u16> {
+    ENCODE_VERSION_CAP.with(|c| c.get())
+}
+
+/// True when `for_encode(cap)` keeps a member introduced at `since_version`,
+/// i.e. the encoder-owned items naming it are generated.
+pub(crate) fn encodable_at(since_version: u16) -> bool {
+    matches!(encode_version_cap(), Some(cap) if since_version <= cap)
+}
+
+/// Run `f` with memoized dynamic-tail boundaries in generated random-access
+/// decoders. Default is disabled; enabling adds the progressive tail cache.
+pub(crate) fn with_memoized_tail_offsets<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
+    MEMOIZED_TAIL_OFFSETS.with(|cell| {
+        let prev = cell.get();
+        cell.set(enabled);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+pub(crate) fn memoized_tail_offsets_enabled() -> bool {
+    MEMOIZED_TAIL_OFFSETS.with(|c| c.get())
 }
 
 /// Rust keywords that cannot be used as bare identifiers.

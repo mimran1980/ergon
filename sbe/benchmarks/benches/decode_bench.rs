@@ -312,6 +312,55 @@ fn bench_skip(c: &mut Criterion) {
     group.finish();
 }
 
+fn read_full_random(car: &CarDecoder<'_>) {
+    black_box(car.serial_number());
+    let _ = car.fuel_figures();
+    let _ = car.performance_figures();
+    black_box(car.manufacturer().unwrap());
+    black_box(car.model().unwrap());
+    black_box(car.activation_code().unwrap());
+}
+
+fn bench_cached_random_access(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode/cached_random_access");
+    group.throughput(Throughput::Bytes(BASELINE.len() as u64));
+    group.bench_function("construction_plus_fixed", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            black_box((car.serial_number(), car.model_year()));
+        });
+    });
+    group.bench_function("cold_final_tail", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            black_box(car.activation_code().unwrap());
+        });
+    });
+    let warm = CarDecoder::try_from(BASELINE).unwrap();
+    let _ = warm.activation_code();
+    group.bench_function("warm_final_tail", |b| {
+        b.iter(|| black_box(warm.activation_code().unwrap()));
+    });
+    group.bench_function("full_schema_order", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            read_full_random(&car);
+        });
+    });
+    group.bench_function("full_reverse_order", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            black_box(car.activation_code().unwrap());
+            black_box(car.model().unwrap());
+            black_box(car.manufacturer().unwrap());
+            let _ = car.performance_figures();
+            let _ = car.fuel_figures();
+            black_box(car.serial_number());
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_try_from,
@@ -326,5 +375,6 @@ criterion_group!(
     bench_display,
     bench_decode_frame,
     bench_skip,
+    bench_cached_random_access,
 );
 criterion_main!(benches);

@@ -297,6 +297,73 @@ elsewhere rather than substituting a timing harness. After measurement it
 fails if any registered two-arm pair has ergon Ir/op above sbe-tool. There is
 no `iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
 
+### Tail-offset memoization and offset representation
+
+Random-access decoders can memoize dynamic-tail boundaries so that reading
+tails out of order — or reading one twice — walks the wire at most once.
+`with_memoized_tail_offsets` is **off by default**: the cache is constructed on
+every decoder, including the many that only read fixed fields, and a cost the
+whole hot path pays has to be opted into rather than assumed.
+
+`versioned_l3_bench` measures the knob on the versioned nested L3 schema. It is
+ergon-vs-ergon — sbe-tool has no arbitrary-order decoder to compare against —
+so it carries no `1.00` gate; it informs the default instead. Run it from
+`just bench-diagnostics`, which runs both LTO profiles:
+
+```sh
+cargo bench -p ergo-sbe-benchmarks --bench versioned_l3_bench
+```
+
+Groups and what each decides:
+
+| group | question |
+|---|---|
+| `vl3/memoization` | cold single tail, construct-plus-fixed, one full traversal, repeated root re-reads — memoized vs default |
+| `vl3/offsets` | native `usize` vs compact `u32` cache slots, on identical traversals |
+| `vl3/order` | schema, reverse, alternating and seeded-random tail order, cold and warm |
+| `vl3/traverse` | full nested traversal at each acting version |
+
+The shape of the result, not the numbers: a single cold pass in wire order
+never needs the cache, because each tail begins where the last one ended, so
+the uncached decoder wins there. Repeated or out-of-order root reads are what
+memoization exists for, and win by an order of magnitude. Between them sits
+construct-plus-fixed-fields, which pays for the cache and gets nothing back —
+that workload is why the default is off.
+
+Every comparative arm runs the same generated traversal (`traversal_for!` in
+the bench) and asserts the two arms produce an identical decoded sum before
+timing starts, so an arm cannot silently do less work.
+
+#### `u32` vs `usize` tail offsets
+
+`with_compact_tail_offsets` stores each cached tail end as a `u32` relative to
+the decoder base instead of an absolute `usize` (native `usize` on 32-bit). It
+only means anything alongside `with_memoized_tail_offsets`. A span that cannot
+be represented is not an error: the representable prefix stays cached and the
+suffix is walked uncached.
+
+Compact trades instructions for footprint. It removes bytes from every tailed
+decoder and entry decoder, and it costs a `checked_sub` plus a `u32::try_from`
+range check on publish and a checked `base + relative` on read; the two cache
+primitives are straight-line, call-free and loop-free, so their static
+instruction counts equal retired counts per invocation. The adoption rule is
+conjunctive — less memory **and** no slower **and** no more instructions — and
+compact fails the instruction leg, so `usize` remains the default and compact
+stays opt-in for footprint-constrained consumers.
+
+The bench prints the decoder sizes it measured (`vl3 decoder size: …` on
+stderr); read those rather than a figure quoted here. For instruction counts
+use the Callgrind lane:
+
+```sh
+./scripts/run-sbe-instruction-probes.sh --all-profiles --topic decode
+```
+
+A full-traversal probe (`probe_*_final_tail`) is deliberately not compared as a
+static count: the compact build out-lines into more callees, so its static
+instructions exclude the callee bodies. Whole-path retired counts need the
+Linux/Valgrind lane.
+
 ### Warmed latency distributions
 
 HDR Histogram is reserved for warmed batches where timer resolution is

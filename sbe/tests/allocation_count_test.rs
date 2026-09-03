@@ -117,6 +117,11 @@ fn warm_up_all() {
     let (_mfr, a1) = after_perf.into_manufacturer().unwrap();
     let (_mod, _a2) = a1.into_model().unwrap();
 
+    let cached = CarDecoder::try_from(BASELINE).unwrap();
+    let _ = cached.activation_code();
+    let _ = cached.manufacturer();
+    let _ = cached.fuel_figures();
+
     let mut ordered = CarDecoder::try_from(BASELINE).unwrap().ordered();
     ordered
         .fuel_figures()
@@ -205,6 +210,26 @@ fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
             car.available(),
             car.code(),
         ));
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn cached_random_access_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    measure("cached random-access decode", || {
+        let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+        black_box(car.serial_number());
+        black_box(car.activation_code().unwrap());
+        black_box(car.manufacturer().unwrap());
+        let fuel = car.fuel_figures().unwrap();
+        for entry in fuel {
+            let e = entry.unwrap();
+            black_box(e.speed());
+            black_box(e.usage_description().unwrap());
+        }
+        black_box(car.model().unwrap());
+        black_box(car.encoded_length_with_header().unwrap());
     });
     Ok(())
 }

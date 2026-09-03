@@ -191,11 +191,32 @@ pub(crate) fn generate_message_decoder(
 
     // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
     // tail cursor, so copying cannot weaken an ordering invariant. Tailed
-    // decoders are NOT Copy/Clone — consumption enforces wire order.
+    // decoders are NOT Copy/Clone — consumption enforces wire order. The
+    // `Cell` boundary cache also makes them `Send` and not `Sync`.
     let derive_attr = if is_fixed {
         quote::quote! { #[derive(Clone, Copy)] }
     } else {
         quote::quote! {}
+    };
+    let total_tail = msg.groups.len() + msg.var_data.len();
+    let memoized = super::runtime::memoized_tail_offsets_enabled();
+    let (cache_field, cache_init) = if is_fixed || !memoized {
+        (
+            proc_macro2::TokenStream::new(),
+            proc_macro2::TokenStream::new(),
+        )
+    } else {
+        let cache_ty = super::tail_cache::cache_type_tokens(total_tail);
+        (
+            quote::quote! {
+                /// Progressive cache of dynamic-tail ends. Interior mutability
+                /// keeps `&self` getters; `Cell` makes this decoder `Send` and
+                /// not `Sync`. One decoder instance per thread over shareable
+                /// immutable bytes.
+                cache: #cache_ty,
+            },
+            quote::quote! { cache: sbe_rt::TailBoundaryCache::new(), },
+        )
     };
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
@@ -209,6 +230,7 @@ pub(crate) fn generate_message_decoder(
             pub(crate) offset: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
+            #cache_field
         }
     });
 
@@ -391,6 +413,7 @@ pub(crate) fn generate_message_decoder(
                 offset: body_offset,
                 acting_block_length,
                 acting_version,
+                #cache_init
             }
         }
     });
@@ -1104,19 +1127,11 @@ pub(crate) fn generate_message_decoder(
         }
     }
 
-    let total_tail = msg.groups.len() + msg.var_data.len();
-
-    // tail_offset_0
     impl_body.extend(quote::quote! {
         /// Byte offset of the message body within `self.buf`.
         #[inline]
         fn byte_offset(&self) -> usize {
             self.offset
-        }
-
-        #[inline]
-        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.byte_offset() + self.acting_block_length)
         }
     });
 
@@ -1132,127 +1147,23 @@ pub(crate) fn generate_message_decoder(
             }
         })
         .collect();
-    let mut k = 0usize;
-    for (gi, g) in msg.groups.iter().enumerate() {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &g.dimension_type);
-        let g_pascal = &group_unique_names[gi];
-        let _dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let _count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let _bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let _g_entry_ident = syn::Ident::new(
-            &format!("{}EntryDecoder", g_pascal),
-            proc_macro2::Span::call_site(),
-        );
-        let k1 = k + 1;
-        let tail_k_ident = format_ident!("tail_offset_{k}");
-        let tail_k1_ident = format_ident!("tail_offset_{k1}");
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let dn_ident: syn::Ident = syn::parse_str(&dim_name).unwrap();
-        let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let gn_lit = g.name.as_str();
-        let entry_decoder_ident = syn::Ident::new(
-            &format!("{}EntryDecoder", g_pascal),
-            proc_macro2::Span::call_site(),
-        );
-
-        let version_skip = if g.since_version > 0 {
-            let since_lit =
-                syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
-            quote::quote! {
-                if self.acting_version < #since_lit {
-                    return Ok(start);
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_ident()?;
-                #version_skip
-                if start + #dim_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #gn_lit,
-                        needed: #dim_size_lit,
-                        available: self.buf.len().saturating_sub(start),
-                    });
-                }
-                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
-                let header = #dn_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#cf_ident() as u64,
-                )?;
-                let block_len = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bf_ident() as u64,
-                )?;
-                let mut offset = start + #dim_size_lit;
-                let mut idx = 0;
-                while idx < count {
-                    offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
-                    idx += 1;
-                }
-                Ok(offset)
-            }
-        });
-        k += 1;
-    }
-
-    // VarData tail offsets
-    for vd in &msg.var_data {
-        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let prefix_size_lit =
-            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
-        let tail_k_ident = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_ident = quote::format_ident!("tail_offset_{}", k + 1);
-        let version_skip = if vd.since_version > 0 {
-            let since_lit = syn::LitInt::new(
-                &vd.since_version.to_string(),
+    let entry_skip: Vec<syn::Ident> = group_unique_names
+        .iter()
+        .map(|g_pascal| {
+            syn::Ident::new(
+                &format!("{g_pascal}EntryDecoder"),
                 proc_macro2::Span::call_site(),
-            );
-            quote::quote! {
-                if self.acting_version < #since_lit {
-                    return Ok(start);
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_ident()?;
-                #version_skip
-                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #vd_name_lit,
-                        needed: #prefix_size_lit,
-                        available: self.buf.len().saturating_sub(start),
-                    });
-                }
-                let bytes: [u8; #prefix_size_lit] =
-                    read_bytes::<#prefix_size_lit>(self.buf, start);
-                let header = #vd_type_ident(bytes);
-                let wire_length = header.#vd_len_field_ident() as u64;
-                let (_, data_end) = sbe_rt::checked_var_data_bounds(
-                    #vd_name_lit,
-                    start,
-                    #prefix_size_lit,
-                    wire_length,
-                    self.buf.len(),
-                )?;
-                Ok(data_end)
-            }
-        });
-        k += 1;
-    }
+            )
+        })
+        .collect();
+    impl_body.extend(super::tail_cache::emit_tail_offsets(
+        &msg.groups,
+        &msg.var_data,
+        elements,
+        &entry_skip,
+        quote::quote! { Ok(self.byte_offset() + self.acting_block_length) },
+        quote::quote! { self.offset },
+    ));
 
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
@@ -1333,11 +1244,31 @@ pub(crate) fn generate_message_decoder(
         if let Some(ref desc) = vd.description {
             impl_body.extend(doc_attr_tokens(desc));
         }
+        let vd_slot_lit = syn::LitInt::new(&vd_idx.to_string(), proc_macro2::Span::call_site());
+        let (vd_cache_hit, vd_cache_publish) = if memoized {
+            (
+                quote::quote! {
+                    if let Some(end) = self.cache.end_of(#vd_slot_lit, self.offset) {
+                        let data_start = offset + #prefix_size_lit;
+                        return Ok(&self.buf[data_start..end]);
+                    }
+                },
+                quote::quote! {
+                    let _ = self.cache.publish(#vd_slot_lit, data_end, self.offset);
+                },
+            )
+        } else {
+            (
+                proc_macro2::TokenStream::new(),
+                proc_macro2::TokenStream::new(),
+            )
+        };
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_ident()?;
+                #vd_cache_hit
                 if offset + #prefix_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_snake_ident),
@@ -1367,6 +1298,7 @@ pub(crate) fn generate_message_decoder(
                     wire_length,
                     self.buf.len(),
                 )?;
+                #vd_cache_publish
                 Ok(&self.buf[data_start..data_end])
             }
         });
@@ -1461,7 +1393,13 @@ pub(crate) fn generate_message_decoder(
             /// message position. The consumed stage cannot be reused.
             #[inline]
             pub fn rewind(self) -> Self {
-                self
+                Self {
+                    buf: self.buf,
+                    offset: self.offset,
+                    acting_version: self.acting_version,
+                    acting_block_length: self.acting_block_length,
+                    #cache_init
+                }
             }
         });
     }
