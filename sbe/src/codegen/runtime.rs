@@ -8,70 +8,11 @@ use quote::format_ident;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
 
-/// The progressive tail-boundary cache runtime. Only emitted when
-/// `with_memoized_tail_offsets(true)` selects it — otherwise no generated
-/// decoder names it, and ~180 lines of dead code stay out of every module.
+/// The progressive tail-boundary cache runtime, used by every generated
+/// `{Name}MemoizedDecoder`. Emitted unconditionally: `Decoder::memoized()` is
+/// always available on a tail-bearing message, so the type is always reachable.
 fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
-    if !memoized_tail_offsets_enabled() {
-        return proc_macro2::TokenStream::new();
-    }
     quote::quote! {
-            /// How a progressive tail-boundary cache stores one discovered end
-            /// offset. Native stores absolute `usize`; compact stores a `u32`
-            /// relative to the owning decoder's base and falls back to an
-            /// uncached walk when a span cannot be represented.
-            pub trait TailOffsetKind: Copy + 'static {
-                /// Stored slot type.
-                type Stored: Copy;
-                /// Encode an absolute end. `None` means "do not cache this slot".
-                fn encode(base: usize, abs: usize) -> Option<Self::Stored>;
-                /// Reconstruct an absolute end. `None` is treated as a miss.
-                fn decode(base: usize, stored: Self::Stored) -> Option<usize>;
-            }
-
-            /// Absolute `usize` offsets — default representation.
-            #[derive(Clone, Copy)]
-            pub struct NativeTailOffset;
-            impl TailOffsetKind for NativeTailOffset {
-                type Stored = usize;
-                #[inline]
-                fn encode(_base: usize, abs: usize) -> Option<usize> {
-                    Some(abs)
-                }
-                #[inline]
-                fn decode(_base: usize, stored: usize) -> Option<usize> {
-                    Some(stored)
-                }
-            }
-
-            /// Compact relative `u32` offsets on 64-bit; native `usize` elsewhere.
-            #[derive(Clone, Copy)]
-            pub struct CompactTailOffset;
-            #[cfg(target_pointer_width = "64")]
-            impl TailOffsetKind for CompactTailOffset {
-                type Stored = u32;
-                #[inline]
-                fn encode(base: usize, abs: usize) -> Option<u32> {
-                    abs.checked_sub(base).and_then(|d| u32::try_from(d).ok())
-                }
-                #[inline]
-                fn decode(base: usize, stored: u32) -> Option<usize> {
-                    base.checked_add(stored as usize)
-                }
-            }
-            #[cfg(not(target_pointer_width = "64"))]
-            impl TailOffsetKind for CompactTailOffset {
-                type Stored = usize;
-                #[inline]
-                fn encode(_base: usize, abs: usize) -> Option<usize> {
-                    Some(abs)
-                }
-                #[inline]
-                fn decode(_base: usize, stored: usize) -> Option<usize> {
-                    Some(stored)
-                }
-            }
-
             /// Progressive cache of dynamic-tail *end* offsets.
             ///
             /// Slot `i` is the absolute (or compact-relative) end of tail `i`
@@ -82,17 +23,15 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
             /// Decoding errors are never published. A compact encode failure
             /// leaves the frontier at the representable prefix so the suffix
             /// is walked uncached without rejecting the message.
-            pub struct TailBoundaryCache<const N: usize, Off: TailOffsetKind = NativeTailOffset> {
+            pub struct TailBoundaryCache<const N: usize> {
                 known_through: core::cell::Cell<usize>,
-                ends: [core::cell::Cell<core::mem::MaybeUninit<Off::Stored>>; N],
+                ends: [core::cell::Cell<core::mem::MaybeUninit<usize>>; N],
                 #[cfg(debug_assertions)]
                 hits: core::cell::Cell<u32>,
                 #[cfg(debug_assertions)]
                 misses: core::cell::Cell<u32>,
                 #[cfg(debug_assertions)]
                 boundary_calcs: core::cell::Cell<u32>,
-                #[cfg(debug_assertions)]
-                nested_walks: core::cell::Cell<u32>,
             }
 
             /// Debug-only counters for the memoized random-access prototype.
@@ -104,13 +43,11 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 pub misses: u32,
                 /// Individual tail walks (group skip or var-data length read).
                 pub boundary_calcs: u32,
-                /// Nested group-entry skips performed while walking a group.
-                pub nested_walks: u32,
                 /// How far the contiguous frontier has advanced.
                 pub known_through: usize,
             }
 
-            impl<const N: usize, Off: TailOffsetKind> TailBoundaryCache<N, Off> {
+            impl<const N: usize> TailBoundaryCache<N> {
                 /// Empty cache. Slots past the frontier are uninitialized.
                 #[inline]
                 pub const fn new() -> Self {
@@ -123,8 +60,6 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                         misses: core::cell::Cell::new(0),
                         #[cfg(debug_assertions)]
                         boundary_calcs: core::cell::Cell::new(0),
-                        #[cfg(debug_assertions)]
-                        nested_walks: core::cell::Cell::new(0),
                     }
                 }
 
@@ -142,29 +77,25 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
 
                 /// Absolute end of tail `idx` if the contiguous frontier covers it.
                 #[inline]
-                pub fn end_of(&self, idx: usize, base: usize) -> Option<usize> {
+                pub fn end_of(&self, idx: usize) -> Option<usize> {
                     if idx >= N || idx >= self.known_through.get() {
                         return None;
                     }
                     // SAFETY: `idx < known_through`, so this slot was published.
-                    let stored = unsafe { self.ends[idx].get().assume_init() };
-                    Off::decode(base, stored)
+                    Some(unsafe { self.ends[idx].get().assume_init() })
                 }
 
-                /// Publish the end of tail `idx`. Must be the next frontier slot.
-                /// Returns `false` when compact storage cannot represent `abs_end`;
-                /// the frontier is left unchanged and the caller walks uncached.
+                /// Publish the end of tail `idx`. Ignored unless `idx` is the
+                /// next frontier slot, so a boundary can never be published out
+                /// of order — and errors, which never reach here, never land in
+                /// the cache.
                 #[inline]
-                pub fn publish(&self, idx: usize, abs_end: usize, base: usize) -> bool {
+                pub fn publish(&self, idx: usize, abs_end: usize) {
                     if idx >= N || idx != self.known_through.get() {
-                        return true;
+                        return;
                     }
-                    let Some(stored) = Off::encode(base, abs_end) else {
-                        return false;
-                    };
-                    self.ends[idx].set(core::mem::MaybeUninit::new(stored));
+                    self.ends[idx].set(core::mem::MaybeUninit::new(abs_end));
                     self.known_through.set(idx + 1);
-                    true
                 }
 
                 #[cfg(debug_assertions)]
@@ -185,18 +116,11 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 }
                 #[cfg(debug_assertions)]
                 #[inline]
-                pub fn record_nested_walk(&self) {
-                    self.nested_walks
-                        .set(self.nested_walks.get().saturating_add(1));
-                }
-                #[cfg(debug_assertions)]
-                #[inline]
                 pub fn stats(&self) -> DecodeCacheStats {
                     DecodeCacheStats {
                         hits: self.hits.get(),
                         misses: self.misses.get(),
                         boundary_calcs: self.boundary_calcs.get(),
-                        nested_walks: self.nested_walks.get(),
                         known_through: self.known_through.get(),
                     }
                 }
@@ -677,8 +601,6 @@ pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
 
 thread_local! {
     static DEPRECATED_ATTRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static COMPACT_TAIL_OFFSETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static MEMOIZED_TAIL_OFFSETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Highest `sinceVersion` the generated *encoder* still emits.
     /// `Some(u16::MAX)` (the default) means every version in the schema is
     /// encodable; `None` means the enclosing subtree has no encoder at all.
@@ -703,22 +625,6 @@ fn deprecated_attrs_enabled() -> bool {
     DEPRECATED_ATTRS.with(|c| c.get())
 }
 
-/// Run `f` with compact (`u32` relative) tail-offset storage in generated
-/// random-access decoders. Default is native `usize`.
-pub(crate) fn with_compact_tail_offsets<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
-    COMPACT_TAIL_OFFSETS.with(|cell| {
-        let prev = cell.get();
-        cell.set(enabled);
-        let out = f();
-        cell.set(prev);
-        out
-    })
-}
-
-pub(crate) fn compact_tail_offsets_enabled() -> bool {
-    COMPACT_TAIL_OFFSETS.with(|c| c.get())
-}
-
 /// Run `f` with the encoder's acting-version cap in scope. Decoder codegen
 /// reads it to avoid naming encoder-owned items that `for_encode` dropped.
 pub(crate) fn with_encode_version_cap<R>(cap: Option<u16>, f: impl FnOnce() -> R) -> R {
@@ -739,22 +645,6 @@ pub(crate) fn encode_version_cap() -> Option<u16> {
 /// i.e. the encoder-owned items naming it are generated.
 pub(crate) fn encodable_at(since_version: u16) -> bool {
     matches!(encode_version_cap(), Some(cap) if since_version <= cap)
-}
-
-/// Run `f` with memoized dynamic-tail boundaries in generated random-access
-/// decoders. Default is disabled; enabling adds the progressive tail cache.
-pub(crate) fn with_memoized_tail_offsets<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
-    MEMOIZED_TAIL_OFFSETS.with(|cell| {
-        let prev = cell.get();
-        cell.set(enabled);
-        let out = f();
-        cell.set(prev);
-        out
-    })
-}
-
-pub(crate) fn memoized_tail_offsets_enabled() -> bool {
-    MEMOIZED_TAIL_OFFSETS.with(|c| c.get())
 }
 
 /// Rust keywords that cannot be used as bare identifiers.
@@ -2493,6 +2383,77 @@ pub(crate) fn generate_any_message(
                     /// followed by the unparsed body. Not the body alone.
                     frame: &'a [u8],
                 },
+            }
+        });
+
+        // Per-variant lane accessors. `match` still works; these save the
+        // caller writing one when they already know which template they want,
+        // and let them land directly in the lane they intend to decode with
+        // instead of taking the base decoder and converting at the call site.
+        let mut lane_accessors = proc_macro2::TokenStream::new();
+        for m in messages {
+            let pascal = to_pascal_case(&m.name);
+            let variant = quote::format_ident!("{pascal}");
+            let decoder = quote::format_ident!("{pascal}Decoder");
+            let snake = to_snake_case(&m.name);
+            let into_base = quote::format_ident!("into_{snake}");
+            let doc_base = if m.has_tails() {
+                format!(
+                    "Take the `{pascal}` decoder, or `None` if this frame is a different template."
+                )
+            } else {
+                format!(
+                    "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized or ordered lane to take: every field is random-access off the block and this decoder reads them all."
+                )
+            };
+            lane_accessors.extend(quote::quote! {
+                #[doc = #doc_base]
+                #[inline]
+                #[must_use]
+                pub fn #into_base(self) -> Option<#decoder<'a>> {
+                    match self {
+                        Self::#variant(d) => Some(d),
+                        _ => None,
+                    }
+                }
+            });
+            if m.has_tails() {
+                let memo = quote::format_ident!("{pascal}MemoizedDecoder");
+                let ordered = quote::format_ident!("{pascal}OrderedDecoder");
+                let into_memo = quote::format_ident!("into_{snake}_memoized");
+                let into_ordered = quote::format_ident!("into_{snake}_ordered");
+                let doc_memo = format!(
+                    "Take the `{pascal}` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template."
+                );
+                let doc_ordered = format!(
+                    "Take the `{pascal}` decoder straight into the mutable ordered lane (complete sequential decoding), or `None` if this frame is a different template."
+                );
+                lane_accessors.extend(quote::quote! {
+                    #[doc = #doc_memo]
+                    #[inline]
+                    #[must_use]
+                    pub fn #into_memo(self) -> Option<#memo<'a>> {
+                        match self {
+                            Self::#variant(d) => Some(d.memoized()),
+                            _ => None,
+                        }
+                    }
+
+                    #[doc = #doc_ordered]
+                    #[inline]
+                    #[must_use]
+                    pub fn #into_ordered(self) -> Option<#ordered<'a>> {
+                        match self {
+                            Self::#variant(d) => Some(d.ordered()),
+                            _ => None,
+                        }
+                    }
+                });
+            }
+        }
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #lane_accessors
             }
         });
     }

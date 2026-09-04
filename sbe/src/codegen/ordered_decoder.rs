@@ -36,6 +36,13 @@ pub(crate) fn generate_ordered_decoder(
     let metadata_ident = syn::Ident::new(&format!("{name}DecoderMetadata"), span);
     let owner_lit = syn::LitStr::new(name, span);
     let total_tail = msg.groups.len() + msg.var_data.len();
+    // A fixed-block message has nothing to order: every field is random-access
+    // off the block, and the base decoder already reads them all. Emitting a
+    // cursor that only forwards fixed getters would be a second name for the
+    // same thing, so the lane simply does not exist for these messages.
+    if total_tail == 0 {
+        return proc_macro2::TokenStream::new();
+    }
 
     let forwards = forward_fixed_fields(
         &msg.fields,
@@ -92,10 +99,6 @@ pub(crate) fn generate_ordered_decoder(
             #forwards
         }
     };
-
-    if total_tail == 0 {
-        return ts;
-    }
 
     let complete_ident = syn::Ident::new(&format!("{name}DecoderComplete"), span);
     let names: Vec<syn::LitStr> = msg
@@ -837,7 +840,7 @@ fn generate_entry_ordered(
     ts
 }
 
-fn forward_fixed_fields(
+pub(crate) fn forward_fixed_fields(
     fields: &[MessageField],
     conversions: &[crate::ConversionSelector],
     domain_types: &[(crate::ConversionSelector, String)],

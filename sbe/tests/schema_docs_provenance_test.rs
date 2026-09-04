@@ -250,7 +250,7 @@ fn single_line_description_html_chars_are_escaped() -> Result<(), Box<dyn std::e
     );
     // Scoped to doc lines: only `#[doc]` content is rustdoc-parsed, and the
     // generated runtime legitimately contains ordinary Rust whose signatures
-    // read as `Option<u32>` (`CompactTailOffset::encode`). A whole-file
+    // read as `Option<u32>` (a checked cache publish). A whole-file
     // substring scan cannot tell schema prose from code, so it would fail on
     // unrelated generator changes while still missing an unescaped
     // description emitted on any item this test does not name.

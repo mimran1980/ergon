@@ -199,25 +199,11 @@ pub(crate) fn generate_message_decoder(
         quote::quote! {}
     };
     let total_tail = msg.groups.len() + msg.var_data.len();
-    let memoized = super::runtime::memoized_tail_offsets_enabled();
-    let (cache_field, cache_init) = if is_fixed || !memoized {
-        (
-            proc_macro2::TokenStream::new(),
-            proc_macro2::TokenStream::new(),
-        )
-    } else {
-        let cache_ty = super::tail_cache::cache_type_tokens(total_tail);
-        (
-            quote::quote! {
-                /// Progressive cache of dynamic-tail ends. Interior mutability
-                /// keeps `&self` getters; `Cell` makes this decoder `Send` and
-                /// not `Sync`. One decoder instance per thread over shareable
-                /// immutable bytes.
-                cache: #cache_ty,
-            },
-            quote::quote! { cache: sbe_rt::TailBoundaryCache::new(), },
-        )
-    };
+    // The base decoder carries no message-level cache: it is `Sync`, small, and
+    // recalculates tail offsets. `Decoder::memoized(self)` is the opt-in lane
+    // that adds one (see `memoized_decoder.rs`).
+    let cache_field = proc_macro2::TokenStream::new();
+    let cache_init = proc_macro2::TokenStream::new();
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
@@ -1245,24 +1231,8 @@ pub(crate) fn generate_message_decoder(
             impl_body.extend(doc_attr_tokens(desc));
         }
         let vd_slot_lit = syn::LitInt::new(&vd_idx.to_string(), proc_macro2::Span::call_site());
-        let (vd_cache_hit, vd_cache_publish) = if memoized {
-            (
-                quote::quote! {
-                    if let Some(end) = self.cache.end_of(#vd_slot_lit, self.offset) {
-                        let data_start = offset + #prefix_size_lit;
-                        return Ok(&self.buf[data_start..end]);
-                    }
-                },
-                quote::quote! {
-                    let _ = self.cache.publish(#vd_slot_lit, data_end, self.offset);
-                },
-            )
-        } else {
-            (
-                proc_macro2::TokenStream::new(),
-                proc_macro2::TokenStream::new(),
-            )
-        };
+        let vd_cache_hit = proc_macro2::TokenStream::new();
+        let vd_cache_publish = proc_macro2::TokenStream::new();
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1899,6 +1869,21 @@ pub(crate) fn generate_message_decoder(
         );
         ts.extend(domain_ts);
     }
+
+    // Opt-in memoized lane: `Decoder::memoized(self)` -> `MemoizedDecoder`.
+    // Emitted here because it needs the same scoped group names the base
+    // getters use, so both lanes name identical group decoder types.
+    ts.extend(super::generate_memoized_decoder(
+        msg,
+        elements,
+        &name,
+        &group_unique_names,
+        enable_display_debug,
+        conversions,
+        domain_types,
+        null_as_option,
+        all_enums_as_option,
+    ));
 
     (ts, marker_name)
 }

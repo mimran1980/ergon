@@ -813,7 +813,10 @@ fn version_absent_and_present_tails() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-/// Schema field named `ordered` is renamed; `ordered()` conversion remains.
+/// Schema field named `ordered` is renamed; the `ordered()` lane method wins
+/// the name. The fixture carries a group on purpose — a fixed-block message
+/// generates no `ordered()` at all, so the clash this guards can only happen
+/// on a message with tails.
 #[test]
 fn schema_field_named_ordered_is_renamed() -> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<messageSchema package="ordclash" id="1" version="0" byteOrder="littleEndian">
@@ -824,9 +827,16 @@ fn schema_field_named_ordered_is_renamed() -> Result<(), Box<dyn std::error::Err
       <type name="schemaId" primitiveType="uint16"/>
       <type name="version" primitiveType="uint16"/>
     </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
   </types>
   <message name="Msg" id="1" blockLength="4">
     <field name="ordered" id="1" type="uint32" offset="0"/>
+    <group name="legs" id="2" dimensionType="groupSizeEncoding" blockLength="4">
+      <field name="qty" id="3" type="uint32" offset="0"/>
+    </group>
   </message>
 </messageSchema>"#;
     let schema = Schema::from_ir(parse(XML)?);
@@ -849,15 +859,21 @@ fn schema_field_named_ordered_is_renamed() -> Result<(), Box<dyn std::error::Err
         "ordclash",
         &src,
         r#"
-        let mut storage = [0u8; 32];
+        let mut storage = [0u8; MsgEncoder::compute_length_with_header(1)];
         let len = MsgEncoder::try_wrap_and_apply_header(&mut storage, 0)?
             .fixed(&MsgFixedFields { ordered: 7 })
+            .legs(1, |legs| { legs.add(|l| { l.qty(3u32); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
+        assert_eq!(storage.len(), len);
         let dec = MsgDecoder::try_decode(&storage[..len], 0)?;
         assert_eq!(dec.ordered_field(), 7);
-        let ordered = dec.ordered();
+        let mut ordered = dec.ordered();
         assert_eq!(ordered.ordered_field(), 7);
         assert_eq!(ordered.acting_version(), 0);
+        ordered.legs()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
+            assert_eq!(e.qty(), 3);
+            Ok(())
+        })?;
     "#,
     );
     Ok(())

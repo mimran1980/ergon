@@ -14,17 +14,9 @@
 
 mod common;
 use common::{
-    Paths, compile_and_run, compile_and_run_modules, compile_and_run_two_modules,
+    Paths, compile_and_run, compile_and_run_modules, compile_and_run_two_modules, generate,
     generate_domain_with,
 };
-use std::path::Path;
-
-/// Memoization is opt-in; the cache assertions below need it on.
-fn generate(xml_path: &Path, module_name: &str) -> (ergo_sbe::Schema, String) {
-    generate_domain_with(xml_path, module_name, |c| {
-        c.with_memoized_tail_offsets(true)
-    })
-}
 
 #[test]
 fn v3_decoder_reads_v0_buffer_in_any_order() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,7 +87,7 @@ fn v3_decoder_reads_v0_buffer_in_any_order() -> Result<(), Box<dyn std::error::E
         assert_eq!(prices, vec![100i64]);
         assert_eq!(dec.symbol()?, b"IBM");
 
-        let reverse = vl3_v3::L3BookDecoder::try_decode(encoded, 0)?;
+        let reverse = vl3_v3::L3BookDecoder::try_decode(encoded, 0)?.memoized();
         assert_eq!(reverse.symbol()?, b"IBM");
         let asks = reverse.asks()?;
         assert!(asks.is_empty());
@@ -190,7 +182,7 @@ fn v3_roundtrip_dense_book() -> Result<(), Box<dyn std::error::Error>> {
             .encoded_length_with_header();
         assert_eq!(sized, len, "EncodedLength must match the encoder");
         let encoded = &storage[..len];
-        let dec = L3BookDecoder::try_decode(encoded, 0)?;
+        let dec = L3BookDecoder::try_decode(encoded, 0)?.memoized();
         assert_eq!(dec.timestamp(), 1);
         assert_eq!(dec.epoch(), Some(3));
         assert_eq!(dec.flags(), Some(4));
@@ -268,8 +260,7 @@ fn each_snapshot_encodes_and_later_decoders_read_earlier_wire()
     for version in 0u16..=3 {
         let name = format!("vl3_v{version}");
         let (_schema, src) = generate_domain_with(&Paths::versioned_l3_schema(3), &name, |c| {
-            c.with_memoized_tail_offsets(true)
-                .with_encode_version(version)
+            c.with_encode_version(version)
         });
         sources.push(src);
         modules.push(name);
@@ -700,7 +691,7 @@ fn encode_version_beyond_schema_is_rejected() -> Result<(), Box<dyn std::error::
 fn snapshot_encoder_matches_encode_version_filter() -> Result<(), Box<dyn std::error::Error>> {
     let (_s_snap, snap) = generate(&Paths::versioned_l3_schema(1), "snap_v1");
     let (_s_filt, filt) = generate_domain_with(&Paths::versioned_l3_schema(3), "filt_v1", |c| {
-        c.with_memoized_tail_offsets(true).with_encode_version(1)
+        c.with_encode_version(1)
     });
     compile_and_run_two_modules(
         "vl3_snapshot_vs_encode_version",

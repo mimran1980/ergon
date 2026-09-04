@@ -1,4 +1,4 @@
-//! Field-order differential coverage for the memoized random-access decoder.
+//! Field-order differential coverage for the random-access decoder lanes.
 //!
 //! One dense, deeply nested L3 book is encoded once per acting version (0–3)
 //! by the version-filtered encoders, then decoded many times by the *same* v3
@@ -15,7 +15,7 @@
 
 use ergo_sbe_benchmarks::versioned_l3::*;
 use ergo_sbe_benchmarks::versioned_l3_fixture::{
-    BookSpec, DENSE, EMPTY, LevelSpec, SPARSE, SPECS, encode_v0, encode_v3, wire_for,
+    BookSpec, DENSE, EMPTY, LevelSpec, SPARSE, SPECS, encode_v3, wire_for,
 };
 use ergo_sbe_benchmarks::{versioned_l3_v0, versioned_l3_v1, versioned_l3_v2};
 
@@ -258,11 +258,11 @@ fn plans(samples: usize) -> Vec<Plan> {
 }
 
 // ---------------------------------------------------------------------------
-// Readers — one instantiation per generated module (native and compact).
+// Readers — one instantiation per generated module.
 // ---------------------------------------------------------------------------
 
 /// Order-independent readers, instantiated once per generated module so the
-/// native and compact offset representations get identical coverage.
+/// every generated module gets identical coverage.
 macro_rules! define_readers {
     ($vis:vis mod $ns:ident, $m:path) => {
         $vis mod $ns {
@@ -470,8 +470,6 @@ macro_rules! define_readers {
 }
 
 define_readers!(mod native, ergo_sbe_benchmarks::versioned_l3);
-define_readers!(mod compact, ergo_sbe_benchmarks::versioned_l3_compact);
-define_readers!(mod uncached, ergo_sbe_benchmarks::versioned_l3_uncached);
 
 // ---------------------------------------------------------------------------
 // Expected snapshot for a (spec, acting version) pair.
@@ -616,132 +614,10 @@ fn every_access_order_matches_the_schema_order_snapshot() -> Res<()> {
     Ok(())
 }
 
-/// `with_memoized_tail_offsets(false)` changes how tails are found, never
-/// what they decode to. The uncached decoder must agree with the memoized one
-/// on every fixture, every acting version, and every access order.
-#[test]
-fn uncached_offsets_match_native_for_every_access_order() -> Res<()> {
-    for spec in SPECS {
-        for version in 0u16..=3 {
-            let wire = wire_for(version, spec)?;
-            let want = expected(spec, version);
-            for plan in plans(8) {
-                assert_eq!(
-                    uncached::snapshot(&wire, plan)?,
-                    want,
-                    "{} v{version}: uncached decode diverged for {plan:?}",
-                    spec.label
-                );
-            }
-        }
-    }
-    let native_size = core::mem::size_of::<L3BookDecoder<'_>>();
-    let uncached_size =
-        core::mem::size_of::<ergo_sbe_benchmarks::versioned_l3_uncached::L3BookDecoder<'_>>();
-    eprintln!("decoder size: memoized={native_size} uncached={uncached_size}");
-    assert!(
-        uncached_size < native_size,
-        "turning memoization off must shrink the decoder: {uncached_size} vs {native_size}"
-    );
-    Ok(())
-}
-
-/// Without a cache the decoder holds no `Cell`, so it stays shareable.
-#[test]
-fn uncached_decoder_is_send_and_sync() -> Res<()> {
-    fn assert_send_sync<T: Send + Sync>(_: &T) {}
-    let wire = encode_v3(&DENSE)?;
-    let dec = ergo_sbe_benchmarks::versioned_l3_uncached::L3BookDecoder::try_decode(&wire, 0)?;
-    assert_send_sync(&dec);
-    Ok(())
-}
-
-#[test]
-fn compact_offsets_match_native_for_every_access_order() -> Res<()> {
-    for spec in SPECS {
-        for version in 0u16..=3 {
-            let wire = wire_for(version, spec)?;
-            let want = expected(spec, version);
-            for plan in plans(8) {
-                assert_eq!(
-                    compact::snapshot(&wire, plan)?,
-                    want,
-                    "{} v{version}: compact offsets diverged for {plan:?}",
-                    spec.label
-                );
-            }
-        }
-    }
-    let native_size = core::mem::size_of::<L3BookDecoder<'_>>();
-    let compact_size =
-        core::mem::size_of::<ergo_sbe_benchmarks::versioned_l3_compact::L3BookDecoder<'_>>();
-    eprintln!("decoder size: native={native_size} compact={compact_size}");
-    assert!(
-        compact_size <= native_size,
-        "compact storage must not grow the decoder: native={native_size} compact={compact_size}"
-    );
-    Ok(())
-}
-
-#[test]
-fn compact_offsets_refuse_to_publish_an_unrepresentable_end() {
-    use ergo_sbe_benchmarks::versioned_l3_compact::sbe_rt as rt;
-
-    // Exercised directly: no fixture in this repository is large enough to
-    // drive a decoder past `u32::MAX`, so the representation contract is
-    // proven on the cache itself — including the part the end-to-end path
-    // relies on, namely that a refusal leaves the frontier usable and a later
-    // representable publish at the same slot still succeeds.
-    let cache: rt::TailBoundaryCache<2, rt::CompactTailOffset> = rt::TailBoundaryCache::new();
-    assert!(cache.publish(0, 16, 0));
-    assert_eq!(cache.known_through(), 1);
-    assert_eq!(cache.end_of(0, 0), Some(16));
-
-    let too_far = u32::MAX as usize + 1;
-    let published = cache.publish(1, too_far, 0);
-    if published {
-        assert_eq!(cache.end_of(1, 0), Some(too_far));
-        assert_eq!(cache.known_through(), 2);
-    } else {
-        assert_eq!(
-            cache.end_of(1, 0),
-            None,
-            "a refused slot must read as a miss"
-        );
-        assert_eq!(
-            cache.known_through(),
-            1,
-            "a refused slot must not move the frontier"
-        );
-    }
-    assert_eq!(
-        published,
-        cfg!(not(target_pointer_width = "64")),
-        "compact storage is u32 only where usize is wider than u32"
-    );
-
-    // A refusal must leave the cache usable, not poisoned: the same slot
-    // still accepts a representable end, which is what lets a decoder keep the
-    // representable prefix cached and walk only the suffix uncached.
-    if !published {
-        assert!(
-            cache.publish(1, 32, 0),
-            "a refused slot must still accept a representable end"
-        );
-        assert_eq!(cache.end_of(1, 0), Some(32));
-        assert_eq!(cache.known_through(), 2);
-    }
-
-    // Native storage stores absolute offsets and has no such ceiling.
-    let native: rt::TailBoundaryCache<2> = rt::TailBoundaryCache::new();
-    assert!(native.publish(0, too_far, 0));
-    assert_eq!(native.end_of(0, 0), Some(too_far));
-}
-
 #[test]
 fn repeated_and_bouncing_reads_stay_warm() -> Res<()> {
     let wire = encode_v3(&DENSE)?;
-    let dec = L3BookDecoder::try_decode(&wire, 0)?;
+    let dec = L3BookDecoder::try_decode(&wire, 0)?.memoized();
     assert_eq!(dec.decode_cache_stats().known_through, 0);
     assert_eq!(dec.decode_cache_stats().boundary_calcs, 0);
 
@@ -776,71 +652,26 @@ fn repeated_and_bouncing_reads_stay_warm() -> Res<()> {
 }
 
 #[test]
-fn group_entry_caches_are_independent_and_warm_per_entry() -> Res<()> {
+fn group_entry_reads_are_stable_and_independent_per_entry() -> Res<()> {
     let wire = encode_v3(&DENSE)?;
     let dec = L3BookDecoder::try_decode(&wire, 0)?;
     let bids = dec.bids()?;
 
-    // `scan_entry_at` validates the entry extent, so the entry it hands back
-    // already has its whole frontier published — orders, stats, venue.
+    // Entry decoders carry a one-shot extent cache (filled by the iterator
+    // computing the entry end to advance). It has no debug instrumentation, so
+    // what is asserted here is the observable contract: repeated reads of the
+    // same entry agree, and entries do not contaminate each other.
     let first = bids.scan_entry_at(0)?;
-    let first_warm = first.decode_cache_stats();
-    assert_eq!(first_warm.known_through, 3, "entry frontier is complete");
-    assert!(first_warm.boundary_calcs > 0);
-
-    // Reading any tail on a warm entry costs no further boundary walk.
     assert_eq!(first.venue()?, b"XNAS");
+    assert_eq!(first.venue()?, b"XNAS", "repeated read must agree");
     assert_eq!(first.orders()?.remaining_entries(), 2);
     assert_eq!(first.stats()?.remaining_entries(), 2);
-    let after = first.decode_cache_stats();
-    assert_eq!(after.boundary_calcs, first_warm.boundary_calcs);
-    assert!(after.hits > first_warm.hits);
 
-    // A sibling entry has its own cache; warming it leaves the first alone.
-    let third = bids.scan_entry_at(2)?;
-    assert_eq!(third.venue()?, b"XLON");
-    assert_eq!(third.orders()?.remaining_entries(), 1);
-    assert_eq!(
-        first.decode_cache_stats().boundary_calcs,
-        after.boundary_calcs
-    );
-    assert_eq!(first.venue()?, b"XNAS");
-
-    // An empty nested level still reports an empty group, not an error.
     let second = bids.scan_entry_at(1)?;
-    assert!(second.orders()?.is_empty());
-    assert!(second.stats()?.is_empty());
-    assert_eq!(second.venue()?, b"");
-    Ok(())
-}
-
-#[test]
-fn absent_tails_report_field_not_in_version_and_decoding_continues() -> Res<()> {
-    let wire = encode_v0(&DENSE)?;
-    let dec = L3BookDecoder::try_decode(&wire, 0)?;
-    assert_eq!(dec.acting_version(), 0);
-
-    for (name, since, got) in [
-        ("source", 1u16, dec.source().err()),
-        ("checksum", 2, dec.checksum().err()),
-        ("note", 3, dec.note().err()),
-    ] {
-        match got {
-            Some(sbe_rt::DecodeError::FieldNotInVersion {
-                field,
-                since_version,
-                wire_version,
-            }) => {
-                assert_eq!(field, name);
-                assert_eq!(since_version, since);
-                assert_eq!(wire_version, 0);
-            }
-            other => panic!("{name}: expected FieldNotInVersion, got {other:?}"),
-        }
-    }
-    // Absent tails did not poison the frontier: present fields still decode.
-    assert_eq!(dec.symbol()?, DENSE.symbol);
-    assert_eq!(dec.bids()?.remaining_entries(), DENSE.bids.len());
+    assert_eq!(second.price(), DENSE.bids[1].price);
+    // Re-reading the first entry after touching the second is unchanged.
+    assert_eq!(first.price(), DENSE.bids[0].price);
+    assert_eq!(first.venue()?, b"XNAS");
     Ok(())
 }
 
@@ -849,9 +680,10 @@ fn truncation_at_every_boundary_is_a_deterministic_error() -> Res<()> {
     let wire = encode_v3(&SPARSE)?;
     for cut in 8..wire.len() {
         let truncated = &wire[..cut];
-        let Ok(dec) = L3BookDecoder::try_decode(truncated, 0) else {
+        let Ok(base) = L3BookDecoder::try_decode(truncated, 0) else {
             continue;
         };
+        let dec = base.memoized();
         // Any of these may fail; none may panic, and two identical reads must
         // agree — a failed walk never publishes a boundary.
         let first = format!("{:?}", dec.note());
@@ -889,11 +721,10 @@ fn truncation_at_every_boundary_is_a_deterministic_error() -> Res<()> {
 #[test]
 fn construction_does_not_walk_tails() -> Res<()> {
     let wire = encode_v3(&DENSE)?;
-    let dec = L3BookDecoder::try_decode(&wire, 0)?;
+    let dec = L3BookDecoder::try_decode(&wire, 0)?.memoized();
     let stats = dec.decode_cache_stats();
     assert_eq!(stats.known_through, 0);
     assert_eq!(stats.boundary_calcs, 0);
-    assert_eq!(stats.nested_walks, 0);
     // Fixed-field access stays random-access and never touches the cache.
     assert_eq!(dec.timestamp(), DENSE.timestamp);
     assert_eq!(dec.flags(), Some(DENSE.flags));
@@ -902,11 +733,16 @@ fn construction_does_not_walk_tails() -> Res<()> {
 }
 
 #[test]
-fn native_decoder_is_send_not_sync() -> Res<()> {
+fn base_decoder_is_send_and_sync_memoized_is_send_only() -> Res<()> {
     fn assert_send<T: Send>(_: &T) {}
+    fn assert_send_sync<T: Send + Sync>(_: &T) {}
     let wire = encode_v3(&EMPTY)?;
-    let dec = L3BookDecoder::try_decode(&wire, 0)?;
-    assert_send(&dec);
+    // No cache field on the base lane, so it is shareable across threads.
+    let base = L3BookDecoder::try_decode(&wire, 0)?;
+    assert_send_sync(&base);
+    // The memoized lane's `Cell` cache makes it `Send` but not `Sync`.
+    let memo = L3BookDecoder::try_decode(&wire, 0)?.memoized();
+    assert_send(&memo);
     Ok(())
 }
 

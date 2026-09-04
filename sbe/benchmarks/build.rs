@@ -14,26 +14,12 @@ fn generate_versioned_l3(sbe_root: &Path) -> Result<(), Box<dyn std::error::Erro
         } else {
             format!("versioned_l3_v{version}_bench")
         };
-        // The cache arm: memoization is opt-in, and these modules are what the
-        // cache tests and the memoization benchmark measure.
-        let mut cfg = ergo_sbe::GenerationConfig::new(&module).with_memoized_tail_offsets(true);
+        let mut cfg = ergo_sbe::GenerationConfig::new(&module);
         if version < 3 {
             cfg = cfg.with_encode_version(version);
         }
         ergo_sbe::generate_to_out_dir(&schema, cfg)?;
     }
-    ergo_sbe::generate_to_out_dir(
-        &schema,
-        ergo_sbe::GenerationConfig::new("versioned_l3_compact_bench")
-            .with_memoized_tail_offsets(true)
-            .with_compact_tail_offsets(true),
-    )?;
-    // The other side of `with_memoized_tail_offsets`: same schema, the default
-    // uncached decoder.
-    ergo_sbe::generate_to_out_dir(
-        &schema,
-        ergo_sbe::GenerationConfig::new("versioned_l3_uncached_bench"),
-    )?;
     println!("cargo:rerun-if-changed=../tests/fixtures/schemas/versioned-l3-v3.xml");
     Ok(())
 }

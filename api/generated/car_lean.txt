@@ -1,7 +1,13 @@
+# [cfg (debug_assertions)] # [must_use = "discarding cache stats is almost always a mistake"] CarMemoizedDecoder::fn decode_cache_stats (& self) -> sbe_rt :: DecodeCacheStats
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_boundary (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_hit (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_miss (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn stats (& self) -> DecodeCacheStats
 # [must_use = "complete the nested shape or call finish_empty()"] struct CarFuelFiguresUniformEncodedLength {  }
 # [must_use = "complete the nested shape or call finish_empty()"] struct CarPerformanceFiguresUniformEncodedLength {  }
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CarDecoder< 'a > {  }
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CarOrderedDecoder< 'a > {  }
+# [must_use = "decoder must be read; dropping it discards the cache"] struct CarMemoizedDecoder< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterFuelFigures< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterManufacturer< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderAfterModel< 'a > {  }
@@ -9,6 +15,7 @@
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct CarDecoderComplete< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct FuelFiguresEntryDecoderComplete< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"] struct PerformanceFiguresEntryDecoderComplete< 'a > {  }
+# [must_use = "discarding the returned decoder discards the message"] CarMemoizedDecoder::fn into_inner (self) -> CarDecoder < 'a >
 # [must_use = "discarding this value is almost always a mistake"] BooleanType::const fn as_bool (self) -> Option < bool >
 # [must_use = "discarding this value is almost always a mistake"] BooleanType::const fn as_option (self) -> Option < Self >
 # [must_use = "discarding this value is almost always a mistake"] BooleanType::const fn as_str (self) -> & 'static str
@@ -68,6 +75,9 @@
 # [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::fn as_fixed_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] CarEncoderMetadata::fn as_fixed_region_with_header (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] CarMemoizedDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarMemoizedDecoder::fn fuel_figures (& self) -> Result < FuelFiguresDecoder < 'a > , sbe_rt :: DecodeError >
+# [must_use = "discarding this value is almost always a mistake"] CarMemoizedDecoder::fn performance_figures (& self ,) -> Result < PerformanceFiguresDecoder < 'a > , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] CarOrderedDecoder::fn get_metadata (& self) -> CarDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] Engine::const fn fuel (& self) -> & 'static str
 # [must_use = "discarding this value is almost always a mistake"] Engine::const fn max_rpm (& self) -> u16
@@ -163,6 +173,7 @@
 # [must_use = "length builder must be completed"] struct CarEncodedLengthAfterPerformanceFigures {  }
 # [must_use = "length builder must be completed"] struct CarEncodedLengthComplete {  }
 # [must_use = "length builder must be consumed"] struct CarEncodedLength {  }
+# [must_use = "memoized() returns a new decoder; the original is consumed"] CarDecoder::fn memoized (self) -> CarMemoizedDecoder < 'a >
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarFuelFiguresRaggedBuilder< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresAccelerationRaggedBuilder< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresRaggedBuilder< 'a > {  }
@@ -310,6 +321,24 @@ CarFuelFiguresRaggedBuilder::fn uniform (& mut self , count : usize) -> Result <
 CarFuelFiguresRaggedBuilder::fn usage_description (& mut self , len : usize ,) -> Result < & mut Self , sbe_rt :: EncodeError >
 CarFuelFiguresUniformEncodedLength::const fn usage_description (mut self , byte_len : usize ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError >
 CarFuelFiguresUniformEncodedLength::fn finish_empty (self ,) -> Result < CarEncodedLengthAfterFuelFigures , sbe_rt :: EncodeError >
+CarMemoizedDecoder::const fn acting_block_length (& self) -> usize
+CarMemoizedDecoder::const fn acting_version (& self) -> u16
+CarMemoizedDecoder::const fn inner (& self) -> & CarDecoder < 'a >
+CarMemoizedDecoder::fn activation_code (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn available (& self) -> BooleanType
+CarMemoizedDecoder::fn code (& self) -> Model
+CarMemoizedDecoder::fn discounted_model (& self) -> Model
+CarMemoizedDecoder::fn engine (& self) -> EngineDecoder < '_ >
+CarMemoizedDecoder::fn engine_value (& self) -> Engine
+CarMemoizedDecoder::fn extras (& self) -> OptionalExtras
+CarMemoizedDecoder::fn manufacturer (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn manufacturer_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn model (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn model_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn model_year (& self) -> u16
+CarMemoizedDecoder::fn serial_number (& self) -> u64
+CarMemoizedDecoder::fn some_numbers (& self) -> [u32 ; 4]
+CarMemoizedDecoder::fn vehicle_code (& self) -> [u8 ; 6]
 CarOrderedDecoder::const fn acting_block_length (& self) -> usize
 CarOrderedDecoder::const fn acting_version (& self) -> u16
 CarOrderedDecoder::fn activation_code (& mut self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
@@ -486,6 +515,11 @@ fn fn read_bytes < const N : usize > (buf : & [u8] , offset : usize) -> [u8 ; N]
 fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes : & [u8 ; N])
 mod prelude
 mod sbe_rt
+sbe_rt::TailBoundaryCache::const fn new () -> Self
+sbe_rt::TailBoundaryCache::fn end_of (& self , idx : usize) -> Option < usize >
+sbe_rt::TailBoundaryCache::fn is_complete (& self) -> bool
+sbe_rt::TailBoundaryCache::fn known_through (& self) -> usize
+sbe_rt::TailBoundaryCache::fn publish (& self , idx : usize , abs_end : usize)
 sbe_rt::enum DecodeError
 sbe_rt::enum DecodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
 sbe_rt::enum DecodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
@@ -525,11 +559,13 @@ sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
 sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
 sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
 sbe_rt::struct Attached {  }
+sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
 sbe_rt::struct FieldsFixed {  }
 sbe_rt::struct FieldsUnfixed {  }
 sbe_rt::struct HeaderAbsent {  }
 sbe_rt::struct HeaderPresent {  }
+sbe_rt::struct TailBoundaryCache< const N : usize > {  }
 sbe_rt::trait FieldsState: private :: Sealed
 sbe_rt::trait GroupContext: private :: Sealed
 sbe_rt::trait HeaderState: private :: Sealed

@@ -4,9 +4,7 @@
 use std::error::Error;
 
 mod common;
-use common::{
-    Paths, compile_and_run, compile_fails_with_diagnostics, generate, generate_domain_with,
-};
+use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
 /// Wrong group order: encode asks before bids must not compile.
 #[test]
@@ -143,9 +141,9 @@ fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
             "default decoder larger than its carrier: {dec} > {carrier}"
         );
         assert_send_sync::<CarDecoder<'_>>();
-        // Entry decoders with tails keep the one-shot extent cache in BOTH
-        // modes, so they are `Send` and never `Sync`. Only the message
-        // decoder's `Sync`-ness tracks `with_memoized_tail_offsets`.
+        // Entry decoders with tails keep the one-shot extent cache in every
+        // lane, so they are `Send` and never `Sync`. The base message decoder
+        // carries no cache at all, so it stays `Sync`.
         fn assert_send<T: Send>() {}
         assert_send::<FuelFiguresEntryDecoder<'_>>();
 
@@ -158,17 +156,15 @@ fn size_of_send_sync_stage_budgets() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The other side of [`GenerationConfig::with_memoized_tail_offsets`].
+/// The other side of the lane split: `Decoder::memoized(self)`.
 ///
 /// Opting in must cost exactly one boundary cache and no more, and it is what
-/// makes the decoder `Send` but not `Sync` (`Cell` interior mutability). The
-/// default budget is pinned in `size_of_send_sync_stage_budgets`, so the two
-/// tests together bound both sides of the knob rather than relaxing either.
+/// makes the wrapper `Send` but not `Sync` (`Cell` interior mutability). The
+/// base budget is pinned in `size_of_send_sync_stage_budgets`, so the two
+/// tests together bound both lanes rather than relaxing either.
 #[test]
 fn memoized_decoder_pays_one_boundary_cache() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate_domain_with(&Paths::example_schema(), "ts_size_memoized", |c| {
-        c.with_memoized_tail_offsets(true)
-    });
+    let (_schema, src) = generate(&Paths::example_schema(), "ts_size_memoized");
     compile_and_run(
         "ts_size_memoized",
         &src,
@@ -177,17 +173,17 @@ fn memoized_decoder_pays_one_boundary_cache() -> Result<(), Box<dyn Error>> {
 
         fn assert_send<T: Send>() {}
 
-        let dec = size_of::<CarDecoder<'_>>();
-        let carrier = size_of::<(*const u8, usize, usize, u16)>() + 8;
+        let base = size_of::<CarDecoder<'_>>();
+        let memo = size_of::<CarMemoizedDecoder<'_>>();
         let cache = size_of::<sbe_rt::TailBoundaryCache<5>>();
         assert!(
-            dec <= carrier + cache,
-            "decoder larger than carrier + one boundary cache: {dec} > {carrier} + {cache}"
+            memo <= base + cache,
+            "memoized lane costs more than one boundary cache: {memo} > {base} + {cache}"
         );
-        assert!(dec > carrier, "memoized decoder must actually carry a cache");
+        assert!(memo > base, "memoized lane must actually carry a cache");
 
-        assert_send::<CarDecoder<'_>>();
-        assert!(!std::mem::needs_drop::<CarDecoder<'_>>());
+        assert_send::<CarMemoizedDecoder<'_>>();
+        assert!(!std::mem::needs_drop::<CarMemoizedDecoder<'_>>());
     "#,
     );
     Ok(())

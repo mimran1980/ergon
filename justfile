@@ -406,8 +406,8 @@ bench-historic-update:
     scripts/update-historic-baseline.sh
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
-# `versioned_l3_bench` is ergon-vs-ergon (memoization knob, offset width,
-# access order) — it has no sbe-tool arm, so it informs the knob defaults
+# `versioned_l3_bench` is ergon-vs-ergon (base lane vs `.memoized()`, access
+# order) — it has no sbe-tool arm, so it informs the lane guidance in the book
 # rather than gating a ratio. Both LTO profiles, because the cache changes
 # decoder size and inlining.
 bench-diagnostics:

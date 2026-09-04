@@ -12,11 +12,11 @@
 //!    the cold first/final tail?
 //! 2. Does it pay for itself on warm, repeated, reverse, and random access?
 //!
-//! `with_memoized_tail_offsets` is **off by default**, so the `memoized/` arms
-//! come from modules that opt in (see `build.rs`) and the `uncached/` arms come
-//! from the default config.
+//! Memoization is a runtime lane, not a generation-time knob: both arms use
+//! the same generated module, and the `memoized/` arms simply call
+//! `.memoized()` on the decoder the `base/` arms use directly.
 //!
-//! Every comparative pair runs the same generated traversal (`traversal_for!`)
+//! Every comparative pair runs the same generated traversal (`lane_traversal!`)
 //! and asserts both arms return an identical decoded sum before timing starts —
 //! that is simultaneously the equal-work proof and the value-correctness check,
 //! and it is what a hand-copied per-arm dispatch failed to guarantee.
@@ -79,133 +79,149 @@ fn seeded_order() -> [u8; 7] {
 /// them to the same values — so the comparison is proven equal-work *and*
 /// value-correct before any timing happens. Absent tails on old wire contribute
 /// nothing, which keeps the same closure valid at every acting version.
-macro_rules! traversal_for {
-    ($name:ident, $module:path) => {
-        mod $name {
-            use $module::*;
-
-            /// Touch one root dynamic tail.
-            #[inline]
-            pub fn touch_root(dec: &L3BookDecoder<'_>, tail: u8) -> u64 {
-                match tail {
-                    0 => dec.bids().map_or(0, |g| g.remaining_entries() as u64),
-                    1 => dec.asks().map_or(0, |g| g.remaining_entries() as u64),
-                    2 => dec.audit().map_or(0, |g| g.remaining_entries() as u64),
-                    3 => dec.symbol().map_or(0, |v| v.len() as u64),
-                    4 => dec.source().map_or(0, |v| v.len() as u64),
-                    5 => dec.checksum().map_or(0, |v| v.len() as u64),
-                    _ => dec.note().map_or(0, |v| v.len() as u64),
-                }
+/// One traversal implementation per decoder lane.
+///
+/// The base and memoized decoders are distinct types with identical getter
+/// names, so a macro is the only way to share this code — and sharing it is
+/// the point: the seven-tail dispatch used to be copied per arm, and the
+/// copies drifted into comparing different work.
+///
+/// Both functions return a wrapping sum of every value they read. Two arms
+/// that return the same sum read the same fields, in the same quantity, and
+/// decoded them to the same values — so a comparison is proven equal-work
+/// *and* value-correct before any timing happens. Absent tails on old wire
+/// contribute nothing, which keeps the same closure valid at every acting
+/// version.
+macro_rules! lane_traversal {
+    ($touch:ident, $traverse:ident, $ty:ident) => {
+        /// Touch one root dynamic tail.
+        #[inline]
+        pub fn $touch(dec: &$ty<'_>, tail: u8) -> u64 {
+            match tail {
+                0 => dec.bids().map_or(0, |g| g.remaining_entries() as u64),
+                1 => dec.asks().map_or(0, |g| g.remaining_entries() as u64),
+                2 => dec.audit().map_or(0, |g| g.remaining_entries() as u64),
+                3 => dec.symbol().map_or(0, |v| v.len() as u64),
+                4 => dec.source().map_or(0, |v| v.len() as u64),
+                5 => dec.checksum().map_or(0, |v| v.len() as u64),
+                _ => dec.note().map_or(0, |v| v.len() as u64),
             }
+        }
 
-            /// Every root tail, every level, order, allocation, leg, stat and
-            /// var-data field, at whatever acting version the wire carries.
-            #[inline]
-            pub fn traverse(dec: &L3BookDecoder<'_>) -> u64 {
-                let mut acc = 0u64;
-                if let Ok(bids) = dec.bids() {
-                    for lvl in bids {
-                        let Ok(lvl) = lvl else { return acc };
-                        acc = acc
-                            .wrapping_add(lvl.price() as u64)
-                            .wrapping_add(lvl.qty() as u64)
-                            .wrapping_add(lvl.participant().unwrap_or(0));
-                        if let Ok(orders) = lvl.orders() {
-                            for ord in orders {
-                                let Ok(ord) = ord else { return acc };
-                                acc = acc.wrapping_add(ord.order_qty() as u64);
-                                if let Ok(allocations) = ord.allocations() {
-                                    for al in allocations {
-                                        let Ok(al) = al else { return acc };
-                                        acc = acc.wrapping_add(al.alloc_qty() as u64);
-                                        if let Ok(legs) = al.legs() {
-                                            for leg in legs {
-                                                let Ok(leg) = leg else { return acc };
-                                                acc = acc
-                                                    .wrapping_add(leg.leg_qty() as u64)
-                                                    .wrapping_add(
-                                                        leg.leg_ref().map_or(0, |r| r.len() as u64),
-                                                    );
-                                            }
+        /// Every root tail, every level, order, allocation, leg, stat and
+        /// var-data field, at whatever acting version the wire carries.
+        #[inline]
+        pub fn $traverse(dec: &$ty<'_>) -> u64 {
+            let mut acc = 0u64;
+            if let Ok(bids) = dec.bids() {
+                for lvl in bids {
+                    let Ok(lvl) = lvl else { return acc };
+                    acc = acc
+                        .wrapping_add(lvl.price() as u64)
+                        .wrapping_add(lvl.qty() as u64)
+                        .wrapping_add(lvl.participant().unwrap_or(0));
+                    if let Ok(orders) = lvl.orders() {
+                        for ord in orders {
+                            let Ok(ord) = ord else { return acc };
+                            acc = acc.wrapping_add(ord.order_qty() as u64);
+                            if let Ok(allocations) = ord.allocations() {
+                                for al in allocations {
+                                    let Ok(al) = al else { return acc };
+                                    acc = acc.wrapping_add(al.alloc_qty() as u64);
+                                    if let Ok(legs) = al.legs() {
+                                        for leg in legs {
+                                            let Ok(leg) = leg else { return acc };
+                                            acc = acc
+                                                .wrapping_add(leg.leg_qty() as u64)
+                                                .wrapping_add(
+                                                    leg.leg_ref().map_or(0, |r| r.len() as u64),
+                                                );
                                         }
                                     }
                                 }
-                                acc = acc
-                                    .wrapping_add(ord.order_id().map_or(0, |v| v.len() as u64))
-                                    .wrapping_add(ord.trader_id().map_or(0, |v| v.len() as u64));
                             }
+                            acc = acc
+                                .wrapping_add(ord.order_id().map_or(0, |v| v.len() as u64))
+                                .wrapping_add(ord.trader_id().map_or(0, |v| v.len() as u64));
                         }
-                        if let Ok(stats) = lvl.stats() {
-                            for st in stats {
-                                acc = acc
-                                    .wrapping_add(st.fill_count() as u64)
-                                    .wrapping_add(st.fill_qty() as u64);
-                            }
-                        }
-                        acc = acc.wrapping_add(lvl.venue().map_or(0, |v| v.len() as u64));
                     }
+                    if let Ok(stats) = lvl.stats() {
+                        for st in stats {
+                            acc = acc
+                                .wrapping_add(st.fill_count() as u64)
+                                .wrapping_add(st.fill_qty() as u64);
+                        }
+                    }
+                    acc = acc.wrapping_add(lvl.venue().map_or(0, |v| v.len() as u64));
                 }
-                if let Ok(asks) = dec.asks() {
-                    for lvl in asks {
-                        let Ok(lvl) = lvl else { return acc };
-                        acc = acc
-                            .wrapping_add(lvl.price() as u64)
-                            .wrapping_add(lvl.qty() as u64)
-                            .wrapping_add(lvl.participant().unwrap_or(0));
-                        if let Ok(orders) = lvl.ask_orders() {
-                            for ord in orders {
-                                let Ok(ord) = ord else { return acc };
-                                acc = acc.wrapping_add(ord.order_qty() as u64);
-                                if let Ok(allocations) = ord.ask_allocations() {
-                                    for al in allocations {
-                                        let Ok(al) = al else { return acc };
-                                        acc = acc.wrapping_add(al.alloc_qty() as u64);
-                                        if let Ok(legs) = al.ask_legs() {
-                                            for leg in legs {
-                                                let Ok(leg) = leg else { return acc };
-                                                acc = acc
-                                                    .wrapping_add(leg.leg_qty() as u64)
-                                                    .wrapping_add(
-                                                        leg.leg_ref().map_or(0, |r| r.len() as u64),
-                                                    );
-                                            }
+            }
+            if let Ok(asks) = dec.asks() {
+                for lvl in asks {
+                    let Ok(lvl) = lvl else { return acc };
+                    acc = acc
+                        .wrapping_add(lvl.price() as u64)
+                        .wrapping_add(lvl.qty() as u64)
+                        .wrapping_add(lvl.participant().unwrap_or(0));
+                    if let Ok(orders) = lvl.ask_orders() {
+                        for ord in orders {
+                            let Ok(ord) = ord else { return acc };
+                            acc = acc.wrapping_add(ord.order_qty() as u64);
+                            if let Ok(allocations) = ord.ask_allocations() {
+                                for al in allocations {
+                                    let Ok(al) = al else { return acc };
+                                    acc = acc.wrapping_add(al.alloc_qty() as u64);
+                                    if let Ok(legs) = al.ask_legs() {
+                                        for leg in legs {
+                                            let Ok(leg) = leg else { return acc };
+                                            acc = acc
+                                                .wrapping_add(leg.leg_qty() as u64)
+                                                .wrapping_add(
+                                                    leg.leg_ref().map_or(0, |r| r.len() as u64),
+                                                );
                                         }
                                     }
                                 }
-                                acc = acc
-                                    .wrapping_add(ord.order_id().map_or(0, |v| v.len() as u64))
-                                    .wrapping_add(ord.trader_id().map_or(0, |v| v.len() as u64));
                             }
+                            acc = acc
+                                .wrapping_add(ord.order_id().map_or(0, |v| v.len() as u64))
+                                .wrapping_add(ord.trader_id().map_or(0, |v| v.len() as u64));
                         }
-                        if let Ok(stats) = lvl.ask_stats() {
-                            for st in stats {
-                                acc = acc
-                                    .wrapping_add(st.fill_count() as u64)
-                                    .wrapping_add(st.fill_qty() as u64);
-                            }
+                    }
+                    if let Ok(stats) = lvl.ask_stats() {
+                        for st in stats {
+                            acc = acc
+                                .wrapping_add(st.fill_count() as u64)
+                                .wrapping_add(st.fill_qty() as u64);
                         }
-                        acc = acc.wrapping_add(lvl.venue().map_or(0, |v| v.len() as u64));
                     }
+                    acc = acc.wrapping_add(lvl.venue().map_or(0, |v| v.len() as u64));
                 }
-                if let Ok(audit) = dec.audit() {
-                    for row in audit {
-                        acc = acc
-                            .wrapping_add(row.ts())
-                            .wrapping_add(u64::from(row.code()));
-                    }
-                }
-                for tail in 3..=6u8 {
-                    acc = acc.wrapping_add(touch_root(dec, tail));
-                }
-                acc
             }
+            if let Ok(audit) = dec.audit() {
+                for row in audit {
+                    acc = acc
+                        .wrapping_add(row.ts())
+                        .wrapping_add(u64::from(row.code()));
+                }
+            }
+            for tail in 3..=6u8 {
+                acc = acc.wrapping_add($touch(dec, tail));
+            }
+            acc
         }
     };
 }
 
-traversal_for!(memo, ergo_sbe_benchmarks::versioned_l3);
-traversal_for!(uncached, ergo_sbe_benchmarks::versioned_l3_uncached);
-traversal_for!(compact, ergo_sbe_benchmarks::versioned_l3_compact);
+mod memo {
+    use ergo_sbe_benchmarks::versioned_l3::*;
+
+    lane_traversal!(touch_root_base, traverse_base, L3BookDecoder);
+    lane_traversal!(
+        touch_root_memoized,
+        traverse_memoized,
+        L3BookMemoizedDecoder
+    );
+}
 
 /// Prove two arms decode identically before timing them. Panics rather than
 /// letting a broken arm quietly do less work.
@@ -256,7 +272,7 @@ fn bench_cold_tails(c: &mut Criterion) {
         b.iter(|| {
             let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
             black_box(dec.note().unwrap().len());
-            black_box(memo::traverse(&dec));
+            black_box(memo::traverse_base(&dec));
         });
     });
     group.finish();
@@ -313,7 +329,7 @@ fn bench_access_orders(c: &mut Criterion) {
             b.iter(|| {
                 let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
                 for tail in black_box(order) {
-                    black_box(memo::touch_root(&dec, tail));
+                    black_box(memo::touch_root_base(&dec, tail));
                 }
             });
         });
@@ -327,7 +343,7 @@ fn bench_access_orders(c: &mut Criterion) {
             b.iter(|| {
                 let dec = black_box(&warm);
                 for tail in black_box(order) {
-                    black_box(memo::touch_root(dec, tail));
+                    black_box(memo::touch_root_base(dec, tail));
                 }
             });
         });
@@ -343,7 +359,7 @@ fn bench_full_traversal_by_version(c: &mut Criterion) {
         group.bench_function(format!("cold/v{version}"), |b| {
             b.iter(|| {
                 let dec = L3BookDecoder::try_decode(black_box(buf.as_slice()), 0).unwrap();
-                black_box(memo::traverse(&dec));
+                black_box(memo::traverse_base(&dec));
             });
         });
     }
@@ -390,197 +406,101 @@ fn bench_nested_entry_access(c: &mut Criterion) {
     group.finish();
 }
 
-/// The knob itself: `with_memoized_tail_offsets(true)` vs the default.
+/// Base lane vs `.memoized()`.
 ///
-/// Cold single-pass favours uncached — it never pays for the cache. Warm and
-/// repeated access favours memoized, which is the whole reason to opt in. Both
-/// arms run the same generated traversal (see `traversal_for!`) and their
-/// decoded sums are asserted equal before timing.
-fn bench_memoization_knob(c: &mut Criterion) {
-    use ergo_sbe_benchmarks::versioned_l3_uncached as unc;
+/// Both arms decode the same bytes with the same generated module; they differ
+/// only in whether tail starts are recalculated or cached. Every comparative
+/// pair asserts an identical decoded sum before timing, so an arm cannot
+/// silently do less work.
+///
+/// Cold single-pass favours the base lane — it never pays for a cache, and a
+/// wire-order pass gains nothing because each tail begins where the last ended.
+/// Repeated and out-of-order access is what `.memoized()` exists for.
+fn bench_memoization_lane(c: &mut Criterion) {
     let v3 = wire(3);
     eprintln!(
-        "vl3 decoder size: memoized={} uncached={}",
+        "vl3 decoder size: base={} memoized={}",
         core::mem::size_of::<L3BookDecoder<'_>>(),
-        core::mem::size_of::<unc::L3BookDecoder<'_>>(),
+        core::mem::size_of::<L3BookMemoizedDecoder<'_>>(),
     );
     assert_same_work(
-        "memoization/traverse",
-        memo::traverse(&L3BookDecoder::try_decode(&v3, 0).unwrap()),
-        uncached::traverse(&unc::L3BookDecoder::try_decode(&v3, 0).unwrap()),
-    );
-    assert_same_work(
-        "memoization/final_tail",
-        L3BookDecoder::try_decode(&v3, 0)
-            .unwrap()
-            .note()
-            .unwrap()
-            .len() as u64,
-        unc::L3BookDecoder::try_decode(&v3, 0)
-            .unwrap()
-            .note()
-            .unwrap()
-            .len() as u64,
+        "lane/traverse",
+        memo::traverse_base(&L3BookDecoder::try_decode(&v3, 0).unwrap()),
+        memo::traverse_memoized(&L3BookDecoder::try_decode(&v3, 0).unwrap().memoized()),
     );
 
-    let mut group = c.benchmark_group("vl3/memoization");
+    let mut group = c.benchmark_group("vl3/lane");
     group.throughput(Throughput::Bytes(v3.len() as u64));
 
-    group.bench_function("memoized/cold_final_tail", |b| {
+    group.bench_function("base/cold_final_tail", |b| {
         b.iter(|| {
             let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
             black_box(dec.note().unwrap().len())
         });
     });
-    group.bench_function("uncached/cold_final_tail", |b| {
+    group.bench_function("memoized/cold_final_tail", |b| {
         b.iter(|| {
-            let dec = unc::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
+            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0)
+                .unwrap()
+                .memoized();
             black_box(dec.note().unwrap().len())
         });
     });
 
-    // Construct-and-read-fixed-fields: the shape that pays for the cache and
-    // gets nothing back, so it is the knob's worst case — and the workload that
-    // decided the default.
-    group.bench_function("memoized/construct_plus_fixed", |b| {
+    // Construct-and-read-fixed-fields: the shape that pays for a cache and
+    // gets nothing back. This is why the base lane is the default.
+    group.bench_function("base/construct_plus_fixed", |b| {
         b.iter(|| {
             let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
             black_box((dec.timestamp(), dec.sequence()))
         });
     });
-    group.bench_function("uncached/construct_plus_fixed", |b| {
+    group.bench_function("memoized/construct_plus_fixed", |b| {
         b.iter(|| {
-            let dec = unc::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
+            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0)
+                .unwrap()
+                .memoized();
             black_box((dec.timestamp(), dec.sequence()))
         });
     });
 
     // Full traversal, one pass in wire order — the fair single-pass compare.
-    group.bench_function("memoized/cold_traverse", |b| {
+    group.bench_function("base/cold_traverse", |b| {
         b.iter(|| {
             let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(memo::traverse(&dec))
+            black_box(memo::traverse_base(&dec))
         });
     });
-    group.bench_function("uncached/cold_traverse", |b| {
+    group.bench_function("memoized/cold_traverse", |b| {
         b.iter(|| {
-            let dec = unc::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(uncached::traverse(&dec))
+            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0)
+                .unwrap()
+                .memoized();
+            black_box(memo::traverse_memoized(&dec))
         });
     });
 
-    // Repeated reads of the whole root: memoized walks once, uncached every time.
+    // Repeated reads of the whole root: memoized walks once, base every time.
     group.throughput(Throughput::Elements(7 * 4));
-    group.bench_function("memoized/reread_root_x4", |b| {
+    group.bench_function("base/reread_root_x4", |b| {
         let dec = L3BookDecoder::try_decode(&v3, 0).unwrap();
+        b.iter(|| {
+            for _ in 0..4 {
+                for tail in black_box(SCHEMA_ORDER) {
+                    black_box(memo::touch_root_base(&dec, tail));
+                }
+            }
+        });
+    });
+    group.bench_function("memoized/reread_root_x4", |b| {
+        let dec = L3BookDecoder::try_decode(&v3, 0).unwrap().memoized();
         let _ = dec.note().unwrap();
         b.iter(|| {
             for _ in 0..4 {
                 for tail in black_box(SCHEMA_ORDER) {
-                    black_box(memo::touch_root(&dec, tail));
+                    black_box(memo::touch_root_memoized(&dec, tail));
                 }
             }
-        });
-    });
-    group.bench_function("uncached/reread_root_x4", |b| {
-        let dec = unc::L3BookDecoder::try_decode(&v3, 0).unwrap();
-        b.iter(|| {
-            for _ in 0..4 {
-                for tail in black_box(SCHEMA_ORDER) {
-                    black_box(uncached::touch_root(&dec, tail));
-                }
-            }
-        });
-    });
-    group.finish();
-}
-
-/// Native `usize` vs compact `u32` cache slots. Both arms are memoized; only
-/// the stored offset type differs.
-fn bench_offset_representation(c: &mut Criterion) {
-    use ergo_sbe_benchmarks::versioned_l3_compact as cmp;
-    let v3 = wire(3);
-    eprintln!(
-        "vl3 decoder size: native={} compact={}",
-        core::mem::size_of::<L3BookDecoder<'_>>(),
-        core::mem::size_of::<cmp::L3BookDecoder<'_>>(),
-    );
-    let reverse_work = |a: u64, b: u64| assert_same_work("offsets/reverse_order", a, b);
-    reverse_work(
-        {
-            let dec = L3BookDecoder::try_decode(&v3, 0).unwrap();
-            REVERSE_ORDER
-                .iter()
-                .fold(0u64, |acc, &t| acc.wrapping_add(memo::touch_root(&dec, t)))
-        },
-        {
-            let dec = cmp::L3BookDecoder::try_decode(&v3, 0).unwrap();
-            REVERSE_ORDER.iter().fold(0u64, |acc, &t| {
-                acc.wrapping_add(compact::touch_root(&dec, t))
-            })
-        },
-    );
-    assert_same_work(
-        "offsets/final_tail",
-        L3BookDecoder::try_decode(&v3, 0)
-            .unwrap()
-            .note()
-            .unwrap()
-            .len() as u64,
-        cmp::L3BookDecoder::try_decode(&v3, 0)
-            .unwrap()
-            .note()
-            .unwrap()
-            .len() as u64,
-    );
-    assert_same_work(
-        "offsets/traverse",
-        memo::traverse(&L3BookDecoder::try_decode(&v3, 0).unwrap()),
-        compact::traverse(&cmp::L3BookDecoder::try_decode(&v3, 0).unwrap()),
-    );
-
-    let mut group = c.benchmark_group("vl3/offsets");
-    group.throughput(Throughput::Bytes(v3.len() as u64));
-    group.bench_function("native/cold_final_tail", |b| {
-        b.iter(|| {
-            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(dec.note().unwrap().len())
-        });
-    });
-    group.bench_function("compact/cold_final_tail", |b| {
-        b.iter(|| {
-            let dec = cmp::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(dec.note().unwrap().len())
-        });
-    });
-    group.bench_function("native/reverse_order", |b| {
-        b.iter(|| {
-            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            for tail in black_box(REVERSE_ORDER) {
-                black_box(memo::touch_root(&dec, tail));
-            }
-        });
-    });
-    group.bench_function("compact/reverse_order", |b| {
-        b.iter(|| {
-            let dec = cmp::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            for tail in black_box(REVERSE_ORDER) {
-                black_box(compact::touch_root(&dec, tail));
-            }
-        });
-    });
-    // Full end-to-end traversal: the workload that decides whether compact's
-    // smaller decoder costs anything on real decode paths.
-    group.bench_function("native/cold_traverse", |b| {
-        b.iter(|| {
-            let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(memo::traverse(&dec))
-        });
-    });
-    group.bench_function("compact/cold_traverse", |b| {
-        b.iter(|| {
-            let dec = cmp::L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();
-            black_box(compact::traverse(&dec))
         });
     });
     group.finish();
@@ -594,7 +514,6 @@ criterion_group!(
     bench_access_orders,
     bench_full_traversal_by_version,
     bench_nested_entry_access,
-    bench_offset_representation,
-    bench_memoization_knob,
+    bench_memoization_lane,
 );
 criterion_main!(benches);

@@ -531,6 +531,115 @@ pub mod sbe_rt {
         }
         checked_header_usize(field, value)
     }
+    /// Progressive cache of dynamic-tail *end* offsets.
+    ///
+    /// Slot `i` is the absolute (or compact-relative) end of tail `i`
+    /// — the start of tail `i + 1`. `known_through` is the count of
+    /// published slots. Construction is O(1): unpublished slots stay
+    /// uninitialized and are never read.
+    ///
+    /// Decoding errors are never published. A compact encode failure
+    /// leaves the frontier at the representable prefix so the suffix
+    /// is walked uncached without rejecting the message.
+    pub struct TailBoundaryCache<const N: usize> {
+        known_through: core::cell::Cell<usize>,
+        ends: [core::cell::Cell<core::mem::MaybeUninit<usize>>; N],
+        #[cfg(debug_assertions)]
+        hits: core::cell::Cell<u32>,
+        #[cfg(debug_assertions)]
+        misses: core::cell::Cell<u32>,
+        #[cfg(debug_assertions)]
+        boundary_calcs: core::cell::Cell<u32>,
+    }
+    /// Debug-only counters for the memoized random-access prototype.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct DecodeCacheStats {
+        /// Cached tail-start lookups.
+        pub hits: u32,
+        /// Lookups that walked from the frontier.
+        pub misses: u32,
+        /// Individual tail walks (group skip or var-data length read).
+        pub boundary_calcs: u32,
+        /// How far the contiguous frontier has advanced.
+        pub known_through: usize,
+    }
+    impl<const N: usize> TailBoundaryCache<N> {
+        /// Empty cache. Slots past the frontier are uninitialized.
+        #[inline]
+        pub const fn new() -> Self {
+            Self {
+                known_through: core::cell::Cell::new(0),
+                ends: [const {
+                    core::cell::Cell::new(core::mem::MaybeUninit::uninit())
+                }; N],
+                #[cfg(debug_assertions)]
+                hits: core::cell::Cell::new(0),
+                #[cfg(debug_assertions)]
+                misses: core::cell::Cell::new(0),
+                #[cfg(debug_assertions)]
+                boundary_calcs: core::cell::Cell::new(0),
+            }
+        }
+        /// Count of published tail ends (`0..=N`).
+        #[inline]
+        pub fn known_through(&self) -> usize {
+            self.known_through.get()
+        }
+        /// True when every dynamic tail end has been published.
+        #[inline]
+        pub fn is_complete(&self) -> bool {
+            self.known_through.get() == N
+        }
+        /// Absolute end of tail `idx` if the contiguous frontier covers it.
+        #[inline]
+        pub fn end_of(&self, idx: usize) -> Option<usize> {
+            if idx >= N || idx >= self.known_through.get() {
+                return None;
+            }
+            Some(unsafe { self.ends[idx].get().assume_init() })
+        }
+        /// Publish the end of tail `idx`. Ignored unless `idx` is the
+        /// next frontier slot, so a boundary can never be published out
+        /// of order — and errors, which never reach here, never land in
+        /// the cache.
+        #[inline]
+        pub fn publish(&self, idx: usize, abs_end: usize) {
+            if idx >= N || idx != self.known_through.get() {
+                return;
+            }
+            self.ends[idx].set(core::mem::MaybeUninit::new(abs_end));
+            self.known_through.set(idx + 1);
+        }
+        ///Generated method `record_hit`.
+        #[cfg(debug_assertions)]
+        #[inline]
+        pub fn record_hit(&self) {
+            self.hits.set(self.hits.get().saturating_add(1));
+        }
+        ///Generated method `record_miss`.
+        #[cfg(debug_assertions)]
+        #[inline]
+        pub fn record_miss(&self) {
+            self.misses.set(self.misses.get().saturating_add(1));
+        }
+        ///Generated method `record_boundary`.
+        #[cfg(debug_assertions)]
+        #[inline]
+        pub fn record_boundary(&self) {
+            self.boundary_calcs.set(self.boundary_calcs.get().saturating_add(1));
+        }
+        ///Generated method `stats`.
+        #[cfg(debug_assertions)]
+        #[inline]
+        pub fn stats(&self) -> DecodeCacheStats {
+            DecodeCacheStats {
+                hits: self.hits.get(),
+                misses: self.misses.get(),
+                boundary_calcs: self.boundary_calcs.get(),
+                known_through: self.known_through.get(),
+            }
+        }
+    }
     /// Narrow a group count for `GroupFull` / mismatch diagnostics.
     /// Errors instead of truncating when the count exceeds `u32::MAX`.
     #[inline]
@@ -2629,6 +2738,21 @@ impl<'a> CarDecoder<'a> {
         Ok(data_end)
     }
     #[inline]
+    pub(crate) fn walk_dynamic_tail(
+        &self,
+        k: usize,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        match k {
+            0 => self.walk_tail_0(start),
+            1 => self.walk_tail_1(start),
+            2 => self.walk_tail_2(start),
+            3 => self.walk_tail_3(start),
+            4 => self.walk_tail_4(start),
+            _ => Ok(start),
+        }
+    }
+    #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
         self.walk_tail_0(start)
@@ -3586,9 +3710,9 @@ pub struct FuelFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by `encoded_length`,
-    /// reused by the last var-data accessor. `Cell` keeps `&self`
-    /// getters and makes the entry `Send` + `!Sync`.
+    /// One-shot entry-extent cache: filled by `encoded_length`, reused by
+    /// the last var-data accessor. `Cell` keeps `&self` getters and makes
+    /// the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -3711,6 +3835,17 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             self.buf.len(),
         )?;
         Ok(data_end)
+    }
+    #[inline]
+    pub(crate) fn walk_dynamic_tail(
+        &self,
+        k: usize,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        match k {
+            0 => self.walk_tail_0(start),
+            _ => Ok(start),
+        }
     }
     #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -4459,9 +4594,9 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by `encoded_length`,
-    /// reused by the last var-data accessor. `Cell` keeps `&self`
-    /// getters and makes the entry `Send` + `!Sync`.
+    /// One-shot entry-extent cache: filled by `encoded_length`, reused by
+    /// the last var-data accessor. `Cell` keeps `&self` getters and makes
+    /// the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
@@ -4562,6 +4697,17 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             idx += 1;
         }
         Ok(offset)
+    }
+    #[inline]
+    pub(crate) fn walk_dynamic_tail(
+        &self,
+        k: usize,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        match k {
+            0 => self.walk_tail_0(start),
+            _ => Ok(start),
+        }
     }
     #[inline]
     fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -7316,6 +7462,22 @@ impl<'p, 'a> PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
             header.block_length() as u64,
         )?;
         let min_entry_extent = 0usize;
+        let entries_start = start + 4;
+        let available = parent.inner.buf.len().saturating_sub(entries_start);
+        let entries_length = count
+            .checked_mul(block_length)
+            .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: usize::MAX,
+                available,
+            })?;
+        if entries_length > available {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: entries_length,
+                available,
+            });
+        }
         Ok(Self {
             buf: parent.inner.buf,
             offset: start + 4,
@@ -7931,6 +8093,333 @@ impl CarDomain {
     #[inline]
     pub fn encoded_length_with_header(&self) -> Result<usize, sbe_rt::EncodeError> {
         Ok(self.encoded_length()? + CarEncoder::HEADER_LENGTH)
+    }
+}
+impl<'a> CarDecoder<'a> {
+    /// Consume this decoder and return one that memoizes dynamic-tail
+    /// boundaries.
+    ///
+    /// Use it when you read tails out of order, or read the same tail
+    /// more than once. A single cold pass in wire order gains nothing
+    /// — each tail already begins where the last one ended — and pays
+    /// for the cache, so the base decoder stays the default.
+    ///
+    /// Construction is O(1) and allocates nothing. Decoded values and
+    /// wire bytes are identical to the base lane.
+    ///
+    /// Build it **once** and share `&`-references: each call creates a
+    /// separate empty cache.
+    #[inline]
+    #[must_use = "memoized() returns a new decoder; the original is consumed"]
+    pub fn memoized(self) -> CarMemoizedDecoder<'a> {
+        CarMemoizedDecoder {
+            inner: self,
+            cache: sbe_rt::TailBoundaryCache::new(),
+        }
+    }
+}
+/// Random-access decoder with a progressive dynamic-tail cache.
+///
+/// Same getter names as the base decoder. `Send` but not `Sync` — the
+/// cache uses `Cell`, so use one instance per thread over shareable
+/// immutable bytes.
+#[must_use = "decoder must be read; dropping it discards the cache"]
+pub struct CarMemoizedDecoder<'a> {
+    inner: CarDecoder<'a>,
+    cache: sbe_rt::TailBoundaryCache<5>,
+}
+impl<'a> CarMemoizedDecoder<'a> {
+    /// Schema version from the message header (or wrap args).
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version
+    }
+    /// Acting block length from the message header (or wrap args).
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length
+    }
+    /// Borrow the underlying uncached decoder (fixed fields, metadata).
+    #[inline]
+    pub const fn inner(&self) -> &CarDecoder<'a> {
+        &self.inner
+    }
+    /// Discard the cache and return the base decoder.
+    #[inline]
+    #[must_use = "discarding the returned decoder discards the message"]
+    pub fn into_inner(self) -> CarDecoder<'a> {
+        self.inner
+    }
+    ///Generated method `serial_number`.
+    #[inline]
+    pub fn serial_number(&self) -> u64 {
+        self.inner.serial_number()
+    }
+    ///Generated method `model_year`.
+    #[inline]
+    pub fn model_year(&self) -> u16 {
+        self.inner.model_year()
+    }
+    ///Generated method `available`.
+    #[inline]
+    pub fn available(&self) -> BooleanType {
+        self.inner.available()
+    }
+    ///Generated method `code`.
+    #[inline]
+    pub fn code(&self) -> Model {
+        self.inner.code()
+    }
+    ///Generated method `some_numbers`.
+    #[inline]
+    pub fn some_numbers(&self) -> [u32; 4] {
+        self.inner.some_numbers()
+    }
+    ///Generated method `vehicle_code`.
+    #[inline]
+    pub fn vehicle_code(&self) -> [u8; 6] {
+        self.inner.vehicle_code()
+    }
+    ///Generated method `extras`.
+    #[inline]
+    pub fn extras(&self) -> OptionalExtras {
+        self.inner.extras()
+    }
+    ///Generated method `discounted_model`.
+    #[inline]
+    pub fn discounted_model(&self) -> Model {
+        self.inner.discounted_model()
+    }
+    ///Generated method `engine`.
+    #[inline]
+    pub fn engine(&self) -> EngineDecoder<'_> {
+        self.inner.engine()
+    }
+    ///Generated method `engine_value`.
+    #[inline]
+    pub fn engine_value(&self) -> Engine {
+        self.inner.engine_value()
+    }
+    #[inline]
+    fn ensure_tail_start(&self, idx: usize) -> Result<usize, sbe_rt::DecodeError> {
+        if idx == 0 {
+            return self.inner.tail_offset_0();
+        }
+        let need_slot = idx - 1;
+        if let Some(abs) = self.cache.end_of(need_slot) {
+            #[cfg(debug_assertions)] self.cache.record_hit();
+            return Ok(abs);
+        }
+        #[cfg(debug_assertions)] self.cache.record_miss();
+        let mut k = self.cache.known_through();
+        let mut pos = if k == 0 {
+            self.inner.tail_offset_0()?
+        } else {
+            match self.cache.end_of(k - 1) {
+                Some(abs) => abs,
+                None => self.inner.tail_offset_0()?,
+            }
+        };
+        while k < idx {
+            #[cfg(debug_assertions)] self.cache.record_boundary();
+            pos = self.inner.walk_dynamic_tail(k, pos)?;
+            self.cache.publish(k, pos);
+            k += 1;
+        }
+        Ok(pos)
+    }
+    #[inline]
+    fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(0)
+    }
+    #[inline]
+    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(1)
+    }
+    #[inline]
+    fn tail_offset_2(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(2)
+    }
+    #[inline]
+    fn tail_offset_3(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(3)
+    }
+    #[inline]
+    fn tail_offset_4(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(4)
+    }
+    #[inline]
+    fn tail_offset_5(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.ensure_tail_start(5)
+    }
+    /// Debug-build cache counters: hits, misses, boundary walks, frontier.
+    #[cfg(debug_assertions)]
+    #[must_use = "discarding cache stats is almost always a mistake"]
+    #[inline]
+    pub fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
+        self.cache.stats()
+    }
+    ///Generated method `fuel_figures`.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        let offset = self.tail_offset_0()?;
+        FuelFiguresDecoder::wrap(self.inner.buf, offset, self.inner.acting_version)
+    }
+    ///Generated method `performance_figures`.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub fn performance_figures(
+        &self,
+    ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
+        let offset = self.tail_offset_1()?;
+        PerformanceFiguresDecoder::wrap(
+            self.inner.buf,
+            offset,
+            self.inner.acting_version,
+        )
+    }
+    ///Generated method `manufacturer`.
+    #[inline]
+    pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_offset_2()?;
+        let buf = self.inner.buf;
+        if let Some(end) = self.cache.end_of(2) {
+            let data_start = offset + 4;
+            return Ok(&buf[data_start..end]);
+        }
+        if offset + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(manufacturer),
+                needed: 4,
+                available: buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let header = VarStringEncoding(bytes);
+        let wire_length = header.length() as u64;
+        if wire_length > 1073741824 as u64 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: stringify!(manufacturer),
+                length: wire_length,
+                max_length: 1073741824 as u64,
+            });
+        }
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+            stringify!(manufacturer),
+            offset,
+            4,
+            wire_length,
+            buf.len(),
+        )?;
+        self.cache.publish(2, data_end);
+        Ok(&buf[data_start..data_end])
+    }
+    /// View this UTF-8 var-data field as `&str`.
+    #[inline]
+    pub fn manufacturer_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.manufacturer()?;
+        core::str::from_utf8(bytes)
+            .map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                field: "manufacturer",
+                error: e,
+            })
+    }
+    ///Generated method `model`.
+    #[inline]
+    pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_offset_3()?;
+        let buf = self.inner.buf;
+        if let Some(end) = self.cache.end_of(3) {
+            let data_start = offset + 4;
+            return Ok(&buf[data_start..end]);
+        }
+        if offset + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(model),
+                needed: 4,
+                available: buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let header = VarStringEncoding(bytes);
+        let wire_length = header.length() as u64;
+        if wire_length > 1073741824 as u64 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: stringify!(model),
+                length: wire_length,
+                max_length: 1073741824 as u64,
+            });
+        }
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+            stringify!(model),
+            offset,
+            4,
+            wire_length,
+            buf.len(),
+        )?;
+        self.cache.publish(3, data_end);
+        Ok(&buf[data_start..data_end])
+    }
+    /// View this UTF-8 var-data field as `&str`.
+    #[inline]
+    pub fn model_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.model()?;
+        core::str::from_utf8(bytes)
+            .map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                field: "model",
+                error: e,
+            })
+    }
+    ///Generated method `activation_code`.
+    #[inline]
+    pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+        let offset = self.tail_offset_4()?;
+        let buf = self.inner.buf;
+        if let Some(end) = self.cache.end_of(4) {
+            let data_start = offset + 4;
+            return Ok(&buf[data_start..end]);
+        }
+        if offset + 4 > buf.len() {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(activation_code),
+                needed: 4,
+                available: buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let header = VarAsciiEncoding(bytes);
+        let wire_length = header.length() as u64;
+        if wire_length > 1073741824 as u64 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: stringify!(activation_code),
+                length: wire_length,
+                max_length: 1073741824 as u64,
+            });
+        }
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+            stringify!(activation_code),
+            offset,
+            4,
+            wire_length,
+            buf.len(),
+        )?;
+        self.cache.publish(4, data_end);
+        Ok(&buf[data_start..data_end])
+    }
+    /// Total body length, walking (and caching) every remaining tail.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let end = self.tail_offset_5()?;
+        Ok(end - self.inner.offset)
+    }
+}
+impl<'a> core::fmt::Debug for CarMemoizedDecoder<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CarMemoizedDecoder")
+            .field("inner", &self.inner)
+            .finish_non_exhaustive()
     }
 }
 ///Description of a basic Car
@@ -11556,6 +12045,35 @@ pub enum AnyMessage<'a> {
         /// followed by the unparsed body. Not the body alone.
         frame: &'a [u8],
     },
+}
+impl<'a> AnyMessage<'a> {
+    ///Take the `Car` decoder, or `None` if this frame is a different template.
+    #[inline]
+    #[must_use]
+    pub fn into_car(self) -> Option<CarDecoder<'a>> {
+        match self {
+            Self::Car(d) => Some(d),
+            _ => None,
+        }
+    }
+    ///Take the `Car` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template.
+    #[inline]
+    #[must_use]
+    pub fn into_car_memoized(self) -> Option<CarMemoizedDecoder<'a>> {
+        match self {
+            Self::Car(d) => Some(d.memoized()),
+            _ => None,
+        }
+    }
+    ///Take the `Car` decoder straight into the mutable ordered lane (complete sequential decoding), or `None` if this frame is a different template.
+    #[inline]
+    #[must_use]
+    pub fn into_car_ordered(self) -> Option<CarOrderedDecoder<'a>> {
+        match self {
+            Self::Car(d) => Some(d.ordered()),
+            _ => None,
+        }
+    }
 }
 /// One decoded message with its buffer range and length.
 pub struct DecodedFrame<'a> {

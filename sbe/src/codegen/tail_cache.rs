@@ -1,30 +1,30 @@
-//! Random-access tail-offset emission, memoized or not.
+//! Random-access tail-offset emission.
 //!
-//! Shared by message and group-entry decoders. Both modes emit the same
-//! per-tail `walk_tail_k(start)` walkers; they differ only in how
-//! `tail_offset_k` reaches them:
+//! One kernel, two lanes. The per-tail `walk_tail_k(start)` walkers and the
+//! `walk_dynamic_tail(k, start)` dispatch over them are pure: given a start
+//! offset they validate and return that tail's end, consulting no cache. They
+//! are emitted once, on the base decoder.
 //!
-//! * memoized (default) — a progressive `Cell` cache of discovered tail ends,
-//!   walked forward from the frontier only, so repeated and out-of-order
-//!   access walks each boundary at most once.
-//! * uncached ([`GenerationConfig::with_memoized_tail_offsets`] set to
-//!   `false`) — `tail_offset_k` chains back to `tail_offset_0`, re-walking
-//!   every time. The decoder then carries no cache field, stays `Sync`, and is
-//!   smaller.
+//! * Base lane — `tail_offset_k` chains back through `tail_offset_0`,
+//!   re-walking on every access. No cache field, so the decoder stays `Sync`
+//!   and small. This is what `Decoder::try_decode` gives you.
+//! * Memoized lane — [`emit_cached_tail_offsets`] emits a progressive `Cell`
+//!   cache over the *same* walkers, on the `{Name}MemoizedDecoder` wrapper
+//!   produced by `Decoder::memoized(self)`. Walked forward from the frontier
+//!   only, so repeated and out-of-order access walks each boundary at most
+//!   once.
+//!
+//! Group *entry* decoders keep their own one-shot extent cache in both lanes
+//! (see `group_decoder.rs`): the group iterator computes each entry's end to
+//! advance, and the last var-data accessor reuses it.
 
 use crate::structured_ir::{
     MessageGroup, MessageVarData, SchemaElements, get_dimension_info, get_vardata_info,
 };
 
-use super::runtime::{compact_tail_offsets_enabled, memoized_tail_offsets_enabled};
-
 pub(crate) fn cache_type_tokens(n: usize) -> proc_macro2::TokenStream {
     let n_lit = syn::LitInt::new(&n.to_string(), proc_macro2::Span::call_site());
-    if compact_tail_offsets_enabled() {
-        quote::quote! { sbe_rt::TailBoundaryCache<#n_lit, sbe_rt::CompactTailOffset> }
-    } else {
-        quote::quote! { sbe_rt::TailBoundaryCache<#n_lit> }
-    }
+    quote::quote! { sbe_rt::TailBoundaryCache<#n_lit> }
 }
 
 /// Emit the per-tail walkers and `tail_offset_*` accessors for an owner with
@@ -37,7 +37,6 @@ pub(crate) fn emit_tail_offsets(
     tail0: proc_macro2::TokenStream,
     cache_base: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    let memoized = memoized_tail_offsets_enabled();
     let total_tail = groups.len() + var_data.len();
     let mut ts = proc_macro2::TokenStream::new();
     ts.extend(quote::quote! {
@@ -64,14 +63,6 @@ pub(crate) fn emit_tail_offsets(
         let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let gn_lit = g.name.as_str();
         let entry_decoder_ident = &entry_skip[gi];
-        let nested_walk_probe = if memoized {
-            quote::quote! {
-                #[cfg(debug_assertions)]
-                self.cache.record_nested_walk();
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
         let version_skip = if g.since_version > 0 {
             let since_lit =
                 syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
@@ -107,8 +98,7 @@ pub(crate) fn emit_tail_offsets(
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
-                    #nested_walk_probe
-                    offset = #entry_decoder_ident::skip(
+                                        offset = #entry_decoder_ident::skip(
                         self.buf,
                         offset,
                         block_len,
@@ -175,40 +165,64 @@ pub(crate) fn emit_tail_offsets(
 
     ts.extend(walk_fns);
 
-    if !memoized {
-        // Uncached: each tail chains back through its predecessor, re-walking
-        // the wire on every access. No cache field exists to consult.
-        for i in 1..=total_tail {
-            let ident = quote::format_ident!("tail_offset_{i}");
-            let prev = quote::format_ident!("tail_offset_{}", i - 1);
-            let walk = quote::format_ident!("walk_tail_{}", i - 1);
-            ts.extend(quote::quote! {
-                #[inline]
-                fn #ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                    let start = self.#prev()?;
-                    self.#walk(start)
+    if total_tail > 0 {
+        // Pure dispatch over the walkers. Emitted on the base decoder in every
+        // lane; the memoized wrapper drives it through the inner decoder.
+        ts.extend(quote::quote! {
+            #[inline]
+            pub(crate) fn walk_dynamic_tail(
+                &self,
+                k: usize,
+                start: usize,
+            ) -> Result<usize, sbe_rt::DecodeError> {
+                match k {
+                    #walk_arms
+                    _ => Ok(start),
                 }
-            });
-        }
-        return ts;
+            }
+        });
     }
 
-    ts.extend(quote::quote! {
-        #[inline]
-        fn walk_dynamic_tail(&self, k: usize, start: usize) -> Result<usize, sbe_rt::DecodeError> {
-            match k {
-                #walk_arms
-                _ => Ok(start),
+    // Base lane: each tail chains back through its predecessor, re-walking the
+    // wire on every access. No cache field exists to consult.
+    for i in 1..=total_tail {
+        let ident = quote::format_ident!("tail_offset_{i}");
+        let prev = quote::format_ident!("tail_offset_{}", i - 1);
+        let walk = quote::format_ident!("walk_tail_{}", i - 1);
+        ts.extend(quote::quote! {
+            #[inline]
+            fn #ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                let start = self.#prev()?;
+                self.#walk(start)
             }
-        }
+        });
+    }
 
+    ts
+}
+
+/// Cache-consulting `tail_offset_*` for the memoized wrapper.
+///
+/// `core` names the inner base decoder (`self.inner`), which owns the pure
+/// walkers; the cache and its `tail_offset_*` live on the wrapper. A boundary
+/// is published only after its walk succeeded, so a decode error can never
+/// leave a bogus offset in the cache.
+pub(crate) fn emit_cached_tail_offsets(
+    total_tail: usize,
+    core: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let mut ts = proc_macro2::TokenStream::new();
+    if total_tail == 0 {
+        return ts;
+    }
+    ts.extend(quote::quote! {
         #[inline]
         fn ensure_tail_start(&self, idx: usize) -> Result<usize, sbe_rt::DecodeError> {
             if idx == 0 {
-                return self.tail_offset_0();
+                return #core.tail_offset_0();
             }
             let need_slot = idx - 1;
-            if let Some(abs) = self.cache.end_of(need_slot, #cache_base) {
+            if let Some(abs) = self.cache.end_of(need_slot) {
                 #[cfg(debug_assertions)]
                 self.cache.record_hit();
                 return Ok(abs);
@@ -217,34 +231,28 @@ pub(crate) fn emit_tail_offsets(
             self.cache.record_miss();
             let mut k = self.cache.known_through();
             let mut pos = if k == 0 {
-                self.tail_offset_0()?
+                #core.tail_offset_0()?
             } else {
-                match self.cache.end_of(k - 1, #cache_base) {
+                match self.cache.end_of(k - 1) {
                     Some(abs) => abs,
-                    None => self.tail_offset_0()?,
+                    None => #core.tail_offset_0()?,
                 }
             };
             while k < idx {
                 #[cfg(debug_assertions)]
                 self.cache.record_boundary();
-                pos = self.walk_dynamic_tail(k, pos)?;
-                let published = self.cache.publish(k, pos, #cache_base);
+                // A failed walk returns here, so the boundary is never
+                // published: the frontier only ever advances over validated
+                // offsets.
+                pos = #core.walk_dynamic_tail(k, pos)?;
+                self.cache.publish(k, pos);
                 k += 1;
-                if !published {
-                    while k < idx {
-                        #[cfg(debug_assertions)]
-                        self.cache.record_boundary();
-                        pos = self.walk_dynamic_tail(k, pos)?;
-                        k += 1;
-                    }
-                    return Ok(pos);
-                }
             }
             Ok(pos)
         }
     });
 
-    for i in 1..=total_tail {
+    for i in 0..=total_tail {
         let ident = quote::format_ident!("tail_offset_{i}");
         let i_lit = syn::LitInt::new(&i.to_string(), proc_macro2::Span::call_site());
         ts.extend(quote::quote! {
@@ -256,6 +264,7 @@ pub(crate) fn emit_tail_offsets(
     }
 
     ts.extend(quote::quote! {
+        /// Debug-build cache counters: hits, misses, boundary walks, frontier.
         #[cfg(debug_assertions)]
         #[must_use = "discarding cache stats is almost always a mistake"]
         #[inline]

@@ -9,15 +9,9 @@
 #![allow(unused)]
 
 mod common;
-use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate_domain_with};
-use std::path::Path;
-
-/// Memoization is opt-in, so every module in this file asks for it.
-fn generate(xml_path: &Path, module_name: &str) -> (ergo_sbe::Schema, String) {
-    generate_domain_with(xml_path, module_name, |c| {
-        c.with_memoized_tail_offsets(true)
-    })
-}
+use common::{
+    Paths, compile_and_run, compile_fails_with_diagnostics, generate, generate_domain_with,
+};
 
 const fn encode_car_body() -> &'static str {
     r#"
@@ -85,7 +79,7 @@ fn car_cache_warms_and_repeated_reads_hit() -> Result<(), Box<dyn std::error::Er
     let mut body = encode_car_body().to_string();
     body.push_str(
         r#"
-        let dec = CarDecoder::try_decode(encoded, 0)?;
+        let dec = CarDecoder::try_decode(encoded, 0)?.memoized();
         assert_eq!(dec.serial_number(), 1);
         let cold = dec.decode_cache_stats();
         assert_eq!(cold.known_through, 0, "construction must not walk tails");
@@ -198,7 +192,7 @@ fn truncated_var_data_does_not_publish_invalid_boundary() -> Result<(), Box<dyn 
         assert_eq!(sized, len, "EncodedLength must match the encoder");
         let short = &storage[..len.saturating_sub(2)];
         let dec = match CarDecoder::try_decode(short, 0) {
-            Ok(d) => d,
+            Ok(d) => d.memoized(),
             Err(_) => return Ok(()),
         };
         let before = dec.decode_cache_stats().known_through;
@@ -214,7 +208,7 @@ fn truncated_var_data_does_not_publish_invalid_boundary() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn tailed_decoder_is_send_not_sync() -> Result<(), Box<dyn std::error::Error>> {
+fn memoized_decoder_is_send_not_sync() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "memo_car_sync");
     compile_and_run(
         "memo_car_send",
@@ -249,7 +243,7 @@ fn tailed_decoder_is_send_not_sync() -> Result<(), Box<dyn std::error::Error>> {
             .activation_code(b"z")?
             .encoded_length_with_header();
         assert_eq!(sized, len, "EncodedLength must match the encoder");
-        let dec = CarDecoder::try_decode(&storage[..len], 0)?;
+        let dec = CarDecoder::try_decode(&storage[..len], 0)?.memoized();
         assert_send(&dec);
     "#,
     );
@@ -258,7 +252,7 @@ fn tailed_decoder_is_send_not_sync() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         fn assert_sync<T: Sync>(_: T) {}
-        let dec = unsafe { core::mem::zeroed::<CarDecoder>() };
+        let dec = unsafe { core::mem::zeroed::<CarMemoizedDecoder>() };
         assert_sync(dec);
         "#,
         &["Sync"],
@@ -267,27 +261,44 @@ fn tailed_decoder_is_send_not_sync() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn compact_tail_offsets_compile() -> Result<(), Box<dyn std::error::Error>> {
-    let (_schema, src) = generate_domain_with(&Paths::example_schema(), "memo_car_compact", |c| {
-        c.with_memoized_tail_offsets(true)
-            .with_compact_tail_offsets(true)
-    });
+fn memoized_is_a_separate_lane_reached_by_consuming_the_base_decoder()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "memo_car_lane");
     assert!(
-        src.contains("CompactTailOffset"),
-        "compact config must select CompactTailOffset"
+        src.contains("pub struct CarMemoizedDecoder"),
+        "memoized lane must be its own type"
+    );
+    assert!(
+        src.contains("pub fn memoized(self)"),
+        "memoized() must consume the base decoder"
     );
     let mut body = encode_car_body().to_string();
     body.push_str(
         r#"
-        let dec = CarDecoder::try_decode(encoded, 0)?;
-        assert_eq!(dec.manufacturer()?, b"Honda");
-        assert_eq!(dec.activation_code()?, b"abc");
-        assert_eq!(dec.model()?, b"Civic");
-        let stats = dec.decode_cache_stats();
-        assert!(stats.known_through >= 5);
+        // The base decoder recalculates and carries no cache, so it is Sync.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<CarDecoder<'_>>();
+
+        let base = CarDecoder::try_decode(encoded, 0)?;
+        assert_eq!(base.manufacturer()?, b"Honda");
+
+        // Same getter names on the memoized lane, same decoded values.
+        let memo = CarDecoder::try_decode(encoded, 0)?.memoized();
+        assert_eq!(memo.serial_number(), base.serial_number());
+        assert_eq!(memo.manufacturer()?, b"Honda");
+        assert_eq!(memo.activation_code()?, b"abc");
+        assert_eq!(memo.model()?, b"Civic");
+
+        // Reaching the last tail warms every boundary before it.
+        let stats = memo.decode_cache_stats();
+        assert!(stats.known_through >= 5, "final var-data warms preceding tails");
+
+        // into_inner() hands the uncached decoder back.
+        let back = memo.into_inner();
+        assert_eq!(back.manufacturer()?, b"Honda");
     "#,
     );
-    compile_and_run("memo_car_compact", &src, &body);
+    compile_and_run("memo_car_lane", &src, &body);
     Ok(())
 }
 

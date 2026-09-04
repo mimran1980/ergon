@@ -204,24 +204,8 @@ pub(crate) fn generate_owner_consuming_stages(
         // accessor in `group_decoder.rs`; without it the two same-signature
         // methods on the same type differ only in that this one re-reads and
         // re-validates a length header the iterator already resolved.
-        let last_slot = syn::LitInt::new(&(total_tail.saturating_sub(1)).to_string(), span);
-        let slice_cached_tail = if super::runtime::memoized_tail_offsets_enabled()
-            && i == 0
-            && !initial_has_byte_offset
-            && total_tail == 1
-        {
-            quote::quote! {
-                // `Iterator::next` cached the complete validated entry extent,
-                // including this prefix and payload.
-                if let Some(end) = self.cache.end_of(#last_slot, self.offset) {
-                    let data_offset =
-                        self.offset + self.acting_block_length + #prefix_size_lit;
-                    return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-                }
-            }
-        } else {
-            quote::quote! {}
-        };
+        // The message-level cache lives on the opt-in memoized lane, not here.
+        let slice_cached_tail = proc_macro2::TokenStream::new();
         let mut max_check = proc_macro2::TokenStream::new();
         if let Some(max) = vd.max_length {
             let max_lit = syn::LitInt::new(&max.to_string(), span);

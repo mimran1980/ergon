@@ -95,6 +95,121 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm()
     Ok(())
 }
 
+#[test]
+fn any_message_lane_accessors_exist_only_for_messages_with_tails()
+-> Result<(), Box<dyn std::error::Error>> {
+    // `Fixed` is a fixed-block message: every field is random-access off the
+    // block, so there is nothing for the memoized or ordered lanes to do and
+    // neither is generated. `Tailed` has a group and var-data, so it gets all
+    // three lane accessors.
+    let multi = r#"<?xml version="1.0"?>
+<messageSchema package="lanes_test" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="Fixed" id="1" blockLength="4">
+    <field name="x" id="1" type="uint32" offset="0"/>
+  </message>
+  <message name="Tailed" id="2" blockLength="4">
+    <field name="y" id="1" type="uint32" offset="0"/>
+    <group name="legs" id="2" dimensionType="groupSizeEncoding" blockLength="4">
+      <field name="qty" id="3" type="uint32" offset="0"/>
+    </group>
+    <data name="label" id="4" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let ir = parse(multi)?;
+    let schema = Schema::from_ir(ir);
+    let src = Generator::new(GenerationConfig::new("lanes_test"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module generated")?
+        .source
+        .clone();
+
+    // Source assertions name which cell broke; the compile below is the check.
+    assert!(
+        !src.contains("FixedOrderedDecoder") && !src.contains("FixedMemoizedDecoder"),
+        "fixed-block message must not get an ordered or memoized lane"
+    );
+    assert!(
+        !src.contains("into_fixed_ordered") && !src.contains("into_fixed_memoized"),
+        "fixed-block message must not get lane accessors on AnyMessage"
+    );
+    assert!(
+        src.contains("into_tailed_ordered") && src.contains("into_tailed_memoized"),
+        "message with tails must get both lane accessors on AnyMessage"
+    );
+
+    compile_and_run(
+        "lanes_test",
+        &src,
+        r#"
+        use lanes_test::{AnyMessage, FixedEncoder, FixedFixedFields, TailedEncoder,
+                         TailedFixedFields, sbe_rt};
+
+        let mut fbuf = [0u8; FixedEncoder::compute_length_with_header()];
+        let flen = FixedEncoder::wrap_and_apply_header(&mut fbuf, 0)
+            .fixed(&FixedFixedFields { x: 42 })
+            .encoded_length_with_header();
+
+        // `Tailed` has a fixed-stride group and one var-data field, so the
+        // direct const sizing helper applies: one leg, a three-byte label.
+        let mut tbuf = [0u8; TailedEncoder::compute_length_with_header(1, 3)];
+        let actual = TailedEncoder::wrap_and_apply_header(&mut tbuf, 0)
+            .fixed(&TailedFixedFields { y: 99 })
+            .legs(1, |legs| { legs.add(|l| { l.qty(7u32); Ok(()) })?; Ok(()) })?
+            .label(b"abc")?
+            .encoded_length_with_header();
+        assert_eq!(tbuf.len(), actual);
+
+        // Fixed-block frame: only the base lane exists, and it is enough.
+        let f = AnyMessage::try_decode(&fbuf[..flen], 0)?.into_fixed()
+            .ok_or("expected Fixed")?;
+        assert_eq!(f.x(), 42);
+        // Wrong template yields None rather than a panic.
+        assert!(AnyMessage::try_decode(&tbuf[..actual], 0)?.into_fixed().is_none());
+
+        // Tailed frame: every lane reachable straight off the enum.
+        let base = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed()
+            .ok_or("expected Tailed")?;
+        assert_eq!(base.y(), 99);
+
+        let memo = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed_memoized()
+            .ok_or("expected Tailed")?;
+        assert_eq!(memo.label()?, b"abc");
+        assert_eq!(memo.y(), 99);
+
+        let mut ord = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed_ordered()
+            .ok_or("expected Tailed")?;
+        ord.legs()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
+            assert_eq!(e.qty(), 7);
+            Ok(())
+        })?;
+        assert_eq!(ord.label()?, b"abc");
+
+        assert!(AnyMessage::try_decode(&fbuf[..flen], 0)?.into_tailed_memoized().is_none());
+        assert!(AnyMessage::try_decode(&fbuf[..flen], 0)?.into_tailed_ordered().is_none());
+        "#,
+    );
+    Ok(())
+}
+
 // ─── Sealing ───────────────────────────────────────────────────────────────
 
 #[test]

@@ -321,35 +321,97 @@ fn read_full_random(car: &CarDecoder<'_>) {
     black_box(car.activation_code().unwrap());
 }
 
-fn bench_cached_random_access(c: &mut Criterion) {
-    let mut group = c.benchmark_group("decode/cached_random_access");
+fn read_full_random_memoized(car: &CarMemoizedDecoder<'_>) {
+    black_box(car.serial_number());
+    let _ = car.fuel_figures();
+    let _ = car.performance_figures();
+    black_box(car.manufacturer().unwrap());
+    black_box(car.model().unwrap());
+    black_box(car.activation_code().unwrap());
+}
+
+/// Base lane vs memoized lane over identical reads.
+///
+/// The two arms of each pair touch the same fields the same number of times;
+/// only the lane differs. `warm_final_tail` is the one pair that is not
+/// symmetric by construction — the base decoder has no cache to warm, which is
+/// exactly the difference being measured, so both arms still perform one
+/// `activation_code()` read on an already-constructed decoder.
+fn bench_tail_access(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode/tail_access");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
-    group.bench_function("construction_plus_fixed", |b| {
+
+    group.bench_function("base/construction_plus_fixed", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
             black_box((car.serial_number(), car.model_year()));
         });
     });
-    group.bench_function("cold_final_tail", |b| {
+    group.bench_function("memoized/construction_plus_fixed", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .memoized();
+            black_box((car.serial_number(), car.model_year()));
+        });
+    });
+
+    group.bench_function("base/cold_final_tail", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
             black_box(car.activation_code().unwrap());
         });
     });
-    let warm = CarDecoder::try_from(BASELINE).unwrap();
-    let _ = warm.activation_code();
-    group.bench_function("warm_final_tail", |b| {
-        b.iter(|| black_box(warm.activation_code().unwrap()));
+    group.bench_function("memoized/cold_final_tail", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .memoized();
+            black_box(car.activation_code().unwrap());
+        });
     });
-    group.bench_function("full_schema_order", |b| {
+
+    let base_warm = CarDecoder::try_from(BASELINE).unwrap();
+    let memo_warm = CarDecoder::try_from(BASELINE).unwrap().memoized();
+    let _ = memo_warm.activation_code();
+    group.bench_function("base/warm_final_tail", |b| {
+        b.iter(|| black_box(black_box(&base_warm).activation_code().unwrap()));
+    });
+    group.bench_function("memoized/warm_final_tail", |b| {
+        b.iter(|| black_box(black_box(&memo_warm).activation_code().unwrap()));
+    });
+
+    group.bench_function("base/full_schema_order", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
             read_full_random(&car);
         });
     });
-    group.bench_function("full_reverse_order", |b| {
+    group.bench_function("memoized/full_schema_order", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .memoized();
+            read_full_random_memoized(&car);
+        });
+    });
+
+    group.bench_function("base/full_reverse_order", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+            black_box(car.activation_code().unwrap());
+            black_box(car.model().unwrap());
+            black_box(car.manufacturer().unwrap());
+            let _ = car.performance_figures();
+            let _ = car.fuel_figures();
+            black_box(car.serial_number());
+        });
+    });
+    group.bench_function("memoized/full_reverse_order", |b| {
+        b.iter(|| {
+            let car = CarDecoder::try_from(black_box(BASELINE))
+                .unwrap()
+                .memoized();
             black_box(car.activation_code().unwrap());
             black_box(car.model().unwrap());
             black_box(car.manufacturer().unwrap());
@@ -375,6 +437,6 @@ criterion_group!(
     bench_display,
     bench_decode_frame,
     bench_skip,
-    bench_cached_random_access,
+    bench_tail_access,
 );
 criterion_main!(benches);

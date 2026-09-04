@@ -35,8 +35,6 @@
 //! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
 //! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
-//! | [`with_compact_tail_offsets`](GenerationConfig::with_compact_tail_offsets) | `u32` relative tail-end cache on 64-bit |
-//! | [`with_memoized_tail_offsets`](GenerationConfig::with_memoized_tail_offsets) | Memoize dynamic-tail boundaries (default off) |
 
 /// Selects which fields receive conversion / domain-type methods.
 ///
@@ -441,19 +439,6 @@ pub struct GenerationConfig {
     /// Hooks fired after each generated item (enum, set, composite, message).
     /// Returned tokens are appended after the item's definition.
     pub(crate) hooks: Hooks,
-    /// Store random-access tail ends as `u32` relative offsets (64-bit) instead
-    /// of absolute `usize`. Unrepresentable spans keep the representable prefix
-    /// and walk the suffix uncached — they never reject a valid message.
-    pub(crate) compact_tail_offsets: bool,
-    /// Memoize discovered dynamic-tail boundaries so out-of-order and repeated
-    /// `&self` getters do not re-walk the tail. Default `false` — the cache is
-    /// an explicit opt-in because constructing it costs decoders that never
-    /// read a tail.
-    ///
-    /// Left off, every tail access re-walks from the fixed block, the decoder
-    /// carries no `Cell` cache (so it stays `Sync` and smaller), and
-    /// `decode_cache_stats` is not generated.
-    pub(crate) memoized_tail_offsets: bool,
     /// When set, the encoder writes this acting version and omits members
     /// with `sinceVersion` above it. The decoder is still generated from the
     /// full schema so it can read every acting version the schema declares.
@@ -482,8 +467,6 @@ impl std::fmt::Debug for GenerationConfig {
             .field("enable_meta_attributes", &self.enable_meta_attributes)
             .field("enable_dispatch", &self.enable_dispatch)
             .field("hooks", &self.hooks)
-            .field("compact_tail_offsets", &self.compact_tail_offsets)
-            .field("memoized_tail_offsets", &self.memoized_tail_offsets)
             .field("encode_version", &self.encode_version)
             .finish()
     }
@@ -518,8 +501,6 @@ impl GenerationConfig {
             enable_meta_attributes: true,
             enable_dispatch: true,
             hooks: Hooks::default(),
-            compact_tail_offsets: false,
-            memoized_tail_offsets: false,
             encode_version: None,
         }
     }
@@ -588,12 +569,6 @@ impl GenerationConfig {
     /// Re-use one `sbe_rt` runtime across separately generated schema modules.
     ///
     /// `path` must work in `pub use <path> as sbe_rt;`.
-    ///
-    /// The runtime's contents follow the config that emitted it: a module
-    /// generated without [`Self::with_memoized_tail_offsets`] emits no
-    /// `TailBoundaryCache`. Give the owning module and every module borrowing
-    /// its `sbe_rt` the same value for that knob, or the borrower fails to
-    /// compile naming a type the owner did not emit.
     ///
     /// ```
     /// # use ergo_sbe::GenerationConfig;
@@ -898,48 +873,6 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_dispatch(mut self, enable: bool) -> Self {
         self.enable_dispatch = enable;
-        self
-    }
-
-    /// Store memoized random-access tail ends as compact `u32` relative
-    /// offsets on 64-bit targets (native `usize` on 32-bit).
-    ///
-    /// Only meaningful with [`Self::with_memoized_tail_offsets`] — there is no
-    /// cache to store otherwise. Default is native `usize`; choose compact when
-    /// the smaller decoder is worth it and `just bench-diagnostics`
-    /// (`vl3/offsets`) shows no cost on your access pattern. Unrepresentable
-    /// spans are not a decode error: the representable prefix stays cached and
-    /// the suffix is walked uncached.
-    #[must_use]
-    pub fn with_compact_tail_offsets(mut self, enable: bool) -> Self {
-        self.compact_tail_offsets = enable;
-        self
-    }
-
-    /// Memoize dynamic-tail boundaries in generated random-access decoders.
-    ///
-    /// **Default: disabled**, because the cache costs construction work on
-    /// every decoder — including the many that only read fixed fields — and
-    /// no safety check or ergonomic wrapper may slow a benchmarked hot path
-    /// unless it is an explicit opt-in.
-    ///
-    /// Enable it when you read tails out of order, or read the same tail more
-    /// than once per message. Each message and dynamic group-entry decoder
-    /// then keeps a progressive cache of discovered tail ends, so the wire is
-    /// walked at most once per tail. Construction stays O(1); undiscovered
-    /// slots are never read.
-    ///
-    /// | | disabled (default) | memoized |
-    /// |---|---|---|
-    /// | Repeated / out-of-order tail reads | re-walk every time | walk once, then cached |
-    /// | Single wire-order pass | no cache to pay for | pays, gains nothing |
-    /// | `Sync` | yes | no (`Cell` interior mutability) |
-    /// | `decode_cache_stats` (debug builds) | not generated | generated |
-    ///
-    /// Wire compatibility and decoded values are identical either way.
-    #[must_use]
-    pub fn with_memoized_tail_offsets(mut self, enable: bool) -> Self {
-        self.memoized_tail_offsets = enable;
         self
     }
 

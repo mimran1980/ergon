@@ -216,8 +216,8 @@ fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 #[serial(alloc_count)]
-fn cached_random_access_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    measure("cached random-access decode", || {
+fn random_access_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    measure("random-access decode", || {
         let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
         black_box(car.serial_number());
         black_box(car.activation_code().unwrap());
@@ -230,6 +230,31 @@ fn cached_random_access_decode_zero_alloc() -> Result<(), Box<dyn std::error::Er
         }
         black_box(car.model().unwrap());
         black_box(car.encoded_length_with_header().unwrap());
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn memoized_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    // The memoized lane claims O(1) construction and no heap traffic: the
+    // boundary cache is an inline `Cell` array, not a `Vec`. Same reads as the
+    // base-lane case above, out of wire order so the cache is exercised.
+    measure("memoized decode", || {
+        let car = CarDecoder::try_from(black_box(BASELINE))
+            .unwrap()
+            .memoized();
+        black_box(car.activation_code().unwrap());
+        black_box(car.serial_number());
+        black_box(car.manufacturer().unwrap());
+        let fuel = car.fuel_figures().unwrap();
+        for entry in fuel {
+            let e = entry.unwrap();
+            black_box(e.speed());
+            black_box(e.usage_description().unwrap());
+        }
+        black_box(car.model().unwrap());
+        black_box(car.encoded_length().unwrap());
     });
     Ok(())
 }

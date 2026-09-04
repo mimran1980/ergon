@@ -1,56 +1,167 @@
 # Decoder Lanes
 
-Every generated decoder exposes **three lanes**. They read the same wire and
-return the same values; they differ in how order is enforced and what each
-dynamic-tail access costs. The standard group `Iterator` remains for
-compatibility and partial traversal. It is not a fourth message-decoding lane:
+A decoder for a message with groups or variable-data exposes **four lanes**
+(a fixed-block message has [exactly one](#fixed-block-messages-have-exactly-one-lane)).
+They read the same wire and return the same values; they differ in how order is
+enforced and what each dynamic-tail access costs. The standard group `Iterator`
+remains for
+compatibility and partial traversal. It is not a fifth message-decoding lane:
 `Iterator::next()` must learn the next entry position before yielding a
 dynamic entry, so it is not the ordered fast path.
 
-| Lane | Entry point | Ordering | Dynamic-tail cost |
-|------|-------------|----------|-------------------|
-| Random access | Existing decoder getters | Any order | Recalculates preceding offsets |
-| Staged | `into_*` and `visit_entries` | Compile time | One wire-order pass |
-| Mutable ordered | `decoder.ordered()` | Runtime `OutOfOrder` | One wire-order pass plus order checks |
+| Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
+|------|-------------|----------|-------------------|--------|
+| Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
+| Memoized | `decoder.memoized()` | Any order | Walks each boundary at most once | no |
+| Staged | `into_*` and `visit_entries` | Compile time | One wire-order pass | yes |
+| Mutable ordered | `decoder.ordered()` | Runtime `OutOfOrder` | One wire-order pass plus order checks | yes |
 
 Fixed fields stay random-access in every lane. Groups and variable-data must
 be consumed in schema order in the staged and mutable ordered lanes.
 
+## Fixed-block messages have exactly one lane
+
+A message with no repeating groups and no variable-data has no dynamic tail:
+every field sits at a compile-time offset inside the block, and the base
+decoder reads them all in any order at constant cost. There is nothing to
+memoize and nothing to order, so **`memoized()` and `ordered()` are not
+generated for those messages at all** — and `AnyMessage` offers only
+`into_<name>()` for them. This is not an omission you work around; the base
+decoder already is the whole story, and a second name for it would only invite
+the question of which one is faster.
+
+The lanes below therefore describe messages that *do* carry groups or
+variable-data.
+
+## Choosing a lane
+
+- **Sparse or one-off access** — random access. Smallest decoder, `Sync`, no
+  cache to pay for. This is the default and the right answer surprisingly often.
+- **Repeated or out-of-order access through the same decoder instance** —
+  `.memoized()`.
+- **Complete sequential decoding** — `.ordered()` (or the staged lane when you
+  want the compiler, not the runtime, to enforce order). Fastest full-message
+  path.
+
+Group entry decoders keep a one-shot extent cache in *every* lane: the group
+iterator computes an entry's end in order to advance, and the entry's last
+var-data accessor reuses it rather than re-reading a length header. That is
+internal and needs no configuration.
+
+If you already know which template you want, `AnyMessage` will hand you the
+lane directly — `into_car()`, `into_car_memoized()`, `into_car_ordered()` —
+instead of making you take the base decoder and convert at the call site. A
+fixed-block message only offers `into_<name>()`, for the reason above.
+
+## Why four lanes at all — the sbe-tool comparison
+
+sbe-tool's Rust generator gives you **one** decoder: a `&mut` flyweight
+carrying a `limit` cursor. Every group and var-data accessor reads at the
+current `limit` and then advances it. That single design has to answer three
+different questions at once, and it answers them by trusting the caller:
+
+| Question | sbe-tool's answer | Consequence |
+|----------|-------------------|-------------|
+| What order may I read tails in? | Whatever order you call them in | Calling `activation_code_decoder()` before iterating `fuelFigures` reads the **group's bytes as a length prefix**. No error — a wrong value, or a panic on a short slice |
+| Can I go back and re-read a tail? | No — `limit` only moves forward | Re-reading means re-wrapping the message from the start |
+| Can I hold the decoder and read fields later? | Only through `&mut` (or by consuming it — `fuel_figures_decoder(self)` takes the decoder and `parent()` gives it back) | No useful `&`-sharing across helpers: reading a tail mutates the cursor, so two readers cannot hold it at once |
+
+ergon splits those three questions into separate types so each one has a
+correct answer rather than a convention:
+
+| ergon lane | Closest sbe-tool spelling | What ergon adds | What it costs |
+|-----------|---------------------------|------------------|---------------|
+| Random access | *(no equivalent — sbe-tool cannot re-read)* | Order-independent reads from an `&` shared, `Sync` decoder | Each dynamic-tail read re-walks from the block |
+| Memoized | *(no equivalent)* | The same, but each boundary is walked at most once | One `usize` per tail, inline; not `Sync` |
+| Staged | `_decoder()` + `.parent()` chain | The wrong order is a **compile error**, not wrong bytes | Stage types appear in signatures |
+| Mutable ordered | `&mut` flyweight with `limit` | The wrong order is `DecodeError::OutOfOrder`, cursor unchanged and retryable | One runtime ordinal check per tail |
+
+Two things are true in **every** ergon lane and in none of sbe-tool's:
+
+- **A short buffer is a `DecodeError`, not a panic**, once you enter through a
+  `try_*` constructor. sbe-tool's accessors index the slice directly.
+- **A group's declared `numInGroup` is checked against the bytes that are
+  actually there before an entry reaches your code.** For a fixed-stride group
+  the whole `count × blockLength` region is proven in bounds up front; for a
+  dynamic-stride group each entry's minimum extent is proven before that entry
+  is handed over. Either way a truncated frame is a `DecodeError`. sbe-tool's
+  `advance()` trusts the count and the read panics part-way through iteration.
+
+The trade is real and worth stating plainly: sbe-tool's single flyweight is
+less to learn. If your code always decodes complete messages in wire order and
+never re-reads, the mutable ordered lane is the like-for-like port and the
+other three are choices you can ignore.
+
 ## Random access
 
 Simplest for sparse or genuinely out-of-order reads. You can ask for
-`manufacturer` before walking `fuelFigures`. By default every dynamic-tail
-getter re-walks from the fixed block. With
-[`with_memoized_tail_offsets(true)`](../configuration/generation-config.md#tail-offset-memoization)
-the getters lazily memoize discovered boundaries on the decoder (`Cell`, so
-the flyweight becomes `Send` and not `Sync`): the first access walks from the
-frontier, later accesses reuse it. Construction and fixed-field reads stay
-constant-time either way.
+`manufacturer` before walking `fuelFigures`. Every dynamic-tail getter
+re-walks from the fixed block, so the decoder holds nothing but the buffer,
+offset, and acting header values. Construction and fixed-field reads are
+constant-time.
 
 **Advantages**
 
 - Any-order access; no stage types to thread through the call site
-- Natural for “read two fields and stop”
-- Same flyweight you already wrap with `try_decode` / `wrap`
+- Natural for "read two fields and stop"
+- Smallest decoder, and `Sync` — shareable across threads
+- Nothing is paid for a cache you might not use
 
 **Disadvantages**
 
 - Nothing stops you from reading tails twice or skipping a required walk
-- Full-message decode of nested groups is the slowest of the three lanes
-- With memoization on, the decoder is larger and, because the cache uses
-  `Cell`, `Send` but not `Sync` — one instance per thread over shareable
-  immutable bytes
-
-Reading tails twice is the case memoization exists for: the second read
-becomes a cache hit instead of a fresh walk, and repeated or reverse-order
-root reads improve by an order of magnitude. What it does *not* buy you is a
-single cold jump to the last tail — that pays to publish every boundary it
-skips past, and is faster with the cache off. `just bench-diagnostics` runs
-`versioned_l3_bench`, which measures both shapes.
+- Full-message decode of nested groups is the slowest of the lanes
+- Reading the same tail twice walks it twice
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_random_access}}
 ```
+
+## Memoized (`decoder.memoized()`)
+
+Same getter names as random access, with a progressive cache of discovered
+dynamic-tail ends. The first access to a tail walks forward from the cache
+frontier; later accesses — in any order — reuse what was already discovered.
+
+```rust,ignore
+let decoder = CarDecoder::try_from(bytes)?;   // small, Sync, recalculates tails
+let decoder = decoder.memoized();             // lazy cache, no allocation
+
+read_header(&decoder)?;
+read_groups(&decoder)?;
+read_final_tail(&decoder)?;                   // reuses discovered boundaries
+```
+
+Construction is O(1) and allocates nothing. Decoded values and wire bytes are
+identical to the base lane.
+
+**Build it once and pass `&CarMemoizedDecoder` around.** Calling `.memoized()`
+separately inside every function creates a *separate empty cache* each time and
+re-walks everything — the opposite of what you wanted. The cache uses `Cell`,
+so the wrapper is `Send` but not `Sync`: one instance per thread over shareable
+immutable bytes. `into_inner()` hands the base decoder back.
+
+**Use it when**
+
+- You read tails out of order, or read the same tail more than once
+- A view jumps to the last var-data field and then back to a group
+- One decoder is read by several helpers in the same thread
+
+**Do not use it when**
+
+- You make a single cold pass in wire order. Each tail already begins where the
+  last one ended, so there is nothing to reuse — you pay for the cache and get
+  nothing back. A cold jump to the last tail is *slower* than random access,
+  because it publishes every boundary it skips past.
+- You need `Sync`.
+
+`just bench-diagnostics` runs `versioned_l3_bench`, whose `vl3/lane` group
+measures exactly these shapes — cold single tail, construct-plus-fixed, one
+full traversal, and repeated root re-reads — in both LTO profiles.
+
+Ordered and staged decoders are **not** memoized: they already carry their
+current offset and never re-walk an earlier tail, so a cache would be pure
+overhead.
 
 ## Staged (`into_*` / `visit_entries`)
 

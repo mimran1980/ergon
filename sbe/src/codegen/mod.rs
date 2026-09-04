@@ -76,8 +76,10 @@ pub(crate) mod group_decoder;
 pub(crate) use group_decoder::generate_group_decoder;
 pub(crate) mod tail_stages;
 pub(crate) use tail_stages::*;
+pub(crate) mod memoized_decoder;
 pub(crate) mod ordered_decoder;
 pub(crate) mod tail_cache;
+pub(crate) use memoized_decoder::generate_memoized_decoder;
 pub(crate) use ordered_decoder::generate_ordered_decoder;
 pub(crate) mod message_decoder;
 pub(crate) use message_decoder::generate_message_decoder;
@@ -569,14 +571,7 @@ impl Generator {
     fn with_config_scope<R>(&self, f: impl FnOnce() -> R) -> R {
         with_keyword_append(&self.config.keyword_append_token, || {
             with_deprecated_attrs(self.config.deprecated_attrs, || {
-                with_compact_tail_offsets(self.config.compact_tail_offsets, || {
-                    with_memoized_tail_offsets(self.config.memoized_tail_offsets, || {
-                        with_encode_version_cap(
-                            Some(self.config.encode_version.unwrap_or(u16::MAX)),
-                            f,
-                        )
-                    })
-                })
+                with_encode_version_cap(Some(self.config.encode_version.unwrap_or(u16::MAX)), f)
             })
         })
     }

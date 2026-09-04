@@ -63,8 +63,6 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
-    let memoized = super::runtime::memoized_tail_offsets_enabled();
-    let entry_cache_ty = super::tail_cache::cache_type_tokens(total_tail);
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
     let bulk_decode_eligible = g.has_fixed_stride()
@@ -833,30 +831,18 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
-    // Both modes cache; they differ in how much. Memoized keeps one slot per
-    // dynamic tail. Uncached keeps the pre-memoization *one-shot* extent: the
-    // group iterator computes each entry's end to advance, and the last
-    // var-data accessor reuses it instead of re-reading its length header.
-    // Emitting nothing here would make the uncached entry decoder slower than
-    // it has ever been, which is what the `decode_full_message` gate measures.
-    let entry_cache_init = if memoized {
-        quote::quote! { cache: sbe_rt::TailBoundaryCache::new(), }
-    } else {
-        quote::quote! { tail_end: core::cell::Cell::new(None), }
-    };
-    let entry_cache_field = if memoized {
-        quote::quote! {
-            /// Progressive cache of this entry's dynamic-tail ends.
-            /// `Cell` keeps `&self` getters and makes the entry `Send` + `!Sync`.
-            cache: #entry_cache_ty,
-        }
-    } else {
-        quote::quote! {
-            /// One-shot entry-extent cache: filled by `encoded_length`,
-            /// reused by the last var-data accessor. `Cell` keeps `&self`
-            /// getters and makes the entry `Send` + `!Sync`.
-            tail_end: core::cell::Cell<Option<usize>>,
-        }
+    // Entry decoders keep a one-shot extent cache in every lane: the group
+    // iterator computes each entry's end to advance, and the last var-data
+    // accessor reuses it instead of re-reading its length header. Dropping it
+    // makes full-message decode lose to sbe-tool, which the
+    // `decode_full_message` gate measures. The message-level progressive cache
+    // is a separate, opt-in lane (`memoized_decoder.rs`).
+    let entry_cache_init = quote::quote! { tail_end: core::cell::Cell::new(None), };
+    let entry_cache_field = quote::quote! {
+        /// One-shot entry-extent cache: filled by `encoded_length`, reused by
+        /// the last var-data accessor. `Cell` keeps `&self` getters and makes
+        /// the entry `Send` + `!Sync`.
+        tail_end: core::cell::Cell<Option<usize>>,
     };
 
     // wrap() method header. Entries with tail components carry a one-shot
@@ -1465,11 +1451,7 @@ pub(crate) fn generate_group_decoder(
         // A warm entry cache proves the whole entry extent was validated, so
         // the nested dim header is known in-bounds and `wrap_trusted` is sound
         // here. The two modes spell "warm" differently; both are one load.
-        let entry_extent_known = if memoized {
-            quote::quote! { self.cache.is_complete() }
-        } else {
-            quote::quote! { self.tail_end.get().is_some() }
-        };
+        let entry_extent_known = quote::quote! { self.tail_end.get().is_some() };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
                 // `Iterator::next` cached the complete validated entry extent,
@@ -1543,11 +1525,7 @@ pub(crate) fn generate_group_decoder(
                 &(total_tail.saturating_sub(1)).to_string(),
                 proc_macro2::Span::call_site(),
             );
-            let warm_entry_end = if memoized {
-                quote::quote! { self.cache.end_of(#last_slot, self.offset) }
-            } else {
-                quote::quote! { self.tail_end.get() }
-            };
+            let warm_entry_end = quote::quote! { self.tail_end.get() };
             let cached_first_tail = if nvd_idx == 0 {
                 quote::quote! {
                     // `Iterator::next` cached the complete validated entry
@@ -1564,42 +1542,21 @@ pub(crate) fn generate_group_decoder(
             // Last tail component: a warm cache (filled by the iterator's
             // encoded_length) gives the slice end directly — no second
             // length-header read, bounds already validated.
-            let nvd_slot = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
-            let (nvd_cache_hit_last, nvd_cache_publish) = if memoized {
-                (
-                    quote::quote! {
-                        if let Some(end) = self.cache.end_of(#nvd_slot, self.offset) {
-                            let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
-                                sbe_rt::DecodeError::BufferTooShort {
-                                    field: stringify!(#vd_snake_ident),
-                                    needed: usize::MAX,
-                                    available: self.buf.len().saturating_sub(offset),
-                                },
-                            )?;
-                            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-                        }
-                    },
-                    quote::quote! {
-                        let _ = self.cache.publish(#nvd_slot, data_end, self.offset);
-                    },
-                )
-            } else {
-                (
-                    quote::quote! {
-                        if let Some(end) = self.tail_end.get() {
-                            let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
-                                sbe_rt::DecodeError::BufferTooShort {
-                                    field: stringify!(#vd_snake_ident),
-                                    needed: usize::MAX,
-                                    available: self.buf.len().saturating_sub(offset),
-                                },
-                            )?;
-                            return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-                        }
-                    },
-                    proc_macro2::TokenStream::new(),
-                )
+            let nvd_cache_hit_last = quote::quote! {
+                if let Some(end) = self.tail_end.get() {
+                    let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: stringify!(#vd_snake_ident),
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(offset),
+                        },
+                    )?;
+                    // SAFETY: a warm `tail_end` proves this entry's extent was
+                    // validated when the iterator computed it.
+                    return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                }
             };
+            let nvd_cache_publish = proc_macro2::TokenStream::new();
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1622,24 +1579,10 @@ pub(crate) fn generate_group_decoder(
                 }
             });
         } else {
-            let nvd_slot = syn::LitInt::new(&nvd_idx.to_string(), proc_macro2::Span::call_site());
-            let (nvd_cache_hit_mid, nvd_cache_publish) = if memoized {
-                (
-                    quote::quote! {
-                        if let Some(end) = self.cache.end_of(#nvd_slot, self.offset) {
-                            return Ok(&self.buf[offset + #prefix_size_lit..end]);
-                        }
-                    },
-                    quote::quote! {
-                        let _ = self.cache.publish(#nvd_slot, data_end, self.offset);
-                    },
-                )
-            } else {
-                (
-                    proc_macro2::TokenStream::new(),
-                    proc_macro2::TokenStream::new(),
-                )
-            };
+            // Only the LAST tail's end coincides with the entry extent, so a
+            // mid-entry var-data field has no one-shot cache to consult.
+            let nvd_cache_hit_mid = proc_macro2::TokenStream::new();
+            let nvd_cache_publish = proc_macro2::TokenStream::new();
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -1667,27 +1610,14 @@ pub(crate) fn generate_group_decoder(
     // encoded_length, skip — tail shape is a compile-time constant;
     // emit only the live path (no dead branch in the generated source).
     let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
-    let entry_len_cache_hit = if memoized {
-        quote::quote! {
-            let last = (#total_tail as usize).saturating_sub(1);
-            if let Some(end) = self.cache.end_of(last, self.offset) {
-                return Ok(end - self.offset);
-            }
-        }
-    } else {
-        quote::quote! {
-            if let Some(end) = self.tail_end.get() {
-                return Ok(end - self.offset);
-            }
+    let entry_len_cache_hit = quote::quote! {
+        if let Some(end) = self.tail_end.get() {
+            return Ok(end - self.offset);
         }
     };
-    // Memoized publishes inside `tail_offset_*`; the one-shot cache is filled
-    // here, by the iterator call that computes the entry extent to advance.
-    let entry_len_cache_publish = if memoized {
-        proc_macro2::TokenStream::new()
-    } else {
-        quote::quote! { self.tail_end.set(Some(end)); }
-    };
+    // Filled here, by the iterator call that computes the entry extent in
+    // order to advance to the next entry.
+    let entry_len_cache_publish = quote::quote! { self.tail_end.set(Some(end)); };
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
             #mu
