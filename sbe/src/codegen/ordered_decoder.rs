@@ -477,8 +477,30 @@ fn generate_group_guard_inner(
             }
         }
     } else {
+        // Fixed stride: the whole entries region is `count * blockLength`, and
+        // it must be proven in-bounds HERE. `visit_entries` hands each entry to
+        // a caller callback without a per-entry check (there is no per-entry
+        // extent to compute), so a truncated buffer with a large `numInGroup`
+        // would otherwise read past the end. The random-access lane has always
+        // validated this; the ordered lane did not.
         quote::quote! {
             let min_entry_extent = 0usize;
+            let entries_start = start + #dim_size_lit;
+            let available = parent.inner.buf.len().saturating_sub(entries_start);
+            let entries_length = count.checked_mul(block_length).ok_or(
+                sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_name_lit,
+                    needed: usize::MAX,
+                    available,
+                },
+            )?;
+            if entries_length > available {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_name_lit,
+                    needed: entries_length,
+                    available,
+                });
+            }
         }
     };
     let visit_body = if g.has_dynamic_entries() {

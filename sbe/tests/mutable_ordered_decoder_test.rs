@@ -38,6 +38,84 @@ fn assert_out_of_order_src(src: &str) {
     );
 }
 
+/// A truncated fixed-stride group must be rejected before any entry reaches
+/// the visitor callback.
+///
+/// The dynamic-entry path checks `min_entry_extent` per entry, but a
+/// fixed-stride group has no per-entry extent to compute, so `visit_entries`
+/// hands each entry straight to the callback. Without an up-front
+/// `count * blockLength` check, a large `numInGroup` on a short buffer walks
+/// past the end. The random-access lane has always validated this region; the
+/// ordered lane did not, and this pins the parity.
+#[test]
+fn ordered_visit_entries_rejects_truncated_fixed_stride_group()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("basic-group-schema.xml"),
+        "mo_fixed_truncated",
+    );
+    compile_and_run(
+        "mo_fixed_truncated",
+        &src,
+        r#"
+        let row = EntriesEntry {
+            tag_group1: {
+                let mut symbol = [0u8; 20];
+                symbol[..3].copy_from_slice(b"ABC");
+                symbol
+            },
+            tag_group2: 101,
+        };
+        // Fixed-stride group, no var-data: the direct const helper is the
+        // exact-size API for this shape (no staged builder is generated).
+        const LEN: usize = TestMessage1Encoder::compute_length_with_header(1);
+        let mut buf = [0u8; LEN];
+        let len = LEN;
+        let actual = TestMessage1Encoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&TestMessage1FixedFields { tag1: 0 })
+            .entries(1, |group| group.bulk_add(core::slice::from_ref(&row)))?
+            .encoded_length_with_header();
+        assert_eq!(len, actual, "EncodedLength must match the encoder");
+
+        // One byte short of the declared entries region. The region is proven
+        // in-bounds when the group is entered, so this is rejected before a
+        // visitor could ever be handed an entry.
+        let truncated = &buf[..actual - 1];
+        let mut ordered = TestMessage1Decoder::try_decode(truncated, 0)?.ordered();
+        // The guard type is not Debug, so map to the error before asserting.
+        let err = ordered.entries().err();
+        assert!(
+            matches!(err, Some(sbe_rt::DecodeError::BufferTooShort { .. })),
+            "truncated fixed-stride entries must be rejected; got {err:?}",
+        );
+
+        // Nothing may reach the callback either.
+        let mut ordered = TestMessage1Decoder::try_decode(truncated, 0)?.ordered();
+        let mut visited = 0usize;
+        if let Ok(group) = ordered.entries() {
+            let _ = group.visit_entries(|_e| -> Result<(), sbe_rt::DecodeError> {
+                visited += 1;
+                Ok(())
+            });
+        }
+        assert_eq!(visited, 0, "no entry may be visited from a truncated group");
+
+        // The untruncated buffer still visits every entry.
+        let mut ordered = TestMessage1Decoder::try_decode(&buf[..actual], 0)?.ordered();
+        let mut seen = 0usize;
+        ordered
+            .entries()?
+            .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(entry.tag_group2(), 101);
+                seen += 1;
+                Ok(())
+            })?;
+        assert_eq!(seen, 1);
+        "#,
+    );
+    Ok(())
+}
+
 /// All three lanes decode the same Car payload to the same values.
 #[test]
 fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error>> {
