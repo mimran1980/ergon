@@ -317,12 +317,14 @@ Groups and what each decides:
 | `vl3/order` | schema, reverse, alternating and seeded-random tail order, cold and warm |
 | `vl3/traverse` | full nested traversal at each acting version |
 
-The shape of the result, not the numbers: a single cold pass in wire order
-never needs a cache, because each tail begins where the last one ended, so the
-base lane wins there. Repeated or out-of-order root reads are what
-`.memoized()` exists for, and win by an order of magnitude. Between them sits
-construct-plus-fixed-fields, which pays for a cache and gets nothing back —
-that workload is why memoization is a lane you opt into rather than a default.
+What the group is for, rather than what it last measured: the base lane's tail
+offsets are recursive and stateless, so reading `n` tails re-walks
+quadratically whatever order you read them in — the cache turns that sweep
+linear. Against that, construct-plus-fixed-fields pays for a cache it never
+consults, and one cold jump to a late tail publishes every boundary it passes.
+Those opposing shapes are why memoization is a lane you opt into per decoder
+rather than a generator default. Run the group to find where the crossover
+sits for your tail count; this page deliberately records no numbers.
 
 Every comparative arm runs the same generated traversal (`lane_traversal!` in
 the bench) and asserts the two arms produce an identical decoded sum before

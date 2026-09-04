@@ -38,6 +38,94 @@ fn assert_out_of_order_src(src: &str) {
     );
 }
 
+/// An undersized wire `blockLength` on a fixed-stride group must be rejected
+/// before any entry reaches the visitor callback.
+///
+/// Separate hole from truncation, and the more dangerous one: the buffer is
+/// long enough, so `count * blockLength` passes trivially — a *smaller* stride
+/// makes that region check easier, not harder. But a required getter reads at
+/// its compiled offset inside the entry, so a stride too short to hold the
+/// fixed fields active at this version lets a safe getter read past the entry.
+/// `group_decoder.rs` and the ordered lane's dynamic-entry branch both reject
+/// `blockLength < min_readable_fixed_extent`; the fixed-stride branch did not.
+#[test]
+fn ordered_visit_entries_rejects_undersized_fixed_stride_block_length()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &Paths::sbe_tool_test_resource("basic-group-schema.xml"),
+        "mo_fixed_undersized",
+    );
+    compile_and_run(
+        "mo_fixed_undersized",
+        &src,
+        r#"
+        let row = EntriesEntry {
+            tag_group1: {
+                let mut symbol = [0u8; 20];
+                symbol[..3].copy_from_slice(b"ABC");
+                symbol
+            },
+            tag_group2: 101,
+        };
+        const LEN: usize = TestMessage1Encoder::compute_length_with_header(1);
+        let mut buf = [0u8; LEN];
+        let actual = TestMessage1Encoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&TestMessage1FixedFields { tag1: 0 })
+            .entries(1, |group| group.bulk_add(core::slice::from_ref(&row)))?
+            .encoded_length_with_header();
+        assert_eq!(LEN, actual, "EncodedLength must match the encoder");
+
+        // The group dimension header sits immediately after the fixed block.
+        // Overwrite its `blockLength` with 1 — far too small to hold the
+        // entry's fixed fields — leaving the buffer itself full length.
+        let dim = TestMessage1Schema::HEADER_LENGTH + TestMessage1Schema::BLOCK_LENGTH;
+        let real_block_length = u16::from_le_bytes([buf[dim], buf[dim + 1]]);
+        assert!(real_block_length > 1, "fixture must have a real stride");
+        buf[dim..dim + 2].copy_from_slice(&1u16.to_le_bytes());
+
+        let mut ordered = TestMessage1Decoder::try_decode(&buf[..actual], 0)?.ordered();
+        let err = ordered.entries().err();
+        assert!(
+            matches!(err, Some(sbe_rt::DecodeError::BufferTooShort { .. })),
+            "undersized fixed-stride blockLength must be rejected; got {err:?}",
+        );
+
+        // And nothing may reach the callback.
+        let mut ordered = TestMessage1Decoder::try_decode(&buf[..actual], 0)?.ordered();
+        let mut visited = 0usize;
+        if let Ok(group) = ordered.entries() {
+            let _ = group.visit_entries(|_e| -> Result<(), sbe_rt::DecodeError> {
+                visited += 1;
+                Ok(())
+            });
+        }
+        assert_eq!(visited, 0, "no entry may be visited from an undersized stride");
+
+        // The random-access lane must agree — same wire, same verdict.
+        let dec = TestMessage1Decoder::try_decode(&buf[..actual], 0)?;
+        assert!(
+            matches!(dec.entries(), Err(sbe_rt::DecodeError::BufferTooShort { .. })),
+            "random-access lane must reject the same wire"
+        );
+
+        // Restoring the real stride makes the group readable again, proving
+        // the rejection is about the stride and not the fixture.
+        buf[dim..dim + 2].copy_from_slice(&real_block_length.to_le_bytes());
+        let mut ordered = TestMessage1Decoder::try_decode(&buf[..actual], 0)?.ordered();
+        let mut seen = 0usize;
+        ordered
+            .entries()?
+            .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(entry.tag_group2(), 101);
+                seen += 1;
+                Ok(())
+            })?;
+        assert_eq!(seen, 1);
+        "#,
+    );
+    Ok(())
+}
+
 /// A truncated fixed-stride group must be rejected before any entry reaches
 /// the visitor callback.
 ///

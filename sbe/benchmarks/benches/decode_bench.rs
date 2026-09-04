@@ -312,22 +312,29 @@ fn bench_skip(c: &mut Criterion) {
     group.finish();
 }
 
-fn read_full_random(car: &CarDecoder<'_>) {
-    black_box(car.serial_number());
-    let _ = car.fuel_figures();
-    let _ = car.performance_figures();
-    black_box(car.manufacturer().unwrap());
-    black_box(car.model().unwrap());
-    black_box(car.activation_code().unwrap());
+/// Read every root tail once, in schema order.
+///
+/// The group getters observe `remaining_entries()` rather than discarding the
+/// decoder: `let _ = car.fuel_figures();` leaves the walk dead, and LTO is free
+/// to delete it — which would silently make this arm do less work than the
+/// memoized arm it is paired with.
+fn read_full_random(car: &CarDecoder<'_>) -> u64 {
+    let mut acc = black_box(car.serial_number());
+    acc = acc.wrapping_add(car.fuel_figures().unwrap().remaining_entries() as u64);
+    acc = acc.wrapping_add(car.performance_figures().unwrap().remaining_entries() as u64);
+    acc = acc.wrapping_add(car.manufacturer().unwrap().len() as u64);
+    acc = acc.wrapping_add(car.model().unwrap().len() as u64);
+    acc.wrapping_add(car.activation_code().unwrap().len() as u64)
 }
 
-fn read_full_random_memoized(car: &CarMemoizedDecoder<'_>) {
-    black_box(car.serial_number());
-    let _ = car.fuel_figures();
-    let _ = car.performance_figures();
-    black_box(car.manufacturer().unwrap());
-    black_box(car.model().unwrap());
-    black_box(car.activation_code().unwrap());
+/// `read_full_random` on the memoized lane — same tails, same observations.
+fn read_full_random_memoized(car: &CarMemoizedDecoder<'_>) -> u64 {
+    let mut acc = black_box(car.serial_number());
+    acc = acc.wrapping_add(car.fuel_figures().unwrap().remaining_entries() as u64);
+    acc = acc.wrapping_add(car.performance_figures().unwrap().remaining_entries() as u64);
+    acc = acc.wrapping_add(car.manufacturer().unwrap().len() as u64);
+    acc = acc.wrapping_add(car.model().unwrap().len() as u64);
+    acc.wrapping_add(car.activation_code().unwrap().len() as u64)
 }
 
 /// Base lane vs memoized lane over identical reads.
@@ -338,6 +345,20 @@ fn read_full_random_memoized(car: &CarMemoizedDecoder<'_>) {
 /// exactly the difference being measured, so both arms still perform one
 /// `activation_code()` read on an already-constructed decoder.
 fn bench_tail_access(c: &mut Criterion) {
+    // Equal-work proof before any timing: the two lanes must decode the same
+    // sum from the same fields. `read_full_random*` observe every group's
+    // entry count and every var-data length, so an arm that skipped a walk
+    // could not produce the same total.
+    {
+        let base = CarDecoder::try_from(BASELINE).unwrap();
+        let memo = CarDecoder::try_from(BASELINE).unwrap().memoized();
+        assert_eq!(
+            read_full_random(&base),
+            read_full_random_memoized(&memo),
+            "decode/tail_access arms decode different values"
+        );
+    }
+
     let mut group = c.benchmark_group("decode/tail_access");
     group.throughput(Throughput::Bytes(BASELINE.len() as u64));
 
@@ -371,8 +392,12 @@ fn bench_tail_access(c: &mut Criterion) {
         });
     });
 
+    // Identical pre-read on both arms. Only the memoized one has a cache to
+    // warm; "warm" names the workload — a decoder already read once — not a
+    // property of the lane.
     let base_warm = CarDecoder::try_from(BASELINE).unwrap();
     let memo_warm = CarDecoder::try_from(BASELINE).unwrap().memoized();
+    let _ = base_warm.activation_code();
     let _ = memo_warm.activation_code();
     group.bench_function("base/warm_final_tail", |b| {
         b.iter(|| black_box(black_box(&base_warm).activation_code().unwrap()));
@@ -384,7 +409,7 @@ fn bench_tail_access(c: &mut Criterion) {
     group.bench_function("base/full_schema_order", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
-            read_full_random(&car);
+            black_box(read_full_random(&car));
         });
     });
     group.bench_function("memoized/full_schema_order", |b| {
@@ -392,18 +417,18 @@ fn bench_tail_access(c: &mut Criterion) {
             let car = CarDecoder::try_from(black_box(BASELINE))
                 .unwrap()
                 .memoized();
-            read_full_random_memoized(&car);
+            black_box(read_full_random_memoized(&car));
         });
     });
 
     group.bench_function("base/full_reverse_order", |b| {
         b.iter(|| {
             let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
-            black_box(car.activation_code().unwrap());
-            black_box(car.model().unwrap());
-            black_box(car.manufacturer().unwrap());
-            let _ = car.performance_figures();
-            let _ = car.fuel_figures();
+            black_box(car.activation_code().unwrap().len());
+            black_box(car.model().unwrap().len());
+            black_box(car.manufacturer().unwrap().len());
+            black_box(car.performance_figures().unwrap().remaining_entries());
+            black_box(car.fuel_figures().unwrap().remaining_entries());
             black_box(car.serial_number());
         });
     });
@@ -412,11 +437,11 @@ fn bench_tail_access(c: &mut Criterion) {
             let car = CarDecoder::try_from(black_box(BASELINE))
                 .unwrap()
                 .memoized();
-            black_box(car.activation_code().unwrap());
-            black_box(car.model().unwrap());
-            black_box(car.manufacturer().unwrap());
-            let _ = car.performance_figures();
-            let _ = car.fuel_figures();
+            black_box(car.activation_code().unwrap().len());
+            black_box(car.model().unwrap().len());
+            black_box(car.manufacturer().unwrap().len());
+            black_box(car.performance_figures().unwrap().remaining_entries());
+            black_box(car.fuel_figures().unwrap().remaining_entries());
             black_box(car.serial_number());
         });
     });

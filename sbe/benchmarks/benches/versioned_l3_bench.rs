@@ -21,6 +21,11 @@
 //! that is simultaneously the equal-work proof and the value-correctness check,
 //! and it is what a hand-copied per-arm dispatch failed to guarantee.
 //!
+//! `vl3/warm` reaches its tails through `memo::touch_root_*`, whose `match
+//! tail` adds one branch per access inside the timed loop. Both arms pay it
+//! equally, so the comparison holds — but absolute `vl3/warm` numbers are not
+//! comparable with results recorded before the arms were paired this way.
+//!
 //! Buffers are encoded once outside `b.iter`; nothing on the timed path
 //! allocates. `just bench-diagnostics` runs both LTO profiles; directly:
 //!
@@ -67,18 +72,6 @@ fn seeded_order() -> [u8; 7] {
     v
 }
 
-/// One traversal implementation per generated module.
-///
-/// The three modules (`versioned_l3`, `versioned_l3_uncached`,
-/// `versioned_l3_compact`) are distinct types, so a macro is the only way to
-/// share this code — and sharing it is the point: the seven-tail dispatch used
-/// to be copied per arm, and the copies drifted into comparing different work.
-///
-/// Both functions return a wrapping sum of every value they read. Two arms that
-/// return the same sum read the same fields, in the same quantity, and decoded
-/// them to the same values — so the comparison is proven equal-work *and*
-/// value-correct before any timing happens. Absent tails on old wire contribute
-/// nothing, which keeps the same closure valid at every acting version.
 /// One traversal implementation per decoder lane.
 ///
 /// The base and memoized decoders are distinct types with identical getter
@@ -278,37 +271,78 @@ fn bench_cold_tails(c: &mut Criterion) {
     group.finish();
 }
 
+/// Repeated access to one already-constructed decoder, per lane.
+///
+/// Only the memoized arms have a cache to warm — the base decoder is stateless
+/// between getters, so "warm" describes the *workload* (a decoder already read
+/// once), not a property of that lane. Both arms of a pair are pre-read
+/// identically before timing, run the same repetition count, and reach the
+/// same tails through `memo::touch_root_*`, so neither can do less work.
+///
+/// This is steady-state repeated access, not per-message latency: construction
+/// and the first fill sit outside `b.iter`. `vl3/lane` covers the end-to-end
+/// shape where they are inside.
 fn bench_warm(c: &mut Criterion) {
     let v3 = wire(3);
-    let warm = L3BookDecoder::try_decode(&v3, 0).unwrap();
-    let _ = warm.note().unwrap();
+    let base = L3BookDecoder::try_decode(&v3, 0).unwrap();
+    let memo = L3BookDecoder::try_decode(&v3, 0).unwrap().memoized();
+    // Identical pre-read on both arms.
+    let _ = base.note().unwrap();
+    let _ = memo.note().unwrap();
+
+    // Tail ordinals: note is the final root tail, bids the first. The bouncing
+    // set walks four adjacent var-data tails.
+    const FINAL_TAIL: [u8; 1] = [6];
+    const FIRST_TAIL: [u8; 1] = [0];
+    const BOUNCING: [u8; 4] = [5, 6, 4, 3];
+
     let mut group = c.benchmark_group("vl3/warm");
     group.throughput(Throughput::Elements(REPS));
-    group.bench_function("final_tail", |b| {
-        b.iter(|| {
-            for _ in 0..REPS {
-                black_box(black_box(&warm).note().unwrap().len());
-            }
-        });
-    });
-    group.bench_function("first_tail", |b| {
-        b.iter(|| {
-            for _ in 0..REPS {
-                black_box(black_box(&warm).bids().unwrap().remaining_entries());
-            }
-        });
-    });
-    group.bench_function("bouncing_adjacent", |b| {
-        b.iter(|| {
-            for _ in 0..REPS / 4 {
-                let dec = black_box(&warm);
-                black_box(dec.checksum().unwrap().len());
-                black_box(dec.note().unwrap().len());
-                black_box(dec.source().unwrap().len());
-                black_box(dec.symbol().unwrap().len());
-            }
-        });
-    });
+
+    macro_rules! warm_pair {
+        ($name:literal, $tails:expr, $reps:expr) => {{
+            // Equal-work proof before timing: both lanes must decode the same
+            // sum from the same tails.
+            let b_sum: u64 = $tails
+                .iter()
+                .map(|t| memo::touch_root_base(&base, *t))
+                .sum();
+            let m_sum: u64 = $tails
+                .iter()
+                .map(|t| memo::touch_root_memoized(&memo, *t))
+                .sum();
+            assert_eq!(b_sum, m_sum, concat!("vl3/warm ", $name, ": arms disagree"));
+
+            group.bench_function(concat!("base/", $name), |b| {
+                b.iter(|| {
+                    let dec = black_box(&base);
+                    let mut acc = 0u64;
+                    for _ in 0..$reps {
+                        for t in $tails {
+                            acc = acc.wrapping_add(memo::touch_root_base(dec, t));
+                        }
+                    }
+                    black_box(acc)
+                });
+            });
+            group.bench_function(concat!("memoized/", $name), |b| {
+                b.iter(|| {
+                    let dec = black_box(&memo);
+                    let mut acc = 0u64;
+                    for _ in 0..$reps {
+                        for t in $tails {
+                            acc = acc.wrapping_add(memo::touch_root_memoized(dec, t));
+                        }
+                    }
+                    black_box(acc)
+                });
+            });
+        }};
+    }
+
+    warm_pair!("final_tail", FINAL_TAIL, REPS);
+    warm_pair!("first_tail", FIRST_TAIL, REPS);
+    warm_pair!("bouncing_adjacent", BOUNCING, REPS / 4);
     group.finish();
 }
 

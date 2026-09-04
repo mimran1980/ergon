@@ -226,6 +226,17 @@ pub(crate) const DECODER_RESERVED: &[&str] = &[
     "rewind",
     // Mutable ordered-decoder conversion.
     "ordered",
+    // Memoized-lane conversion, on the base decoder.
+    "memoized",
+    // Inherent methods on `{Name}MemoizedDecoder`. Fixed fields are forwarded
+    // onto that type by `forward_fixed_fields` under the same names they have
+    // on the base decoder, so a field colliding with any of these breaks the
+    // wrapper even though the name is free on the base decoder itself. One
+    // list keeps the rename identical in both places — a field named `inner`
+    // must not be `inner` on one type and `inner_field` on the other.
+    "inner",
+    "into_inner",
+    "decode_cache_stats",
 ];
 
 /// Inherent methods on the **message encoder** that force a `_field` rename.

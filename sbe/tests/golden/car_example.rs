@@ -2835,12 +2835,12 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
-    /// View this text var-data field as `&str` without character
-    /// encoding validation. Structural bounds are still checked.
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
     ///
     /// # Safety
     ///
-    /// The wire bytes must be valid UTF-8.
+    ///The wire bytes must be valid UTF-8.
     #[inline]
     pub unsafe fn manufacturer_as_str_unchecked(
         &self,
@@ -2890,12 +2890,12 @@ impl<'a> CarDecoder<'a> {
                 error: e,
             })
     }
-    /// View this text var-data field as `&str` without character
-    /// encoding validation. Structural bounds are still checked.
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
     ///
     /// # Safety
     ///
-    /// The wire bytes must be valid UTF-8.
+    ///The wire bytes must be valid UTF-8.
     #[inline]
     pub unsafe fn model_as_str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
@@ -2944,13 +2944,12 @@ impl<'a> CarDecoder<'a> {
         }
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
-    /// View this text var-data field as `&str` without ASCII
-    /// validation. Structural bounds remain fallible.
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
     ///
     /// # Safety
     ///
-    /// The wire bytes must be 7-bit ASCII. For ASCII-declared
-    /// fields from a trusted source this is always true.
+    ///The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true.
     #[inline]
     pub unsafe fn activation_code_as_str_unchecked(
         &self,
@@ -7462,6 +7461,17 @@ impl<'p, 'a> PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
             header.block_length() as u64,
         )?;
         let min_entry_extent = 0usize;
+        let min_fixed = <PerformanceFiguresAccelerationDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(parent.inner.acting_version);
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
         let entries_start = start + 4;
         let available = parent.inner.buf.len().saturating_sub(entries_start);
         let entries_length = count
@@ -8099,10 +8109,22 @@ impl<'a> CarDecoder<'a> {
     /// Consume this decoder and return one that memoizes dynamic-tail
     /// boundaries.
     ///
-    /// Use it when you read tails out of order, or read the same tail
-    /// more than once. A single cold pass in wire order gains nothing
-    /// — each tail already begins where the last one ended — and pays
-    /// for the cache, so the base decoder stays the default.
+    /// Use it when you read more than one or two dynamic tails
+    /// through the same decoder — in any order, including schema
+    /// order. The base lane's tail offsets are defined recursively and
+    /// remember nothing between calls, so reading `n` tails re-walks
+    /// quadratically; this lane makes the same sweep linear.
+    ///
+    /// Reading exactly one tail and stopping is the case that gains
+    /// nothing: there is no second access to amortise against, and
+    /// reaching a late tail publishes every boundary it passes. If you
+    /// are decoding the whole message in wire order, `ordered()` or
+    /// the staged lane carries the cursor without a cache and is
+    /// faster still.
+    ///
+    /// The cache covers this message's own groups and var-data. Group
+    /// entries are decoded by ordinary entry decoders and are not
+    /// memoized.
     ///
     /// Construction is O(1) and allocates nothing. Decoded values and
     /// wire bytes are identical to the base lane.
@@ -8325,6 +8347,19 @@ impl<'a> CarMemoizedDecoder<'a> {
                 error: e,
             })
     }
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
+    ///
+    /// # Safety
+    ///
+    ///The wire bytes must be valid UTF-8.
+    #[inline]
+    pub unsafe fn manufacturer_as_str_unchecked(
+        &self,
+    ) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.manufacturer()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
     ///Generated method `model`.
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -8371,6 +8406,17 @@ impl<'a> CarMemoizedDecoder<'a> {
                 error: e,
             })
     }
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
+    ///
+    /// # Safety
+    ///
+    ///The wire bytes must be valid UTF-8.
+    #[inline]
+    pub unsafe fn model_as_str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.model()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
     ///Generated method `activation_code`.
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -8406,6 +8452,30 @@ impl<'a> CarMemoizedDecoder<'a> {
         )?;
         self.cache.publish(4, data_end);
         Ok(&buf[data_start..data_end])
+    }
+    /// View this ASCII var-data field as `&str`.
+    #[inline]
+    pub fn activation_code_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.activation_code()?;
+        if bytes.iter().any(|b| *b > 0x7F) {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "activation_code",
+            });
+        }
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
+    ///
+    /// # Safety
+    ///
+    ///The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true.
+    #[inline]
+    pub unsafe fn activation_code_as_str_unchecked(
+        &self,
+    ) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.activation_code()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
     /// Total body length, walking (and caching) every remaining tail.
     #[must_use = "discarding this value is almost always a mistake"]

@@ -480,14 +480,34 @@ fn generate_group_guard_inner(
             }
         }
     } else {
-        // Fixed stride: the whole entries region is `count * blockLength`, and
-        // it must be proven in-bounds HERE. `visit_entries` hands each entry to
-        // a caller callback without a per-entry check (there is no per-entry
-        // extent to compute), so a truncated buffer with a large `numInGroup`
-        // would otherwise read past the end. The random-access lane has always
-        // validated this; the ordered lane did not.
+        // Fixed stride: two independent things must be proven HERE, because
+        // `visit_entries` hands each entry to a caller callback without any
+        // per-entry check (there is no per-entry extent to compute).
+        //
+        // 1. The wire `blockLength` must be able to hold the fixed fields
+        //    active at this version. A short stride is malformed: a required
+        //    getter reads at a compiled offset inside the entry and would run
+        //    past it. This is checked FIRST, so an undersized stride is
+        //    rejected as malformed rather than sliding under a
+        //    `count * blockLength` region check that a small stride makes
+        //    trivially satisfiable.
+        // 2. The whole `count * blockLength` region must be in bounds, or a
+        //    large `numInGroup` on a truncated buffer reads past the end.
+        //
+        // `group_decoder.rs` has always validated both; the ordered lane
+        // validated neither, then only (2).
         quote::quote! {
             let min_entry_extent = 0usize;
+            let min_fixed = <#flyweight_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(
+                parent.inner.acting_version,
+            );
+            if count > 0 && block_length < min_fixed {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_name_lit,
+                    needed: min_fixed,
+                    available: block_length,
+                });
+            }
             let entries_start = start + #dim_size_lit;
             let available = parent.inner.buf.len().saturating_sub(entries_start);
             let entries_length = count.checked_mul(block_length).ok_or(

@@ -56,10 +56,11 @@ and the cases where each lane wins. Two things worth repeating here:
 - The base decoder is `Sync`; the memoized one is `Send` but not `Sync`
   (`Cell` interior mutability).
 
-Compact `u32` tail-offset storage was removed with the knob. It saved a little
-decoder memory but cost more instructions on both cache primitives and was
-materially slower under LTO, so it was never a defensible default and is not
-worth a second public surface.
+Compact `u32` tail-offset storage was removed with the knob. Adoption here is
+conjunctive — less memory **and** no slower **and** no more instructions — and
+it failed two of the three legs, so it was never a defensible default and is
+not worth a second public surface. The reasoning, and how to re-derive it, is
+in [Benchmarks](../benchmarks.md#decoder-lanes).
 
 ## Typed error conversions
 

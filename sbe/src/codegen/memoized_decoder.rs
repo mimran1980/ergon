@@ -53,10 +53,22 @@ pub(crate) fn generate_memoized_decoder(
             /// Consume this decoder and return one that memoizes dynamic-tail
             /// boundaries.
             ///
-            /// Use it when you read tails out of order, or read the same tail
-            /// more than once. A single cold pass in wire order gains nothing
-            /// — each tail already begins where the last one ended — and pays
-            /// for the cache, so the base decoder stays the default.
+            /// Use it when you read more than one or two dynamic tails
+            /// through the same decoder — in any order, including schema
+            /// order. The base lane's tail offsets are defined recursively and
+            /// remember nothing between calls, so reading `n` tails re-walks
+            /// quadratically; this lane makes the same sweep linear.
+            ///
+            /// Reading exactly one tail and stopping is the case that gains
+            /// nothing: there is no second access to amortise against, and
+            /// reaching a late tail publishes every boundary it passes. If you
+            /// are decoding the whole message in wire order, `ordered()` or
+            /// the staged lane carries the cursor without a cache and is
+            /// faster still.
+            ///
+            /// The cache covers this message's own groups and var-data. Group
+            /// entries are decoded by ordinary entry decoders and are not
+            /// memoized.
             ///
             /// Construction is O(1) and allocates nothing. Decoded values and
             /// wire bytes are identical to the base lane.
@@ -214,21 +226,13 @@ pub(crate) fn generate_memoized_decoder(
             }
         });
 
-        if vd.character_encoding.as_deref() == Some("UTF-8") {
-            let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), span);
-            let vd_name_lit = vd_snake.clone();
-            impl_body.extend(quote::quote! {
-                /// View this UTF-8 var-data field as `&str`.
-                #[inline]
-                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_ident()?;
-                    core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
-                        field: #vd_name_lit,
-                        error: e,
-                    })
-                }
-            });
-        }
+        // Same generator as the base decoder, so the text surface cannot
+        // diverge: both lanes get checked and unchecked helpers for UTF-8 and
+        // ASCII, and neither gets one for binary var-data.
+        impl_body.extend(super::message_decoder::vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+        ));
         vd_idx += 1;
     }
 

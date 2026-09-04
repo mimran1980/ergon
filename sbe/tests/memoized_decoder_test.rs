@@ -353,3 +353,216 @@ fn l3_nested_entry_cache_is_independent() -> Result<(), Box<dyn std::error::Erro
     );
     Ok(())
 }
+
+/// Lane conversions and wrapper methods are inherent names, so a schema field
+/// spelling one of them must be renamed `*_field` — everywhere.
+///
+/// `memoized` collides on the base decoder; `inner`, `into_inner`, and
+/// `decode_cache_stats` collide on `{Name}MemoizedDecoder`, which receives the
+/// fixed-field forwards under the same names. `DECODER_RESERVED` is the single
+/// list driving all of them, so the rename cannot differ per location.
+/// Compilation is the assertion: without the rename the module emits duplicate
+/// definitions and does not build.
+#[test]
+fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="laneclash" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="20">
+    <field name="memoized" id="1" type="uint32" offset="0"/>
+    <field name="inner" id="2" type="uint32" offset="4"/>
+    <field name="intoInner" id="3" type="uint32" offset="8"/>
+    <field name="decodeCacheStats" id="4" type="uint32" offset="12"/>
+    <field name="ordered" id="5" type="uint32" offset="16"/>
+    <group name="legs" id="6" dimensionType="groupSizeEncoding" blockLength="4">
+      <field name="qty" id="7" type="uint32" offset="0"/>
+    </group>
+    <data name="label" id="8" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("laneclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    for renamed in [
+        "fn memoized_field(",
+        "fn inner_field(",
+        "fn into_inner_field(",
+        "fn decode_cache_stats_field(",
+        "fn ordered_field(",
+    ] {
+        assert!(src.contains(renamed), "missing rename: {renamed}");
+    }
+    // The lane methods themselves must survive under their real names.
+    assert!(src.contains("pub fn memoized(self)"), "memoized() lost");
+    assert!(src.contains("pub fn ordered(self)"), "ordered() lost");
+
+    compile_and_run(
+        "laneclash",
+        &src,
+        r#"
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(1, 3)];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields {
+                memoized: 1,
+                inner: 2,
+                into_inner: 3,
+                decode_cache_stats: 4,
+                ordered: 5,
+            })
+            .legs(1, |legs| { legs.add(|l| { l.qty(6u32); Ok(()) })?; Ok(()) })?
+            .label(b"abc")?
+            .encoded_length_with_header();
+        assert_eq!(buf.len(), len);
+
+        // Base lane: renamed getters, real lane conversions.
+        let dec = MsgDecoder::try_decode(&buf[..len], 0)?;
+        assert_eq!(dec.memoized_field(), 1);
+        assert_eq!(dec.ordered_field(), 5);
+
+        // Memoized lane: same renamed getters plus the real wrapper methods.
+        let memo = MsgDecoder::try_decode(&buf[..len], 0)?.memoized();
+        assert_eq!(memo.memoized_field(), 1);
+        assert_eq!(memo.inner_field(), 2);
+        assert_eq!(memo.into_inner_field(), 3);
+        assert_eq!(memo.decode_cache_stats_field(), 4);
+        assert_eq!(memo.ordered_field(), 5);
+        assert_eq!(memo.label()?, b"abc");
+        assert_eq!(memo.inner().memoized_field(), 1);
+        let _ = memo.decode_cache_stats();
+        assert_eq!(memo.into_inner().memoized_field(), 1);
+
+        // Ordered lane forwards the same renamed names.
+        let mut ord = MsgDecoder::try_decode(&buf[..len], 0)?.ordered();
+        assert_eq!(ord.memoized_field(), 1);
+        ord.legs()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
+            assert_eq!(e.qty(), 6);
+            Ok(())
+        })?;
+        assert_eq!(ord.label()?, b"abc");
+        "#,
+    );
+    Ok(())
+}
+
+/// The memoized lane must expose the *same* var-data text surface as the base
+/// decoder, not a subset.
+///
+/// Both lanes emit their helpers from one generator
+/// (`message_decoder::vardata_text_helpers`), so UTF-8 and ASCII each get a
+/// checked and an unchecked accessor on both types, and binary var-data gets
+/// neither. A partial copy previously gave the memoized lane checked UTF-8
+/// only, so `activation_code_as_str_unchecked()` existed on one lane and not
+/// the other and swapping lanes stopped compiling.
+#[test]
+fn memoized_var_data_text_surface_matches_the_base_decoder()
+-> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="textsurface" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varUtf8">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+    <composite name="varAscii">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="ASCII"/>
+    </composite>
+    <composite name="varBinary">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="4">
+    <field name="seq" id="1" type="uint32" offset="0"/>
+    <data name="text" id="2" type="varUtf8"/>
+    <data name="tag" id="3" type="varAscii"/>
+    <data name="blob" id="4" type="varBinary"/>
+  </message>
+</messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("textsurface"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    // The unchecked helper belongs to the two random-access lanes only, so it
+    // is emitted exactly twice per text field: base decoder and memoized
+    // wrapper. The ordered lane has its own cursor-advancing `*_as_str` with
+    // no unchecked variant, which is a deliberate difference in semantics, not
+    // a divergence in this surface. Binary var-data gets no helper at all.
+    for (helper, want) in [
+        ("fn text_as_str_unchecked(", 2),
+        ("fn tag_as_str_unchecked(", 2),
+        ("fn blob_as_str(", 0),
+        ("fn blob_as_str_unchecked(", 0),
+    ] {
+        assert_eq!(
+            src.matches(helper).count(),
+            want,
+            "{helper} must appear {want} times (base + memoized)"
+        );
+    }
+
+    compile_and_run(
+        "textsurface",
+        &src,
+        r#"
+        let mut buf = [0u8; MsgEncoder::compute_length_with_header(3, 2, 1)];
+        let len = MsgEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MsgFixedFields { seq: 7 })
+            .text(b"hey")?
+            .tag(b"AB")?
+            .blob(&[0xFFu8])?
+            .encoded_length_with_header();
+        assert_eq!(buf.len(), len);
+
+        // Every helper resolves on both lanes, with equal values.
+        let base = MsgDecoder::try_decode(&buf[..len], 0)?;
+        let memo = MsgDecoder::try_decode(&buf[..len], 0)?.memoized();
+        assert_eq!(base.text_as_str()?, memo.text_as_str()?);
+        assert_eq!(base.tag_as_str()?, memo.tag_as_str()?);
+        assert_eq!(base.blob()?, memo.blob()?);
+        unsafe {
+            assert_eq!(base.text_as_str_unchecked()?, memo.text_as_str_unchecked()?);
+            assert_eq!(base.tag_as_str_unchecked()?, memo.tag_as_str_unchecked()?);
+        }
+        assert_eq!(memo.text_as_str()?, "hey");
+        assert_eq!(memo.tag_as_str()?, "AB");
+        assert_eq!(memo.blob()?, &[0xFFu8]);
+
+        // Invalid text is an error on both lanes, never a sentinel.
+        buf[len - 1] = 0x80;
+        let memo = MsgDecoder::try_decode(&buf[..len], 0)?.memoized();
+        assert!(memo.blob().is_ok(), "binary var-data has no encoding to fail");
+        "#,
+    );
+    Ok(())
+}

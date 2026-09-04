@@ -325,6 +325,7 @@ CarMemoizedDecoder::const fn acting_block_length (& self) -> usize
 CarMemoizedDecoder::const fn acting_version (& self) -> u16
 CarMemoizedDecoder::const fn inner (& self) -> & CarDecoder < 'a >
 CarMemoizedDecoder::fn activation_code (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
+CarMemoizedDecoder::fn activation_code_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
 CarMemoizedDecoder::fn available (& self) -> BooleanType
 CarMemoizedDecoder::fn code (& self) -> Model
 CarMemoizedDecoder::fn discounted_model (& self) -> Model
@@ -339,6 +340,9 @@ CarMemoizedDecoder::fn model_year (& self) -> u16
 CarMemoizedDecoder::fn serial_number (& self) -> u64
 CarMemoizedDecoder::fn some_numbers (& self) -> [u32 ; 4]
 CarMemoizedDecoder::fn vehicle_code (& self) -> [u8 ; 6]
+CarMemoizedDecoder::unsafe fn activation_code_as_str_unchecked (& self ,) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarMemoizedDecoder::unsafe fn manufacturer_as_str_unchecked (& self ,) -> Result < & 'a str , sbe_rt :: DecodeError >
+CarMemoizedDecoder::unsafe fn model_as_str_unchecked (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
 CarOrderedDecoder::const fn acting_block_length (& self) -> usize
 CarOrderedDecoder::const fn acting_version (& self) -> u16
 CarOrderedDecoder::fn activation_code (& mut self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >

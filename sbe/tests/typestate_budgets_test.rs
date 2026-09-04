@@ -212,7 +212,16 @@ fn ordered_decoder_stores_only_the_decoder_core_and_a_cursor() -> Result<(), Box
             "ordered lane carries more than the decoder core plus a cursor: \
              {ord} > {base} + {cursor} (+ padding)"
         );
-        // Strictly smaller than the memoized lane: no boundary cache.
+        // Strictly smaller than the memoized lane. Compare the two concrete
+        // generated types — comparing against `base + size_of::<cache>()` only
+        // restates the memoized budget and would stay green if the ordered
+        // lane grew a cache of its own.
+        let memo = size_of::<CarMemoizedDecoder<'_>>();
+        assert!(
+            ord < memo,
+            "ordered lane is not smaller than the memoized lane: {ord} >= {memo}"
+        );
+        // And it must not have grown a cache-sized field by any other name.
         let cache = size_of::<sbe_rt::TailBoundaryCache<5>>();
         assert!(
             ord < base + cache,

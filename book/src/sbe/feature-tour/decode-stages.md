@@ -141,27 +141,52 @@ re-walks everything — the opposite of what you wanted. The cache uses `Cell`,
 so the wrapper is `Send` but not `Sync`: one instance per thread over shareable
 immutable bytes. `into_inner()` hands the base decoder back.
 
+### What the cache actually saves
+
+The base lane's `tail_offset_k` is defined in terms of `tail_offset_{k-1}`: it
+re-walks every preceding tail on **every** getter, and remembers nothing
+between calls. Reading tails `0..n` costs `1 + 2 + … + n` walks — quadratic in
+the number of tails — even when you read them in schema order. The memoized
+lane makes the same sweep linear, because a boundary already discovered is
+never walked again.
+
+That matters because it is easy to assume the opposite. Reading in wire order
+does not make the base lane cheap; only a lane that *carries* its cursor —
+ordered or staged — gets that for free.
+
 **Use it when**
 
-- You read tails out of order, or read the same tail more than once
+- You read more than one or two dynamic tails through the same decoder, in any
+  order, including schema order
+- You read the same tail more than once
 - A view jumps to the last var-data field and then back to a group
 - One decoder is read by several helpers in the same thread
 
 **Do not use it when**
 
-- You make a single cold pass in wire order. Each tail already begins where the
-  last one ended, so there is nothing to reuse — you pay for the cache and get
-  nothing back. A cold jump to the last tail is *slower* than random access,
-  because it publishes every boundary it skips past.
+- You read one dynamic tail and stop. There is no second access to amortise
+  the cache against, and reaching a late tail publishes every boundary it
+  passes — so a single cold jump is *slower* than the base lane.
+- You are decoding the whole message in wire order anyway. Use `.ordered()` or
+  the staged lane: they carry the cursor without a cache and are faster still.
 - You need `Sync`.
 
 `just bench-diagnostics` runs `versioned_l3_bench`, whose `vl3/lane` group
 measures exactly these shapes — cold single tail, construct-plus-fixed, one
-full traversal, and repeated root re-reads — in both LTO profiles.
+full traversal, and repeated root re-reads — in both LTO profiles. Measure
+there rather than assuming; the crossover depends on your tail count.
 
-Ordered and staged decoders are **not** memoized: they already carry their
-current offset and never re-walk an earlier tail, so a cache would be pure
-overhead.
+### Root tails only
+
+The cache covers the message's own groups and var-data. Reaching *into* a
+group — a nested group inside an entry, or an entry's var-data — goes through
+an ordinary entry decoder, which rediscovers its own preceding tails as
+before. Entry decoders do keep a one-shot extent cache (see above), but there
+is no per-entry boundary cache and no measured demand for one.
+
+Ordered and staged decoders are **not** memoized either: they already carry
+their current offset and never re-walk an earlier tail, so a cache would be
+pure overhead.
 
 ## Staged (`into_*` / `visit_entries`)
 

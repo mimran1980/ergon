@@ -1273,80 +1273,10 @@ pub(crate) fn generate_message_decoder(
             }
         });
 
-        #[allow(clippy::collapsible_else_if)]
-        if vd.character_encoding.as_deref() == Some("UTF-8") {
-            let str_ident = syn::Ident::new(
-                &format!("{vd_snake}_as_str"),
-                proc_macro2::Span::call_site(),
-            );
-            let vd_snake_str = vd_snake.clone();
-            impl_body.extend(quote::quote! {
-                /// View this UTF-8 var-data field as `&str`.
-                #[inline]
-                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
-                        field: #vd_snake_str,
-                        error: e,
-                    })
-                }
-            });
-            let str_unchecked = syn::Ident::new(
-                &format!("{vd_snake}_as_str_unchecked"),
-                proc_macro2::Span::call_site(),
-            );
-            impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without character
-                /// encoding validation. Structural bounds are still checked.
-                ///
-                /// # Safety
-                ///
-                /// The wire bytes must be valid UTF-8.
-                #[inline]
-                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
-        } else if vd.character_encoding.as_deref() == Some("ASCII") {
-            let str_ident = syn::Ident::new(
-                &format!("{vd_snake}_as_str"),
-                proc_macro2::Span::call_site(),
-            );
-            let vd_snake_str = vd_snake.clone();
-            impl_body.extend(quote::quote! {
-                /// View this ASCII var-data field as `&str`.
-                #[inline]
-                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    if bytes.iter().any(|b| *b > 0x7F) {
-                        return Err(sbe_rt::DecodeError::InvalidAscii {
-                            field: #vd_snake_str,
-                        });
-                    }
-                    // Valid 7-bit ASCII is always valid UTF-8.
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
-            let str_unchecked = syn::Ident::new(
-                &format!("{vd_snake}_as_str_unchecked"),
-                proc_macro2::Span::call_site(),
-            );
-            impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without ASCII
-                /// validation. Structural bounds remain fallible.
-                ///
-                /// # Safety
-                ///
-                /// The wire bytes must be 7-bit ASCII. For ASCII-declared
-                /// fields from a trusted source this is always true.
-                #[inline]
-                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
-        }
+        impl_body.extend(vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+        ));
         // Binary / unspecified encoding: no string helper at all. The caller
         // has the raw `_slice` / `into_<field>` accessors and can interpret
         // the bytes as needed.
@@ -1886,4 +1816,76 @@ pub(crate) fn generate_message_decoder(
     ));
 
     (ts, marker_name)
+}
+
+/// `*_as_str` / `*_as_str_unchecked` helpers over a var-data byte accessor.
+///
+/// Emitted for the base decoder and the memoized wrapper from this one place.
+/// Both types name the raw accessor identically (`vd_snake`) and both return
+/// `&'a [u8]` borrowed from the wire, so the helpers are the same tokens —
+/// which is the point: a lane that emitted only part of this surface would
+/// silently drop `*_as_str_unchecked` and every ASCII helper, and a caller
+/// swapping lanes would hit a missing method.
+///
+/// Binary / unspecified encoding gets no string helper at all: the caller
+/// decides what the bytes mean.
+pub(crate) fn vardata_text_helpers(
+    vd_snake: &str,
+    character_encoding: Option<&str>,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let vd_ident = syn::Ident::new(vd_snake, span);
+    let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), span);
+    let str_unchecked = syn::Ident::new(&format!("{vd_snake}_as_str_unchecked"), span);
+    let field_lit = syn::LitStr::new(vd_snake, span);
+
+    let checked = match character_encoding {
+        Some("UTF-8") => quote::quote! {
+            /// View this UTF-8 var-data field as `&str`.
+            #[inline]
+            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_ident()?;
+                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                    field: #field_lit,
+                    error: e,
+                })
+            }
+        },
+        Some("ASCII") => quote::quote! {
+            /// View this ASCII var-data field as `&str`.
+            #[inline]
+            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_ident()?;
+                if bytes.iter().any(|b| *b > 0x7F) {
+                    return Err(sbe_rt::DecodeError::InvalidAscii { field: #field_lit });
+                }
+                // Valid 7-bit ASCII is always valid UTF-8.
+                Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+            }
+        },
+        _ => return proc_macro2::TokenStream::new(),
+    };
+
+    let safety_note = if character_encoding == Some("ASCII") {
+        "The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true."
+    } else {
+        "The wire bytes must be valid UTF-8."
+    };
+    let safety_lit = syn::LitStr::new(safety_note, span);
+
+    quote::quote! {
+        #checked
+
+        /// View this text var-data field as `&str` without character encoding
+        /// validation. Structural bounds are still checked.
+        ///
+        /// # Safety
+        ///
+        #[doc = #safety_lit]
+        #[inline]
+        pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+            let bytes = self.#vd_ident()?;
+            Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+        }
+    }
 }
