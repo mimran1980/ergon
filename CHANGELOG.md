@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.1.25] — 2026-09-06
+
+### Added
+- **Four decoder lanes, generated for every message with groups or var-data:**
+  random access (`try_decode`, any order, `Sync`), staged (`into_*` /
+  `visit_entries`, compile-time order), mutable ordered (`.ordered()`, one
+  cursor, runtime order checks), and memoized (`.ordered()`'s sibling —
+  `decoder.memoized()` consumes the base decoder and returns a progressive
+  `Cell`-backed tail-boundary cache, so repeated or out-of-order tail reads
+  walk each boundary at most once). A message with no groups or var-data gets
+  only the base decoder — there is no tail to memoize or order, so
+  `.memoized()` / `.ordered()` are not generated and `AnyMessage` exposes only
+  `into_<name>()` for it.
+- `AnyMessage::into_<name>_memoized()` / `into_<name>_ordered()` land directly
+  in a lane without an intermediate base-decoder conversion.
+- Var-data declared with `characterEncoding="UTF-8"` or `"ASCII"` now gets
+  `*_as_str` / `*_as_str_unchecked` text accessors on **group entries**, not
+  only at message level — the same helper that already existed for message
+  var-data, shared rather than duplicated.
+- Cluster Callgrind instruction probes (`just bench-instructions-cluster`) —
+  mechanism-level evidence for cluster session codec hot paths, alongside the
+  existing SBE probe lane.
+
+### Fixed
+- **`<data characterEncoding="...">` was silently dropped by the schema
+  parser.** SBE allows `characterEncoding` directly on `<data>`, not only on
+  the referenced composite's `varData` member; real schemas use the element
+  form. The parser only read the composite-member form, so a declared-text
+  field silently downgraded to raw `&[u8]` with no `*_as_str` accessor at all
+  — a wire-compatible but API-degrading bug with no error to signal it.
+- **A truncated or undersized fixed-stride group could be read out of bounds
+  through the mutable ordered decoder.** The fixed-stride branch of
+  `.ordered()`'s group entry validated `count * blockLength` but never
+  `blockLength` against the fixed fields' minimum readable extent — a
+  `blockLength` smaller than a required field's offset let a safe getter read
+  past its entry. Both the truncation and the undersized-stride case are now
+  rejected before any entry reaches a caller callback, matching the
+  random-access lane's existing checks.
+
+### Removed
+- `GenerationConfig::with_memoized_tail_offsets` and
+  `with_compact_tail_offsets` — memoization is now a runtime lane
+  (`decoder.memoized()`) rather than a generation-time, module-wide knob, so
+  the choice moves to each call site instead of being fixed for the whole
+  module. Compact `u32` tail-offset storage was measured and dropped: it saved
+  a little decoder memory but cost more instructions on the cache's hot
+  primitives and was materially slower under LTO.
+
 ## [0.1.24] — 2026-08-31
 
 ### Fixed
