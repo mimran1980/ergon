@@ -3881,6 +3881,30 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         )?;
         Ok(&self.buf[data_start..data_end])
     }
+    /// View this ASCII var-data field as `&str`.
+    #[inline]
+    pub fn usage_description_as_str(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.usage_description()?;
+        if bytes.iter().any(|b| *b > 0x7F) {
+            return Err(sbe_rt::DecodeError::InvalidAscii {
+                field: "usage_description",
+            });
+        }
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
+    /// View this text var-data field as `&str` without character encoding
+    /// validation. Structural bounds are still checked.
+    ///
+    /// # Safety
+    ///
+    ///The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true.
+    #[inline]
+    pub unsafe fn usage_description_as_str_unchecked(
+        &self,
+    ) -> Result<&'a str, sbe_rt::DecodeError> {
+        let bytes = self.usage_description()?;
+        Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
     ///Generated method `encoded_length`.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {

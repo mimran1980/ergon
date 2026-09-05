@@ -1604,6 +1604,29 @@ pub(crate) fn generate_group_decoder(
                 }
             });
         }
+        // Same text helpers as the message-level accessor. A group entry's
+        // var-data is text or binary for exactly the same reason the message's
+        // is — the schema says so — so it gets the same `*_as_str` /
+        // `*_as_str_unchecked` surface under the same names. Emitting them only
+        // at message level forced callers to drop to `&[u8]` inside a group and
+        // re-validate by hand.
+        //
+        // Unless the schema already used the name. Entry fields keep their
+        // schema names in *every* entry location — decoder, ordered decoder,
+        // encoder, DTO — so renaming one to free up `<vd>_as_str` would give
+        // the same field different names per location, which is exactly what
+        // the naming rule forbids. A field the author explicitly called
+        // `noteAsStr` wins the name; `note()` still returns the bytes.
+        let claims_taken = g.fields.iter().any(|f| {
+            let n = to_snake_case(&f.name);
+            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+        });
+        if !claims_taken {
+            entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
+                &vd_snake,
+                vd.character_encoding.as_deref(),
+            ));
+        }
         nvd_idx += 1;
     }
 

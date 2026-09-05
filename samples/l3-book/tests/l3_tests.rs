@@ -948,3 +948,471 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
 
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Four decoder lanes over one nested book
+//
+// `L3Book` is the shape that makes the lanes worth distinguishing: two
+// sibling groups (`bids`, `asks`), each entry carrying a nested `orders`
+// group, then a trailing var-data `symbol`. Reaching `symbol` means walking
+// past every order of every level.
+//
+// One fixture is encoded once with exact sizing, then decoded four ways.
+// Every lane must produce a byte-identical `Snapshot`; the assertion is
+// equality between lanes, so a lane that silently skipped a nested group or
+// mis-resolved a tail offset cannot pass by agreeing with itself.
+// ─────────────────────────────────────────────────────────────────────────
+
+// ANCHOR: lane_snapshot
+/// Everything the fixture contains, in wire order — in the schema's *domain*
+/// types, not its wire types.
+///
+/// This sample generates with `with_domain_type`, so `price` is
+/// `rust_decimal::Decimal`, `exchangeTimestamp` is `DateTime<Utc>` and
+/// `isActive` is `bool`. Comparing at that level is what proves the
+/// conversions round-trip; comparing raw mantissas would pass even if the
+/// domain layer were broken.
+///
+/// `symbol` is borrowed, not owned: every lane hands back `&'a str` pointing
+/// into the wire buffer. Copying it would defeat the flyweight. The `Vec`s
+/// are the *test's* comparison scaffolding — a decode has to materialise
+/// something to compare — not part of the decode path, which allocates
+/// nothing.
+#[derive(Debug, PartialEq, Eq)]
+struct Snapshot<'a> {
+    timestamp: chrono::DateTime<chrono::Utc>,
+    sequence: u64,
+    is_active: bool,
+    /// `(price, size, [(order_id, quantity)])` per level.
+    bids: Vec<OwnedLevel>,
+    asks: Vec<OwnedLevel>,
+    symbol: &'a str,
+}
+
+/// A decoded level, owned so lanes can be compared. The decode itself borrows
+/// — see `best_bid_and_depth` for the shape a hot path actually uses.
+type OwnedLevel = (Rd, Rd, Vec<(u64, Rd)>);
+// ANCHOR_END: lane_snapshot
+
+// ANCHOR: lane_fixture
+/// Ragged on purpose: 3 bid levels with 2/1/3 orders and 2 ask levels with
+/// 1/2. A uniform fixture would let a lane compute entry positions by
+/// multiplication and still look correct.
+fn fixture() -> (Vec<u8>, Vec<OwnedLevel>, Vec<OwnedLevel>) {
+    let o_b1 = [(101u64, d(5)), (102, d(7))];
+    let o_b2 = [(103u64, d(25))];
+    let o_b3 = [(104u64, d(1)), (105, d(2)), (106, d(3))];
+    let bids: &[l3_book::Level<'_>] = &[
+        (d(50800), d(15), &o_b1),
+        (d(50750), d(40), &o_b2),
+        (d(50700), d(60), &o_b3),
+    ];
+    let o_a1 = [(201u64, d(10))];
+    let o_a2 = [(202u64, d(20)), (203, d(30))];
+    let asks: &[l3_book::Level<'_>] = &[(d(50850), d(20), &o_a1), (d(50900), d(35), &o_a2)];
+    let symbol = b"BTCUSDT";
+
+    // Exact sizing through the staged builder, then encode into a buffer of
+    // precisely that length: no oversize, no truncate.
+    let len = l3_book::book_encoded_length(bids, asks, symbol).expect("length");
+    let mut storage = vec![0u8; len];
+    let actual = l3_book::encode_book(&mut storage, bids, asks, symbol).expect("encode");
+    assert_eq!(len, actual, "computed length must match encoded length");
+
+    let own = |lv: &(Rd, Rd, &[(u64, Rd)])| (lv.0, lv.1, lv.2.to_vec());
+    (
+        storage,
+        bids.iter().map(own).collect(),
+        asks.iter().map(own).collect(),
+    )
+}
+// ANCHOR_END: lane_fixture
+
+// ANCHOR: decode_random_access
+/// Lane 1 — random access (the base decoder from `try_decode`).
+///
+/// Getters may be called in any order and the decoder is `Sync`. Each
+/// dynamic-tail getter re-walks from the fixed block, so reading `bids`,
+/// `asks` and `symbol` walks the bid orders three times over. Correct
+/// everywhere, cheapest when you want one or two fields.
+fn decode_random_access(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
+    let dec = L3BookDecoder::try_decode(wire, 0)?;
+
+    // Deliberately out of wire order: symbol (the last tail) first, then back
+    // to the groups. Only a lane that resolves tails independently can do
+    // this. The `&str` borrows the wire buffer — nothing is copied.
+    let symbol = dec.symbol_as_str()?;
+
+    let mut bids = Vec::new();
+    for level in dec.bids()? {
+        let level = level?;
+        let mut orders = Vec::new();
+        // `orders` is fixed-stride, so its whole region was proven in bounds
+        // when the group was entered and the iterator yields entries directly.
+        // The outer `bids`/`asks` iterators yield `Result` because a dynamic
+        // entry's extent can only be known once it is reached.
+        for order in level.orders()? {
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        bids.push((level.try_price()?, level.try_size()?, orders));
+    }
+
+    let mut asks = Vec::new();
+    for level in dec.asks()? {
+        let level = level?;
+        let mut orders = Vec::new();
+        for order in level.orders()? {
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        asks.push((level.try_price()?, level.try_size()?, orders));
+    }
+
+    Ok(Snapshot {
+        timestamp: dec.try_exchange_timestamp()?,
+        sequence: dec.sequence(),
+        is_active: dec.try_is_active()?,
+        bids,
+        asks,
+        symbol,
+    })
+}
+// ANCHOR_END: decode_random_access
+
+// ANCHOR: decode_staged
+/// Lane 2 — staged (`into_*` / `visit_entries`).
+///
+/// Each `into_*` consumes the current stage and returns a type that only
+/// exposes the next tail, so calling `into_symbol_as_str` before finishing
+/// `asks` is a compile error rather than a runtime check. One wire-order pass.
+fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
+    let dec = L3BookDecoder::try_decode(wire, 0)?;
+    let timestamp = dec.try_exchange_timestamp()?;
+    let sequence = dec.sequence();
+    let is_active = dec.try_is_active()?;
+
+    let mut bids = Vec::new();
+    let mut bid_group = dec.into_bids()?;
+    while let Some(level) = bid_group.next().transpose()? {
+        let price = level.try_price()?;
+        let size = level.try_size()?;
+        let mut orders = Vec::new();
+        // The nested group consumes the entry and hands back an entry-complete
+        // stage, which is how the outer iterator learns where the next level
+        // begins — the walk, not a pre-scan, produces the cursor. That stage is
+        // `#[must_use]` precisely so dropping it unread is visible; this entry
+        // holds no further tails, so binding it is the whole of "done here".
+        let _entry_complete = level.into_orders()?.visit_entries(
+            |order| -> Result<(), Box<dyn std::error::Error>> {
+                orders.push((order.order_id(), order.try_quantity()?));
+                Ok(())
+            },
+        )?;
+        bids.push((price, size, orders));
+    }
+
+    let mut asks = Vec::new();
+    let mut ask_group = bid_group.finish()?.into_asks()?;
+    while let Some(level) = ask_group.next().transpose()? {
+        let price = level.try_price()?;
+        let size = level.try_size()?;
+        let mut orders = Vec::new();
+        let _entry_complete = level.into_orders()?.visit_entries(
+            |order| -> Result<(), Box<dyn std::error::Error>> {
+                orders.push((order.order_id(), order.try_quantity()?));
+                Ok(())
+            },
+        )?;
+        asks.push((price, size, orders));
+    }
+
+    // `into_symbol_as_str` exists only on the stage reached after `asks`
+    // completes, and validates the declared encoding as it goes. The `&str`
+    // borrows the wire buffer, not the consumed stage, so it stays valid.
+    let (symbol, _complete) = ask_group.finish()?.into_symbol_as_str()?;
+
+    Ok(Snapshot {
+        timestamp,
+        sequence,
+        is_active,
+        bids,
+        asks,
+        symbol,
+    })
+}
+// ANCHOR_END: decode_staged
+
+// ANCHOR: decode_memoized
+/// Lane 3 — memoized (`decoder.memoized()`).
+///
+/// Same getter names as the base lane, plus a progressive cache of discovered
+/// tail boundaries. Read here in the worst order for the base lane — symbol
+/// first, then back to the groups, then symbol again — which is exactly the
+/// shape the cache exists for.
+fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
+    let dec = L3BookDecoder::try_decode(wire, 0)?.memoized();
+
+    let symbol = dec.symbol_as_str()?;
+
+    let mut bids = Vec::new();
+    for level in dec.bids()? {
+        let level = level?;
+        let mut orders = Vec::new();
+        for order in level.orders()? {
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        bids.push((level.try_price()?, level.try_size()?, orders));
+    }
+
+    let mut asks = Vec::new();
+    for level in dec.asks()? {
+        let level = level?;
+        let mut orders = Vec::new();
+        for order in level.orders()? {
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        asks.push((level.try_price()?, level.try_size()?, orders));
+    }
+
+    // Re-reading a tail is free once its boundary is known: the base lane
+    // would re-walk every bid and ask order to get back here.
+    assert_eq!(dec.symbol_as_str()?, symbol, "re-read must be identical");
+
+    Ok(Snapshot {
+        timestamp: dec.try_exchange_timestamp()?,
+        sequence: dec.sequence(),
+        is_active: dec.try_is_active()?,
+        bids,
+        asks,
+        symbol,
+    })
+}
+// ANCHOR_END: decode_memoized
+
+// ANCHOR: decode_ordered
+/// Lane 4 — mutable ordered (`decoder.ordered()`).
+///
+/// One `&mut` cursor walking tails in schema order. A wrong call is a runtime
+/// `OutOfOrder` that leaves the cursor untouched, so the correct method can
+/// still be called. Nested guards borrow their entry, so the borrow checker
+/// prevents touching a level while its `orders` walk is live.
+fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
+    let mut dec = L3BookDecoder::try_decode(wire, 0)?.ordered();
+    let timestamp = dec.try_exchange_timestamp()?;
+    let sequence = dec.sequence();
+    let is_active = dec.try_is_active()?;
+
+    let mut bids = Vec::new();
+    dec.bids()?
+        .visit_entries(|level| -> Result<(), Box<dyn std::error::Error>> {
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            let mut orders = Vec::new();
+            level
+                .orders()?
+                .visit_entries(|order| -> Result<(), Box<dyn std::error::Error>> {
+                    orders.push((order.order_id(), order.try_quantity()?));
+                    Ok(())
+                })?;
+            bids.push((price, size, orders));
+            Ok(())
+        })?;
+
+    let mut asks = Vec::new();
+    dec.asks()?
+        .visit_entries(|level| -> Result<(), Box<dyn std::error::Error>> {
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            let mut orders = Vec::new();
+            level
+                .orders()?
+                .visit_entries(|order| -> Result<(), Box<dyn std::error::Error>> {
+                    orders.push((order.order_id(), order.try_quantity()?));
+                    Ok(())
+                })?;
+            asks.push((price, size, orders));
+            Ok(())
+        })?;
+
+    let symbol = dec.symbol_as_str()?;
+
+    Ok(Snapshot {
+        timestamp,
+        sequence,
+        is_active,
+        bids,
+        asks,
+        symbol,
+    })
+}
+// ANCHOR_END: decode_ordered
+
+// ANCHOR: decode_hot_path
+/// The shape you actually want on a hot path: no `Vec`, no `String`, no copy.
+///
+/// The four lane functions above build owned collections because a test has to
+/// materialise something to compare. Real consumption does not. Here every
+/// level and every nested order is visited, `symbol` is used as a borrowed
+/// `&str`, and the only state is a handful of scalars in registers — the
+/// generated decoders are flyweights over the wire buffer and allocate
+/// nothing, so this whole walk is allocation-free.
+///
+/// Prices stay in the wire `Decimal` (mantissa/exponent) rather than
+/// converting to `rust_decimal` per level: the conversion is cheap but not
+/// free, and a top-of-book scan only needs to compare and count.
+fn best_bid_and_depth(wire: &[u8]) -> Result<(i64, u64, usize, &str), sbe_rt::DecodeError> {
+    let mut dec = L3BookDecoder::try_decode(wire, 0)?.ordered();
+
+    let mut best_bid = i64::MIN;
+    let mut total_orders = 0u64;
+    let mut levels = 0usize;
+
+    dec.bids()?
+        .visit_entries(|level| -> Result<(), sbe_rt::DecodeError> {
+            levels += 1;
+            let px = level.price_value().mantissa();
+            if px > best_bid {
+                best_bid = px;
+            }
+            level
+                .orders()?
+                .visit_entries(|_order| -> Result<(), sbe_rt::DecodeError> {
+                    total_orders += 1;
+                    Ok(())
+                })?;
+            Ok(())
+        })?;
+
+    // `asks` must still be consumed before `symbol` — the cursor walks in wire
+    // order — but nothing here needs its contents.
+    dec.asks()?.skip_remaining()?;
+
+    Ok((best_bid, total_orders, levels, dec.symbol_as_str()?))
+}
+// ANCHOR_END: decode_hot_path
+
+#[test]
+fn hot_path_walk_borrows_everything() -> Result<(), Box<dyn std::error::Error>> {
+    let (wire, exp_bids, _) = fixture();
+    let (best_bid, total_orders, levels, symbol) = best_bid_and_depth(&wire)?;
+
+    assert_eq!(levels, exp_bids.len());
+    assert_eq!(
+        total_orders,
+        exp_bids.iter().map(|(_, _, o)| o.len() as u64).sum::<u64>()
+    );
+    assert_eq!(best_bid, exp_bids[0].0.mantissa() as i64);
+    assert_eq!(symbol, "BTCUSDT");
+
+    // The `&str` points into `wire`, not into a copy: same address range.
+    let base = wire.as_ptr() as usize;
+    let sym = symbol.as_ptr() as usize;
+    assert!(
+        sym >= base && sym < base + wire.len(),
+        "symbol must borrow the wire buffer, not a copy"
+    );
+    Ok(())
+}
+
+#[test]
+fn all_four_lanes_decode_the_same_nested_book() -> Result<(), Box<dyn std::error::Error>> {
+    let (wire, exp_bids, exp_asks) = fixture();
+    let expected = Snapshot {
+        timestamp: chrono::DateTime::from_timestamp_nanos(1_720_000_000_000_000_000),
+        sequence: 42,
+        is_active: true,
+        bids: exp_bids,
+        asks: exp_asks,
+        symbol: "BTCUSDT",
+    };
+
+    let random = decode_random_access(&wire)?;
+    let staged = decode_staged(&wire)?;
+    let memoized = decode_memoized(&wire)?;
+    let ordered = decode_ordered(&wire)?;
+
+    // Against the encoder's inputs first — otherwise four identical wrong
+    // answers would agree with each other and pass.
+    assert_eq!(random, expected, "random access");
+    assert_eq!(staged, expected, "staged");
+    assert_eq!(memoized, expected, "memoized");
+    assert_eq!(ordered, expected, "mutable ordered");
+
+    // Then lane against lane, which is what pins them together as the
+    // generator changes.
+    assert_eq!(random, staged);
+    assert_eq!(staged, memoized);
+    assert_eq!(memoized, ordered);
+
+    // The fixture is genuinely ragged and genuinely nested, so the equality
+    // above is not vacuous.
+    assert_eq!(expected.bids.len(), 3);
+    assert_eq!(expected.asks.len(), 2);
+    let orders_per_bid: Vec<usize> = expected.bids.iter().map(|(_, _, o)| o.len()).collect();
+    assert_eq!(orders_per_bid, vec![2, 1, 3], "bid levels must be ragged");
+    let orders_per_ask: Vec<usize> = expected.asks.iter().map(|(_, _, o)| o.len()).collect();
+    assert_eq!(orders_per_ask, vec![1, 2], "ask levels must be ragged");
+    Ok(())
+}
+
+#[test]
+fn ordered_lane_rejects_out_of_order_tails() -> Result<(), Box<dyn std::error::Error>> {
+    let (wire, _, _) = fixture();
+    let mut dec = L3BookDecoder::try_decode(&wire, 0)?.ordered();
+
+    // `symbol` is the third tail; asking for it first must fail and leave the
+    // cursor where it was.
+    let err = dec.symbol().unwrap_err();
+    assert!(
+        matches!(err, sbe_rt::DecodeError::OutOfOrder { .. }),
+        "expected OutOfOrder, got {err:?}"
+    );
+
+    // The cursor is untouched, so the correct call still works and the whole
+    // walk completes — a rejected call is not a poisoned decoder.
+    let mut bid_levels = 0usize;
+    dec.bids()?
+        .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> {
+            bid_levels += 1;
+            Ok(())
+        })?;
+    assert_eq!(bid_levels, 3);
+    dec.asks()?.skip_remaining()?;
+    assert_eq!(dec.symbol_as_str()?, "BTCUSDT");
+    Ok(())
+}
+
+#[test]
+fn memoized_lane_caches_boundaries_across_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let (wire, _, _) = fixture();
+    let dec = L3BookDecoder::try_decode(&wire, 0)?.memoized();
+
+    // Fixed fields never touch the cache.
+    assert_eq!(dec.sequence(), 42);
+    assert_eq!(dec.decode_cache_stats().known_through, 0);
+
+    // Reaching `symbol` — the final tail — discovers and publishes every
+    // boundary before it: bids, then asks.
+    let symbol = dec.symbol_as_str()?;
+    let warm = dec.decode_cache_stats();
+    assert!(
+        warm.known_through >= 2,
+        "final tail must warm the preceding boundaries, got {warm:?}"
+    );
+    let walks = warm.boundary_calcs;
+
+    // Every later read — in any order — is served from the cache.
+    assert_eq!(dec.symbol_as_str()?, symbol);
+    assert_eq!(dec.bids()?.remaining_entries(), 3);
+    assert_eq!(dec.asks()?.remaining_entries(), 2);
+    let after = dec.decode_cache_stats();
+    assert_eq!(
+        after.boundary_calcs, walks,
+        "warm reads must not walk the wire again"
+    );
+    assert!(after.hits > warm.hits, "warm reads must register hits");
+
+    // Same values as the uncached lane, and `into_inner` gets that lane back.
+    let base = dec.into_inner();
+    assert_eq!(base.symbol_as_str()?, symbol);
+    Ok(())
+}

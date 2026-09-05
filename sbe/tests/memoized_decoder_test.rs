@@ -566,3 +566,111 @@ fn memoized_var_data_text_surface_matches_the_base_decoder()
     );
     Ok(())
 }
+
+/// A group entry's var-data text helpers must never take a name the schema
+/// already gave a field of that entry.
+///
+/// Entry fields keep their schema names in every entry location — decoder,
+/// ordered decoder, encoder, DTO — so renaming one to free up `<vd>_as_str`
+/// would give the same field different names per location, which the naming
+/// rule forbids. The helper stands down instead; `note()` still returns the
+/// bytes. Compilation is the assertion: emitting both produced two
+/// `fn note_as_str` on the entry and did not build.
+#[test]
+fn entry_text_helper_yields_to_a_field_that_already_has_its_name()
+-> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="entryclash" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStr">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="M" id="1" blockLength="4">
+    <field name="x" id="1" type="uint32" offset="0"/>
+    <group name="legs" id="2" dimensionType="groupSizeEncoding" blockLength="4">
+      <field name="noteAsStr" id="3" type="uint32" offset="0"/>
+      <data name="note" id="4" type="varStr"/>
+    </group>
+    <group name="clean" id="5" dimensionType="groupSizeEncoding" blockLength="4">
+      <field name="qty" id="6" type="uint32" offset="0"/>
+      <data name="tag" id="7" type="varStr"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("entryclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    // The uncontested entry gets the full text surface...
+    assert!(
+        src.contains("fn tag_as_str("),
+        "uncontested helper must exist"
+    );
+    assert!(
+        src.contains("fn tag_as_str_unchecked("),
+        "uncontested unchecked helper must exist"
+    );
+    // ...and the contested one is not renamed away from the schema's spelling.
+    assert!(
+        !src.contains("fn note_as_str_field("),
+        "entry fields must keep their schema names"
+    );
+
+    compile_and_run(
+        "entryclash",
+        &src,
+        r#"
+        use entryclash::{MEncoder, MFixedFields, MDecoder, MEncodedLength, sbe_rt};
+
+        let len = MEncodedLength::new()
+            .legs_ragged(1, |g| { g.add()?.note(3)?; Ok(()) })?
+            .clean_ragged(1, |g| { g.add()?.tag(2)?; Ok(()) })?
+            .encoded_length_with_header();
+        let mut buf = vec![0u8; len];
+        let actual = MEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MFixedFields { x: 1 })
+            .legs(1, |legs| {
+                legs.add(|mut e| { e.note_as_str(7u32); e.note(b"abc") })?;
+                Ok(())
+            })?
+            .clean(1, |g| {
+                g.add(|mut e| { e.qty(9u32); e.tag(b"hi") })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+
+        let dec = MDecoder::try_decode(&buf[..actual], 0)?;
+        for leg in dec.legs()? {
+            let leg = leg?;
+            // The name resolves to the schema's field, as the author asked.
+            assert_eq!(leg.note_as_str(), 7);
+            // The bytes are still reachable; the caller validates if it wants.
+            assert_eq!(leg.note()?, b"abc");
+        }
+        for entry in dec.clean()? {
+            let entry = entry?;
+            assert_eq!(entry.qty(), 9);
+            assert_eq!(entry.tag_as_str()?, "hi");
+            unsafe { assert_eq!(entry.tag_as_str_unchecked()?, "hi"); }
+        }
+        "#,
+    );
+    Ok(())
+}

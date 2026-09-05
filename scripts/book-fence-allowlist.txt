@@ -11,6 +11,16 @@ book/src/introduction.md:75 — deliberate; see page context
 book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:15 — deliberate; see page context
 book/src/samples/l3-book.md:14 — deliberate; see page context
+book/src/samples/l3-book.md:36 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:47 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:55 — deliberate; three-line call-site sketch of the size-then-encode pair, whose real bodies are {{#include}}d above it
+book/src/samples/l3-book.md:78 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:82 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:88 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:98 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:107 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:119 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:136 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context

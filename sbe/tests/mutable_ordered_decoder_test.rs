@@ -253,11 +253,11 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
         let r_year = random.model_year();
         let r_code = random.code();
         let r_eng = random.engine().capacity();
-        let r_mfr = random.manufacturer()?.to_vec();
+        let r_mfr = random.manufacturer_as_str()?.to_owned();
         let mut r_fuel = Vec::new();
         for e in random.fuel_figures()? {
             let e = e?;
-            r_fuel.push((e.speed(), e.usage_description()?.to_vec()));
+            r_fuel.push((e.speed(), e.usage_description_as_str()?.to_owned()));
         }
         let mut r_octane = Vec::new();
         let mut r_acc = Vec::new();
@@ -268,8 +268,8 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
                 r_acc.push((a.mph(), a.seconds().to_bits()));
             }
         }
-        let r_model = random.model()?.to_vec();
-        let r_code_vd = random.activation_code()?.to_vec();
+        let r_model = random.model_as_str()?.to_owned();
+        let r_code_vd = random.activation_code_as_str()?.to_owned();
 
         // Lane 2: compile-time staged visit_entries.
         let mut s_fuel = Vec::new();
@@ -284,8 +284,8 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
             .into_fuel_figures()?
             .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
                 let speed = entry.speed();
-                let (usage, complete) = entry.into_usage_description()?;
-                s_fuel.push((speed, usage.to_vec()));
+                let (usage, complete) = entry.into_usage_description_as_str()?;
+                s_fuel.push((speed, usage.to_owned()));
                 Ok(complete)
             })?
             .into_performance_figures()?
@@ -296,9 +296,9 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
                     Ok(())
                 })
             })?
-            .into_manufacturer()?;
-        let (s_model, staged) = staged.into_model()?;
-        let (s_code_vd, _) = staged.into_activation_code()?;
+            .into_manufacturer_as_str()?;
+        let (s_model, staged) = staged.into_model_as_str()?;
+        let (s_code_vd, _) = staged.into_activation_code_as_str()?;
 
         // Lane 3: mutable ordered.
         let mut o_fuel = Vec::new();
@@ -310,7 +310,7 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
         let o_code = ordered.code();
         let o_eng = ordered.engine().capacity();
         ordered.fuel_figures()?.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-            o_fuel.push((entry.speed(), entry.usage_description()?.to_vec()));
+            o_fuel.push((entry.speed(), entry.usage_description_as_str()?.to_owned()));
             Ok(())
         })?;
         ordered.performance_figures()?.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
@@ -321,9 +321,9 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
             })?;
             Ok(())
         })?;
-        let o_mfr = ordered.manufacturer()?.to_vec();
-        let o_model = ordered.model()?.to_vec();
-        let o_code_vd = ordered.activation_code()?.to_vec();
+        let o_mfr = ordered.manufacturer_as_str()?.to_owned();
+        let o_model = ordered.model_as_str()?.to_owned();
+        let o_code_vd = ordered.activation_code_as_str()?.to_owned();
         let complete = ordered.finish()?;
         assert_eq!(complete.encoded_length_with_header(), len);
 
@@ -338,12 +338,15 @@ fn three_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error
         assert_eq!(s_octane, o_octane);
         assert_eq!(r_acc, s_acc);
         assert_eq!(s_acc, o_acc);
+        // All three lanes read the schema-declared text as `&str`, so the
+        // comparison is String-to-String rather than one lane's bytes against
+        // another's — each lane's encoding validation is exercised too.
         assert_eq!(r_mfr, s_mfr);
-        assert_eq!(s_mfr.as_ref(), o_mfr.as_slice());
+        assert_eq!(s_mfr, o_mfr);
         assert_eq!(r_model, s_model);
-        assert_eq!(s_model.as_ref(), o_model.as_slice());
+        assert_eq!(s_model, o_model);
         assert_eq!(r_code_vd, s_code_vd);
-        assert_eq!(s_code_vd.as_ref(), o_code_vd.as_slice());
+        assert_eq!(s_code_vd, o_code_vd);
     "#,
     );
     Ok(())
@@ -1088,17 +1091,17 @@ fn l3_mutable_ordered() -> Result<(), Box<dyn std::error::Error>> {
         let mut book = L3BookDecoder::try_decode(encoded, 0)?.ordered();
         assert_eq!(book.timestamp(), 99);
         let mut prices = Vec::new();
-        let mut ids: Vec<Vec<u8>> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
         book.bids()?.visit_entries(|lvl| -> Result<(), sbe_rt::DecodeError> {
             prices.push(lvl.price());
             lvl.orders()?.visit_entries(|ord| -> Result<(), sbe_rt::DecodeError> {
-                ids.push(ord.order_id()?.to_vec());
+                ids.push(ord.order_id_as_str()?.to_owned());
                 Ok(())
             })?;
             Ok(())
         })?;
         assert_eq!(prices, vec![100, 101]);
-        assert_eq!(ids, vec![b"ord-1".to_vec(), b"ord-2".to_vec()]);
+        assert_eq!(ids, vec!["ord-1", "ord-2"]);
         let mut ask_prices = Vec::new();
         book.asks()?.visit_entries(|lvl| -> Result<(), sbe_rt::DecodeError> {
             ask_prices.push(lvl.price());
