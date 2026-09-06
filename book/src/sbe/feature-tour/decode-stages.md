@@ -9,6 +9,26 @@ compatibility and partial traversal. It is not a fifth message-decoding lane:
 `Iterator::next()` must learn the next entry position before yielding a
 dynamic entry, so it is not the ordered fast path.
 
+## Encoding: one state machine
+
+Encoding is the simple half of this page. Each encoder stage is a distinct
+type that exposes only the fields legal to write *next* — fixed block, then
+each group, then each var-data field, in schema order. There is no cursor to
+get wrong: the compiler enforces the order by only giving the next stage's
+type a method for the next field. Skip a required tail or write two fields
+out of order and the code does not compile, full stop. That is the whole
+safety story — no runtime check, no `Result` to handle for ordering, because
+the wrong call is not expressible.
+
+The cost of that safety is effectively zero: the stages are concrete
+monomorphic structs, not a state machine you pay for at runtime, and they
+disappear entirely under optimisation. See [Encode and
+Decode](../getting-started/encode-decode.md) for the `fixed()` / `raw_fixed()`
+mechanics and [Method Chaining](../getting-started/method-chaining.md) for why
+one chained expression is the idiom. Decoding is where the real choice lives,
+because a decoder can be asked to read in an order the encoder never had to
+think about — which is what the rest of this page is about.
+
 | Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
@@ -35,13 +55,69 @@ variable-data.
 
 ## Choosing a lane
 
-- **Sparse or one-off access** — random access. Smallest decoder, `Sync`, no
-  cache to pay for. This is the default and the right answer surprisingly often.
-- **Repeated or out-of-order access through the same decoder instance** —
-  `.memoized()`.
-- **Complete sequential decoding** — `.ordered()` (or the staged lane when you
-  want the compiler, not the runtime, to enforce order). Fastest full-message
-  path.
+**Random access (the default) is what most code should reach for first.**
+It carries no cursor at all — no internal mutable state — so it is just a
+`&`-shared reference you can pass around freely: into a function, across a
+thread, held by several callers at once. You can read `manufacturer`, then a
+group three fields later, then jump back, in any order, and it always returns
+the correct value because it re-derives every offset from the start on each
+call rather than trusting a remembered position. Unlike sbe-tool, wrong order
+is not a silent correctness bug here — there is no "wrong order" to have. The
+one real cost is that a deeply nested read (nested groups, var-data inside
+entries, that kind of shape) recomputes preceding offsets each time, which is
+measurably slower than a lane that remembers where it is. In practice that gap
+is small enough that "default, plus benchmark if you're unsure" is the right
+starting posture, not a premature switch to something else.
+
+**The staged lane (`into_*` / `visit_entries`) is the same wire-order idea as
+random access, aimed at the sequential case.** Reaching a field consumes the
+current stage and returns the next one, so the type system — not a runtime
+check — makes reading out of order a compile error. That ownership transfer is
+what buys back the performance random access gives up: each tail is walked
+exactly once, in one pass, so it is the closest ergon comes to sbe-tool's raw
+speed while still being safe. The trade is that the stage type is now part of
+your function's signature, so it does not thread through arbitrary call sites
+the way a plain reference does. See [Staged](#staged-into_--visit_entries)
+below for the worked example — it is the `into_manufacturer_as_str()` /
+`visit_entries` code straight from the sample crate, not a sketch.
+
+**Mutable ordered (`.ordered()`) is the lane to reach for when you want
+sbe-tool's performance without sbe-tool's silent-corruption risk.** It carries
+a real cursor, just like sbe-tool's `&mut` flyweight, and moves it forward as
+you read — so it is fast for exactly the same reason sbe-tool is fast. The
+difference is what happens when you read out of order: sbe-tool hands you
+garbage or a slice-index panic with no diagnosis; here you get
+`DecodeError::OutOfOrder { owner, expected, requested }` and the cursor is
+left untouched, so the correct call can still succeed. If your access pattern
+is genuinely "decode this whole message in wire order and nothing else,"
+`.ordered()` is the fastest lane and the runtime check on top of it is close
+to free.
+
+**Memoized (`decoder.memoized()`) is the slowest lane and exists for one
+specific shape of problem: the same decoder instance gets handed to several
+functions, and each function reads tails in a different order.** Random
+access would recompute the same offsets over and over across those calls;
+memoized remembers each tail boundary the first time anything reaches it, so
+later reads — from any of those functions, in any order — are free. Outside
+that shape it is close to pure overhead: reading one tail and stopping never
+earns back the cache's bookkeeping, and if you are already reading in wire
+order, `.ordered()` or the staged lane beats it without carrying a cache at
+all. Do not reach for this lane by default — benchmark the concrete access
+pattern first; see [Memoized](#memoized-decodermemoized) below for the
+`versioned_l3_bench` numbers.
+
+**The short version:**
+
+| If you want… | Use |
+|---|---|
+| The easiest API to work with — any order, share it anywhere, nearly sbe-tool's speed | Random access (the default) |
+| The best raw performance, and you decode fully in wire order | Mutable ordered (`.ordered()`) — or staged, if you want the compiler enforcing order instead of a runtime check |
+| The same decoder passed to many functions that each read tails in a different order | Memoized (`decoder.memoized()`) — but benchmark it, don't reach for it by default |
+
+For a worked example that puts all four lanes side by side over one genuinely
+nested schema (two repeating groups, each entry carrying its own nested
+`orders` group, plus trailing var-data) rather than a single flat message, see
+the [L3 order book sample](../../samples/l3-book.md#decoding-four-lanes-over-the-same-nested-book).
 
 Group entry decoders keep a one-shot extent cache in *every* lane: the group
 iterator computes an entry's end in order to advance, and the entry's last
