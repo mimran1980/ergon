@@ -178,7 +178,6 @@ sbe_rt::enum DecodeError::InvalidBoolean(field: & 'static str, discriminant: u64
 sbe_rt::enum DecodeError::InvalidHeaderValue(field: & 'static str, value: u64, maximum: u64)
 sbe_rt::enum DecodeError::InvalidUtf8(field: & 'static str, error: core :: str :: Utf8Error)
 sbe_rt::enum DecodeError::InvalidVarDataLength(field: & 'static str, length: u64, max_length: u64)
-sbe_rt::enum DecodeError::OutOfOrder(owner: & 'static str, expected: & 'static str, requested: & 'static str)
 sbe_rt::enum DecodeError::UnknownTemplateLength(template_id: u16)
 sbe_rt::enum DecodeError::WrongSchema(expected: u16, actual: u16, expected_name: & 'static str)
 sbe_rt::enum DecodeError::WrongTemplate(expected: u16, actual: u16, expected_name: & 'static str)

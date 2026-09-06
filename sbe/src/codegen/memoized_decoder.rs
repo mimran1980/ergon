@@ -14,11 +14,17 @@
 //! once and pass `&{Name}MemoizedDecoder` around: calling `.memoized()` again
 //! produces a second, empty cache and re-walks everything.
 
-use crate::structured_ir::{MessageStructure, SchemaElements, get_vardata_info};
+use crate::ir::{Presence, PrimitiveType};
+use crate::structured_ir::{
+    FieldType, MessageField, MessageStructure, SchemaElements, get_vardata_info, rust_type,
+};
 
+use super::conversion_helpers::{
+    DECODER_RESERVED, field_has_conversion_free, find_domain_type, resolve_field_ident,
+};
+use super::converter_impls::is_optional_domain_field;
 use super::doc_attr_tokens;
-use super::ordered_decoder::forward_fixed_fields;
-use super::to_snake_case;
+use super::{to_pascal_case, to_snake_case};
 
 /// Emit `memoized()` plus the `{Name}MemoizedDecoder` wrapper.
 ///
@@ -62,9 +68,9 @@ pub(crate) fn generate_memoized_decoder(
             /// Reading exactly one tail and stopping is the case that gains
             /// nothing: there is no second access to amortise against, and
             /// reaching a late tail publishes every boundary it passes. If you
-            /// are decoding the whole message in wire order, `ordered()` or
-            /// the staged lane carries the cursor without a cache and is
-            /// faster still.
+            /// are decoding the whole message in wire order, the staged
+            /// `into_*(|entry|)` / `skip_*` chain carries the cursor without a
+            /// cache and is faster still.
             ///
             /// The cache covers this message's own groups and var-data. Group
             /// entries are decoded by ordinary entry decoders and are not
@@ -127,9 +133,8 @@ pub(crate) fn generate_memoized_decoder(
         }
     });
 
-    // Fixed fields are random-access in both lanes and never touch the cache,
-    // so they forward straight to the inner decoder — same forwarder the
-    // ordered lane uses, so conversions and domain types stay consistent.
+    // Fixed fields are random-access and never touch the cache, so they
+    // forward straight to the inner decoder under the same names.
     impl_body.extend(forward_fixed_fields(
         &msg.fields,
         conversions,
@@ -298,4 +303,164 @@ fn version_guard(
             });
         }
     }
+}
+
+/// Forward each fixed field onto `{Name}MemoizedDecoder` under the same name
+/// the base decoder uses, including conversion / domain-type variants.
+pub(crate) fn forward_fixed_fields(
+    fields: &[MessageField],
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
+) -> proc_macro2::TokenStream {
+    let mut out = proc_macro2::TokenStream::new();
+    for f in fields {
+        out.extend(forward_one_field(
+            f,
+            conversions,
+            domain_types,
+            null_as_option,
+            all_enums_as_option,
+        ));
+    }
+    out
+}
+
+fn field_wire_type(f: &MessageField) -> syn::Type {
+    let span = proc_macro2::Span::call_site();
+    match &f.field_type {
+        FieldType::Primitive(prim, Some(len)) => {
+            let r = syn::Ident::new(rust_type(*prim), span);
+            let n = syn::LitInt::new(&len.to_string(), span);
+            syn::parse_quote!([#r; #n])
+        }
+        FieldType::Primitive(prim, None) => {
+            let r = syn::Ident::new(rust_type(*prim), span);
+            syn::parse_quote!(#r)
+        }
+        FieldType::Composite { name, .. }
+        | FieldType::Enum { name, .. }
+        | FieldType::Set { name, .. } => {
+            let t = syn::Ident::new(&to_pascal_case(name), span);
+            syn::parse_quote!(#t)
+        }
+    }
+}
+
+fn forward_one_field(
+    f: &MessageField,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let snake = to_snake_case(&f.name);
+    let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
+    let ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
+
+    let wire_ty = field_wire_type(f);
+    let optional = f.presence != Presence::Constant
+        && is_optional_domain_field(f, null_as_option, all_enums_as_option);
+
+    let ret: syn::Type = if f.presence == Presence::Constant {
+        match &f.field_type {
+            FieldType::Primitive(prim, None)
+                if *prim == PrimitiveType::Char
+                    && f.constant_value.as_ref().is_some_and(|v| v.len() > 1) =>
+            {
+                syn::parse_quote!(&'static str)
+            }
+            _ => wire_ty.clone(),
+        }
+    } else if let FieldType::Composite { name, .. } = &f.field_type {
+        let dec = syn::Ident::new(&format!("{}Decoder", to_pascal_case(name)), span);
+        if optional {
+            syn::parse_quote!(Option<#dec<'_>>)
+        } else {
+            syn::parse_quote!(#dec<'_>)
+        }
+    } else if optional {
+        syn::parse_quote!(Option<#wire_ty>)
+    } else {
+        wire_ty.clone()
+    };
+
+    let mut ts = quote::quote! {
+        #[inline]
+        pub fn #ident(&self) -> #ret {
+            self.inner.#ident()
+        }
+    };
+    if f.presence != Presence::Constant {
+        if let FieldType::Composite { name, .. } = &f.field_type {
+            let value_ident = syn::Ident::new(&format!("{snake}_value"), span);
+            let value_ty = syn::Ident::new(&to_pascal_case(name), span);
+            if optional {
+                ts.extend(quote::quote! {
+                    #[inline]
+                    pub fn #value_ident(&self) -> Option<#value_ty> {
+                        self.inner.#value_ident()
+                    }
+                });
+            } else {
+                ts.extend(quote::quote! {
+                    #[inline]
+                    pub fn #value_ident(&self) -> #value_ty {
+                        self.inner.#value_ident()
+                    }
+                });
+            }
+        }
+    }
+
+    if f.presence == Presence::Constant {
+        return ts;
+    }
+
+    if let Some(dt) = find_domain_type(f, domain_types) {
+        if let Ok(dt_ty) = syn::parse_str::<syn::Type>(dt) {
+            let try_ident = syn::Ident::new(&format!("try_{snake}"), span);
+            if optional {
+                ts.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &self,
+                    ) -> Result<Option<#dt_ty>, <#dt_ty as TryFromSbe<#wire_ty>>::Error> {
+                        self.inner.#try_ident()
+                    }
+                });
+            } else {
+                ts.extend(quote::quote! {
+                    #[inline]
+                    pub fn #try_ident(
+                        &self,
+                    ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_ty>>::Error> {
+                        self.inner.#try_ident()
+                    }
+                });
+            }
+        }
+    } else if field_has_conversion_free(f, conversions) {
+        let as_ident = syn::Ident::new(&format!("{snake}_as"), span);
+        if optional {
+            ts.extend(quote::quote! {
+                #[inline]
+                pub fn #as_ident<T: TryFromSbe<#wire_ty>>(
+                    &self,
+                ) -> Result<Option<T>, T::Error> {
+                    self.inner.#as_ident()
+                }
+            });
+        } else {
+            ts.extend(quote::quote! {
+                #[inline]
+                pub fn #as_ident<T: TryFromSbe<#wire_ty>>(&self) -> Result<T, T::Error> {
+                    self.inner.#as_ident()
+                }
+            });
+        }
+    }
+    ts
 }

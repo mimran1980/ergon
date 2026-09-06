@@ -147,29 +147,21 @@ fn poisoned_group_completion_returns_the_stored_error() -> Result<(), Box<dyn st
             .encoded_length_with_header();
 
         // Sanity: the untouched frame walks cleanly to the next stage.
-        let clean = CarDecoder::try_from(&buf[..len])?.into_fuel_figures()?;
-        assert!(clean.finish().is_ok());
+        assert!(CarDecoder::try_from(&buf[..len])?.skip_fuel_figures().is_ok());
 
         // Corrupt the first entry's var-data length prefix.
         let group_start = 8 + 45;
         let prefix = group_start + 4 + 6; // dimension + first fixed block
         buf[prefix..prefix + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
-        let mut group = CarDecoder::try_from(&buf[..len])?.into_fuel_figures()?;
-        let first = group.next();
-        assert!(matches!(first, Some(Err(_))), "the corrupt entry must error");
-        assert!(group.next().is_none(), "and must not yield again");
+        let err = CarDecoder::try_from(&buf[..len])?.into_fuel_figures(|entry| {
+            entry.into_usage_description().map(|(_, c)| c)
+        });
+        assert!(err.is_err(), "the corrupt entry must error");
 
-        // finish() must not fabricate the next stage at the failed position.
-        let Err(_) = group.finish() else {
-            panic!("a poisoned group must not complete into a message stage");
-        };
-
-        // skip_remaining() reports the same failure.
-        let mut group = CarDecoder::try_from(&buf[..len])?.into_fuel_figures()?;
-        let _ = group.next();
-        let Err(_) = group.skip_remaining() else {
-            panic!("skip_remaining must not complete a poisoned group either");
+        // skip_* reports the same failure and must not fabricate the next stage.
+        let Err(_) = CarDecoder::try_from(&buf[..len])?.skip_fuel_figures() else {
+            panic!("skip_fuel_figures must not complete a poisoned group either");
         };
         "#,
     );
@@ -214,7 +206,7 @@ fn rewind_clears_poison_and_retries_from_the_proven_start() -> Result<(), Box<dy
         let prefix = group_start + 4 + 6;
         buf[prefix..prefix + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
-        let mut group = CarDecoder::try_from(&buf[..len])?.into_fuel_figures()?;
+        let mut group = FuelFiguresDecoder::wrap(&buf[..len], 8 + 45, 0)?;
         assert!(matches!(group.next(), Some(Err(_))));
         assert!(group.next().is_none());
 
@@ -225,14 +217,13 @@ fn rewind_clears_poison_and_retries_from_the_proven_start() -> Result<(), Box<dy
         assert!(matches!(group.next(), Some(Err(_))), "the wire is still broken");
 
         // The same group over an intact buffer iterates normally after rewind.
-        let mut good = CarDecoder::try_from(&saved[..len])?.into_fuel_figures()?;
+        let mut good = FuelFiguresDecoder::wrap(&saved[..len], 8 + 45, 0)?;
         let Some(Ok(first)) = good.next() else { panic!("first entry") };
         assert_eq!(first.speed(), 30);
         good.rewind();
         assert_eq!(good.remaining(), 2);
         let Some(Ok(again)) = good.next() else { panic!("first entry after rewind") };
         assert_eq!(again.speed(), 30);
-        assert!(good.finish().is_ok(), "an unpoisoned group still completes");
         "#,
     );
     Ok(())

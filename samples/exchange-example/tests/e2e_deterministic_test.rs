@@ -129,11 +129,8 @@ fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHe
     let (frame, _complete) = after_name.into_payload_as_message().expect("payload");
     if let AnyMessage::L2Book(book) = frame.message {
         assert_eq!(book.sequence(), expect.seq);
-        let bids_dec = book.into_bids().expect("bids");
-        assert_eq!(bids_dec.len(), expect.bids);
-        let after = bids_dec.finish().expect("finish");
-        let asks_dec = after.into_asks().expect("asks");
-        assert_eq!(asks_dec.len(), expect.asks);
+        assert_eq!(book.bids().expect("bids").len(), expect.bids);
+        assert_eq!(book.asks().expect("asks").len(), expect.asks);
     } else {
         panic!("expected an L2Book payload");
     }

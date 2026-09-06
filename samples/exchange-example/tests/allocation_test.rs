@@ -12,8 +12,8 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 

@@ -98,14 +98,16 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         assert_eq!(&dto_buf[..dto_len], &domain_bulk_buf[..domain_bulk_len]);
         assert_eq!(&dto_buf[..dto_len], &wire_bulk_buf[..wire_bulk_len]);
 
-        let mut decoded = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels()?;
-        for expected in &levels {
-            let actual = decoded.next().expect("missing level");
+        let mut i = 0usize;
+        let _ = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels(|actual| -> Result<(), sbe_rt::DecodeError> {
+            let expected = &levels[i];
             assert_eq!(actual.price(), expected.price);
             assert_eq!(actual.qty(), expected.qty);
             assert_eq!(actual.num_orders(), expected.num_orders);
-        }
-        assert!(decoded.next().is_none());
+            i += 1;
+            Ok(())
+        })?;
+        assert_eq!(i, levels.len());
 
         let invalid_levels = [BookSnapshotLevelsEntryDomain {
             price: 10_003,

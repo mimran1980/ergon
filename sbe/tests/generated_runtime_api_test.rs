@@ -99,9 +99,9 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm()
 fn any_message_lane_accessors_exist_only_for_messages_with_tails()
 -> Result<(), Box<dyn std::error::Error>> {
     // `Fixed` is a fixed-block message: every field is random-access off the
-    // block, so there is nothing for the memoized or ordered lanes to do and
-    // neither is generated. `Tailed` has a group and var-data, so it gets all
-    // three lane accessors.
+    // block, so there is nothing for the memoized lane to do and it is not
+    // generated. `Tailed` has a group and var-data, so it gets the memoized
+    // accessor as well as the base one.
     let multi = r#"<?xml version="1.0"?>
 <messageSchema package="lanes_test" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -144,16 +144,20 @@ fn any_message_lane_accessors_exist_only_for_messages_with_tails()
 
     // Source assertions name which cell broke; the compile below is the check.
     assert!(
-        !src.contains("FixedOrderedDecoder") && !src.contains("FixedMemoizedDecoder"),
-        "fixed-block message must not get an ordered or memoized lane"
+        !src.contains("FixedMemoizedDecoder") && !src.contains("FixedOrderedDecoder"),
+        "fixed-block message must not get a memoized or ordered lane"
     );
     assert!(
-        !src.contains("into_fixed_ordered") && !src.contains("into_fixed_memoized"),
+        !src.contains("into_fixed_memoized") && !src.contains("into_fixed_ordered"),
         "fixed-block message must not get lane accessors on AnyMessage"
     );
     assert!(
-        src.contains("into_tailed_ordered") && src.contains("into_tailed_memoized"),
-        "message with tails must get both lane accessors on AnyMessage"
+        src.contains("into_tailed_memoized"),
+        "message with tails must get the memoized accessor on AnyMessage"
+    );
+    assert!(
+        !src.contains("into_tailed_ordered") && !src.contains("TailedOrderedDecoder"),
+        "ordered lane must not be generated"
     );
 
     compile_and_run(
@@ -195,16 +199,16 @@ fn any_message_lane_accessors_exist_only_for_messages_with_tails()
         assert_eq!(memo.label()?, b"abc");
         assert_eq!(memo.y(), 99);
 
-        let mut ord = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed_ordered()
-            .ok_or("expected Tailed")?;
-        ord.legs()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
-            assert_eq!(e.qty(), 7);
-            Ok(())
-        })?;
-        assert_eq!(ord.label()?, b"abc");
+        let mut n = 0u32;
+        let _ = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed()
+            .ok_or("expected Tailed")?
+            .into_legs(|e| -> Result<(), sbe_rt::DecodeError> {
+                n += e.qty();
+                Ok(())
+            })?;
+        assert_eq!(n, 7);
 
         assert!(AnyMessage::try_decode(&fbuf[..flen], 0)?.into_tailed_memoized().is_none());
-        assert!(AnyMessage::try_decode(&fbuf[..flen], 0)?.into_tailed_ordered().is_none());
         "#,
     );
     Ok(())
