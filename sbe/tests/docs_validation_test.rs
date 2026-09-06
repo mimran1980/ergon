@@ -497,7 +497,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         })?
-        .note(b"hi")?
+        .note_as_str("hi")?
         .encoded_length_with_header();
     let q = QuoteDecoder::try_from(&qbuf[..written])?;
     assert_eq!(q.seq(), 1);

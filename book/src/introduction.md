@@ -87,7 +87,7 @@ readable and you rarely pass encoder ownership field-to-field by hand:
           Ok(())
       })?
       .asks(0, |_| Ok(()))?
-      .symbol(b"EURUSD")?;
+      .symbol_as_str("EURUSD")?;
 ```
 
 Wire parity is exercised three ways: official Java `.sbe` fixtures, **live

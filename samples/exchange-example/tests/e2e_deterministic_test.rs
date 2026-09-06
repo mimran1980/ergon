@@ -27,7 +27,7 @@ struct Expect {
     received: bool,
 }
 
-fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
+fn run_roundtrip(symbol: &str, bids: u16, asks: u16, seq: u64) {
     let _guard = DRIVER_LOCK.lock().unwrap();
     let app_name = b"bitget";
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
@@ -96,7 +96,7 @@ fn run_roundtrip(symbol: &[u8], bids: u16, asks: u16, seq: u64) {
                         }
                         Ok(())
                     })?
-                    .symbol(symbol)?;
+                    .symbol_as_str(symbol)?;
                 assert_eq!(inner.as_bytes_with_header().len(), inner_len);
                 Ok(())
             })
@@ -142,35 +142,35 @@ fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHe
 
 #[test]
 fn e2e_zero_levels() -> Result<(), Box<dyn std::error::Error>> {
-    run_roundtrip(b"BTCUSDT", 0, 0, 1);
+    run_roundtrip("BTCUSDT", 0, 0, 1);
 
     Ok(())
 }
 
 #[test]
 fn e2e_one_level() -> Result<(), Box<dyn std::error::Error>> {
-    run_roundtrip(b"BTCUSDT", 1, 1, 2);
+    run_roundtrip("BTCUSDT", 1, 1, 2);
 
     Ok(())
 }
 
 #[test]
 fn e2e_typical_asymmetric() -> Result<(), Box<dyn std::error::Error>> {
-    run_roundtrip(b"ETHUSDT", 10, 8, 3);
+    run_roundtrip("ETHUSDT", 10, 8, 3);
 
     Ok(())
 }
 
 #[test]
 fn e2e_large_25x25() -> Result<(), Box<dyn std::error::Error>> {
-    run_roundtrip(b"BTCUSDT", 25, 25, 4);
+    run_roundtrip("BTCUSDT", 25, 25, 4);
 
     Ok(())
 }
 
 #[test]
 fn e2e_large_asymmetric_40x3() -> Result<(), Box<dyn std::error::Error>> {
-    run_roundtrip(b"BTCUSDT", 40, 3, 5);
+    run_roundtrip("BTCUSDT", 40, 3, 5);
 
     Ok(())
 }

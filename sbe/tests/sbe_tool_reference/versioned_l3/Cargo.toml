@@ -1,0 +1,12 @@
+[package]
+name = "parity_versioned_l3"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Versioned nested L3 book used to evaluate memoized random-access decode"
+edition = "2021"
+
+[lib]
+name = "parity_versioned_l3"
+path = "src/lib.rs"
+
+[workspace]

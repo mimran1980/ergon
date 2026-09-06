@@ -439,6 +439,11 @@ pub struct GenerationConfig {
     /// Hooks fired after each generated item (enum, set, composite, message).
     /// Returned tokens are appended after the item's definition.
     pub(crate) hooks: Hooks,
+    /// When set, the encoder writes this acting version and omits members
+    /// with `sinceVersion` above it. The decoder is still generated from the
+    /// full schema so it can read every acting version the schema declares.
+    /// `None` means encode at the schema version (default).
+    pub(crate) encode_version: Option<u16>,
 }
 
 impl std::fmt::Debug for GenerationConfig {
@@ -462,6 +467,7 @@ impl std::fmt::Debug for GenerationConfig {
             .field("enable_meta_attributes", &self.enable_meta_attributes)
             .field("enable_dispatch", &self.enable_dispatch)
             .field("hooks", &self.hooks)
+            .field("encode_version", &self.encode_version)
             .finish()
     }
 }
@@ -495,6 +501,7 @@ impl GenerationConfig {
             enable_meta_attributes: true,
             enable_dispatch: true,
             hooks: Hooks::default(),
+            encode_version: None,
         }
     }
 
@@ -866,6 +873,39 @@ impl GenerationConfig {
     #[must_use]
     pub fn with_dispatch(mut self, enable: bool) -> Self {
         self.enable_dispatch = enable;
+        self
+    }
+
+    /// Encode at `version` instead of the schema version.
+    ///
+    /// The generated encoder writes `version` in the message header and
+    /// omits groups, var-data, and fixed fields with `sinceVersion` above
+    /// it — including nested groups, which occupy zero bytes on older
+    /// wire rather than a count-zero header. The generated decoder still
+    /// understands every member in the schema, so a module built at
+    /// encode version 1 can decode acting versions 0..=schema version.
+    ///
+    /// `version` must be `<=` the schema version. Combining this with
+    /// [`Self::with_domain_objects`] when it would drop members is rejected
+    /// at generate time.
+    ///
+    /// **Scope.** The projection is derived from the *current* schema, not
+    /// from the historical one. `blockLength` becomes the retained fields'
+    /// extent plus any trailing padding the current schema declares beyond
+    /// every field. Padding that only the historical schema declared is not
+    /// recoverable from the current schema, so this generates wire that is
+    /// *version-compatible* at `version` — decodable by any conforming
+    /// decoder — not necessarily byte-identical to a codec built from the
+    /// archived schema of that version. When byte-identical historical output
+    /// matters, generate from the archived schema instead.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let _ = GenerationConfig::new("l3_v1").with_encode_version(1);
+    /// ```
+    #[must_use]
+    pub fn with_encode_version(mut self, version: u16) -> Self {
+        self.encode_version = Some(version);
         self
     }
 

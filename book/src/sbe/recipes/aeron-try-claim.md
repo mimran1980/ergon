@@ -54,7 +54,7 @@ debug_assert_eq!(claim.data().len(), len); // claim boundary == EncodedLength
 let written = CarEncoder::try_wrap_and_apply_header(claim.data(), 0)?
     .fixed(&fields)
     // ... fuel_figures / performance_figures / manufacturer / model ...
-    .activation_code(b"abcdef")?
+    .activation_code_as_str("abcdef")?
     .encoded_length_with_header();
 debug_assert_eq!(written, len);
 claim.commit()?;

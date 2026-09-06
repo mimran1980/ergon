@@ -226,7 +226,7 @@ impl<P: Publication> ClaimPublisher<P> {
                                 }
                                 Ok(())
                             })?;
-                            let _complete = after.symbol(symbol.as_bytes())?;
+                            let _complete = after.symbol_as_str(symbol)?;
                             Ok(())
                         },
                     )?;
@@ -271,7 +271,7 @@ impl<P: Publication> ClaimPublisher<P> {
                                     size: Decimal::new(size.mantissa, size.exponent),
                                     side: if *is_buy { Side::Buy } else { Side::Sell },
                                 })
-                                .symbol(symbol.as_bytes())?;
+                                .symbol_as_str(symbol)?;
                             Ok(())
                         },
                     )?;

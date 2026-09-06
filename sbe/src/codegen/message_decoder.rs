@@ -19,6 +19,7 @@ use super::conversion_helpers::{
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
+use super::ordered_decoder::generate_ordered_decoder;
 use super::runtime::{
     constant_value_expr, deprecated_attr_tokens, doc_attr_tokens, emit_field_consts,
     schema_marker_ident, to_pascal_case, to_snake_case,
@@ -190,12 +191,19 @@ pub(crate) fn generate_message_decoder(
 
     // Fixed-block-only decoders (no groups/var-data) are Copy: they have no
     // tail cursor, so copying cannot weaken an ordering invariant. Tailed
-    // decoders are NOT Copy/Clone — consumption enforces wire order.
+    // decoders are NOT Copy/Clone — consumption enforces wire order. The
+    // `Cell` boundary cache also makes them `Send` and not `Sync`.
     let derive_attr = if is_fixed {
         quote::quote! { #[derive(Clone, Copy)] }
     } else {
         quote::quote! {}
     };
+    let total_tail = msg.groups.len() + msg.var_data.len();
+    // The base decoder carries no message-level cache: it is `Sync`, small, and
+    // recalculates tail offsets. `Decoder::memoized(self)` is the opt-in lane
+    // that adds one (see `memoized_decoder.rs`).
+    let cache_field = proc_macro2::TokenStream::new();
+    let cache_init = proc_macro2::TokenStream::new();
     if let Some(ref desc) = msg.description {
         ts.extend(doc_attr_tokens(desc));
     }
@@ -208,6 +216,7 @@ pub(crate) fn generate_message_decoder(
             pub(crate) offset: usize,
             pub(crate) acting_version: u16,
             pub(crate) acting_block_length: usize,
+            #cache_field
         }
     });
 
@@ -390,6 +399,7 @@ pub(crate) fn generate_message_decoder(
                 offset: body_offset,
                 acting_block_length,
                 acting_version,
+                #cache_init
             }
         }
     });
@@ -1103,19 +1113,11 @@ pub(crate) fn generate_message_decoder(
         }
     }
 
-    let total_tail = msg.groups.len() + msg.var_data.len();
-
-    // tail_offset_0
     impl_body.extend(quote::quote! {
         /// Byte offset of the message body within `self.buf`.
         #[inline]
         fn byte_offset(&self) -> usize {
             self.offset
-        }
-
-        #[inline]
-        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
-            Ok(self.byte_offset() + self.acting_block_length)
         }
     });
 
@@ -1131,101 +1133,23 @@ pub(crate) fn generate_message_decoder(
             }
         })
         .collect();
-    let mut k = 0usize;
-    for (gi, g) in msg.groups.iter().enumerate() {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &g.dimension_type);
-        let g_pascal = &group_unique_names[gi];
-        let _dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let _count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let _bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let _g_entry_ident = syn::Ident::new(
-            &format!("{}EntryDecoder", g_pascal),
-            proc_macro2::Span::call_site(),
-        );
-        let k1 = k + 1;
-        let tail_k_ident = format_ident!("tail_offset_{k}");
-        let tail_k1_ident = format_ident!("tail_offset_{k1}");
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let dn_ident: syn::Ident = syn::parse_str(&dim_name).unwrap();
-        let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let gn_lit = g.name.as_str();
-        let entry_decoder_ident = syn::Ident::new(
-            &format!("{}EntryDecoder", g_pascal),
-            proc_macro2::Span::call_site(),
-        );
-
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_ident()?;
-                if start + #dim_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #gn_lit,
-                        needed: #dim_size_lit,
-                        available: self.buf.len().saturating_sub(start),
-                    });
-                }
-                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
-                let header = #dn_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#cf_ident() as u64,
-                )?;
-                let block_len = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bf_ident() as u64,
-                )?;
-                let mut offset = start + #dim_size_lit;
-                let mut idx = 0;
-                while idx < count {
-                    offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
-                    idx += 1;
-                }
-                Ok(offset)
-            }
-        });
-        k += 1;
-    }
-
-    // VarData tail offsets
-    for vd in &msg.var_data {
-        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let prefix_size_lit =
-            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
-        let tail_k_ident = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_ident = quote::format_ident!("tail_offset_{}", k + 1);
-        impl_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_ident()?;
-                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #vd_name_lit,
-                        needed: #prefix_size_lit,
-                        available: self.buf.len().saturating_sub(start),
-                    });
-                }
-                let bytes: [u8; #prefix_size_lit] =
-                    read_bytes::<#prefix_size_lit>(self.buf, start);
-                let header = #vd_type_ident(bytes);
-                let wire_length = header.#vd_len_field_ident() as u64;
-                let (_, data_end) = sbe_rt::checked_var_data_bounds(
-                    #vd_name_lit,
-                    start,
-                    #prefix_size_lit,
-                    wire_length,
-                    self.buf.len(),
-                )?;
-                Ok(data_end)
-            }
-        });
-        k += 1;
-    }
+    let entry_skip: Vec<syn::Ident> = group_unique_names
+        .iter()
+        .map(|g_pascal| {
+            syn::Ident::new(
+                &format!("{g_pascal}EntryDecoder"),
+                proc_macro2::Span::call_site(),
+            )
+        })
+        .collect();
+    impl_body.extend(super::tail_cache::emit_tail_offsets(
+        &msg.groups,
+        &msg.var_data,
+        elements,
+        &entry_skip,
+        quote::quote! { Ok(self.byte_offset() + self.acting_block_length) },
+        quote::quote! { self.offset },
+    ));
 
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
@@ -1256,8 +1180,9 @@ pub(crate) fn generate_message_decoder(
             quote::quote! {}
         };
         impl_body.extend(quote::quote! {
+            #mu
             #[inline]
-            fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
+            pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#tail_offset_ident()?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
@@ -1305,11 +1230,15 @@ pub(crate) fn generate_message_decoder(
         if let Some(ref desc) = vd.description {
             impl_body.extend(doc_attr_tokens(desc));
         }
+        let vd_slot_lit = syn::LitInt::new(&vd_idx.to_string(), proc_macro2::Span::call_site());
+        let vd_cache_hit = proc_macro2::TokenStream::new();
+        let vd_cache_publish = proc_macro2::TokenStream::new();
         impl_body.extend(quote::quote! {
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_ident()?;
+                #vd_cache_hit
                 if offset + #prefix_size_lit > self.buf.len() {
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_snake_ident),
@@ -1339,83 +1268,24 @@ pub(crate) fn generate_message_decoder(
                     wire_length,
                     self.buf.len(),
                 )?;
+                #vd_cache_publish
                 Ok(&self.buf[data_start..data_end])
             }
         });
 
-        #[allow(clippy::collapsible_else_if)]
-        if vd.character_encoding.as_deref() == Some("UTF-8") {
-            let str_ident = syn::Ident::new(
-                &format!("{vd_snake}_as_str"),
-                proc_macro2::Span::call_site(),
-            );
-            let vd_snake_str = vd_snake.clone();
-            impl_body.extend(quote::quote! {
-                /// View this UTF-8 var-data field as `&str`.
-                #[inline]
-                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
-                        field: #vd_snake_str,
-                        error: e,
-                    })
-                }
-            });
-            let str_unchecked = syn::Ident::new(
-                &format!("{vd_snake}_as_str_unchecked"),
-                proc_macro2::Span::call_site(),
-            );
-            impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without character
-                /// encoding validation. Structural bounds are still checked.
-                ///
-                /// # Safety
-                ///
-                /// The wire bytes must be valid UTF-8.
-                #[inline]
-                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
-        } else if vd.character_encoding.as_deref() == Some("ASCII") {
-            let str_ident = syn::Ident::new(
-                &format!("{vd_snake}_as_str"),
-                proc_macro2::Span::call_site(),
-            );
-            let vd_snake_str = vd_snake.clone();
-            impl_body.extend(quote::quote! {
-                /// View this ASCII var-data field as `&str`.
-                #[inline]
-                pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    if bytes.iter().any(|b| *b > 0x7F) {
-                        return Err(sbe_rt::DecodeError::InvalidAscii {
-                            field: #vd_snake_str,
-                        });
-                    }
-                    // Valid 7-bit ASCII is always valid UTF-8.
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
-            let str_unchecked = syn::Ident::new(
-                &format!("{vd_snake}_as_str_unchecked"),
-                proc_macro2::Span::call_site(),
-            );
-            impl_body.extend(quote::quote! {
-                /// View this text var-data field as `&str` without ASCII
-                /// validation. Structural bounds remain fallible.
-                ///
-                /// # Safety
-                ///
-                /// The wire bytes must be 7-bit ASCII. For ASCII-declared
-                /// fields from a trusted source this is always true.
-                #[inline]
-                pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-                    let bytes = self.#vd_snake_ident()?;
-                    Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-                }
-            });
+        // Unless a fixed field already claims the derived name — same rule
+        // as the group-entry guard in `group_decoder.rs`: a field the author
+        // explicitly called `noteAsStr` wins the name over the var-data
+        // helper, rather than colliding and failing to compile.
+        let claims_taken = msg.fields.iter().any(|f| {
+            let n = to_snake_case(&f.name);
+            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+        });
+        if !claims_taken {
+            impl_body.extend(vardata_text_helpers(
+                &vd_snake,
+                vd.character_encoding.as_deref(),
+            ));
         }
         // Binary / unspecified encoding: no string helper at all. The caller
         // has the raw `_slice` / `into_<field>` accessors and can interpret
@@ -1433,7 +1303,13 @@ pub(crate) fn generate_message_decoder(
             /// message position. The consumed stage cannot be reused.
             #[inline]
             pub fn rewind(self) -> Self {
-                self
+                Self {
+                    buf: self.buf,
+                    offset: self.offset,
+                    acting_version: self.acting_version,
+                    acting_block_length: self.acting_block_length,
+                    #cache_init
+                }
             }
         });
     }
@@ -1891,6 +1767,20 @@ pub(crate) fn generate_message_decoder(
         &group_unique_names,
         enable_dispatch,
     ));
+    ts.extend(generate_ordered_decoder(
+        msg,
+        elements,
+        &name,
+        header_size,
+        byte_order,
+        multi_message,
+        &group_unique_names,
+        conversions,
+        domain_types,
+        enable_dispatch,
+        null_as_option,
+        all_enums_as_option,
+    ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)
     // Actually the impl block is opened but the `}` is emitted by the trait impls section above.
@@ -1920,5 +1810,93 @@ pub(crate) fn generate_message_decoder(
         ts.extend(domain_ts);
     }
 
+    // Opt-in memoized lane: `Decoder::memoized(self)` -> `MemoizedDecoder`.
+    // Emitted here because it needs the same scoped group names the base
+    // getters use, so both lanes name identical group decoder types.
+    ts.extend(super::generate_memoized_decoder(
+        msg,
+        elements,
+        &name,
+        &group_unique_names,
+        enable_display_debug,
+        conversions,
+        domain_types,
+        null_as_option,
+        all_enums_as_option,
+    ));
+
     (ts, marker_name)
+}
+
+/// `*_as_str` / `*_as_str_unchecked` helpers over a var-data byte accessor.
+///
+/// Emitted for the base decoder and the memoized wrapper from this one place.
+/// Both types name the raw accessor identically (`vd_snake`) and both return
+/// `&'a [u8]` borrowed from the wire, so the helpers are the same tokens —
+/// which is the point: a lane that emitted only part of this surface would
+/// silently drop `*_as_str_unchecked` and every ASCII helper, and a caller
+/// swapping lanes would hit a missing method.
+///
+/// Binary / unspecified encoding gets no string helper at all: the caller
+/// decides what the bytes mean.
+pub(crate) fn vardata_text_helpers(
+    vd_snake: &str,
+    character_encoding: Option<&str>,
+) -> proc_macro2::TokenStream {
+    let span = proc_macro2::Span::call_site();
+    let vd_ident = syn::Ident::new(vd_snake, span);
+    let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), span);
+    let str_unchecked = syn::Ident::new(&format!("{vd_snake}_as_str_unchecked"), span);
+    let field_lit = syn::LitStr::new(vd_snake, span);
+
+    let kind = super::runtime::text_encoding_kind(character_encoding);
+    let checked = match kind {
+        Some(super::runtime::TextEncoding::Utf8) => quote::quote! {
+            /// View this UTF-8 var-data field as `&str`.
+            #[inline]
+            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_ident()?;
+                core::str::from_utf8(bytes).map_err(|e| sbe_rt::DecodeError::InvalidUtf8 {
+                    field: #field_lit,
+                    error: e,
+                })
+            }
+        },
+        Some(super::runtime::TextEncoding::Ascii) => quote::quote! {
+            /// View this ASCII var-data field as `&str`.
+            #[inline]
+            pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_ident()?;
+                if bytes.iter().any(|b| *b > 0x7F) {
+                    return Err(sbe_rt::DecodeError::InvalidAscii { field: #field_lit });
+                }
+                // Valid 7-bit ASCII is always valid UTF-8.
+                Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+            }
+        },
+        None => return proc_macro2::TokenStream::new(),
+    };
+
+    let safety_note = if matches!(kind, Some(super::runtime::TextEncoding::Ascii)) {
+        "The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true."
+    } else {
+        "The wire bytes must be valid UTF-8."
+    };
+    let safety_lit = syn::LitStr::new(safety_note, span);
+
+    quote::quote! {
+        #checked
+
+        /// View this text var-data field as `&str` without character encoding
+        /// validation. Structural bounds are still checked.
+        ///
+        /// # Safety
+        ///
+        #[doc = #safety_lit]
+        #[inline]
+        pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+            let bytes = self.#vd_ident()?;
+            Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+        }
+    }
 }

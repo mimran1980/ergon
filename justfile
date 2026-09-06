@@ -406,11 +406,17 @@ bench-historic-update:
     scripts/update-historic-baseline.sh
 
 # Expanded non-gating codec matrix and offset/alignment diagnostics.
+# `versioned_l3_bench` is ergon-vs-ergon (base lane vs `.memoized()`, access
+# order) — it has no sbe-tool arm, so it informs the lane guidance in the book
+# rather than gating a ratio. Both LTO profiles, because the cache changes
+# decoder size and inlining.
 bench-diagnostics:
     cargo bench -p ergo-sbe-benchmarks --bench codec_matrix_bench
     cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
     cargo bench -p ergo-sbe-benchmarks --bench cold_path_bench
     cargo bench -p ergo-sbe-benchmarks --bench latency_distribution
+    cargo bench -p ergo-sbe-benchmarks --bench versioned_l3_bench
+    CARGO_TARGET_DIR=target/bench-no-lto CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p ergo-sbe-benchmarks --bench versioned_l3_bench
 
 # Fresh generated-crate compile/source/binary-size report.
 bench-cold:
@@ -422,6 +428,13 @@ bench-cold:
 # than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
+
+# Same mechanism-level evidence as `bench-instructions`, for cluster codec
+# pairs — currently `cluster_decode_session_event`, the pair carrying a
+# documented no-LTO-only wall-clock allowance (see check-bench-gate.sh).
+# Same Linux/Valgrind/llvm-objdump requirement and fail-closed contract.
+bench-cluster-instructions:
+    ./scripts/run-cluster-instruction-probes.sh --all-profiles
 
 # Regenerate the two sbe-tool comparators the head-to-head benches measure
 # against, from the pinned simple-binary-encoding submodule.

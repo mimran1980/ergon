@@ -208,6 +208,11 @@ const VARIANTS: &[Variant] = &[
         build: |c| with_matrix_domain_types(c.profile(GenerationProfile::Lean)),
     },
     Variant {
+        name: "flyweight_encode_version_0",
+        domain_impls: false,
+        build: |c| c.with_encode_version(0),
+    },
+    Variant {
         name: "domain_objects_null_as_option",
         domain_impls: true,
         build: |c| {

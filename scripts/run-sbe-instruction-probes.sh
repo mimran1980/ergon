@@ -121,12 +121,12 @@ for profile in "${PROFILES[@]}"; do
         env CARGO_TARGET_DIR="$target_dir" \
             CARGO_PROFILE_RELEASE_LTO=false \
             CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
-            cargo build --release -p ergo-sbe-benchmarks --bin perf-probe
+            cargo build --release -p ergo-sbe-benchmarks --bin perf_probe
     else
         env CARGO_TARGET_DIR="$target_dir" \
-            cargo build --release -p ergo-sbe-benchmarks --bin perf-probe
+            cargo build --release -p ergo-sbe-benchmarks --bin perf_probe
     fi
-    binary="$target_dir/release/perf-probe"
+    binary="$target_dir/release/perf_probe"
 
     # The binary's own registry must match the checked-in manifest exactly.
     "$binary" --list > "$profile_dir/probes-actual.tsv"

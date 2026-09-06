@@ -22,7 +22,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5,
     };
 
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -44,7 +44,7 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
             category: InstCategory::Spot,
             padding: Padding5([0u8; 5]),
         })
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -62,12 +62,8 @@ fn bitget_best_bid_ask_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoder.seq(), 42, "seq");
     assert_eq!(decoder.sts(), 99, "sts");
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
-    let (symbol_bytes, _complete) = decoder.into_symbol().expect("symbol");
-    assert_eq!(
-        core::str::from_utf8(symbol_bytes).expect("symbol_as_str"),
-        "BTCUSDT",
-        "symbol"
-    );
+    let (symbol, _complete) = decoder.into_symbol_as_str().expect("symbol");
+    assert_eq!(symbol, "BTCUSDT", "symbol");
 
     Ok(())
 }
@@ -78,7 +74,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
         BestBidAskDecoder, BestBidAskEncoder, BestBidAskFixedFields, InstCategory, Padding5,
     };
 
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -99,7 +95,7 @@ fn bitget_best_bid_ask_verify_passes() -> Result<(), Box<dyn std::error::Error>>
             category: InstCategory::Spot,
             padding: Padding5([0u8; 5]),
         })
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .unwrap();
     let encoded = complete.as_bytes_with_header();
 
@@ -118,7 +114,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     let asks_count = 3u16;
     let bids_count = 2u16;
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let buf_len = Depth50Encoder::compute_encoded_length_with_message_header(
         asks_count as usize,
         bids_count as usize,
@@ -180,7 +176,7 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         })
         .expect("bids encoding should succeed");
     let complete = after_bids
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -218,9 +214,9 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let (symbol, _done) = bids
         .finish()
         .expect("finish bids")
-        .into_symbol()
+        .into_symbol_as_str()
         .expect("symbol decode");
-    assert_eq!(core::str::from_utf8(symbol).unwrap(), "BTCUSDT", "symbol");
+    assert_eq!(symbol, "BTCUSDT", "symbol");
 
     Ok(())
 }
@@ -312,7 +308,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let trades_count = 2u16;
-    let symbol = b"ETHUSDT";
+    let symbol = "ETHUSDT";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -357,7 +353,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -392,12 +388,8 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     // Advance past the trades group to access the trailing var-data symbol
     let after_trades = trades.finish().expect("finish trades");
-    let (symbol_bytes, _complete) = after_trades.into_symbol().expect("symbol");
-    assert_eq!(
-        core::str::from_utf8(symbol_bytes).expect("symbol_as_str"),
-        "ETHUSDT",
-        "symbol"
-    );
+    let (symbol, _complete) = after_trades.into_symbol_as_str().expect("symbol");
+    assert_eq!(symbol, "ETHUSDT", "symbol");
 
     Ok(())
 }
@@ -410,7 +402,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
 
     let sts_max = u64::MAX;
     let trades_count = 1u16;
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -442,7 +434,7 @@ fn bitget_trade_max_uint64() -> Result<(), Box<dyn std::error::Error>> {
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -460,7 +452,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let trades_count = 1u16;
-    let symbol = b"";
+    let symbol = "";
     let buf_len = TradeEncoder::compute_encoded_length(trades_count as usize, symbol.len()) + 8;
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -492,7 +484,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
         })
         .expect("trades encoding should succeed");
     let complete = after_trades
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -513,8 +505,8 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(entry.size(), 0, "entry size");
     assert_eq!(entry.side(), TradeSide::Buy, "entry side");
     let after_trades = trades.finish().expect("finish trades");
-    let (symbol_bytes, _complete) = after_trades.into_symbol().expect("symbol");
-    assert_eq!(symbol_bytes, b"", "empty symbol");
+    let (symbol, _complete) = after_trades.into_symbol_as_str().expect("symbol");
+    assert_eq!(symbol, "", "empty symbol");
 
     Ok(())
 }
@@ -528,7 +520,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         WebSocketSessionLogonResponseFixedFields,
     };
 
-    let api_key = b"my-test-api-key";
+    let api_key = "my-test-api-key";
     let buf_len = WebSocketSessionLogonResponseEncoder::compute_encoded_length_with_message_header(
         api_key.len(),
     );
@@ -546,7 +538,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
             server_time: 1712345680000000i64,
             user_data_stream: Some(BoolEnum::False),
         })
-        .logged_on_api_key(api_key)
+        .logged_on_api_key_as_str(api_key)
         .expect("logged_on_api_key encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -575,12 +567,10 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         BoolEnum::False,
         "user_data_stream"
     );
-    let (api_key_bytes, _complete) = decoder.into_logged_on_api_key().expect("logged_on_api_key");
-    assert_eq!(
-        core::str::from_utf8(api_key_bytes).expect("logged_on_api_key_as_str"),
-        "my-test-api-key",
-        "logged_on_api_key"
-    );
+    let (api_key, _complete) = decoder
+        .into_logged_on_api_key_as_str()
+        .expect("logged_on_api_key");
+    assert_eq!(api_key, "my-test-api-key", "logged_on_api_key");
 
     Ok(())
 }
@@ -595,7 +585,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     };
 
     let rate_limits_count = 2u16;
-    let id = b"test-id-1";
+    let id = "test-id-1";
     let result = b"{\"data\":\"ok\"}";
     let buf_len = WebSocketResponseEncoder::compute_encoded_length(
         rate_limits_count as usize,
@@ -640,7 +630,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
         })
         .expect("rate_limits encoding should succeed");
     let after_id = after_rate_limits
-        .id(id)
+        .id_as_str(id)
         .expect("id encoding should succeed");
     let complete = after_id
         .result(result)
@@ -698,12 +688,10 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
 
     // Advance past rate_limits to access trailing var-data fields
     let after_rates = rate_limits.finish().expect("finish rate_limits");
-    let (id_bytes, after_id) = after_rates.into_id().expect("id");
-    assert_eq!(
-        core::str::from_utf8(id_bytes).expect("id_as_str"),
-        "test-id-1",
-        "id"
-    );
+    let (id, after_id) = after_rates.into_id_as_str().expect("id");
+    assert_eq!(id, "test-id-1", "id");
+    // `result` (schema type `messageData`) is a raw nested-SBE payload, not
+    // characterEncoding-declared text — no `_as_str` accessor exists for it.
     let (result_bytes, _complete) = after_id.into_result().expect("result");
     assert_eq!(
         core::str::from_utf8(result_bytes).expect("result_as_str"),
@@ -748,7 +736,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
     };
 
     // Encode a valid bitget BestBidAsk message
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let buf_len = BestBidAskEncoder::compute_encoded_length_with_message_header(symbol.len());
     let mut buf_storage = [0u8; 8192];
     assert!(buf_len <= buf_storage.len(), "len exceeds stack pad");
@@ -769,7 +757,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
             category: InstCategory::Spot,
             padding: Padding5([0u8; 5]),
         })
-        .symbol(symbol)
+        .symbol_as_str(symbol)
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
@@ -950,7 +938,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let bids_count: u16 = 2;
     let asks_count: u16 = 1;
 
@@ -1007,7 +995,7 @@ fn app_message_l2book_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(())
                 })
                 .unwrap();
-            let book = book.symbol(symbol).unwrap();
+            let book = book.symbol_as_str(symbol).unwrap();
             let _ = book.as_bytes_with_header();
             Ok(())
         })

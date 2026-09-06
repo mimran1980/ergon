@@ -120,6 +120,7 @@ fn decoder_getters_are_must_use() -> Result<(), Box<dyn std::error::Error>> {
         "acting_version",
         "acting_block_length",
         "get_metadata",
+        "remaining_entries",
     ] {
         assert_method_has_must_use(&src, m);
     }

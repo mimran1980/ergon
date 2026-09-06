@@ -66,6 +66,7 @@ pub(crate) fn generate_group_decoder(
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
     let bulk_decode_eligible = g.has_fixed_stride()
+        && super::runtime::encodable_at(g.since_version)
         && g.fields.iter().all(|f| {
             f.presence == Presence::Constant
                 || (f.presence != Presence::Optional && f.since_version == 0)
@@ -103,9 +104,13 @@ pub(crate) fn generate_group_decoder(
     // resolved once at wrap and stored, so the per-entry cost in the iteration
     // hot path is one subtraction and one comparison, not a re-run of the
     // version-branch chain in `min_readable_fixed_extent`.
-    let (dyn_extent_field, dyn_extent_decl, dyn_extent_init, dyn_extent_reinit) = if g
-        .has_dynamic_entries()
-    {
+    let (
+        dyn_extent_field,
+        dyn_extent_decl,
+        dyn_extent_init,
+        dyn_extent_reinit,
+        dyn_extent_init_absent,
+    ) = if g.has_dynamic_entries() {
         (
             quote::quote! { min_entry_extent: usize, },
             quote::quote! {
@@ -113,11 +118,13 @@ pub(crate) fn generate_group_decoder(
             },
             quote::quote! { min_entry_extent, },
             quote::quote! { min_entry_extent: attached.min_entry_extent, },
+            quote::quote! { min_entry_extent: 0, },
         )
     } else {
         // A fixed-stride group proves its whole entry region at wrap time, so
         // it needs no per-entry extent and carries no field for one.
         (
+            proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
             proc_macro2::TokenStream::new(),
@@ -270,10 +277,52 @@ pub(crate) fn generate_group_decoder(
                 })
             }
 
+            /// Attached decoder for a group that is not in the acting version:
+            /// zero entries, zero bytes, immediately complete.
+            ///
+            /// # Safety
+            /// `parent_pos` and `parent_block_length` must describe the message
+            /// body this group is nested in, and `offset` must be the byte
+            /// position where this group would have started had it been present.
+            #[inline]
+            unsafe fn wrap_absent_parent(
+                buf: &'a [u8],
+                offset: usize,
+                acting_version: u16,
+                parent_pos: usize,
+                parent_block_length: usize,
+            ) -> #decoder_ident<'a, sbe_rt::Attached> {
+                #decoder_ident {
+                    buf,
+                    offset,
+                    count: 0,
+                    start: offset,
+                    total: 0,
+                    acting_version,
+                    acting_block_length: 0,
+                    parent_pos,
+                    parent_block_length,
+                    #poison_init
+                    #dyn_extent_init_absent
+                    _context: core::marker::PhantomData,
+                }
+            }
+
             #mu
             #[inline]
             pub fn is_empty(&self) -> bool {
                 self.count == 0
+            }
+
+            /// Wire-declared entries not yet consumed.
+            ///
+            /// O(1): `into_*` already read the SBE dimension header containing
+            /// `numInGroup`. This does not promise that remaining entries will
+            /// decode, so dynamic groups are not [`core::iter::ExactSizeIterator`].
+            #mu
+            #[inline]
+            pub const fn remaining_entries(&self) -> usize {
+                self.count
             }
         }
 
@@ -341,10 +390,12 @@ pub(crate) fn generate_group_decoder(
         impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
             /// Entries not yet advanced (count), not a byte slice.
             /// For message-level byte tails use `get_metadata().remaining()`.
+            /// Prefer [`Self::remaining_entries`] at call sites that mean
+            /// group cardinality rather than a byte tail.
             #mu
             #[inline]
             pub const fn remaining(&self) -> usize {
-                self.count
+                self.remaining_entries()
             }
 
             /// Dimension wrap after the caller has proven
@@ -468,6 +519,9 @@ pub(crate) fn generate_group_decoder(
         // every valid acting version: flat, required, since-v0 fields. An
         // optional or versioned field has no representation in a plain struct,
         // so a bulk row would have to fabricate a value for something absent.
+        // Groups the configured `encode_version` drops are excluded: their
+        // encoder is not generated, and it owns the `{Group}Entry` struct that
+        // `bulk_decode` names. Under default generation every group qualifies.
         let bulk_methods = if bulk_decode_eligible {
             quote::quote! {
                 /// Bulk-decode all remaining entries into a caller-owned `Vec`.
@@ -777,6 +831,19 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
+    // Entry decoders keep a one-shot extent cache in every lane: the group
+    // iterator computes each entry's end to advance, and the last var-data
+    // accessor reuses it instead of re-reading its length header. Dropping it
+    // makes full-message decode lose to sbe-tool, which the
+    // `decode_full_message` gate measures. The message-level progressive cache
+    // is a separate, opt-in lane (`memoized_decoder.rs`).
+    let entry_cache_init = quote::quote! { tail_end: core::cell::Cell::new(None), };
+    let entry_cache_field = quote::quote! {
+        /// One-shot entry-extent cache: filled by `encoded_length`, reused by
+        /// the last var-data accessor. `Cell` keeps `&self` getters and makes
+        /// the entry `Send` + `!Sync`.
+        tail_end: core::cell::Cell<Option<usize>>,
+    };
 
     // wrap() method header. Entries with tail components carry a one-shot
     // tail-end cache: the group iterator computes the entry extent to
@@ -829,7 +896,7 @@ pub(crate) fn generate_group_decoder(
                     offset,
                     acting_version,
                     acting_block_length,
-                    tail_end: core::cell::Cell::new(None),
+                    #entry_cache_init
                 }
             }
         });
@@ -1327,9 +1394,20 @@ pub(crate) fn generate_group_decoder(
         }
     }
 
-    entry_body.extend(quote::quote! {
-        #[inline]
-        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    let nested_entry_skip: Vec<syn::Ident> = g
+        .groups
+        .iter()
+        .map(|ng| {
+            let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
+            quote::format_ident!("{}EntryDecoder", ng_pascal)
+        })
+        .collect();
+    entry_body.extend(super::tail_cache::emit_tail_offsets(
+        &g.groups,
+        &g.var_data,
+        elements,
+        &nested_entry_skip,
+        quote::quote! {
             if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "group entry",
@@ -1338,84 +1416,9 @@ pub(crate) fn generate_group_decoder(
                 });
             }
             Ok(self.offset + self.acting_block_length)
-        }
-    });
-
-    let mut k = 0usize;
-    for ng in &g.groups {
-        let (dim_name, dim_size, bl_field, count_field) =
-            get_dimension_info(elements, &ng.dimension_type);
-        let ng_pascal = format!("{}{}", name, to_pascal_case(&ng.name));
-        let ng_decoder_entry_ident = quote::format_ident!("{}EntryDecoder", ng_pascal);
-        let dim_name_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
-        let bl_field_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
-        let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let dim_size_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
-        let ng_name_lit = syn::LitStr::new(&ng.name, proc_macro2::Span::call_site());
-
-        let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
-        entry_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_fn()?;
-                if start + #dim_size_lit > self.buf.len() {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #ng_name_lit, needed: #dim_size_lit, available: self.buf.len().saturating_sub(start) });
-                }
-                let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
-                let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_len = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
-                let mut offset = start + #dim_size_lit;
-                let mut idx = 0;
-                while idx < count {
-                    offset = #ng_decoder_entry_ident::skip(self.buf, offset, block_len, self.acting_version)?;
-                    idx += 1;
-                }
-                Ok(offset)
-            }
-        });
-        k += 1;
-    }
-
-    for vd in &g.var_data {
-        let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
-        let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
-        let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
-        let prefix_size_lit =
-            syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
-
-        let tail_k_fn = quote::format_ident!("tail_offset_{}", k);
-        let tail_k1_fn = quote::format_ident!("tail_offset_{}", k + 1);
-        entry_body.extend(quote::quote! {
-            #[inline]
-            fn #tail_k1_fn(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#tail_k_fn()?;
-                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
-                    return Err(sbe_rt::DecodeError::BufferTooShort { field: #vd_name_lit, needed: #prefix_size_lit, available: self.buf.len().saturating_sub(start) });
-                }
-                let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, start);
-                let header = #type_pascal_ident(bytes);
-                let wire_length = header.#len_field_ident() as u64;
-                let (_, data_end) = sbe_rt::checked_var_data_bounds(
-                    #vd_name_lit,
-                    start,
-                    #prefix_size_lit,
-                    wire_length,
-                    self.buf.len(),
-                )?;
-                Ok(data_end)
-            }
-        });
-        k += 1;
-    }
+        },
+        quote::quote! { self.offset },
+    ));
 
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;
@@ -1427,13 +1430,35 @@ pub(crate) fn generate_group_decoder(
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
         let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        let ng_snake_str = ng_snake.clone();
+        let version_check = if ng.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &ng.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #ng_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #since_lit,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
+        // A warm entry cache proves the whole entry extent was validated, so
+        // the nested dim header is known in-bounds and `wrap_trusted` is sound
+        // here. The two modes spell "warm" differently; both are one load.
+        let entry_extent_known = quote::quote! { self.tail_end.get().is_some() };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
                 // `Iterator::next` cached the complete validated entry extent,
                 // so this first-tail offset cannot overflow or exceed `buf`.
-                if self.tail_end.get().is_some() {
+                if #entry_extent_known {
                     let offset = self.offset + self.acting_block_length;
-                    // SAFETY: tail_end proves the nested group dim is in-bounds.
+                    // SAFETY: a warm entry cache proves the nested dim is in-bounds.
                     return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
@@ -1444,19 +1469,23 @@ pub(crate) fn generate_group_decoder(
         } else {
             quote::quote! {}
         };
+        let trusted_ng_wrap = quote::quote! {
+            if #entry_extent_known {
+                // SAFETY: tail_offset_* validated the nested dim header region.
+                return unsafe {
+                    #ng_decoder_ident::wrap_trusted(
+                        self.buf, offset, self.acting_version, 0, 0,
+                    )
+                };
+            }
+        };
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
+                #version_check
                 #cached_first_tail
                 let offset = self.#tail_ng_fn()?;
-                if self.tail_end.get().is_some() {
-                    // SAFETY: tail_offset_* validated the nested dim header region.
-                    return unsafe {
-                        #ng_decoder_ident::wrap_trusted(
-                            self.buf, offset, self.acting_version, 0, 0,
-                        )
-                    };
-                }
+                #trusted_ng_wrap
                 #ng_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
         });
@@ -1473,12 +1502,35 @@ pub(crate) fn generate_group_decoder(
         let vd_snake = to_snake_case(&vd.name);
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
+        let vd_snake_str = vd_snake.clone();
+        let version_check = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &vd.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            quote::quote! {
+                if self.acting_version < #since_lit {
+                    return Err(sbe_rt::DecodeError::FieldNotInVersion {
+                        field: #vd_snake_str,
+                        wire_version: self.acting_version,
+                        since_version: #since_lit,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         if nvd_idx + 1 == total_tail {
+            let last_slot = syn::LitInt::new(
+                &(total_tail.saturating_sub(1)).to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            let warm_entry_end = quote::quote! { self.tail_end.get() };
             let cached_first_tail = if nvd_idx == 0 {
                 quote::quote! {
                     // `Iterator::next` cached the complete validated entry
                     // extent, including this prefix and payload.
-                    if let Some(end) = self.tail_end.get() {
+                    if let Some(end) = #warm_entry_end {
                         let data_offset =
                             self.offset + self.acting_block_length + #prefix_size_lit;
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
@@ -1487,30 +1539,31 @@ pub(crate) fn generate_group_decoder(
             } else {
                 quote::quote! {}
             };
-            // Last tail component: a warm tail-end cache (filled by the
-            // iterator's encoded_length) gives the slice end directly —
-            // no second length-header read, bounds already validated.
+            // Last tail component: a warm cache (filled by the iterator's
+            // encoded_length) gives the slice end directly — no second
+            // length-header read, bounds already validated.
+            let nvd_cache_hit_last = quote::quote! {
+                if let Some(end) = self.tail_end.get() {
+                    let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
+                        sbe_rt::DecodeError::BufferTooShort {
+                            field: stringify!(#vd_snake_ident),
+                            needed: usize::MAX,
+                            available: self.buf.len().saturating_sub(offset),
+                        },
+                    )?;
+                    // SAFETY: a warm `tail_end` proves this entry's extent was
+                    // validated when the iterator computed it.
+                    return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
+                }
+            };
+            let nvd_cache_publish = proc_macro2::TokenStream::new();
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #version_check
                     #cached_first_tail
                     let offset = self.#tail_nvd_fn()?;
-                    if let Some(end) = self.tail_end.get() {
-                        let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
-                            sbe_rt::DecodeError::BufferTooShort {
-                                field: stringify!(#vd_snake_ident),
-                                needed: usize::MAX,
-                                available: self.buf.len().saturating_sub(offset),
-                            },
-                        )?;
-                        // SAFETY: `tail_end` is only ever set by
-                        // `encoded_length` from `tail_offset_N`, which
-                        // bounds-checked `end <= buf.len()` and
-                        // `data_offset <= end` before caching. Same
-                        // invariant class as the existing generated
-                        // `from_raw_parts` accessors.
-                        return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
-                    }
+                    #nvd_cache_hit_last
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
@@ -1521,14 +1574,21 @@ pub(crate) fn generate_group_decoder(
                         wire_length,
                         self.buf.len(),
                     )?;
+                    #nvd_cache_publish
                     Ok(&self.buf[data_start..data_end])
                 }
             });
         } else {
+            // Only the LAST tail's end coincides with the entry extent, so a
+            // mid-entry var-data field has no one-shot cache to consult.
+            let nvd_cache_hit_mid = proc_macro2::TokenStream::new();
+            let nvd_cache_publish = proc_macro2::TokenStream::new();
             entry_body.extend(quote::quote! {
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
+                    #version_check
                     let offset = self.#tail_nvd_fn()?;
+                    #nvd_cache_hit_mid
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
@@ -1539,9 +1599,33 @@ pub(crate) fn generate_group_decoder(
                         wire_length,
                         self.buf.len(),
                     )?;
+                    #nvd_cache_publish
                     Ok(&self.buf[data_start..data_end])
                 }
             });
+        }
+        // Same text helpers as the message-level accessor. A group entry's
+        // var-data is text or binary for exactly the same reason the message's
+        // is — the schema says so — so it gets the same `*_as_str` /
+        // `*_as_str_unchecked` surface under the same names. Emitting them only
+        // at message level forced callers to drop to `&[u8]` inside a group and
+        // re-validate by hand.
+        //
+        // Unless the schema already used the name. Entry fields keep their
+        // schema names in *every* entry location — decoder, ordered decoder,
+        // encoder, DTO — so renaming one to free up `<vd>_as_str` would give
+        // the same field different names per location, which is exactly what
+        // the naming rule forbids. A field the author explicitly called
+        // `noteAsStr` wins the name; `note()` still returns the bytes.
+        let claims_taken = g.fields.iter().any(|f| {
+            let n = to_snake_case(&f.name);
+            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+        });
+        if !claims_taken {
+            entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
+                &vd_snake,
+                vd.character_encoding.as_deref(),
+            ));
         }
         nvd_idx += 1;
     }
@@ -1549,6 +1633,14 @@ pub(crate) fn generate_group_decoder(
     // encoded_length, skip — tail shape is a compile-time constant;
     // emit only the live path (no dead branch in the generated source).
     let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
+    let entry_len_cache_hit = quote::quote! {
+        if let Some(end) = self.tail_end.get() {
+            return Ok(end - self.offset);
+        }
+    };
+    // Filled here, by the iterator call that computes the entry extent in
+    // order to advance to the next entry.
+    let entry_len_cache_publish = quote::quote! { self.tail_end.set(Some(end)); };
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
             #mu
@@ -1572,11 +1664,9 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-                if let Some(end) = self.tail_end.get() {
-                    return Ok(end - self.offset);
-                }
+                #entry_len_cache_hit
                 let end = self.#tail_total_fn()?;
-                self.tail_end.set(Some(end));
+                #entry_len_cache_publish
                 Ok(end - self.offset)
             }
             #[inline]
@@ -1806,9 +1896,7 @@ pub(crate) fn generate_group_decoder(
                 offset: usize,
                 acting_version: u16,
                 acting_block_length: usize,
-                /// One-shot entry-extent cache: filled by
-                /// `encoded_length`, reused by the last var-data accessor.
-                tail_end: core::cell::Cell<Option<usize>>,
+                #entry_cache_field
             }
         });
     }
@@ -1833,21 +1921,30 @@ pub(crate) fn generate_group_decoder(
 
     // Recursively generate nested group decoders — scope under parent group name
     // to avoid collisions when different parent groups have same-named children
+    // A group the encoder dropped drops its whole subtree, so nested decoders
+    // generated underneath it must not name encoder-owned entry structs either.
+    let nested_cap = if super::runtime::encodable_at(g.since_version) {
+        super::runtime::encode_version_cap()
+    } else {
+        None
+    };
     for ng in &g.groups {
         let nested_name = format!("{}{}", name, to_pascal_case(&ng.name));
-        ts.extend(generate_group_decoder(
-            ng,
-            elements,
-            byte_order,
-            &nested_name,
-            &conversions,
-            domain_types,
-            enable_meta_attributes,
-            enable_dispatch,
-            null_as_option,
-            all_enums_as_option,
-            enable_display_debug,
-        ));
+        ts.extend(super::runtime::with_encode_version_cap(nested_cap, || {
+            generate_group_decoder(
+                ng,
+                elements,
+                byte_order,
+                &nested_name,
+                &conversions,
+                domain_types,
+                enable_meta_attributes,
+                enable_dispatch,
+                null_as_option,
+                all_enums_as_option,
+                enable_display_debug,
+            )
+        }));
     }
 
     // Consuming entry-level tail stages for entries with nested groups and/or

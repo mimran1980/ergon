@@ -104,6 +104,90 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Nested dynamic `visit_entries`: bids → orders → orderId, then asks.
+#[test]
+fn decode_l3_through_visit_entries() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_visit_rt");
+    compile_and_run(
+        "l3_visit_rt",
+        &src,
+        r#"
+        let mut storage = [0u8; 512];
+        let len = L3BookEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&L3BookFixedFields { timestamp: 99, sequence: 7 })
+            .bids(2, |g| {
+                g.add(|mut lvl| {
+                    lvl.price(100).qty(10);
+                    lvl.orders(2, |o| {
+                        o.add(|mut ord| {
+                            ord.order_qty(4);
+                            ord.order_id(b"ord-1")
+                        })?;
+                        o.add(|mut ord| {
+                            ord.order_qty(6);
+                            ord.order_id(b"ord-2")
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                g.add(|mut lvl| {
+                    lvl.price(101).qty(5);
+                    lvl.orders(0, |_| Ok(()))
+                })?;
+                Ok(())
+            })?
+            .asks(1, |g| {
+                g.add(|mut lvl| {
+                    lvl.price(200).qty(20);
+                    lvl.orders(1, |o| {
+                        o.add(|mut ord| {
+                            ord.order_qty(8);
+                            ord.order_id(b"ask-1")
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let encoded = &storage[..len];
+
+        let dec = L3BookDecoder::try_decode(encoded, 0)?;
+        assert_eq!(dec.timestamp(), 99);
+        assert_eq!(dec.sequence(), 7);
+
+        let mut level_prices = Vec::new();
+        let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
+        let after_bids = dec.into_bids()?.visit_entries(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            level_prices.push(lvl.price());
+            let mut ids = Vec::new();
+            let complete = lvl.into_orders()?.visit_entries(|ord| -> Result<_, sbe_rt::DecodeError> {
+                let (id, complete) = ord.into_order_id()?;
+                ids.push(id.to_vec());
+                Ok(complete)
+            })?;
+            all_order_ids.push(ids);
+            Ok(complete)
+        })?;
+        assert_eq!(level_prices, vec![100i64, 101]);
+        assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
+
+        let mut ask_prices = Vec::new();
+        let done = after_bids.into_asks()?.visit_entries(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            ask_prices.push(lvl.price());
+            lvl.into_orders()?.visit_entries(|ord| -> Result<_, sbe_rt::DecodeError> {
+                let (_id, complete) = ord.into_order_id()?;
+                Ok(complete)
+            })
+        })?;
+        assert_eq!(ask_prices, vec![200i64]);
+        assert_eq!(done.encoded_length_with_header(), len);
+        assert_eq!(done.as_bytes_with_header(), encoded);
+    "#,
+    );
+    Ok(())
+}
+
 /// Compile-fail: `into_asks` does not exist on the initial `L3BookDecoder`; it
 /// is only on `L3BookDecoderAfterBids`. So decoding asks before bids cannot compile.
 #[test]

@@ -120,8 +120,7 @@ impl BookFollower {
             });
         }
         let after_asks = asks_dec.finish()?;
-        let (sym_bytes, _) = after_asks.into_symbol()?;
-        let symbol = std::str::from_utf8(sym_bytes).unwrap_or("");
+        let (symbol, _) = after_asks.into_symbol_as_str()?;
 
         let outcome = if self.book.is_serving() {
             self.apply_increment(term, seq, bids, asks, exchange_ts)

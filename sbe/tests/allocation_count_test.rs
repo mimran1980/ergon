@@ -117,6 +117,23 @@ fn warm_up_all() {
     let (_mfr, a1) = after_perf.into_manufacturer().unwrap();
     let (_mod, _a2) = a1.into_model().unwrap();
 
+    let cached = CarDecoder::try_from(BASELINE).unwrap();
+    let _ = cached.activation_code();
+    let _ = cached.manufacturer();
+    let _ = cached.fuel_figures();
+
+    let mut ordered = CarDecoder::try_from(BASELINE).unwrap().ordered();
+    ordered
+        .fuel_figures()
+        .unwrap()
+        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            let _ = entry.speed();
+            let _ = entry.usage_description()?;
+            Ok(())
+        })
+        .unwrap();
+    let _ = ordered.finish().unwrap();
+
     // Frame cursor — actually unwrap and inspect to settle lazy-inits
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
     let _ = black_box(msg);
@@ -193,6 +210,74 @@ fn raw_scalar_accessor_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
             car.available(),
             car.code(),
         ));
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn random_access_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    measure("random-access decode", || {
+        let car = CarDecoder::try_from(black_box(BASELINE)).unwrap();
+        black_box(car.serial_number());
+        black_box(car.activation_code().unwrap());
+        black_box(car.manufacturer().unwrap());
+        let fuel = car.fuel_figures().unwrap();
+        for entry in fuel {
+            let e = entry.unwrap();
+            black_box(e.speed());
+            black_box(e.usage_description().unwrap());
+        }
+        black_box(car.model().unwrap());
+        black_box(car.encoded_length_with_header().unwrap());
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn memoized_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    // The memoized lane claims O(1) construction and no heap traffic: the
+    // boundary cache is an inline `Cell` array, not a `Vec`. Same reads as the
+    // base-lane case above, out of wire order so the cache is exercised.
+    measure("memoized decode", || {
+        let car = CarDecoder::try_from(black_box(BASELINE))
+            .unwrap()
+            .memoized();
+        black_box(car.activation_code().unwrap());
+        black_box(car.serial_number());
+        black_box(car.manufacturer().unwrap());
+        let fuel = car.fuel_figures().unwrap();
+        for entry in fuel {
+            let e = entry.unwrap();
+            black_box(e.speed());
+            black_box(e.usage_description().unwrap());
+        }
+        black_box(car.model().unwrap());
+        black_box(car.encoded_length().unwrap());
+    });
+    Ok(())
+}
+
+#[test]
+#[serial(alloc_count)]
+fn mutable_ordered_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
+    measure("mutable ordered decode", || {
+        let mut car = CarDecoder::try_from(black_box(BASELINE)).unwrap().ordered();
+        black_box(car.serial_number());
+        car.fuel_figures()
+            .unwrap()
+            .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+                black_box(entry.speed());
+                black_box(entry.usage_description()?);
+                Ok(())
+            })
+            .unwrap();
+        car.performance_figures().unwrap().skip_remaining().unwrap();
+        black_box(car.manufacturer().unwrap());
+        black_box(car.model().unwrap());
+        black_box(car.activation_code().unwrap());
+        black_box(car.finish().unwrap().encoded_length_with_header());
     });
     Ok(())
 }

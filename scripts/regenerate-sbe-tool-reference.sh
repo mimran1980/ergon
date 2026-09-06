@@ -142,6 +142,7 @@ schemas=(
   "$ROOT/sbe/tests/fixtures/schemas/custom-header-layout-be-schema.xml|custom_header_layout_be"
   "$ROOT/sbe/tests/fixtures/schemas/uint64-vardata-be-schema.xml|uint64_vardata_be"
   "$ROOT/sbe/tests/fixtures/schemas/npe-small-header.xml|small_header"
+  "$ROOT/sbe/tests/fixtures/schemas/versioned-l3-v3.xml|versioned_l3"
 )
 
 cd "$SBE_UPSTREAM"

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/real-logic/simple-binary-encoding/master/sbe-tool/src/main/resources/sbe.xsd"
+    package="versionedl3"
+    id="42"
+    version="0"
+    semanticVersion="1.0"
+    description="L3 book snapshot version 0: encodes and decodes v0 wire"
+    byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSize">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varStringEncoding">
+            <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+    </types>
+    <sbe:message name="L3Book" id="1" blockLength="16">
+        <field name="timestamp" id="1" type="uint64" offset="0"/>
+        <field name="sequence" id="2" type="uint64" offset="8"/>
+        <group name="bids" id="10" dimensionType="groupSize" blockLength="16">
+            <field name="price" id="11" type="int64" offset="0"/>
+            <field name="qty" id="12" type="int64" offset="8"/>
+            <group name="orders" id="13" dimensionType="groupSize" blockLength="8">
+                <field name="orderQty" id="14" type="int64" offset="0"/>
+                <data name="orderId" id="15" type="varStringEncoding"/>
+            </group>
+        </group>
+        <group name="asks" id="30" dimensionType="groupSize" blockLength="16">
+            <field name="price" id="31" type="int64" offset="0"/>
+            <field name="qty" id="32" type="int64" offset="8"/>
+            <group name="askOrders" id="34" dimensionType="groupSize" blockLength="8">
+                <field name="orderQty" id="35" type="int64" offset="0"/>
+                <data name="orderId" id="36" type="varStringEncoding"/>
+            </group>
+        </group>
+        <data name="symbol" id="60" type="varStringEncoding"/>
+    </sbe:message>
+</sbe:messageSchema>
