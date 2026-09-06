@@ -11,6 +11,7 @@ use crate::structured_ir::{
 
 use super::conversion_helpers::field_has_conversion_free;
 use super::field_type::field_type_ident;
+use super::message_encoder::vardata_encode_str_setter;
 use super::runtime::{to_pascal_case, to_snake_case};
 
 pub(crate) fn generate_group_encoder(
@@ -816,6 +817,13 @@ pub(crate) fn generate_group_encoder(
         } else {
             quote::quote! {}
         };
+        let str_setter = vardata_encode_str_setter(
+            &vd_snake,
+            &vd.name,
+            vd.character_encoding.as_deref(),
+            &quote::quote! { #next_stage<'a> },
+            &g.fields,
+        );
         quote::quote! {
             #[inline]
             #[must_use]
@@ -847,6 +855,8 @@ pub(crate) fn generate_group_encoder(
                     offset: self.offset,
                 })
             }
+
+            #str_setter
         }
     };
 

@@ -792,6 +792,35 @@ pub(crate) fn schema_marker_ident(
     }
 }
 
+/// Which flavour of text a schema-declared `characterEncoding` names, or
+/// `None` for binary/unspecified var-data.
+pub(crate) enum TextEncoding {
+    Utf8,
+    Ascii,
+}
+
+/// Classifies a `characterEncoding` value for `*_as_str` accessor generation.
+///
+/// `characterEncoding` is free text in the SBE spec, not a closed enum —
+/// schemas legally spell UTF-8 as `UTF-8` or `UTF8`, and ASCII as `ASCII` or
+/// `US-ASCII` (case-insensitively). Every location that emits a `*_as_str`
+/// accessor — message decode, group-entry decode, memoized decode,
+/// mutable-ordered decode, message/entry encode — must agree on what counts
+/// as text through this one function. A narrower match in only some of those
+/// locations doesn't error; it silently drops the accessor there while
+/// leaving it present elsewhere, which is worse than an error and exactly
+/// the defect class this generator has shipped before.
+pub(crate) fn text_encoding_kind(character_encoding: Option<&str>) -> Option<TextEncoding> {
+    let enc = character_encoding?;
+    if enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8") {
+        Some(TextEncoding::Utf8)
+    } else if enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII") {
+        Some(TextEncoding::Ascii)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn to_snake_case(s: &str) -> String {
     let mut res = String::new();
     let mut prev_is_lower = false;

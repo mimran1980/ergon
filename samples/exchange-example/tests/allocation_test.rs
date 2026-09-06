@@ -13,8 +13,17 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// `ALLOC_COUNT` is process-global, but Rust's default test runner runs the
+/// tests in this binary concurrently on separate threads. Without this lock,
+/// `publish_claim_commit_zero_alloc`'s real Aeron/media-driver setup — which
+/// does allocate — can race with another test's before/after measurement
+/// window and inflate its count. One lock per test body serialises them
+/// within this process without requiring `--test-threads=1` globally.
+static ALLOC_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct CountingAllocator;
 unsafe impl GlobalAlloc for CountingAllocator {
@@ -49,6 +58,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
         Source, sbe_rt,
     };
 
+    let _guard = ALLOC_TEST_LOCK.lock().unwrap();
     warm_up();
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
@@ -82,7 +92,7 @@ fn encode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(())
                 })?
                 .asks(0, |_| Ok(()))?
-                .symbol(b"X")?;
+                .symbol_as_str("X")?;
             Ok(())
         })
         .unwrap();
@@ -105,6 +115,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
         L2BookEncoder, L2BookFixedFields, Source, sbe_rt,
     };
 
+    let _guard = ALLOC_TEST_LOCK.lock().unwrap();
     warm_up();
 
     let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(1, 0, 1);
@@ -138,7 +149,7 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(())
                     })?
                     .asks(0, |_| Ok(()))?
-                    .symbol(b"X")?;
+                    .symbol_as_str("X")?;
                 Ok(())
             })
             .unwrap();
@@ -174,6 +185,7 @@ fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use rusteron_client::cformat;
     use std::time::Duration;
 
+    let _guard = ALLOC_TEST_LOCK.lock().unwrap();
     let driver = rusteron_media_driver::testing::EmbeddedDriver::launch().expect("driver");
     let ctx = rusteron_client::AeronContext::new().expect("ctx");
     ctx.set_dir(&cformat!("{}", driver.dir())).expect("dir");

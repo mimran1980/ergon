@@ -47,8 +47,9 @@ pub type VarDataLevel<'a> = (
 pub type VarDataSide<'a> = [VarDataLevel<'a>];
 
 /// One `Depth3Test` level: `(name, items)` where each item is
-/// `(value, tag_bytes)`. Three nesting levels including the var-data tag.
-pub type Depth3Level<'a> = (u32, &'a [(u64, &'a [u8])]);
+/// `(value, tag)`. Three nesting levels including the var-data tag, which
+/// declares `characterEncoding="ASCII"` so it is `&str` here, not `&[u8]`.
+pub type Depth3Level<'a> = (u32, &'a [(u64, &'a str)]);
 
 /// Exact header-inclusive encoded length of an L3 book for the given ragged
 /// bids/asks + symbol, computed up-front via the staged `L3BookEncodedLength`.
@@ -58,7 +59,7 @@ pub type Depth3Level<'a> = (u32, &'a [(u64, &'a [u8])]);
 pub fn book_encoded_length(
     bids: &Side<'_>,
     asks: &Side<'_>,
-    symbol: &[u8],
+    symbol: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_bids = L3BookEncoder::compute_length().bids_ragged(bids.len() as u16, |g| {
         for (_, _, orders) in bids {
@@ -93,7 +94,7 @@ pub fn book_encoded_length(
 pub fn vardata_book_encoded_length(
     bids: &VarDataSide<'_>,
     asks: &VarDataSide<'_>,
-    symbol: &[u8],
+    symbol: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_bids =
         L3BookVarDataEncoder::compute_length().bids_ragged(bids.len() as u16, |g| {
@@ -133,7 +134,7 @@ pub fn encode_book(
     buf: &mut [u8],
     bids: &Side<'_>,
     asks: &Side<'_>,
-    symbol: &[u8],
+    symbol: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let complete = L3BookEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookFixedFields {
@@ -199,7 +200,7 @@ pub fn encode_book(
             }
             Ok(())
         })?
-        .symbol(symbol)?;
+        .symbol_as_str(symbol)?;
     Ok(complete.encoded_length_with_header())
 }
 // ANCHOR_END: encode_book
@@ -209,7 +210,7 @@ pub fn encode_vardata_book(
     buf: &mut [u8],
     bids: &VarDataSide<'_>,
     asks: &VarDataSide<'_>,
-    symbol: &[u8],
+    symbol: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let complete = L3BookVarDataEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&L3BookVarDataFixedFields {
@@ -281,16 +282,20 @@ pub fn encode_vardata_book(
             }
             Ok(())
         })?
-        .symbol(symbol)?;
+        .symbol_as_str(symbol)?;
     Ok(complete.encoded_length_with_header())
 }
 
 /// Encode a Depth3Test message (levels → items → tag var-data).
+///
+/// `tag` and `description` both declare `characterEncoding="ASCII"`, so this
+/// writes through `tag_as_str`/`description_as_str` — the ASCII check runs
+/// before any byte is written rather than leaving it to the caller.
 pub fn encode_depth3(
     buf: &mut [u8],
     id: u64,
     levels: &[Depth3Level<'_>],
-    description: &[u8],
+    description: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let complete = Depth3TestEncoder::try_wrap_and_apply_header(buf, 0)?
         .fixed(&Depth3TestFixedFields { id })
@@ -302,7 +307,7 @@ pub fn encode_depth3(
                         for (value, tag) in *items {
                             ig.add(|mut i| {
                                 i.value(*value);
-                                i.tag(tag)
+                                i.tag_as_str(tag)
                             })?;
                         }
                         Ok(())
@@ -311,14 +316,14 @@ pub fn encode_depth3(
             }
             Ok(())
         })?
-        .description(description)?;
+        .description_as_str(description)?;
     Ok(complete.encoded_length_with_header())
 }
 
 /// Exact length for Depth3Test via the staged builder.
 pub fn depth3_encoded_length(
     levels: &[Depth3Level<'_>],
-    description: &[u8],
+    description: &str,
 ) -> Result<usize, sbe_rt::EncodeError> {
     let after_levels =
         Depth3TestEncoder::compute_length().levels_ragged(levels.len() as u16, |g| {

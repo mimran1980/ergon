@@ -193,12 +193,15 @@
 # [must_use] CarAfterFuelFigures::fn performance_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
 # [must_use] CarAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
 # [must_use] CarAfterManufacturer::fn model (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterManufacturer::fn model_as_str (self , src : & str ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterManufacturer::fn model_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterManufacturer::fn model_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarAfterModel < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
 # [must_use] CarAfterModel::fn activation_code (mut self , data : & [u8] ,) -> Result < CarComplete < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterModel::fn activation_code_as_str (self , src : & str ,) -> Result < CarComplete < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterModel::fn activation_code_unchecked (mut self , data : & [u8] ,) -> Result < CarComplete < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterModel::fn activation_code_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarComplete < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
 # [must_use] CarAfterPerformanceFigures::fn manufacturer (mut self , data : & [u8] ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
+# [must_use] CarAfterPerformanceFigures::fn manufacturer_as_str (self , src : & str ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterPerformanceFigures::fn manufacturer_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterPerformanceFigures::fn manufacturer_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarAfterManufacturer < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
 # [must_use] CarEncoder::fn fixed (mut self , fixed : & CarFixedFields ,) -> CarEncoder < 'a , H , sbe_rt :: FieldsFixed >
@@ -207,6 +210,7 @@
 # [must_use] CarEncoder::fn raw_fixed (self) -> CarRawFixedWriter < 'a >
 # [must_use] FuelFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (FuelFiguresEntryEncoder < 'b > ,) -> Result < FuelFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 # [must_use] FuelFiguresEntryEncoder::fn usage_description (mut self , data : & [u8] ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
+# [must_use] FuelFiguresEntryEncoder::fn usage_description_as_str (self , src : & str ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
 # [must_use] PerformanceFiguresAccelerationEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
 # [must_use] PerformanceFiguresAccelerationEncoder::fn start_entry (& mut self ,) -> Result < PerformanceFiguresAccelerationEntryEncoder < '_ > , sbe_rt :: EncodeError >
 # [must_use] PerformanceFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresEntryEncoder < 'b > ,) -> Result < PerformanceFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,

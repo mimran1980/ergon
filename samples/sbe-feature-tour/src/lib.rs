@@ -150,11 +150,11 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         .fuel_figures(2, |g| {
             g.add(|mut e| {
                 e.speed(30).mpg(35.9);
-                e.usage_description(b"Urban")
+                e.usage_description_as_str("Urban")
             })?;
             g.add(|mut e| {
                 e.speed(60).mpg(25.0);
-                e.usage_description(b"Highway")
+                e.usage_description_as_str("Highway")
             })?;
             Ok(())
         })?
@@ -174,9 +174,9 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
             })?;
             Ok(())
         })?
-        .manufacturer(b"Honda")?
-        .model(b"Civic VTi")?
-        .activation_code(b"abcdef")?
+        .manufacturer_as_str("Honda")?
+        .model_as_str("Civic VTi")?
+        .activation_code_as_str("abcdef")?
         .encoded_length_with_header();
 
     Ok(len)
@@ -249,9 +249,9 @@ pub fn demo_bulk_add() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             })?;
             Ok(())
         })?
-        .manufacturer(b"Honda")?
-        .model(b"Civic")?
-        .activation_code(b"abc")?
+        .manufacturer_as_str("Honda")?
+        .model_as_str("Civic")?
+        .activation_code_as_str("abc")?
         .encoded_length_with_header();
     assert_eq!(len, complete_len);
     Ok(buf[..len].to_vec())
@@ -323,7 +323,7 @@ pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     let (mfr, car) = figures
         .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
             speeds.push(entry.speed());
-            let (_usage, complete) = entry.into_usage_description()?;
+            let (_usage, complete) = entry.into_usage_description_as_str()?;
             Ok(complete)
         })?
         .into_performance_figures()?
@@ -349,14 +349,14 @@ pub fn demo_car_random_access(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     let car = CarDecoder::try_decode(wire, 0)?;
     // Manufacturer is the first var-data field, after both groups — still legal
     // here because random access rescan preceding tails.
-    assert_eq!(car.manufacturer()?, b"Honda");
+    assert_eq!(car.manufacturer_as_str()?, "Honda");
     assert_eq!(car.serial_number(), 1234);
     let mut speeds = Vec::new();
     for entry in car.fuel_figures()? {
         speeds.push(entry?.speed());
     }
     assert_eq!(speeds, vec![30, 60]);
-    assert_eq!(car.model()?, b"Civic VTi");
+    assert_eq!(car.model_as_str()?, "Civic VTi");
     Ok(())
 }
 // ANCHOR_END: demo_car_random_access
@@ -371,7 +371,7 @@ pub fn demo_car_mutable_ordered(wire: &[u8]) -> Result<(), Box<dyn std::error::E
     let mut speeds = Vec::new();
     figures.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
         speeds.push(entry.speed());
-        let _usage = entry.usage_description()?;
+        let _usage = entry.usage_description_as_str()?;
         Ok(())
     })?;
     car.performance_figures()?
@@ -435,7 +435,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
         })
         .encoded_length_with_header();
 
-    let note_body = b"hello AnyMessage";
+    let note_body = "hello AnyMessage";
     let note_len = NoteEncoder::compute_length_with_header(note_body.len());
     const NOTE_PAD: usize = 64;
     assert!(note_len <= NOTE_PAD);
@@ -443,7 +443,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let note = &mut note_storage[..note_len];
     let note_written = NoteEncoder::try_wrap_and_apply_header(note, 0)?
         .fixed(&NoteFixedFields { note_id: 99 })
-        .body(note_body)?
+        .body_as_str(note_body)?
         .encoded_length_with_header();
     assert_eq!(note_written, note_len);
 
@@ -464,7 +464,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
             }
             AnyMessage::Note(d) => {
                 assert_eq!(d.note_id(), 99);
-                let (body, complete) = d.into_body()?;
+                let (body, complete) = d.into_body_as_str()?;
                 assert_eq!(body, note_body);
                 offset += complete.encoded_length() + NoteDecoder::HEADER_LENGTH;
                 saw_note = true;

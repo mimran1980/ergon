@@ -52,6 +52,14 @@ Both functions end with `encoded_length_with_header()`, and the tests assert
 the two agree — a length that does not match the bytes written is a bug in the
 sizing API, not something to paper over with a larger buffer.
 
+`symbol` declares `characterEncoding="ASCII"` in the schema, so the generated
+encoder carries a `symbol_as_str(&str)` setter alongside the raw
+`symbol(&[u8])` one. Every caller here always holds text, so `encode_book`
+takes `symbol: &str` and writes through `symbol_as_str` — the ASCII check
+runs before any byte is written rather than leaving it to the caller. Both
+setters write identical bytes for the same text; reach for the raw
+`symbol(&[u8])` setter only when the caller genuinely starts from bytes.
+
 ```rust,ignore
 let len = book_encoded_length(bids, asks, symbol)?;   // exact, header-inclusive
 let mut storage = vec![0u8; len];                     // no oversize, no truncate

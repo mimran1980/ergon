@@ -9908,6 +9908,17 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterPerformanceFigures<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
+    /// Encode this var-data field from a `&str`. The schema
+    /// declares UTF-8, which `&str` already guarantees, so no
+    /// runtime check is needed.
+    #[inline]
+    #[must_use]
+    pub fn manufacturer_as_str(
+        self,
+        src: &str,
+    ) -> Result<CarAfterManufacturer<'a, H>, sbe_rt::EncodeError> {
+        self.manufacturer(src.as_bytes())
+    }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
     ///Generated method `model`.
@@ -10055,6 +10066,17 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterManufacturer<'a, H> {
             _header: core::marker::PhantomData,
         })
     }
+    /// Encode this var-data field from a `&str`. The schema
+    /// declares UTF-8, which `&str` already guarantees, so no
+    /// runtime check is needed.
+    #[inline]
+    #[must_use]
+    pub fn model_as_str(
+        self,
+        src: &str,
+    ) -> Result<CarAfterModel<'a, H>, sbe_rt::EncodeError> {
+        self.model(src.as_bytes())
+    }
 }
 impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
     ///Generated method `activation_code`.
@@ -10201,6 +10223,22 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterModel<'a, H> {
             offset: start + exact_len,
             _header: core::marker::PhantomData,
         })
+    }
+    /// Encode this var-data field from a `&str`, validating that
+    /// it is ASCII (the schema-declared character encoding)
+    /// before writing.
+    #[inline]
+    #[must_use]
+    pub fn activation_code_as_str(
+        self,
+        src: &str,
+    ) -> Result<CarComplete<'a, H>, sbe_rt::EncodeError> {
+        if !src.is_ascii() {
+            return Err(sbe_rt::EncodeError::InvalidAscii {
+                field: "activationCode",
+            });
+        }
+        self.activation_code(src.as_bytes())
     }
 }
 impl<'a, H: sbe_rt::HeaderState> CarComplete<'a, H> {
@@ -10461,6 +10499,22 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
             entry_start: self.entry_start,
             offset: self.offset,
         })
+    }
+    /// Encode this var-data field from a `&str`, validating that
+    /// it is ASCII (the schema-declared character encoding)
+    /// before writing.
+    #[inline]
+    #[must_use]
+    pub fn usage_description_as_str(
+        self,
+        src: &str,
+    ) -> Result<FuelFiguresEntryComplete<'a>, sbe_rt::EncodeError> {
+        if !src.is_ascii() {
+            return Err(sbe_rt::EncodeError::InvalidAscii {
+                field: "usageDescription",
+            });
+        }
+        self.usage_description(src.as_bytes())
     }
 }
 #[doc = concat!(

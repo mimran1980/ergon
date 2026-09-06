@@ -77,7 +77,7 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
 
     // ── Build and publish via direct claim ──────────────────────────
     let app_name = b"bitget";
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
     let bids: u16 = 1;
     let asks: u16 = 0;
     let epoch_ns = 1_700_000_000_000_000_000u64;
@@ -120,7 +120,7 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
                         Ok(())
                     })?
                     .asks(asks, |_| Ok(()))?
-                    .symbol(symbol)?;
+                    .symbol_as_str(symbol)?;
                 assert_eq!(inner_complete.as_bytes_with_header().len(), inner_len);
                 Ok(())
             })

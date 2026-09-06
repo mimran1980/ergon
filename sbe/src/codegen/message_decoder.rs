@@ -1273,10 +1273,20 @@ pub(crate) fn generate_message_decoder(
             }
         });
 
-        impl_body.extend(vardata_text_helpers(
-            &vd_snake,
-            vd.character_encoding.as_deref(),
-        ));
+        // Unless a fixed field already claims the derived name — same rule
+        // as the group-entry guard in `group_decoder.rs`: a field the author
+        // explicitly called `noteAsStr` wins the name over the var-data
+        // helper, rather than colliding and failing to compile.
+        let claims_taken = msg.fields.iter().any(|f| {
+            let n = to_snake_case(&f.name);
+            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+        });
+        if !claims_taken {
+            impl_body.extend(vardata_text_helpers(
+                &vd_snake,
+                vd.character_encoding.as_deref(),
+            ));
+        }
         // Binary / unspecified encoding: no string helper at all. The caller
         // has the raw `_slice` / `into_<field>` accessors and can interpret
         // the bytes as needed.
@@ -1839,8 +1849,9 @@ pub(crate) fn vardata_text_helpers(
     let str_unchecked = syn::Ident::new(&format!("{vd_snake}_as_str_unchecked"), span);
     let field_lit = syn::LitStr::new(vd_snake, span);
 
-    let checked = match character_encoding {
-        Some("UTF-8") => quote::quote! {
+    let kind = super::runtime::text_encoding_kind(character_encoding);
+    let checked = match kind {
+        Some(super::runtime::TextEncoding::Utf8) => quote::quote! {
             /// View this UTF-8 var-data field as `&str`.
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
@@ -1851,7 +1862,7 @@ pub(crate) fn vardata_text_helpers(
                 })
             }
         },
-        Some("ASCII") => quote::quote! {
+        Some(super::runtime::TextEncoding::Ascii) => quote::quote! {
             /// View this ASCII var-data field as `&str`.
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
@@ -1863,10 +1874,10 @@ pub(crate) fn vardata_text_helpers(
                 Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
             }
         },
-        _ => return proc_macro2::TokenStream::new(),
+        None => return proc_macro2::TokenStream::new(),
     };
 
-    let safety_note = if character_encoding == Some("ASCII") {
+    let safety_note = if matches!(kind, Some(super::runtime::TextEncoding::Ascii)) {
         "The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true."
     } else {
         "The wire bytes must be valid UTF-8."

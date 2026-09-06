@@ -317,15 +317,13 @@ pub(crate) fn generate_owner_consuming_stages(
         });
 
         // Text var-data: into_<field>_as_str() for schema-declared characterEncoding.
-        if let Some(ref enc) = vd.character_encoding {
-            let is_utf8 = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8");
-            let is_ascii =
-                enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
-            if is_utf8 || is_ascii {
+        {
+            if let Some(kind) = super::runtime::text_encoding_kind(vd.character_encoding.as_deref())
+            {
                 let as_str_ident =
                     syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
                 let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
-                if is_ascii {
+                if matches!(kind, super::runtime::TextEncoding::Ascii) {
                     ts.extend(quote::quote! {
                         impl<'a> #current_stage<'a> {
                             /// Consume this stage, read the next ASCII var-data

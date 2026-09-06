@@ -59,7 +59,7 @@ impl QuoteDomain {
           legs.add(|leg| { leg.value(99); Ok(()) })?;
           Ok(())
       })?
-      .note(b"hi")?
+      .note_as_str("hi")?
       .encoded_length_with_header();
   // Decode → owned DTO (allocates — not for the hot path)
   let dec = QuoteDecoder::try_from(&buf[..len])?;

@@ -228,11 +228,19 @@ pub(crate) fn generate_memoized_decoder(
 
         // Same generator as the base decoder, so the text surface cannot
         // diverge: both lanes get checked and unchecked helpers for UTF-8 and
-        // ASCII, and neither gets one for binary var-data.
-        impl_body.extend(super::message_decoder::vardata_text_helpers(
-            &vd_snake,
-            vd.character_encoding.as_deref(),
-        ));
+        // ASCII, and neither gets one for binary var-data. Same collision
+        // guard as the base decoder's own call site too — a fixed field
+        // named e.g. `noteAsStr` wins the name over this helper.
+        let claims_taken = msg.fields.iter().any(|f| {
+            let n = to_snake_case(&f.name);
+            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+        });
+        if !claims_taken {
+            impl_body.extend(super::message_decoder::vardata_text_helpers(
+                &vd_snake,
+                vd.character_encoding.as_deref(),
+            ));
+        }
         vd_idx += 1;
     }
 

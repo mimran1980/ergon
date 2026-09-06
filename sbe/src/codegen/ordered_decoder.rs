@@ -242,8 +242,10 @@ pub(crate) fn generate_ordered_decoder(
 /// whose accessor already spells `<vd>_as_str` wins the name: entry fields keep
 /// their schema spelling in every entry location, so renaming one here would
 /// give the same field different names per location. `note()` still returns
-/// the bytes. At message level the field would already have been renamed by
-/// `DECODER_RESERVED`, so this never fires there.
+/// the bytes. `DECODER_RESERVED` only renames a fixed field away from a
+/// *static* reserved word (`memoized`, `inner`, …) — it has no way to know
+/// about this *dynamically* derived name, so message level needs the same
+/// `claims_taken` check as here, applied at its own call site.
 fn var_data_as_str_methods(
     vd: &MessageVarData,
     ident: &syn::Ident,
@@ -252,9 +254,6 @@ fn var_data_as_str_methods(
     read: &proc_macro2::TokenStream,
     owner_fields: &[MessageField],
 ) -> proc_macro2::TokenStream {
-    let Some(ref enc) = vd.character_encoding else {
-        return proc_macro2::TokenStream::new();
-    };
     let claimed = format!("{ident}_as_str");
     if owner_fields
         .iter()
@@ -262,15 +261,13 @@ fn var_data_as_str_methods(
     {
         return proc_macro2::TokenStream::new();
     }
-    let is_utf8 = enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8");
-    let is_ascii = enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII");
-    if !is_utf8 && !is_ascii {
+    let Some(kind) = super::runtime::text_encoding_kind(vd.character_encoding.as_deref()) else {
         return proc_macro2::TokenStream::new();
-    }
+    };
     let span = proc_macro2::Span::call_site();
     let as_str = syn::Ident::new(&format!("{ident}_as_str"), span);
     let _ = ident;
-    if is_ascii {
+    if matches!(kind, super::runtime::TextEncoding::Ascii) {
         quote::quote! {
             #[inline]
             pub fn #as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {

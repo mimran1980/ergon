@@ -1385,6 +1385,13 @@ pub(crate) fn generate_message_encoder(
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
             let vd_snake_with = syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
+            let str_setter = vardata_encode_str_setter(
+                &vd_snake,
+                &vd.name,
+                vd.character_encoding.as_deref(),
+                &quote::quote! { #next_stage<'a, H> },
+                &msg.fields,
+            );
             let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
             let len_rust_type: syn::Type = syn::parse_str(rust_type(len_type)).unwrap();
@@ -1532,6 +1539,8 @@ pub(crate) fn generate_message_encoder(
                             _header: core::marker::PhantomData,
                         })
                     }
+
+                    #str_setter
                 }
             });
             tail_idx += 1;
@@ -1709,4 +1718,84 @@ pub(crate) fn generate_message_encoder(
     ts.extend(encoded_len_gen.standalone);
 
     ts
+}
+
+/// `<name>_as_str` — the encode-side counterpart of the decode-side
+/// `vardata_text_helpers` (see `message_decoder.rs`).
+///
+/// `vd_ident` is the checked byte setter this forwards to, so the max-length
+/// and buffer-space checks stay in one place. `&str` is already guaranteed
+/// valid UTF-8 by the type itself, so a UTF-8-declared field needs no
+/// encode-time check at all — only ASCII needs one, because a `&str` can
+/// legally hold non-ASCII text that the schema's own declaration forbids.
+///
+/// Binary / unspecified encoding gets no `_as_str` setter, matching the
+/// decode side: the caller decides what the bytes mean.
+///
+/// `ret_ty` is the full return-stage type — `#next_stage<'a, H>` at message
+/// level, `#next_stage<'a>` on a group entry (entries carry no header-state
+/// generic) — so message and entry callers share this one decision without
+/// forcing entries through a signature shape that doesn't apply to them.
+///
+/// `owner_fields` are the fixed fields emitted on the same stage. A field
+/// whose accessor already spells `<vd>_as_str` wins the name, mirroring the
+/// decode-side guard in `var_data_as_str_methods` — entry fields keep their
+/// schema spelling in every location, so a var-data setter can't rename
+/// around a collision the way message-level fields do via `DECODER_RESERVED`.
+pub(crate) fn vardata_encode_str_setter(
+    vd_ident: &syn::Ident,
+    field_name: &str,
+    character_encoding: Option<&str>,
+    ret_ty: &proc_macro2::TokenStream,
+    owner_fields: &[MessageField],
+) -> proc_macro2::TokenStream {
+    let claimed = format!("{vd_ident}_as_str");
+    if owner_fields
+        .iter()
+        .any(|f| to_snake_case(&f.name) == claimed)
+    {
+        return proc_macro2::TokenStream::new();
+    }
+
+    let span = proc_macro2::Span::call_site();
+    let str_ident = syn::Ident::new(&claimed, span);
+    let field_lit = syn::LitStr::new(field_name, span);
+
+    // Generator-authored prose, not schema-derived text, so it goes straight
+    // into a literal `///` line rather than through `doc_attr_tokens` — that
+    // helper HTML-escapes untrusted external descriptions, which would turn
+    // this doc's own `` `&str` `` code span into the literal text `&amp;str`.
+    let (doc, ascii_check) = match super::runtime::text_encoding_kind(character_encoding) {
+        Some(super::runtime::TextEncoding::Utf8) => (
+            quote::quote! {
+                /// Encode this var-data field from a `&str`. The schema
+                /// declares UTF-8, which `&str` already guarantees, so no
+                /// runtime check is needed.
+            },
+            quote::quote! {},
+        ),
+        Some(super::runtime::TextEncoding::Ascii) => (
+            quote::quote! {
+                /// Encode this var-data field from a `&str`, validating that
+                /// it is ASCII (the schema-declared character encoding)
+                /// before writing.
+            },
+            quote::quote! {
+                if !src.is_ascii() {
+                    return Err(sbe_rt::EncodeError::InvalidAscii { field: #field_lit });
+                }
+            },
+        ),
+        None => return proc_macro2::TokenStream::new(),
+    };
+
+    quote::quote! {
+        #doc
+        #[inline]
+        #[must_use]
+        pub fn #str_ident(self, src: &str) -> Result<#ret_ty, sbe_rt::EncodeError> {
+            #ascii_check
+            self.#vd_ident(src.as_bytes())
+        }
+    }
 }

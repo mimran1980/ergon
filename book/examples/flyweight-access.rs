@@ -28,9 +28,9 @@ let n = CarEncoder::try_wrap_and_apply_header(buf, 0)?
     .fixed(&fields)
     .fuel_figures(0, |_| Ok(()))?
     .performance_figures(0, |_| Ok(()))?
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"abc")?
+    .manufacturer_as_str("Honda")?
+    .model_as_str("Civic")?
+    .activation_code_as_str("abc")?
     .encoded_length_with_header();
 assert_eq!(n, complete_len);
 // Now decode — read only the fields you need, no DTO allocation:

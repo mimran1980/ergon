@@ -19,7 +19,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         })?
         .asks_ragged(0, |_g| Ok(()))?
-        .symbol(b"X".len())?
+        .symbol("X".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -51,7 +51,7 @@ fn l3book_converter_accessors() -> Result<(), Box<dyn std::error::Error>> {
             })
         })?
         .asks(0, |_| Ok(()))?
-        .symbol(b"X")?;
+        .symbol_as_str("X")?;
     let _len = complete.encoded_length_with_header();
 
     let dec = L3BookDecoder::try_from(complete.as_bytes_with_header())?;
@@ -68,7 +68,7 @@ fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
     let len = L3BookEncoder::compute_length()
         .bids_ragged(0, |_g| Ok(()))?
         .asks_ragged(0, |_g| Ok(()))?
-        .symbol(b"".len())?
+        .symbol("".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -81,7 +81,7 @@ fn l3book_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         })
         .bids(0, |_| Ok(()))?
         .asks(0, |_| Ok(()))?
-        .symbol(b"")?;
+        .symbol_as_str("")?;
     let len = complete.encoded_length_with_header();
     assert!(len > 0);
     Ok(())
@@ -98,7 +98,7 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
     let bids: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(50800), d(15), &o1), (d(50750), d(40), &o2)];
     let o3: [(Rd, &[u8]); 1] = [(d(10), b"AA")];
     let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(50850), d(20), &o3)];
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
 
     let expected = l3_book::vardata_book_encoded_length(bids, asks, symbol)?;
 
@@ -173,7 +173,7 @@ fn l3book_vardata_direct_length_matches_encoded() -> Result<(), Box<dyn std::err
             }
             Ok(())
         })?
-        .symbol(symbol)?;
+        .symbol_as_str(symbol)?;
     let actual = complete.encoded_length_with_header();
     assert_eq!(expected, actual, "vardata direct length must match encoded");
     Ok(())
@@ -194,7 +194,7 @@ fn l3book_unknown_size_length_matches_encoded() -> Result<(), Box<dyn std::error
         (d(50900), d(30), &o4),
         (d(50950), d(50), &o5),
     ];
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
 
     let len = l3_book::book_encoded_length(bids, asks, symbol)?;
     let mut buf_storage = [0u8; 8192];
@@ -247,7 +247,7 @@ fn l3book_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
         (d(50900), d(30), &o4),
         (d(50950), d(50), &o5),
     ];
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
 
     // Actual length from the encoder.
     let len = l3_book::book_encoded_length(bids, asks, symbol)?;
@@ -303,7 +303,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
             Ok(())
         })?
         .asks_ragged(0, |_g| Ok(()))?
-        .symbol(b"BTCUSDT".len())?
+        .symbol("BTCUSDT".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -349,7 +349,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
             })
         })?
         .asks(0, |_| Ok(()))?
-        .symbol(b"BTCUSDT")?;
+        .symbol_as_str("BTCUSDT")?;
     let len = complete.encoded_length_with_header();
     assert!(len > 0);
 
@@ -386,7 +386,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         })?
         .asks_ragged(0, |_g| Ok(()))?
-        .symbol(b"".len())?
+        .symbol("".len())?
         .encoded_length_with_header();
     let mut buf_storage = [0u8; 8192];
     assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -464,7 +464,7 @@ fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
             })
         })?
         .asks(0, |_| Ok(()))?
-        .symbol(b"")?;
+        .symbol_as_str("")?;
     let _actual = complete.encoded_length_with_header();
 
     // Verify ragged structure.
@@ -498,7 +498,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     let o1 = [(1u64, d(100))];
     let bids: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50000), d(10), &o1)];
     let asks: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50100), d(5), &o1)];
-    let symbol = b"BTC";
+    let symbol = "BTC";
 
     let len = l3_book::book_encoded_length(bids, asks, symbol)?;
     let mut buf_storage = [0u8; 8192];
@@ -572,7 +572,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let o1 = [(1u64, d(100))];
         let bids: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50000), d(10), &o1)];
         let asks: &[(Rd, Rd, &[(u64, Rd)])] = &[(d(50100), d(5), &o1)];
-        let symbol = b"BTC";
+        let symbol = "BTC";
         let len = l3_book::book_encoded_length(bids, asks, symbol)?;
         let mut buf_storage = [0u8; 8192];
         assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -620,7 +620,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         let o2: [(Rd, &[u8]); 1] = [(d(3), b"X")];
         let bids: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(100), d(10), &o1), (d(200), d(5), &o2)];
         let asks: &[(Rd, Rd, &[(Rd, &[u8])])] = &[(d(150), d(8), &[(d(1), b"AA")])];
-        let symbol = b"LINK";
+        let symbol = "LINK";
         let len = l3_book::vardata_book_encoded_length(bids, asks, symbol)?;
         let mut buf_storage = [0u8; 8192];
         assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -645,10 +645,10 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
 
     // ── Depth3Test ──
     {
-        let i1 = [(1u64, &b"A"[..]), (2u64, &b"BB"[..])];
-        let i2 = [(3u64, &b"CCC"[..])];
-        let levels: &[(u32, &[(u64, &[u8])])] = &[(10, i1.as_slice()), (20, i2.as_slice())];
-        let desc = b"test";
+        let i1 = [(1u64, "A"), (2u64, "BB")];
+        let i2 = [(3u64, "CCC")];
+        let levels: &[(u32, &[(u64, &str)])] = &[(10, i1.as_slice()), (20, i2.as_slice())];
+        let desc = "test";
         let len = l3_book::depth3_encoded_length(levels, desc)?;
         let mut buf_storage = [0u8; 8192];
         assert!(len <= buf_storage.len(), "len exceeds stack pad");
@@ -701,7 +701,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
             })
             .bids(0, |_| Ok(()))?
             .asks(0, |_| Ok(()))?
-            .symbol(b"")?;
+            .symbol_as_str("")?;
         let n = complete.encoded_length_with_header();
         let dec = L3BookDecoder::try_from(&buf[..n])?;
         let display = format!("{dec}");
@@ -793,10 +793,10 @@ fn any_message_decode(data: &[u8]) -> String {
 fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Error>> {
     // Ragged at two levels: each level has a different number of items,
     // and each item carries a var-data tag of differing length.
-    let i1: [(u64, &[u8]); 2] = [(1, b"A"), (2, b"BB")];
-    let i2: [(u64, &[u8]); 1] = [(3, b"CCC")];
-    let levels: &[(u32, &[(u64, &[u8])])] = &[(10, &i1), (20, &i2)];
-    let description = b"depth-3 test";
+    let i1: [(u64, &str); 2] = [(1, "A"), (2, "BB")];
+    let i2: [(u64, &str); 1] = [(3, "CCC")];
+    let levels: &[(u32, &[(u64, &str)])] = &[(10, &i1), (20, &i2)];
+    let description = "depth-3 test";
 
     // Encode into an exact-sized buffer.
     let len = Depth3TestEncoder::compute_length()
@@ -828,7 +828,7 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
                         for (value, tag) in *items {
                             ig.add(|mut i| {
                                 i.value(*value);
-                                i.tag(tag)
+                                i.tag_as_str(tag)
                             })?;
                         }
                         Ok(())
@@ -837,7 +837,7 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
             }
             Ok(())
         })?
-        .description(description)?;
+        .description_as_str(description)?;
     let actual = complete.encoded_length_with_header();
 
     assert_eq!(len, actual, "depth-3 staged length must match actual");
@@ -849,17 +849,17 @@ fn depth3_staged_length_matches_encoded() -> Result<(), Box<dyn std::error::Erro
     let mut it1 = l1.into_items()?;
     let it1_first = it1.next().transpose()?.unwrap();
     assert_eq!(it1_first.value(), 1);
-    assert_eq!(it1_first.tag()?, b"A");
+    assert_eq!(it1_first.tag_as_str()?, "A");
     let it1_second = it1.next().transpose()?.unwrap();
     assert_eq!(it1_second.value(), 2);
-    assert_eq!(it1_second.tag()?, b"BB");
+    assert_eq!(it1_second.tag_as_str()?, "BB");
     assert!(it1.next().is_none());
 
     let l2 = lvl.next().transpose()?.unwrap();
     let mut it2 = l2.into_items()?;
     let it2_first = it2.next().transpose()?.unwrap();
     assert_eq!(it2_first.value(), 3);
-    assert_eq!(it2_first.tag()?, b"CCC");
+    assert_eq!(it2_first.tag_as_str()?, "CCC");
     assert!(it2.next().is_none());
     assert!(lvl.next().is_none());
     Ok(())
@@ -928,7 +928,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
             }
             Ok(())
         })?
-        .symbol(b"MSFT")?
+        .symbol_as_str("MSFT")?
         .encoded_length_with_header();
 
     assert_eq!(
@@ -1010,7 +1010,7 @@ fn fixture() -> (Vec<u8>, Vec<OwnedLevel>, Vec<OwnedLevel>) {
     let o_a1 = [(201u64, d(10))];
     let o_a2 = [(202u64, d(20)), (203, d(30))];
     let asks: &[l3_book::Level<'_>] = &[(d(50850), d(20), &o_a1), (d(50900), d(35), &o_a2)];
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
 
     // Exact sizing through the staged builder, then encode into a buffer of
     // precisely that length: no oversize, no truncate.
@@ -1361,7 +1361,7 @@ fn ordered_lane_rejects_out_of_order_tails() -> Result<(), Box<dyn std::error::E
 
     // `symbol` is the third tail; asking for it first must fail and leave the
     // cursor where it was.
-    let err = dec.symbol().unwrap_err();
+    let err = dec.symbol_as_str().unwrap_err();
     assert!(
         matches!(err, sbe_rt::DecodeError::OutOfOrder { .. }),
         "expected OutOfOrder, got {err:?}"
@@ -1414,5 +1414,44 @@ fn memoized_lane_caches_boundaries_across_reads() -> Result<(), Box<dyn std::err
     // Same values as the uncached lane, and `into_inner` gets that lane back.
     let base = dec.into_inner();
     assert_eq!(base.symbol_as_str()?, symbol);
+    Ok(())
+}
+
+#[test]
+fn symbol_as_str_matches_the_byte_setter() -> Result<(), Box<dyn std::error::Error>> {
+    // `symbol` declares `characterEncoding="ASCII"`, so the generated encoder
+    // carries `symbol_as_str(&str)` alongside the raw byte setter — the sample
+    // wrapper (`encode_book`) takes `&str` directly since every caller here
+    // always holds text, but the underlying byte setter is still there for a
+    // caller that only has `&[u8]`. Both must produce an identical wire image
+    // for the same text. Empty bids/asks: the point here is `symbol`, not the
+    // order-encoding logic `encode_book`/`fixture` already cover.
+    let bids: &[l3_book::Level<'_>] = &[];
+    let asks: &[l3_book::Level<'_>] = &[];
+    let symbol = "BTCUSDT";
+    let fixed = L3BookFixedFields {
+        exchange_timestamp: 1_720_000_000_000_000_000u64,
+        sequence: 42,
+        is_active: true.into(),
+    };
+
+    let len = l3_book::book_encoded_length(bids, asks, symbol)?;
+
+    // Via the sample wrapper (`_as_str` internally).
+    let mut via_str = vec![0u8; len];
+    let len_a = l3_book::encode_book(&mut via_str, bids, asks, symbol)?;
+
+    // Via the raw encoder's byte setter directly.
+    let mut via_bytes = vec![0u8; len];
+    let len_b = L3BookEncoder::try_wrap_and_apply_header(&mut via_bytes, 0)?
+        .fixed(&fixed)
+        .bids(0, |_| Ok(()))?
+        .asks(0, |_| Ok(()))?
+        .symbol(symbol.as_bytes())?
+        .encoded_length_with_header();
+
+    assert_eq!(len, len_a);
+    assert_eq!(len_a, len_b);
+    assert_eq!(&via_str[..len_a], &via_bytes[..len_b]);
     Ok(())
 }
