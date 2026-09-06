@@ -200,7 +200,7 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
                         }
                         Ok::<(), sbe_rt::EncodeError>(())
                     })?;
-                    let _complete = after.symbol(symbol.as_bytes())?;
+                    let _complete = after.symbol_as_str(symbol)?;
                     Ok(())
                 })?;
             Ok(())

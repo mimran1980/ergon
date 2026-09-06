@@ -76,8 +76,8 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
     let after = g.finish().unwrap();
     assert_eq!(got_asks, vec![(500015, -1)]);
 
-    let (symbol, _) = after.into_symbol().unwrap();
-    assert_eq!(symbol, b"BTCUSDT");
+    let (symbol, _) = after.into_symbol_as_str().unwrap();
+    assert_eq!(symbol, "BTCUSDT");
 
     Ok(())
 }

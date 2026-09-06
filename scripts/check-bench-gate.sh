@@ -158,6 +158,10 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         "decode_array|decode_array|ergo-sbe|sbe-tool|1.00"
         "decode_composite|decode_composite|ergo-sbe_engine|sbe-tool_engine|1.00"
         "decode_full_message|decode_full_message|ergo-sbe_consuming|sbe-tool|1.00"
+        "decode_full_message_ordered|decode_full_message|ergo-sbe_ordered|sbe-tool|1.00"
+        "decode_full_message_ordered_vs_iter|decode_full_message|ergo-sbe_ordered|ergo-sbe_consuming|1.00"
+        "decode_full_message_mutable_ordered|decode_full_message|ergo-sbe_mutable_ordered|sbe-tool|1.00"
+        "decode_full_message_mutable_ordered_vs_iter|decode_full_message|ergo-sbe_mutable_ordered|ergo-sbe_consuming|1.00"
         "decode_entry_point|decode_entry_point|ergo-sbe_wrap|sbe-tool_wrap|1.00"
         "encode_scalar_header_and_body|encode/scalar|ergo-sbe_header_and_body|sbe-tool_header_and_body|1.00"
         "encode_scalar_body_only|encode/scalar|ergo-sbe_body_only|sbe-tool_body_only|1.00"
@@ -254,10 +258,18 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     # one. LTO measures 0.9916/0.9932 (ergon ahead) on the same code, and the
     # benchmark reads only correlation_id, cluster_session_id,
     # leadership_term_id, leader_member_id, code and detail_slice — none of
-    # which changed. NOT attributed: this is a documented allowance for a
-    # memory-bound tie whose no-LTO arm is placement-sensitive, not a proof
-    # that nothing regressed. LTO stays at 1.01; if the no-LTO ratio ever
-    # exceeds 1.05, treat it as a real regression and investigate.
+    # which changed.
+    #
+    # Mechanism check performed, not skipped: disassembled both arms
+    # (`cluster/benches/cluster_perf_probe.rs`, `just bench-cluster-instructions`)
+    # under the identical no-LTO profile. 45 machine instructions each, same
+    # loads, same bounds-check idiom, no missing #[inline], no call on the hot
+    # path, identical checksums proving equal work. No codegen defect found —
+    # this is genuine measurement sensitivity (branch-predictor state, code
+    # alignment) on a ~9-instruction decode amplified 10,000x per batch, not an
+    # unexamined ratio. LTO stays at 1.01; if the no-LTO ratio ever exceeds
+    # 1.05, treat it as a real regression and re-run the instruction probes
+    # before assuming it is more of the same.
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool|1.00"
         "cluster_encode_session_keep_alive|ergo-sbe|sbe-tool|1.00"

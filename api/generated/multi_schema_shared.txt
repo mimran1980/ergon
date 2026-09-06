@@ -1,4 +1,8 @@
 # common_types.rs
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_boundary (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_hit (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_miss (& self)
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn stats (& self) -> DecodeCacheStats
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CommonMessageDecoder< 'a > {  }
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn acting_version (& self) -> u16
@@ -46,6 +50,7 @@
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn template_id (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn version (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_option (self) -> Option < Self >
+# [must_use = "discarding this value is almost always a mistake"] Side::const fn as_str (self) -> & 'static str
 # [must_use = "discarding this value is almost always a mistake"] Side::fn raw (self) -> u8
 # [must_use = "encoder must be consumed to write the message"] struct CommonMessageEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
 # [must_use = "raw fixed writer must be embedded in FixedFields"] struct CommonMessageRawFixedWriter< 'a > {  }
@@ -55,6 +60,7 @@
 # [must_use = "the schema-matched template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
 # [must_use = "the slice after this message is unused; ignoring it skips payload framing"] CommonMessageDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] CommonMessageDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+# [must_use] AnyMessage::fn into_common_message (self) -> Option < CommonMessageDecoder < 'a > >
 # [must_use] CommonMessageEncoder::fn fixed (mut self , fixed : & CommonMessageFixedFields ,) -> CommonMessageEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] CommonMessageEncoder::fn raw_fixed (self) -> CommonMessageRawFixedWriter < 'a >
 # [non_exhaustive] enum AnyMessage< 'a >
@@ -158,6 +164,11 @@ fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes
 mod common_message_field_meta
 mod prelude
 mod sbe_rt
+sbe_rt::TailBoundaryCache::const fn new () -> Self
+sbe_rt::TailBoundaryCache::fn end_of (& self , idx : usize) -> Option < usize >
+sbe_rt::TailBoundaryCache::fn is_complete (& self) -> bool
+sbe_rt::TailBoundaryCache::fn known_through (& self) -> usize
+sbe_rt::TailBoundaryCache::fn publish (& self , idx : usize , abs_end : usize)
 sbe_rt::enum DecodeError
 sbe_rt::enum DecodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
 sbe_rt::enum DecodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
@@ -167,6 +178,7 @@ sbe_rt::enum DecodeError::InvalidBoolean(field: & 'static str, discriminant: u64
 sbe_rt::enum DecodeError::InvalidHeaderValue(field: & 'static str, value: u64, maximum: u64)
 sbe_rt::enum DecodeError::InvalidUtf8(field: & 'static str, error: core :: str :: Utf8Error)
 sbe_rt::enum DecodeError::InvalidVarDataLength(field: & 'static str, length: u64, max_length: u64)
+sbe_rt::enum DecodeError::OutOfOrder(owner: & 'static str, expected: & 'static str, requested: & 'static str)
 sbe_rt::enum DecodeError::UnknownTemplateLength(template_id: u16)
 sbe_rt::enum DecodeError::WrongSchema(expected: u16, actual: u16, expected_name: & 'static str)
 sbe_rt::enum DecodeError::WrongTemplate(expected: u16, actual: u16, expected_name: & 'static str)
@@ -196,11 +208,13 @@ sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
 sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
 sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
 sbe_rt::struct Attached {  }
+sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
 sbe_rt::struct FieldsFixed {  }
 sbe_rt::struct FieldsUnfixed {  }
 sbe_rt::struct HeaderAbsent {  }
 sbe_rt::struct HeaderPresent {  }
+sbe_rt::struct TailBoundaryCache< const N : usize > {  }
 sbe_rt::trait FieldsState: private :: Sealed
 sbe_rt::trait GroupContext: private :: Sealed
 sbe_rt::trait HeaderState: private :: Sealed
@@ -263,6 +277,7 @@ type CommonMessageUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CommonMes
 # [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 # [must_use = "the slice after this message is unused; ignoring it skips payload framing"] QuoteDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] QuoteDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
+# [must_use] AnyMessage::fn into_quote (self) -> Option < QuoteDecoder < 'a > >
 # [must_use] QuoteEncoder::fn fixed (mut self , fixed : & QuoteFixedFields ,) -> QuoteEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] QuoteEncoder::fn raw_fixed (self) -> QuoteRawFixedWriter < 'a >
 # [non_exhaustive] enum AnyMessage< 'a >

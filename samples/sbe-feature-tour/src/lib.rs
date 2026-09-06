@@ -10,7 +10,10 @@
 //! |------|---------|
 //! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
-//! | [`demo_car_decode_stages`] | Consuming decoder stages (groups → var-data) |
+//! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` groups → var-data) |
+//! | [`demo_car_visit_entries`] | Staged one-pass `visit_entries` + `remaining_entries` |
+//! | [`demo_car_random_access`] | Random-access lane (any-order dynamic getters) |
+//! | [`demo_car_mutable_ordered`] | Mutable ordered lane (`ordered()` + runtime order checks) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
@@ -147,11 +150,11 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         .fuel_figures(2, |g| {
             g.add(|mut e| {
                 e.speed(30).mpg(35.9);
-                e.usage_description(b"Urban")
+                e.usage_description_as_str("Urban")
             })?;
             g.add(|mut e| {
                 e.speed(60).mpg(25.0);
-                e.usage_description(b"Highway")
+                e.usage_description_as_str("Highway")
             })?;
             Ok(())
         })?
@@ -171,9 +174,9 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
             })?;
             Ok(())
         })?
-        .manufacturer(b"Honda")?
-        .model(b"Civic VTi")?
-        .activation_code(b"abcdef")?
+        .manufacturer_as_str("Honda")?
+        .model_as_str("Civic VTi")?
+        .activation_code_as_str("abcdef")?
         .encoded_length_with_header();
 
     Ok(len)
@@ -246,9 +249,9 @@ pub fn demo_bulk_add() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             })?;
             Ok(())
         })?
-        .manufacturer(b"Honda")?
-        .model(b"Civic")?
-        .activation_code(b"abc")?
+        .manufacturer_as_str("Honda")?
+        .model_as_str("Civic")?
+        .activation_code_as_str("abc")?
         .encoded_length_with_header();
     assert_eq!(len, complete_len);
     Ok(buf[..len].to_vec())
@@ -306,6 +309,92 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 }
 // ANCHOR_END: demo_car_decode_stages
 
+/// Walk Car through the ordered one-pass group path.
+// ANCHOR: demo_car_visit_entries
+pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_decode(wire, 0)?;
+    let figures = car.into_fuel_figures()?;
+    let count = figures.remaining_entries();
+    assert!(count > 0);
+    assert!(!figures.is_empty());
+
+    let mut speeds = Vec::new();
+    let mut octanes = Vec::new();
+    let (mfr, car) = figures
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            speeds.push(entry.speed());
+            let (_usage, complete) = entry.into_usage_description_as_str()?;
+            Ok(complete)
+        })?
+        .into_performance_figures()?
+        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            octanes.push(entry.octane_rating());
+            entry
+                .into_acceleration()?
+                .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+        })?
+        .into_manufacturer_as_str()?;
+    let (model, car) = car.into_model_as_str()?;
+    let (code, _) = car.into_activation_code_as_str()?;
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(octanes, vec![95]);
+    assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
+    Ok(())
+}
+// ANCHOR_END: demo_car_visit_entries
+
+/// Random-access lane: dynamic getters may be called in any order.
+// ANCHOR: demo_car_random_access
+pub fn demo_car_random_access(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let car = CarDecoder::try_decode(wire, 0)?;
+    // Manufacturer is the first var-data field, after both groups — still legal
+    // here because random access rescan preceding tails.
+    assert_eq!(car.manufacturer_as_str()?, "Honda");
+    assert_eq!(car.serial_number(), 1234);
+    let mut speeds = Vec::new();
+    for entry in car.fuel_figures()? {
+        speeds.push(entry?.speed());
+    }
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(car.model_as_str()?, "Civic VTi");
+    Ok(())
+}
+// ANCHOR_END: demo_car_random_access
+
+/// Mutable ordered lane: one cursor, schema-order tails, runtime OutOfOrder.
+// ANCHOR: demo_car_mutable_ordered
+pub fn demo_car_mutable_ordered(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut car = CarDecoder::try_decode(wire, 0)?.ordered();
+    assert_eq!(car.serial_number(), 1234);
+    let figures = car.fuel_figures()?;
+    assert!(figures.remaining_entries() > 0);
+    let mut speeds = Vec::new();
+    figures.visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+        speeds.push(entry.speed());
+        let _usage = entry.usage_description_as_str()?;
+        Ok(())
+    })?;
+    car.performance_figures()?
+        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            let _ = entry.octane_rating();
+            entry
+                .acceleration()?
+                .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
+            Ok(())
+        })?;
+    let manufacturer = car.manufacturer_as_str()?;
+    let model = car.model_as_str()?;
+    let code = car.activation_code_as_str()?;
+    let _complete = car.finish()?;
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(
+        (manufacturer, model, code),
+        ("Honda", "Civic VTi", "abcdef")
+    );
+    Ok(())
+}
+// ANCHOR_END: demo_car_mutable_ordered
+
 // ─── 4. Domain DTO ─────────────────────────────────────────────────────────
 
 /// Materialise owned `CarDomain`, re-encode, compare bytes.
@@ -346,7 +435,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
         })
         .encoded_length_with_header();
 
-    let note_body = b"hello AnyMessage";
+    let note_body = "hello AnyMessage";
     let note_len = NoteEncoder::compute_length_with_header(note_body.len());
     const NOTE_PAD: usize = 64;
     assert!(note_len <= NOTE_PAD);
@@ -354,7 +443,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
     let note = &mut note_storage[..note_len];
     let note_written = NoteEncoder::try_wrap_and_apply_header(note, 0)?
         .fixed(&NoteFixedFields { note_id: 99 })
-        .body(note_body)?
+        .body_as_str(note_body)?
         .encoded_length_with_header();
     assert_eq!(note_written, note_len);
 
@@ -375,7 +464,7 @@ pub fn demo_any_message() -> Result<(), Box<dyn std::error::Error>> {
             }
             AnyMessage::Note(d) => {
                 assert_eq!(d.note_id(), 99);
-                let (body, complete) = d.into_body()?;
+                let (body, complete) = d.into_body_as_str()?;
                 assert_eq!(body, note_body);
                 offset += complete.encoded_length() + NoteDecoder::HEADER_LENGTH;
                 saw_note = true;
@@ -679,6 +768,18 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("3) Car decode consuming stages");
     demo_car_decode_stages(&car)?;
+    println!("   ok\n");
+
+    println!("3b) Car ordered visit_entries");
+    demo_car_visit_entries(&car)?;
+    println!("   ok\n");
+
+    println!("3c) Car random-access lane");
+    demo_car_random_access(&car)?;
+    println!("   ok\n");
+
+    println!("3d) Car mutable ordered lane");
+    demo_car_mutable_ordered(&car)?;
     println!("   ok\n");
 
     println!("4) CarDomain DTO round-trip");

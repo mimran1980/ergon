@@ -146,6 +146,46 @@ fn decode_scalar_clobber_is_symmetric_across_arms() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn full_message_decode_arms_use_unchecked_wrap_and_include_ordered_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = get_source(PERF_PARITY, "bench_decode_consuming_full")?;
+    assert!(
+        source.contains("assert_decode_parity()")
+            && source.contains("assert_ordered_decode_parity()")
+            && source.contains("assert_mutable_ordered_decode_parity()"),
+        "full-message decode must prove iterator, visit_entries, and mutable ordered value parity before timing"
+    );
+    for arm in [
+        "ergo-sbe_random",
+        "ergo-sbe_consuming",
+        "ergo-sbe_ordered",
+        "ergo-sbe_mutable_ordered",
+    ] {
+        let body = timed_arm_body(source, arm).ok_or_else(|| format!("missing {arm} arm"))?;
+        assert!(
+            body.contains("CarDecoder::wrap_unchecked"),
+            "{arm} must use wrap_unchecked inside the timed region"
+        );
+        assert!(
+            !body.contains("CarDecoder::wrap("),
+            "{arm} must not pay a validating wrap in the timed region"
+        );
+    }
+    let ordered = timed_arm_body(source, "ergo-sbe_ordered").ok_or("missing ordered arm")?;
+    assert!(
+        ordered.contains("visit_entries"),
+        "ordered full-message arm must use visit_entries"
+    );
+    let mutable =
+        timed_arm_body(source, "ergo-sbe_mutable_ordered").ok_or("missing mutable ordered arm")?;
+    assert!(
+        mutable.contains(".ordered()") && mutable.contains("visit_entries"),
+        "mutable ordered full-message arm must use ordered() and visit_entries"
+    );
+    Ok(())
+}
+
+#[test]
 fn full_message_wire_parity_is_checked_before_criterion_runs()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = get_source(PERF_PARITY, "bench_wire_parity_encode_full_message")?;

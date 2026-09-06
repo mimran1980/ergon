@@ -297,6 +297,60 @@ elsewhere rather than substituting a timing harness. After measurement it
 fails if any registered two-arm pair has ergon Ir/op above sbe-tool. There is
 no `iai-callgrind` dependency — it was removed for RUSTSEC-2026-0173.
 
+### Decoder lanes
+
+A decoder can reach its dynamic tails in more than one way, and
+`versioned_l3_bench` measures the trade-off on the versioned nested L3 schema.
+It is ergon-vs-ergon — sbe-tool has no arbitrary-order decoder to compare
+against — so it carries no `1.00` gate; it informs the lane guidance instead.
+Run it from `just bench-diagnostics`, which runs both LTO profiles:
+
+```sh
+cargo bench -p ergo-sbe-benchmarks --bench versioned_l3_bench
+```
+
+Groups and what each decides:
+
+| group | question |
+|---|---|
+| `vl3/lane` | base vs `.memoized()` — cold single tail, construct-plus-fixed, one full traversal, repeated root re-reads |
+| `vl3/order` | schema, reverse, alternating and seeded-random tail order, cold and warm |
+| `vl3/traverse` | full nested traversal at each acting version |
+
+What the group is for, rather than what it last measured: the base lane's tail
+offsets are recursive and stateless, so reading `n` tails re-walks
+quadratically whatever order you read them in — the cache turns that sweep
+linear. Against that, construct-plus-fixed-fields pays for a cache it never
+consults, and one cold jump to a late tail publishes every boundary it passes.
+Those opposing shapes are why memoization is a lane you opt into per decoder
+rather than a generator default. Run the group to find where the crossover
+sits for your tail count; this page deliberately records no numbers.
+
+Every comparative arm runs the same generated traversal (`lane_traversal!` in
+the bench) and asserts the two arms produce an identical decoded sum before
+timing starts, so an arm cannot silently do less work.
+
+`decode_bench`'s `decode/tail_access` group asks the same question on the Car
+schema, in `base/…` and `memoized/…` pairs that touch identical fields:
+construct-plus-fixed, a cold jump to the final tail, a warm re-read of it, and
+a full read in schema and reverse order. It is likewise ergon-vs-ergon and
+carries no gate.
+
+A `u32` compact tail-offset representation was evaluated and **removed**. It
+made every tailed decoder smaller, and its wall-clock advantage came from
+moving a smaller struct — but it cost more instructions on both cache
+primitives (a `checked_sub` plus a `u32::try_from` range check on publish, and
+a checked `base + relative` on read) and was materially slower under LTO. The
+adoption rule was conjunctive — less memory **and** no slower **and** no more
+instructions — and it failed two of the three legs, so it is not worth a
+public surface. Cached tail ends are absolute `usize`.
+
+For mechanism-level evidence use the Callgrind lane:
+
+```sh
+./scripts/run-sbe-instruction-probes.sh --all-profiles --topic decode
+```
+
 ### Warmed latency distributions
 
 HDR Histogram is reserved for warmed batches where timer resolution is

@@ -15,7 +15,7 @@ use crate::structured_ir::{FieldType, MessageField, MessageGroup, MessageStructu
 /// stays plain and wrapping it here would produce a type mismatch
 /// (`Some`/`None` on a non-`Option`). Shared by the message-level and
 /// group-entry codegen paths so the rule can't drift between them.
-fn is_optional_domain_field(
+pub(crate) fn is_optional_domain_field(
     f: &MessageField,
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,

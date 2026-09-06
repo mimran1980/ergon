@@ -67,6 +67,38 @@ def judge(root: Path, manifest: Path) -> int:
                     f"exceeds sbe-tool {tool_ir:.2f}"
                 )
                 failed = True
+        iterator = measured.get(("decode_full_message", profile), {}).get("ergon")
+        ordered = measured.get(("decode_full_message_ordered", profile), {}).get("ergon")
+        if iterator is not None and ordered is not None:
+            iterator_ir = iterator["instructions_per_operation"]
+            ordered_ir = ordered["instructions_per_operation"]
+            print(
+                f"  {profile}/decode_full_message_ordered vs iterator: "
+                f"ordered Ir/op={ordered_ir:.2f}  iterator Ir/op={iterator_ir:.2f}"
+            )
+            if ordered_ir >= iterator_ir:
+                print(
+                    f"FAIL {profile}/decode_full_message_ordered: ordered Ir/op "
+                    f"{ordered_ir:.2f} is not strictly below iterator {iterator_ir:.2f}"
+                )
+                failed = True
+        mutable = measured.get(
+            ("decode_full_message_mutable_ordered", profile), {}
+        ).get("ergon")
+        if iterator is not None and mutable is not None:
+            iterator_ir = iterator["instructions_per_operation"]
+            mutable_ir = mutable["instructions_per_operation"]
+            print(
+                f"  {profile}/decode_full_message_mutable_ordered vs iterator: "
+                f"mutable ordered Ir/op={mutable_ir:.2f}  iterator Ir/op={iterator_ir:.2f}"
+            )
+            if mutable_ir >= iterator_ir:
+                print(
+                    f"FAIL {profile}/decode_full_message_mutable_ordered: "
+                    f"mutable ordered Ir/op {mutable_ir:.2f} is not strictly below "
+                    f"iterator {iterator_ir:.2f}"
+                )
+                failed = True
     if failed:
         return 1
     print("paired comparison ok: ergon Ir/op does not exceed sbe-tool")

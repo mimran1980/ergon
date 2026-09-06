@@ -33,7 +33,7 @@ fn example_1_uniform() -> Result<(), Box<dyn std::error::Error>> {
     ];
     let o2 = [(3u64, dec!(7.50))];
     let asks = [(dec!(50200), dec!(15), o2.as_slice())];
-    let symbol = b"ETH";
+    let symbol = "ETH";
 
     let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
     let mut storage = [0u8; 4096];
@@ -70,7 +70,7 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
         (dec!(50900.75), dec!(30.25), o4.as_slice()),
         (dec!(50950.10), dec!(50.00), o5.as_slice()),
     ];
-    let symbol = b"BTCUSDT";
+    let symbol = "BTCUSDT";
 
     let len = l3_book::book_encoded_length(&bids, &asks, symbol)?;
     let mut storage = [0u8; 4096];
@@ -114,7 +114,7 @@ fn example_3_vardata() -> Result<(), Box<dyn std::error::Error>> {
     ];
     let o3 = [(dec!(0.50), &b"AA"[..])];
     let asks = [(dec!(150), dec!(8), o3.as_slice())];
-    let symbol = b"LINK";
+    let symbol = "LINK";
 
     let len = l3_book::vardata_book_encoded_length(&bids, &asks, symbol)?;
     let mut storage = [0u8; 4096];
@@ -140,10 +140,10 @@ fn example_3_vardata() -> Result<(), Box<dyn std::error::Error>> {
 fn example_4_depth3() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Example 4: Depth-3 nesting ===\n");
 
-    let i1 = [(1u64, &b"A"[..]), (2u64, &b"BB"[..])];
-    let i2 = [(3u64, &b"CCC"[..])];
+    let i1 = [(1u64, "A"), (2u64, "BB")];
+    let i2 = [(3u64, "CCC")];
     let levels = [(10u32, i1.as_slice()), (20u32, i2.as_slice())];
-    let description = b"depth-3 test message";
+    let description = "depth-3 test message";
 
     let len = l3_book::depth3_encoded_length(&levels, description)?;
     let mut storage = [0u8; 4096];
@@ -159,13 +159,13 @@ fn example_4_depth3() -> Result<(), Box<dyn std::error::Error>> {
     let mut lvl = dec.into_levels()?;
     let l1 = lvl.next().transpose()?.unwrap();
     let mut it1 = l1.into_items()?;
-    assert_eq!(it1.next().transpose()?.unwrap().tag()?, b"A");
-    assert_eq!(it1.next().transpose()?.unwrap().tag()?, b"BB");
+    assert_eq!(it1.next().transpose()?.unwrap().tag_as_str()?, "A");
+    assert_eq!(it1.next().transpose()?.unwrap().tag_as_str()?, "BB");
     assert!(it1.next().is_none());
 
     let l2 = lvl.next().transpose()?.unwrap();
     let mut it2 = l2.into_items()?;
-    assert_eq!(it2.next().transpose()?.unwrap().tag()?, b"CCC");
+    assert_eq!(it2.next().transpose()?.unwrap().tag_as_str()?, "CCC");
     assert!(it2.next().is_none());
     assert!(lvl.next().is_none());
     println!("  encoded_len = {actual}\n");

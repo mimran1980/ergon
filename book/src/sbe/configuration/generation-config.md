@@ -21,12 +21,46 @@ flags default to the value shown.
 | `with_external_sbe_rt(path)` | — | Share one `sbe_rt` runtime module instead of inlining |
 | `with_error_from_impls(path)` | — | Deprecated: `From<EncodeError> for YourError` via `String`; prefer a typed `From` (see below) |
 | `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
+| `with_encode_version(version)` | — | Encoder writes `version` and omits members above it; the decoder still reads every version in the schema |
 | `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
 
 Turn off `with_display_debug`, `with_meta_attributes`, and `with_dispatch` to
 reduce generated-code size (~6,100 lines/message with all on). Text fields
 stay bytes unless the schema declares a character encoding (then strict
 UTF-8/ASCII helpers apply).
+
+## Decoder lanes (no configuration needed)
+
+Tail-offset memoization used to be a generation-time knob
+(`with_memoized_tail_offsets`), paired with a storage-width knob
+(`with_compact_tail_offsets`). **Both are gone.** A knob forced the choice at
+code-generation time, for the whole module, when the right answer depends on
+how each individual call site reads the message.
+
+It is now a runtime lane. Every generated decoder gives you:
+
+```rust,ignore
+let decoder = CarDecoder::try_from(bytes)?;  // small, Sync, recalculates tails
+let decoder = decoder.memoized();            // lazy cache, no allocation
+```
+
+`Decoder::memoized(self)` consumes the base decoder and returns
+`{Name}MemoizedDecoder`, which has the same getter names and a progressive
+cache of discovered dynamic-tail ends. `into_inner()` goes back.
+
+See [Decoder Lanes](../feature-tour/decode-stages.md) for the decision table
+and the cases where each lane wins. Two things worth repeating here:
+
+- Build the memoized decoder **once** and share `&`-references. Calling
+  `.memoized()` in every function creates a separate empty cache each time.
+- The base decoder is `Sync`; the memoized one is `Send` but not `Sync`
+  (`Cell` interior mutability).
+
+Compact `u32` tail-offset storage was removed with the knob. Adoption here is
+conjunctive — less memory **and** no slower **and** no more instructions — and
+it failed two of the three legs, so it was never a defensible default and is
+not worth a second public surface. The reasoning, and how to re-derive it, is
+in [Benchmarks](../benchmarks.md#decoder-lanes).
 
 ## Typed error conversions
 

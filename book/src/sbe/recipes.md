@@ -33,9 +33,9 @@ let unknown_len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
         Ok(())
     })?
     .performance_figures(0, |_| Ok(()))?
-    .manufacturer(b"Honda")?
-    .model(b"Civic")?
-    .activation_code(b"active")?
+    .manufacturer_as_str("Honda")?
+    .model_as_str("Civic")?
+    .activation_code_as_str("active")?
     .encoded_length_with_header();
 
 println!("known={known_len} unknown={unknown_len}");

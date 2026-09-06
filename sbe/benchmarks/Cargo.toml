@@ -94,6 +94,10 @@ harness = false
 name = "perf_parity_extended_bench"
 harness = false
 
+[[bench]]
+name = "versioned_l3_bench"
+harness = false
+
 [features]
 default = []
 compact_str = ["ergo-sbe/compact_str", "dep:compact_str"]

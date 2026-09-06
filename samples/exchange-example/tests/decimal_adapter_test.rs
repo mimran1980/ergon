@@ -70,7 +70,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
                 Ok(())
             })?
             .asks(0, |_| Ok(()))?
-            .symbol(b"X")?;
+            .symbol_as_str("X")?;
         let bytes = complete.as_bytes_with_header().to_vec();
 
         // Generic decode returns the exact same rust_decimal value.
@@ -106,7 +106,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
                 Ok(())
             })?
             .asks(0, |_| Ok(()))?
-            .symbol(b"X")?;
+            .symbol_as_str("X")?;
         assert_eq!(
             complete.as_bytes_with_header(),
             &bytes[..],

@@ -10,6 +10,9 @@ fn car_length_matches_encode() -> Result<(), Box<dyn std::error::Error>> {
     let wire = sbe_feature_tour::demo_car_size_and_encode()?;
     assert!(!wire.is_empty());
     sbe_feature_tour::demo_car_decode_stages(&wire)?;
+    sbe_feature_tour::demo_car_visit_entries(&wire)?;
+    sbe_feature_tour::demo_car_random_access(&wire)?;
+    sbe_feature_tour::demo_car_mutable_ordered(&wire)?;
     sbe_feature_tour::demo_car_domain_dto(&wire)?;
     Ok(())
 }

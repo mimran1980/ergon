@@ -8,7 +8,128 @@ use quote::format_ident;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
 
+/// The progressive tail-boundary cache runtime, used by every generated
+/// `{Name}MemoizedDecoder`. Emitted unconditionally: `Decoder::memoized()` is
+/// always available on a tail-bearing message, so the type is always reachable.
+fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
+    quote::quote! {
+            /// Progressive cache of dynamic-tail *end* offsets.
+            ///
+            /// Slot `i` is the absolute (or compact-relative) end of tail `i`
+            /// — the start of tail `i + 1`. `known_through` is the count of
+            /// published slots. Construction is O(1): unpublished slots stay
+            /// uninitialized and are never read.
+            ///
+            /// Decoding errors are never published. A compact encode failure
+            /// leaves the frontier at the representable prefix so the suffix
+            /// is walked uncached without rejecting the message.
+            pub struct TailBoundaryCache<const N: usize> {
+                known_through: core::cell::Cell<usize>,
+                ends: [core::cell::Cell<core::mem::MaybeUninit<usize>>; N],
+                #[cfg(debug_assertions)]
+                hits: core::cell::Cell<u32>,
+                #[cfg(debug_assertions)]
+                misses: core::cell::Cell<u32>,
+                #[cfg(debug_assertions)]
+                boundary_calcs: core::cell::Cell<u32>,
+            }
+
+            /// Debug-only counters for the memoized random-access prototype.
+            #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+            pub struct DecodeCacheStats {
+                /// Cached tail-start lookups.
+                pub hits: u32,
+                /// Lookups that walked from the frontier.
+                pub misses: u32,
+                /// Individual tail walks (group skip or var-data length read).
+                pub boundary_calcs: u32,
+                /// How far the contiguous frontier has advanced.
+                pub known_through: usize,
+            }
+
+            impl<const N: usize> TailBoundaryCache<N> {
+                /// Empty cache. Slots past the frontier are uninitialized.
+                #[inline]
+                pub const fn new() -> Self {
+                    Self {
+                        known_through: core::cell::Cell::new(0),
+                        ends: [const { core::cell::Cell::new(core::mem::MaybeUninit::uninit()) }; N],
+                        #[cfg(debug_assertions)]
+                        hits: core::cell::Cell::new(0),
+                        #[cfg(debug_assertions)]
+                        misses: core::cell::Cell::new(0),
+                        #[cfg(debug_assertions)]
+                        boundary_calcs: core::cell::Cell::new(0),
+                    }
+                }
+
+                /// Count of published tail ends (`0..=N`).
+                #[inline]
+                pub fn known_through(&self) -> usize {
+                    self.known_through.get()
+                }
+
+                /// True when every dynamic tail end has been published.
+                #[inline]
+                pub fn is_complete(&self) -> bool {
+                    self.known_through.get() == N
+                }
+
+                /// Absolute end of tail `idx` if the contiguous frontier covers it.
+                #[inline]
+                pub fn end_of(&self, idx: usize) -> Option<usize> {
+                    if idx >= N || idx >= self.known_through.get() {
+                        return None;
+                    }
+                    // SAFETY: `idx < known_through`, so this slot was published.
+                    Some(unsafe { self.ends[idx].get().assume_init() })
+                }
+
+                /// Publish the end of tail `idx`. Ignored unless `idx` is the
+                /// next frontier slot, so a boundary can never be published out
+                /// of order — and errors, which never reach here, never land in
+                /// the cache.
+                #[inline]
+                pub fn publish(&self, idx: usize, abs_end: usize) {
+                    if idx >= N || idx != self.known_through.get() {
+                        return;
+                    }
+                    self.ends[idx].set(core::mem::MaybeUninit::new(abs_end));
+                    self.known_through.set(idx + 1);
+                }
+
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_hit(&self) {
+                    self.hits.set(self.hits.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_miss(&self) {
+                    self.misses.set(self.misses.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn record_boundary(&self) {
+                    self.boundary_calcs
+                        .set(self.boundary_calcs.get().saturating_add(1));
+                }
+                #[cfg(debug_assertions)]
+                #[inline]
+                pub fn stats(&self) -> DecodeCacheStats {
+                    DecodeCacheStats {
+                        hits: self.hits.get(),
+                        misses: self.misses.get(),
+                        boundary_calcs: self.boundary_calcs.get(),
+                        known_through: self.known_through.get(),
+                    }
+                }
+            }
+    }
+}
+
 pub(crate) fn generate_sbe_rt_src() -> String {
+    let tail_boundary_cache = tail_boundary_cache_tokens();
     let module = quote::quote! {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +156,12 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 InvalidBoolean { field: &'static str, discriminant: u64 },
                 /// Domain `try_*` conversion failed.
                 DomainConversionFailed { field: &'static str, reason: &'static str },
+                /// Mutable ordered decoder called a dynamic tail out of schema order.
+                OutOfOrder {
+                    owner: &'static str,
+                    expected: &'static str,
+                    requested: &'static str,
+                },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -52,6 +179,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
                         Self::InvalidBoolean { field, discriminant } => write!(f, "field '{}': invalid boolean (discriminant {discriminant:#x})", field),
                         Self::DomainConversionFailed { field, reason } => write!(f, "field '{}': domain conversion failed: {}", field, reason),
+                        Self::OutOfOrder { owner, expected, requested } => write!(f, "{owner}: expected '{expected}', requested '{requested}'"),
                     }
                 }
             }
@@ -271,6 +399,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 checked_header_usize(field, value)
             }
 
+            #tail_boundary_cache
+
+
             /// Narrow a group count for `GroupFull` / mismatch diagnostics.
             /// Errors instead of truncating when the count exceeds `u32::MAX`.
             #[inline]
@@ -470,6 +601,11 @@ pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
 
 thread_local! {
     static DEPRECATED_ATTRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Highest `sinceVersion` the generated *encoder* still emits.
+    /// `Some(u16::MAX)` (the default) means every version in the schema is
+    /// encodable; `None` means the enclosing subtree has no encoder at all.
+    static ENCODE_VERSION_CAP: std::cell::Cell<Option<u16>> =
+        const { std::cell::Cell::new(Some(u16::MAX)) };
 }
 
 /// Run `f` with `#[deprecated]` emission enabled (`with_deprecated_attrs()`).
@@ -487,6 +623,28 @@ pub(crate) fn with_deprecated_attrs<R>(enabled: bool, f: impl FnOnce() -> R) -> 
 
 fn deprecated_attrs_enabled() -> bool {
     DEPRECATED_ATTRS.with(|c| c.get())
+}
+
+/// Run `f` with the encoder's acting-version cap in scope. Decoder codegen
+/// reads it to avoid naming encoder-owned items that `for_encode` dropped.
+pub(crate) fn with_encode_version_cap<R>(cap: Option<u16>, f: impl FnOnce() -> R) -> R {
+    ENCODE_VERSION_CAP.with(|cell| {
+        let prev = cell.get();
+        cell.set(cap);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+pub(crate) fn encode_version_cap() -> Option<u16> {
+    ENCODE_VERSION_CAP.with(|c| c.get())
+}
+
+/// True when `for_encode(cap)` keeps a member introduced at `since_version`,
+/// i.e. the encoder-owned items naming it are generated.
+pub(crate) fn encodable_at(since_version: u16) -> bool {
+    matches!(encode_version_cap(), Some(cap) if since_version <= cap)
 }
 
 /// Rust keywords that cannot be used as bare identifiers.
@@ -631,6 +789,35 @@ pub(crate) fn schema_marker_ident(
             return syn::Ident::new(&name, proc_macro2::Span::call_site());
         }
         n += 1;
+    }
+}
+
+/// Which flavour of text a schema-declared `characterEncoding` names, or
+/// `None` for binary/unspecified var-data.
+pub(crate) enum TextEncoding {
+    Utf8,
+    Ascii,
+}
+
+/// Classifies a `characterEncoding` value for `*_as_str` accessor generation.
+///
+/// `characterEncoding` is free text in the SBE spec, not a closed enum —
+/// schemas legally spell UTF-8 as `UTF-8` or `UTF8`, and ASCII as `ASCII` or
+/// `US-ASCII` (case-insensitively). Every location that emits a `*_as_str`
+/// accessor — message decode, group-entry decode, memoized decode,
+/// mutable-ordered decode, message/entry encode — must agree on what counts
+/// as text through this one function. A narrower match in only some of those
+/// locations doesn't error; it silently drops the accessor there while
+/// leaving it present elsewhere, which is worse than an error and exactly
+/// the defect class this generator has shipped before.
+pub(crate) fn text_encoding_kind(character_encoding: Option<&str>) -> Option<TextEncoding> {
+    let enc = character_encoding?;
+    if enc.eq_ignore_ascii_case("UTF-8") || enc.eq_ignore_ascii_case("UTF8") {
+        Some(TextEncoding::Utf8)
+    } else if enc.eq_ignore_ascii_case("ASCII") || enc.eq_ignore_ascii_case("US-ASCII") {
+        Some(TextEncoding::Ascii)
+    } else {
+        None
     }
 }
 
@@ -1151,6 +1338,17 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 if matches!(self, Self::NullVal) { None } else { Some(self) }
             }
 
+            /// Variant name as a `&'static str` — no allocation, unlike
+            /// `.to_string()` through [`core::fmt::Display`].
+            #[must_use = "discarding this value is almost always a mistake"]
+            #[inline]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    #(Self::#variant_names => stringify!(#variant_names),)*
+                    Self::NullVal => "NullVal",
+                }
+            }
+
             #as_bool_method
         }
 
@@ -1170,10 +1368,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
 
         impl core::fmt::Display for #name_ident {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                match self {
-                    #(Self::#variant_names => f.write_str(stringify!(#variant_names)),)*
-                    Self::NullVal => f.write_str("NullVal"),
-                }
+                f.write_str(self.as_str())
             }
         }
 
@@ -2217,6 +2412,77 @@ pub(crate) fn generate_any_message(
                     /// followed by the unparsed body. Not the body alone.
                     frame: &'a [u8],
                 },
+            }
+        });
+
+        // Per-variant lane accessors. `match` still works; these save the
+        // caller writing one when they already know which template they want,
+        // and let them land directly in the lane they intend to decode with
+        // instead of taking the base decoder and converting at the call site.
+        let mut lane_accessors = proc_macro2::TokenStream::new();
+        for m in messages {
+            let pascal = to_pascal_case(&m.name);
+            let variant = quote::format_ident!("{pascal}");
+            let decoder = quote::format_ident!("{pascal}Decoder");
+            let snake = to_snake_case(&m.name);
+            let into_base = quote::format_ident!("into_{snake}");
+            let doc_base = if m.has_tails() {
+                format!(
+                    "Take the `{pascal}` decoder, or `None` if this frame is a different template."
+                )
+            } else {
+                format!(
+                    "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized or ordered lane to take: every field is random-access off the block and this decoder reads them all."
+                )
+            };
+            lane_accessors.extend(quote::quote! {
+                #[doc = #doc_base]
+                #[inline]
+                #[must_use]
+                pub fn #into_base(self) -> Option<#decoder<'a>> {
+                    match self {
+                        Self::#variant(d) => Some(d),
+                        _ => None,
+                    }
+                }
+            });
+            if m.has_tails() {
+                let memo = quote::format_ident!("{pascal}MemoizedDecoder");
+                let ordered = quote::format_ident!("{pascal}OrderedDecoder");
+                let into_memo = quote::format_ident!("into_{snake}_memoized");
+                let into_ordered = quote::format_ident!("into_{snake}_ordered");
+                let doc_memo = format!(
+                    "Take the `{pascal}` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template."
+                );
+                let doc_ordered = format!(
+                    "Take the `{pascal}` decoder straight into the mutable ordered lane (complete sequential decoding), or `None` if this frame is a different template."
+                );
+                lane_accessors.extend(quote::quote! {
+                    #[doc = #doc_memo]
+                    #[inline]
+                    #[must_use]
+                    pub fn #into_memo(self) -> Option<#memo<'a>> {
+                        match self {
+                            Self::#variant(d) => Some(d.memoized()),
+                            _ => None,
+                        }
+                    }
+
+                    #[doc = #doc_ordered]
+                    #[inline]
+                    #[must_use]
+                    pub fn #into_ordered(self) -> Option<#ordered<'a>> {
+                        match self {
+                            Self::#variant(d) => Some(d.ordered()),
+                            _ => None,
+                        }
+                    }
+                });
+            }
+        }
+        out.extend(quote::quote! {
+            impl<'a> AnyMessage<'a> {
+                #lane_accessors
             }
         });
     }

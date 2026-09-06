@@ -371,6 +371,15 @@ pub(crate) fn parse_message_child(
                     since_version,
                     deprecated: data_deprecated,
                     description: collect_description(node),
+                    // `characterEncoding` is legal on `<data>` itself, not only
+                    // on the composite's `varData` member — sbe-tool accepts
+                    // both and real schemas use the element form. Dropping it
+                    // here silently downgraded a declared-text field to raw
+                    // bytes: the generator saw `None` and emitted no
+                    // `*_as_str` accessor, so callers had no choice but to
+                    // handle `&[u8]`. `structured_ir` prefers this value and
+                    // falls back to the composite member.
+                    character_encoding: node.attribute("characterEncoding").map(str::to_string),
                     ..Encoding::default()
                 },
                 span: None,
