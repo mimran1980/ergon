@@ -353,11 +353,41 @@ suffix and returns the existing complete stage.
 Group guards own a local cursor and commit the parent offset only after a
 successful completion. Dropping the guard, malformed data, or a callback error
 leaves the parent at the group start (retry from the beginning of that group).
-`remaining_entries()` is O(1). The guard does not implement `Iterator`. Nested
-group guards borrow their entry, so Rust prevents using the parent entry until
-the nested guard completes. Unread suffix of a dynamic entry is skipped once
-on successful callback return — you cannot omit an earlier tail and then
-request a later one.
+`remaining_entries()` is O(1). Unread suffix of a dynamic entry is skipped
+once on successful callback return — you cannot omit an earlier tail and
+then request a later one.
+
+### Why `visit_entries` and not `Iterator`
+
+`visit_entries` is a **callback** (you hand it a closure) rather than a
+`for entry in guard` **external iterator**, and that is not a style
+preference — an entry whose own tails need a `&mut` cursor cannot be yielded
+from a real `std::iter::Iterator`. Take an L3 book's `bids` group: each entry
+has its own nested `orders` group, so reading it needs
+`level.orders()?.visit_entries(...)`, which requires `&mut level` and hands
+back a guard that borrows `level` for the walk. An `Iterator::Item` cannot
+carry a borrow that depends on how long *you* keep using it after `next()`
+returns — that is the standard "lending iterator" limitation, and it applies
+the moment an entry has nested groups or var-data of its own. `visit_entries`
+sidesteps it by construction: your closure receives `&mut Entry` for exactly
+one call, does everything with it there — including fully consuming a nested
+`orders` guard — and only then does the walk move to the next entry. The
+borrow never has to survive being handed back across an iteration boundary,
+so there is nothing for the borrow checker to reject.
+
+The commit semantics above depend on the same shape: `visit_entries` drives
+the *entire* walk internally and calls `commit()` once, after every entry has
+been visited without error. A real external iterator you `break` or error out
+of early would need `Drop`-based bookkeeping to reproduce that all-or-nothing
+commit — driving the loop internally and committing once is simpler and
+harder to get wrong. (A group whose entries carry no nested groups or var-data
+of their own has no lending problem and could in principle expose `Iterator`,
+but the interface stays `visit_entries` uniformly, so callers do not need to
+know which shape a given group happens to be.)
+
+The random-access lane's plain `Iterator<Item = Result<Entry, DecodeError>>`
+does not hit this: each entry there is a cheap, independent, `&self`-only
+re-derivation from the wire on every step, with nothing mutable to lend.
 
 **Advantages**
 
