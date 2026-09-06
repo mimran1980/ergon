@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.26] — 2026-09-07
+
 ### Added
 - Var-data declared with `characterEncoding="UTF-8"` or `"ASCII"` now gets a
   `*_as_str(&str)` encode-side setter, at both message and group-entry level,
