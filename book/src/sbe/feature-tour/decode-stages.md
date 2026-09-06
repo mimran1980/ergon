@@ -11,23 +11,28 @@ dynamic entry, so it is not the ordered fast path.
 
 ## Encoding: one state machine
 
-Encoding is the simple half of this page. Each encoder stage is a distinct
-type that exposes only the fields legal to write *next* — fixed block, then
-each group, then each var-data field, in schema order. There is no cursor to
-get wrong: the compiler enforces the order by only giving the next stage's
-type a method for the next field. Skip a required tail or write two fields
-out of order and the code does not compile, full stop. That is the whole
-safety story — no runtime check, no `Result` to handle for ordering, because
-the wrong call is not expressible.
+Encoding is the simple half of this page. It genuinely is a state machine —
+there is a cursor, and it does track your position in the message — the
+difference from a typical state machine is *where* that cursor lives. Each
+encoder stage is a distinct type that **is** the current position: fixed
+block written, then each group, then each var-data field, in schema order.
+Writing a field consumes that stage and returns the next one, so the cursor
+advances by becoming a new type rather than by mutating a field inside it.
+The compiler enforces the order simply by only giving the current stage's
+type a method for the next legal field. Skip a required tail or write two
+fields out of order and the code does not compile, full stop — the state
+machine is real, it is just resolved at compile time instead of carried at
+runtime.
 
-The cost of that safety is effectively zero: the stages are concrete
-monomorphic structs, not a state machine you pay for at runtime, and they
-disappear entirely under optimisation. See [Encode and
-Decode](../getting-started/encode-decode.md) for the `fixed()` / `raw_fixed()`
-mechanics and [Method Chaining](../getting-started/method-chaining.md) for why
-one chained expression is the idiom. Decoding is where the real choice lives,
-because a decoder can be asked to read in an order the encoder never had to
-think about — which is what the rest of this page is about.
+The cost of that safety is effectively zero: the stage types are concrete
+monomorphic structs with no data of their own beyond the buffer and offset
+already needed regardless, and the stage transitions disappear entirely under
+optimisation. See [Encode and Decode](../getting-started/encode-decode.md) for
+the `fixed()` / `raw_fixed()` mechanics and [Method
+Chaining](../getting-started/method-chaining.md) for why one chained
+expression is the idiom. Decoding is where the real choice lives, because a
+decoder can be asked to read in an order the encoder never had to think
+about — which is what the rest of this page is about.
 
 | Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
 |------|-------------|----------|-------------------|--------|
