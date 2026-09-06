@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Var-data declared with `characterEncoding="UTF-8"` or `"ASCII"` now gets a
+  `*_as_str(&str)` encode-side setter, at both message and group-entry level,
+  alongside the existing `*_as_str` decode-side accessors — writes through
+  the checked byte setter after validating ASCII where the schema requires it.
+
+### Fixed
+- `characterEncoding` spelling variants legal under the SBE spec —
+  `US-ASCII` and `UTF8` (no hyphen), used by real schemas including this
+  repo's own Aeron cluster codecs — were silently dropped by message-level
+  decode, the memoized decode lane, and group-entry decode, though the
+  mutable-ordered and staged-consuming lanes already recognised them. All
+  four locations, plus the new encoder, now classify `characterEncoding`
+  through one shared function so they can't drift again.
+
 ## [0.1.25] — 2026-09-06
 
 ### Added
