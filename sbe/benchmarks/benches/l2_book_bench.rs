@@ -128,7 +128,7 @@ fn bench_l2_decode(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("decode_decimal", n), &buf, |b, buf| {
             b.iter(|| {
                 let dec = L2BookDecoder::try_from(black_box(&buf[..written])).unwrap();
-                let levels = dec.into_levels().unwrap();
+                let levels = dec.levels().unwrap();
                 let mut total: i128 = 0;
                 for level in levels {
                     let price: RustDecimal = black_box(level.try_price().expect("valid"));
@@ -145,7 +145,7 @@ fn bench_l2_decode(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("decode_wire", n), &buf, |b, buf| {
             b.iter(|| {
                 let dec = L2BookDecoder::try_from(black_box(&buf[..written])).unwrap();
-                let levels = dec.into_levels().unwrap();
+                let levels = dec.levels().unwrap();
                 let mut total: i64 = 0;
                 for level in levels {
                     let price_wire = black_box(level.price_value());
@@ -162,7 +162,7 @@ fn bench_l2_decode(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("bulk_decode_wire", n), &n, |b, &n| {
             b.iter(|| {
                 let dec = L2BookDecoder::try_from(black_box(&buf[..written])).unwrap();
-                let mut levels = dec.into_levels().unwrap();
+                let mut levels = dec.levels().unwrap();
                 let entries: Vec<LevelsEntry> = black_box(levels.bulk_decode().unwrap());
                 let mut total: i64 = 0;
                 for e in &entries {

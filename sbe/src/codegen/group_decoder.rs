@@ -1612,8 +1612,8 @@ pub(crate) fn generate_group_decoder(
         // re-validate by hand.
         //
         // Unless the schema already used the name. Entry fields keep their
-        // schema names in *every* entry location — decoder, ordered decoder,
-        // encoder, DTO — so renaming one to free up `<vd>_as_str` would give
+        // schema names in *every* entry location — decoder, encoder, DTO —
+        // so renaming one to free up `<vd>_as_str` would give
         // the same field different names per location, which is exactly what
         // the naming rule forbids. A field the author explicitly called
         // `noteAsStr` wins the name; `note()` still returns the bytes.

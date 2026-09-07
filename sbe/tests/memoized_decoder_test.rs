@@ -408,13 +408,19 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         "fn inner_field(",
         "fn into_inner_field(",
         "fn decode_cache_stats_field(",
-        "fn ordered_field(",
     ] {
         assert!(src.contains(renamed), "missing rename: {renamed}");
     }
-    // The lane methods themselves must survive under their real names.
+    // A field named `ordered` keeps that name now that the conversion is gone.
+    assert!(
+        src.contains("fn ordered(") && !src.contains("fn ordered_field("),
+        "field named ordered must stay ordered(), not ordered_field()"
+    );
     assert!(src.contains("pub fn memoized(self)"), "memoized() lost");
-    assert!(src.contains("pub fn ordered(self)"), "ordered() lost");
+    assert!(
+        !src.contains("pub fn ordered(self)"),
+        "ordered() conversion must not exist"
+    );
 
     compile_and_run(
         "laneclash",
@@ -437,7 +443,7 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         // Base lane: renamed getters, real lane conversions.
         let dec = MsgDecoder::try_decode(&buf[..len], 0)?;
         assert_eq!(dec.memoized_field(), 1);
-        assert_eq!(dec.ordered_field(), 5);
+        assert_eq!(dec.ordered(), 5);
 
         // Memoized lane: same renamed getters plus the real wrapper methods.
         let memo = MsgDecoder::try_decode(&buf[..len], 0)?.memoized();
@@ -445,20 +451,11 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         assert_eq!(memo.inner_field(), 2);
         assert_eq!(memo.into_inner_field(), 3);
         assert_eq!(memo.decode_cache_stats_field(), 4);
-        assert_eq!(memo.ordered_field(), 5);
+        assert_eq!(memo.ordered(), 5);
         assert_eq!(memo.label()?, b"abc");
         assert_eq!(memo.inner().memoized_field(), 1);
         let _ = memo.decode_cache_stats();
         assert_eq!(memo.into_inner().memoized_field(), 1);
-
-        // Ordered lane forwards the same renamed names.
-        let mut ord = MsgDecoder::try_decode(&buf[..len], 0)?.ordered();
-        assert_eq!(ord.memoized_field(), 1);
-        ord.legs()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
-            assert_eq!(e.qty(), 6);
-            Ok(())
-        })?;
-        assert_eq!(ord.label()?, b"abc");
         "#,
     );
     Ok(())

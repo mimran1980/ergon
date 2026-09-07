@@ -11,7 +11,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(message) = BookSnapshotDecoder::try_from(data) else {
         return;
     };
-    let Ok(mut levels) = message.into_levels() else {
+    let Ok(mut levels) = message.levels() else {
         return;
     };
     // bulk_decode with hoisted bounds check — must not panic

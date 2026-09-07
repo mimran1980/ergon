@@ -40,3 +40,26 @@ design.
 
 For the full Car example with groups and var-data, see the
 [feature tour](../feature-tour.md) page.
+
+## Decoding
+
+Sequential decode is the same rule: **one chain, bind values not stages.**
+`into_*(|entry|)` visits a group and returns the next stage; `skip_*` jumps
+a tail you do not need; var-data `into_*` returns `(value, next)` because
+the bytes *are* the result.
+
+**Prefer:**
+
+```rust,ignore
+let mut bids = Vec::new();
+let (symbol, _done) = L3BookDecoder::try_decode(wire, 0)?
+    .into_bids(|level| {
+        let complete = level.into_orders(|order| { /* … */ Ok(()) })?;
+        bids.push(/* … */);
+        Ok(complete)
+    })?
+    .skip_asks()?
+    .into_symbol_as_str()?;
+```
+
+**Avoid:** `let after_bids = dec.into_bids(...)?; let after_asks = after_bids.into_asks(...)?;` — those names are the decoder equivalent of `let enc = enc.bids(...)`.

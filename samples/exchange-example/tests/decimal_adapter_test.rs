@@ -75,7 +75,7 @@ fn rust_decimal_generic_roundtrip_through_generated_methods()
 
         // Generic decode returns the exact same rust_decimal value.
         let dec = L2BookDecoder::try_decode(&bytes, 0).unwrap();
-        let mut g = dec.into_bids().unwrap();
+        let mut g = dec.bids().unwrap();
         let entry = g.next().unwrap();
         let back: rust_decimal::Decimal =
             rust_decimal::Decimal::try_from_sbe(entry.price_value()).unwrap();

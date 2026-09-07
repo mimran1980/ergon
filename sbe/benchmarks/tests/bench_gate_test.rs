@@ -36,21 +36,6 @@ const PAIRS: &[(&str, &str, &str)] = &[
     ),
     ("parity_decode_full_message", "ergo-sbe_ordered", "sbe-tool"),
     (
-        "parity_decode_full_message",
-        "ergo-sbe_ordered",
-        "ergo-sbe_consuming",
-    ),
-    (
-        "parity_decode_full_message",
-        "ergo-sbe_mutable_ordered",
-        "sbe-tool",
-    ),
-    (
-        "parity_decode_full_message",
-        "ergo-sbe_mutable_ordered",
-        "ergo-sbe_consuming",
-    ),
-    (
         "parity_decode_entry_point",
         "ergo-sbe_wrap",
         "sbe-tool_wrap",

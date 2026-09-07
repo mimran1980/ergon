@@ -1,11 +1,11 @@
 //! Canonical bids/asks dual-group proof on the L3 orderbook fixture.
 //!
 //! Runtime: decode `bids` then `asks` through the consuming stage API
-//! (`into_bids` -> `finish` -> `into_asks` -> `finish` -> complete), reading
-//! nested `orders` + `orderId` inside each level.
+//! (`into_bids(|entry|)` → `into_asks(|entry|)` → complete), reading nested
+//! `orders` + `orderId` inside each level.
 //!
 //! Compile-fail: the consuming API enforces wire order — `into_asks` lives only
-//! on `L3BookDecoderAfterBids`, and `finish` consumes the group decoder.
+//! on `L3BookDecoderAfterBids`, and `into_bids` consumes the decoder.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -62,39 +62,41 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(dec.timestamp(), 99);
         assert_eq!(dec.sequence(), 7);
 
-        // bids: consume the message stage, iterate levels, read nested orders.
-        let mut bids = dec.into_bids().unwrap();
-        assert_eq!(bids.remaining(), 2);
+        // bids: consume the message stage, visit levels, read nested orders.
         let mut level_prices = Vec::new();
         let mut level_qtys = Vec::new();
         let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
-        while let Some(Ok(lvl)) = bids.next() {
+        let after_bids = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
             level_prices.push(lvl.price());
             level_qtys.push(lvl.qty());
             let mut ids: Vec<Vec<u8>> = Vec::new();
-            for ord in lvl.orders().unwrap() {
-                let ord = ord.unwrap();
-                ids.push(ord.order_id().unwrap().to_vec());
-            }
+            let complete = lvl.into_orders(|ord| -> Result<_, sbe_rt::DecodeError> {
+                let (id, complete) = ord.into_order_id()?;
+                ids.push(id.to_vec());
+                Ok(complete)
+            })?;
             all_order_ids.push(ids);
-        }
-        let after_bids = bids.finish().unwrap();
+            Ok(complete)
+        }).unwrap();
         assert_eq!(level_prices, vec![100i64, 101]);
         assert_eq!(level_qtys, vec![10i64, 5]);
         assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
 
         // asks: only reachable after bids finished.
-        let mut asks = after_bids.into_asks().unwrap();
-        assert_eq!(asks.remaining(), 1);
-        let ask_level = asks.next().unwrap().unwrap();
-        assert_eq!(ask_level.price(), 200);
-        assert_eq!(ask_level.qty(), 20);
+        let mut ask_prices = Vec::new();
         let mut ask_order_qtys = Vec::new();
-        for ord in ask_level.orders().unwrap() {
-            ask_order_qtys.push(ord.unwrap().order_qty());
-        }
+        let done = after_bids.into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            ask_prices.push(lvl.price());
+            assert_eq!(lvl.qty(), 20);
+            let complete = lvl.into_orders(|ord| -> Result<_, sbe_rt::DecodeError> {
+                ask_order_qtys.push(ord.order_qty());
+                let (_id, complete) = ord.into_order_id()?;
+                Ok(complete)
+            })?;
+            Ok(complete)
+        }).unwrap();
+        assert_eq!(ask_prices, vec![200i64]);
         assert_eq!(ask_order_qtys, vec![8i64]);
-        let done = asks.finish().unwrap();
 
         assert_eq!(done.encoded_length_with_header(), total_len);
         assert_eq!(done.as_bytes_with_header(), encoded);
@@ -158,10 +160,10 @@ fn decode_l3_through_visit_entries() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut level_prices = Vec::new();
         let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
-        let after_bids = dec.into_bids()?.visit_entries(|lvl| -> Result<_, sbe_rt::DecodeError> {
+        let after_bids = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
             level_prices.push(lvl.price());
             let mut ids = Vec::new();
-            let complete = lvl.into_orders()?.visit_entries(|ord| -> Result<_, sbe_rt::DecodeError> {
+            let complete = lvl.into_orders(|ord| -> Result<_, sbe_rt::DecodeError> {
                 let (id, complete) = ord.into_order_id()?;
                 ids.push(id.to_vec());
                 Ok(complete)
@@ -173,9 +175,9 @@ fn decode_l3_through_visit_entries() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
 
         let mut ask_prices = Vec::new();
-        let done = after_bids.into_asks()?.visit_entries(|lvl| -> Result<_, sbe_rt::DecodeError> {
+        let done = after_bids.into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
             ask_prices.push(lvl.price());
-            lvl.into_orders()?.visit_entries(|ord| -> Result<_, sbe_rt::DecodeError> {
+            lvl.into_orders(|ord| -> Result<_, sbe_rt::DecodeError> {
                 let (_id, complete) = ord.into_order_id()?;
                 Ok(complete)
             })
@@ -210,8 +212,8 @@ fn cf_decode_asks_before_bids() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Compile-fail: `finish()` consumes the group decoder (which is non-Copy), so
-/// the consumed decoder cannot be iterated afterwards.
+/// Compile-fail: `into_bids` consumes the decoder, so the original value cannot
+/// be used afterwards.
 #[test]
 fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::l3_orderbook_schema(), "l3_cf_finish_consumes");
@@ -224,11 +226,12 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         .fixed(&L3BookFixedFields { timestamp: 1, sequence: 1 })
         .bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
-        let mut bids = dec.into_bids().unwrap();
-        let _after = bids.finish().unwrap(); // bids moved here
-        let _ = bids.next();                  // ILLEGAL: use of moved value `bids`
+        let _after = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            lvl.into_orders(|ord| ord.into_order_id().map(|(_, c)| c))
+        }).unwrap();
+        let _ = dec.timestamp(); // ILLEGAL: use of moved value `dec`
     "#,
-        &["borrow of moved value: `bids`"],
+        &["borrow of moved value: `dec`"],
     );
 
     Ok(())
@@ -267,34 +270,24 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         assert_eq!(c.as_bytes_with_header(), encoded);
 
         let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
-        let mut bids = dec.into_bids().unwrap();
-
-        // Level 0: read fixed fields, then consume the nested orders stage.
-        let lvl0 = bids.next().unwrap().unwrap();
-        assert_eq!(lvl0.price(), 100);
-        assert_eq!(lvl0.qty(), 10);
-        let mut orders = lvl0.into_orders().unwrap();
-        assert_eq!(orders.remaining(), 2);
         let mut order_ids = Vec::new();
-        while let Some(Ok(ord)) = orders.next() {
-            let (id, _done) = ord.into_order_id().unwrap();
-            order_ids.push(id.to_vec());
-        }
-        let _lvl0_done = orders.finish().unwrap();
+        let mut prices = Vec::new();
+        let after_bids = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            prices.push(lvl.price());
+            let complete = lvl.into_orders(|ord| -> Result<_, sbe_rt::DecodeError> {
+                let (id, complete) = ord.into_order_id()?;
+                order_ids.push(id.to_vec());
+                Ok(complete)
+            })?;
+            Ok(complete)
+        }).unwrap();
+        assert_eq!(prices, vec![100i64, 101]);
         assert_eq!(order_ids, vec![b"ord-1".to_vec(), b"ord-2".to_vec()]);
 
-        // Level 1: empty nested orders still traverse to the entry-complete stage.
-        let lvl1 = bids.next().unwrap().unwrap();
-        assert_eq!(lvl1.price(), 101);
-        let orders1 = lvl1.into_orders().unwrap();
-        assert!(orders1.is_empty());
-        let _lvl1_done = orders1.finish().unwrap();
-
         // bids -> after_bids -> asks (empty) -> complete.
-        let after_bids = bids.finish().unwrap();
-        let asks = after_bids.into_asks().unwrap();
-        assert!(asks.is_empty());
-        let done = asks.finish().unwrap();
+        let done = after_bids.into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            lvl.into_orders(|ord| ord.into_order_id().map(|(_, c)| c))
+        }).unwrap();
         assert_eq!(done.encoded_length_with_header(), encoded.len());
         assert_eq!(done.as_bytes_with_header(), encoded);
     "#,
@@ -319,10 +312,11 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
             g.add(|mut lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())) })
         }).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
-        let mut bids = dec.into_bids().unwrap();
-        let lvl = bids.next().unwrap().unwrap();
-        let _orders = lvl.into_orders().unwrap(); // lvl moved here
-        let _p = lvl.price();                      // ILLEGAL: use of moved value `lvl`
+        let _ = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            let complete = lvl.into_orders(|ord| ord.into_order_id().map(|(_, c)| c))?;
+            let _p = lvl.price(); // ILLEGAL: use of moved value `lvl`
+            Ok(complete)
+        });
     "#,
         &["borrow of moved value: `lvl`"],
     );

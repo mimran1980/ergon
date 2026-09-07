@@ -159,8 +159,7 @@ fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: rusteron_client::Aeron
         AnyMessage::L2Book(book) => {
             assert_eq!(book.source(), Source::Bitget);
             assert_eq!(book.sequence(), 1);
-            let bids_dec = book.into_bids().expect("bids");
-            assert_eq!(bids_dec.len(), 1);
+            assert_eq!(book.bids().expect("bids").len(), 1);
         }
         _other => panic!("expected L2Book"),
     }

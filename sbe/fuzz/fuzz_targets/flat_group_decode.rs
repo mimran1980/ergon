@@ -10,15 +10,12 @@ fuzz_target!(|data: &[u8]| {
     let Ok(message) = BookSnapshotDecoder::try_from(data) else {
         return;
     };
-    let Ok(mut levels) = message.into_levels() else {
+    let Ok(levels) = message.levels() else {
         return;
     };
-    // Flat group — entries have no nested tails, next() returns EntryDecoder directly
-    while let Some(entry) = levels.next() {
+    for entry in levels {
         let _ = entry.price();
         let _ = entry.qty();
         let _ = entry.num_orders();
     }
-    // Consuming stage after group — flat message has none, finish returns ()
-    let _ = levels.finish();
 });

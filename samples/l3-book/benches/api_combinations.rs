@@ -30,7 +30,7 @@ fn bench_nested_known_counts(c: &mut Criterion) {
         (decimal(50_850), decimal(15), ask_orders.as_slice()),
         (decimal(50_900), decimal(25), ask_orders.as_slice()),
     ];
-    let expected = book_encoded_length(&bids, &asks, b"BTCUSDT")
+    let expected = book_encoded_length(&bids, &asks, "BTCUSDT")
         .expect("static benchmark shape must have a valid encoded length");
 
     let mut group = c.benchmark_group("l3_book/current_api");
@@ -38,7 +38,7 @@ fn bench_nested_known_counts(c: &mut Criterion) {
     group.bench_function("size_nested_book", |bencher| {
         bencher.iter(|| {
             black_box(
-                book_encoded_length(black_box(&bids), black_box(&asks), black_box(b"BTCUSDT"))
+                book_encoded_length(black_box(&bids), black_box(&asks), black_box("BTCUSDT"))
                     .expect("static benchmark shape must remain valid"),
             )
         });
@@ -50,7 +50,7 @@ fn bench_nested_known_counts(c: &mut Criterion) {
                 black_box(&mut storage[..expected]),
                 black_box(&bids),
                 black_box(&asks),
-                black_box(b"BTCUSDT"),
+                black_box("BTCUSDT"),
             )
             .expect("pre-sized benchmark buffer must encode");
             assert_eq!(written, expected);

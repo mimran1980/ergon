@@ -414,14 +414,14 @@ fn over_limit_u64_group_count_is_a_typed_range_error() -> Result<(), Box<dyn std
             DimsDecoder::BLOCK_LENGTH,
             0,
         )?;
-        match msg.into_rows() {
+        match msg.rows() {
             Err(sbe_rt::DecodeError::InvalidHeaderValue { field, value, maximum }) => {
                 assert_eq!(field, "numInGroup");
                 assert_eq!(value, too_big);
                 assert_eq!(maximum, u32::MAX as u64);
             }
-            Err(other) => panic!("into_rows expected typed range error, got {other:?}"),
-            Ok(_) => panic!("into_rows must reject an over-limit group count"),
+            Err(other) => panic!("rows expected typed range error, got {other:?}"),
+            Ok(_) => panic!("rows must reject an over-limit group count"),
         }
         "#,
     );
@@ -657,7 +657,7 @@ fn every_truncation_boundary_is_rejected_for_fixed_group_nested_and_var_data()
             })?
             .encoded_length_with_header();
         assert_all_cuts("grouped", &grouped[..grouped_len], GroupedDecoder::verify);
-        let mut rows = GroupedDecoder::try_from(&grouped[..grouped_len])?.into_rows()?;
+        let mut rows = GroupedDecoder::try_from(&grouped[..grouped_len])?.rows()?;
         assert!(rows.skip_n(usize::MAX).is_err());
 
         let dimension_offset = GroupedEncoder::HEADER_LENGTH + GroupedEncoder::BLOCK_LENGTH;

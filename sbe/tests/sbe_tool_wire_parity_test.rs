@@ -67,7 +67,7 @@ mod sbe_tool_car;
 use ergo::{
     BooleanType as ErgoBool, BoostType as ErgoBoost, Booster as ErgoBooster, CarDecoder as ErgoDec,
     CarEncoder as ErgoEnc, CarFixedFields as ErgoFixedFields, Engine as ErgoEngine,
-    Model as ErgoModel, OptionalExtras as ErgoExtras,
+    Model as ErgoModel, OptionalExtras as ErgoExtras, sbe_rt,
 };
 use sbe_tool_car::sbe_tool::{
     Encoder, ReadBuf, SBE_SCHEMA_ID, SBE_SCHEMA_VERSION, WriteBuf,
@@ -501,34 +501,39 @@ fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(eng.booster().boost_type(), p.ergo_boost());
     assert_eq!(eng.booster().horse_power(), p.horse_power);
 
-    let mut fuel = car.into_fuel_figures().unwrap();
     let mut fuel_i = 0usize;
-    while let Some(Ok(e)) = fuel.next() {
-        let expected = &p.fuel[fuel_i];
-        assert_eq!(e.speed(), expected.speed);
-        assert_eq!(e.mpg().to_bits(), expected.mpg.to_bits());
-        assert_eq!(e.usage_description().unwrap(), expected.usage);
-        fuel_i += 1;
-    }
+    let after = car
+        .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let expected = &p.fuel[fuel_i];
+            assert_eq!(e.speed(), expected.speed);
+            assert_eq!(e.mpg().to_bits(), expected.mpg.to_bits());
+            let (usage, complete) = e.into_usage_description()?;
+            assert_eq!(usage, expected.usage);
+            fuel_i += 1;
+            Ok(complete)
+        })
+        .unwrap();
     assert_eq!(fuel_i, p.fuel.len());
-    let after = fuel.finish().unwrap();
 
-    let mut perf = after.into_performance_figures().unwrap();
     let mut perf_i = 0usize;
-    while let Some(Ok(e)) = perf.next() {
-        let expected = &p.perf[perf_i];
-        assert_eq!(e.octane_rating(), expected.octane);
-        let acc = e.acceleration().unwrap();
-        let acc_v: Vec<_> = acc.collect();
-        assert_eq!(acc_v.len(), expected.accel.len());
-        for (a, exp) in acc_v.iter().zip(expected.accel.iter()) {
-            assert_eq!(a.mph(), exp.mph);
-            assert_eq!(a.seconds().to_bits(), exp.seconds.to_bits());
-        }
-        perf_i += 1;
-    }
+    let after_p = after
+        .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let expected = &p.perf[perf_i];
+            assert_eq!(e.octane_rating(), expected.octane);
+            let mut acc_i = 0usize;
+            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                let exp = &expected.accel[acc_i];
+                assert_eq!(a.mph(), exp.mph);
+                assert_eq!(a.seconds().to_bits(), exp.seconds.to_bits());
+                acc_i += 1;
+                Ok(())
+            })?;
+            assert_eq!(acc_i, expected.accel.len());
+            perf_i += 1;
+            Ok(complete)
+        })
+        .unwrap();
     assert_eq!(perf_i, p.perf.len());
-    let after_p = perf.finish().unwrap();
     let (mfr, a1) = after_p.into_manufacturer().unwrap();
     assert_eq!(mfr, p.manufacturer);
     let (model, a2) = a1.into_model().unwrap();

@@ -86,22 +86,25 @@ let mut buf = &mut buf_storage[..body_len];
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 42, "symbol");
 
-        let mut bids = dec.into_bids()?;
-        let bid_entries: Vec<_> = bids.by_ref().collect();
+        let mut bid_entries = Vec::new();
+        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+            bid_entries.push((e.price(), e.qty()));
+            Ok(())
+        })?;
         assert_eq!(bid_entries.len(), 2, "expected 2 bids");
-        assert_eq!(bid_entries[0].price(), 100, "bid[0].price");
-        assert_eq!(bid_entries[0].qty(), 10, "bid[0].qty");
-        assert_eq!(bid_entries[1].price(), 101, "bid[1].price");
-        assert_eq!(bid_entries[1].qty(), 20, "bid[1].qty");
+        assert_eq!(bid_entries[0].0, 100, "bid[0].price");
+        assert_eq!(bid_entries[0].1, 10, "bid[0].qty");
+        assert_eq!(bid_entries[1].0, 101, "bid[1].price");
+        assert_eq!(bid_entries[1].1, 20, "bid[1].qty");
 
-        let after_bids = bids.finish()?;
-        let mut asks = after_bids.into_asks()?;
-        let ask_entries: Vec<_> = asks.by_ref().collect();
+        let mut ask_entries = Vec::new();
+        let after_asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+            ask_entries.push((e.price(), e.qty()));
+            Ok(())
+        })?;
         assert_eq!(ask_entries.len(), 1, "expected 1 ask");
-        assert_eq!(ask_entries[0].price(), 200, "ask[0].price");
-        assert_eq!(ask_entries[0].qty(), 30, "ask[0].qty");
-
-        let after_asks = asks.finish()?;
+        assert_eq!(ask_entries[0].0, 200, "ask[0].price");
+        assert_eq!(ask_entries[0].1, 30, "ask[0].qty");
         let (desc, _complete) = after_asks.into_description()?;
         assert_eq!(desc, b"test exchange data", "description");
 
@@ -136,15 +139,21 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 99, "symbol");
 
-        let mut bids = dec.into_bids()?;
-        let be: Vec<_> = bids.by_ref().collect();
+        let mut be = Vec::new();
+        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+            be.push(e.price());
+            Ok(())
+        })?;
         assert_eq!(be.len(), 1);
-        assert_eq!(be[0].price(), 10);
+        assert_eq!(be[0], 10);
 
-        let asks = bids.finish()?.into_asks()?;
-        let ae: Vec<_> = asks.collect();
+        let mut ae = Vec::new();
+        let _asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+            ae.push(e.price());
+            Ok(())
+        })?;
         assert_eq!(ae.len(), 1);
-        assert_eq!(ae[0].price(), 20);
+        assert_eq!(ae[0], 20);
 
         println!("PASS: conformance_flat_group_known_unknown");
         "#,
@@ -177,18 +186,21 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 7);
 
-        let mut bids = dec.into_bids()?;
-        let be: Vec<_> = bids.by_ref().collect();
+        let mut be = Vec::new();
+        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+            be.push(e.price());
+            Ok(())
+        })?;
         assert_eq!(be.len(), 1);
-        assert_eq!(be[0].price(), 1);
+        assert_eq!(be[0], 1);
 
-        let after_bids = bids.finish()?;
-        let mut asks = after_bids.into_asks()?;
-        let ae: Vec<_> = asks.by_ref().collect();
+        let mut ae = Vec::new();
+        let after_asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+            ae.push(e.price());
+            Ok(())
+        })?;
         assert_eq!(ae.len(), 1);
-        assert_eq!(ae[0].price(), 3);
-
-        let after_asks = asks.finish()?;
+        assert_eq!(ae[0], 3);
         let (desc, _c) = after_asks.into_description()?;
         assert_eq!(desc, b"uu");
 
@@ -320,7 +332,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
 
         // scan_entry_at() must walk the first entry's nested group and var-data
         // rather than assuming root blockLength is the complete entry stride.
-        let mut bids = dec.into_bids()?;
+        let mut bids = dec.bids()?;
         let b1 = bids.scan_entry_at(1)?;
         assert_eq!(b1.price(), 4999, "random bid[1].price");
         assert_eq!(b1.venue()?, b"X", "random bid[1].venue");
@@ -339,8 +351,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
 
         assert_eq!(b0.venue()?, b"NASDAQ", "bids.venue");
 
-        let after_bids = bids.finish()?;
-        let mut asks = after_bids.into_asks()?;
+        let mut asks = dec.asks()?;
         let ask_entries: Vec<_> = asks.by_ref().collect::<Result<Vec<_>, _>>()?;
         assert_eq!(ask_entries.len(), 1, "expected 1 ask");
         let a0 = &ask_entries[0];
@@ -353,9 +364,7 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(a0_order_entries[0].order_id(), 2001, "ask.order[0].id");
         assert_eq!(a0.venue()?, b"NYSE", "asks.venue");
 
-        let after_asks = asks.finish()?;
-        let (comment, _complete) = after_asks.into_comment()?;
-        assert_eq!(comment, b"test nested group", "comment");
+        assert_eq!(dec.comment()?, b"test nested group", "comment");
 
         println!("PASS: conformance_nested_group_roundtrip");
         "#,
@@ -412,15 +421,17 @@ let mut buf = &mut buf_storage[..body_len];
         assert_eq!(dec.composite().qty(), 100, "composite.qty");
         assert_eq!(dec.prices(), 9999, "prices");
 
-        let mut ents = dec.into_entries()?;
-        let entry_vec: Vec<_> = ents.by_ref().collect();
+        let mut entry_vec = Vec::new();
+        let after_ents = dec.into_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+            entry_vec.push((entry.key(), entry.value()));
+            Ok(())
+        })?;
         assert_eq!(entry_vec.len(), 2, "expected 2 entries");
-        assert_eq!(entry_vec[0].key(), 1, "entry[0].key");
-        assert_eq!(entry_vec[0].value(), 10, "entry[0].value");
-        assert_eq!(entry_vec[1].key(), 2, "entry[1].key");
-        assert_eq!(entry_vec[1].value(), 20, "entry[1].value");
+        assert_eq!(entry_vec[0].0, 1, "entry[0].key");
+        assert_eq!(entry_vec[0].1, 10, "entry[0].value");
+        assert_eq!(entry_vec[1].0, 2, "entry[1].key");
+        assert_eq!(entry_vec[1].1, 20, "entry[1].value");
 
-        let after_ents = ents.finish()?;
         let (payload, _complete) = after_ents.into_payload()?;
         assert_eq!(payload, b"binary payload data", "payload");
 
@@ -471,30 +482,30 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         let dec = PureFixedNestedDecoder::try_from(encoded)?;
         assert_eq!(dec.id(), 42, "id");
 
-        let mut records = dec.into_records()?;
-        let record_vec: Vec<_> = records.by_ref().collect::<Result<Vec<_>, _>>()?;
+        let mut record_vec = Vec::new();
+        let _ = dec.into_records(|r| -> Result<_, sbe_rt::DecodeError> {
+            let key = r.key();
+            let value = r.value();
+            let mut tags = Vec::new();
+            let complete = r.into_tags(|t| -> Result<(), sbe_rt::DecodeError> {
+                tags.push((t.tag_id(), t.tag_val()));
+                Ok(())
+            })?;
+            record_vec.push((key, value, tags));
+            Ok(complete)
+        })?;
         assert_eq!(record_vec.len(), 2, "expected 2 records");
 
-        let r0 = &record_vec[0];
-        assert_eq!(r0.key(), 100, "record[0].key");
-        assert_eq!(r0.value(), 10, "record[0].value");
+        assert_eq!(record_vec[0].0, 100, "record[0].key");
+        assert_eq!(record_vec[0].1, 10, "record[0].value");
+        assert_eq!(record_vec[0].2.len(), 2, "expected 2 tags");
+        assert_eq!(record_vec[0].2[0], (1, 100), "tag[0]");
+        assert_eq!(record_vec[0].2[1], (2, 200), "tag[1]");
 
-        let r0_tags = r0.tags()?;
-        let r0_tag_vec: Vec<_> = r0_tags.collect();
-        assert_eq!(r0_tag_vec.len(), 2, "expected 2 tags");
-        assert_eq!(r0_tag_vec[0].tag_id(), 1, "tag[0].id");
-        assert_eq!(r0_tag_vec[0].tag_val(), 100, "tag[0].val");
-        assert_eq!(r0_tag_vec[1].tag_id(), 2, "tag[1].id");
-        assert_eq!(r0_tag_vec[1].tag_val(), 200, "tag[1].val");
-
-        let r1 = &record_vec[1];
-        assert_eq!(r1.key(), 200, "record[1].key");
-        assert_eq!(r1.value(), 20, "record[1].value");
-
-        let r1_tags = r1.tags()?;
-        let r1_tag_vec: Vec<_> = r1_tags.collect();
-        assert_eq!(r1_tag_vec.len(), 1, "expected 1 tag");
-        assert_eq!(r1_tag_vec[0].tag_id(), 3, "tag[1][0].id");
+        assert_eq!(record_vec[1].0, 200, "record[1].key");
+        assert_eq!(record_vec[1].1, 20, "record[1].value");
+        assert_eq!(record_vec[1].2.len(), 1, "expected 1 tag");
+        assert_eq!(record_vec[1].2[0].0, 3, "tag[1][0].id");
 
         println!("PASS: conformance_pure_fixed_nested_roundtrip");
         "#,
@@ -524,7 +535,7 @@ let mut buf = &mut buf_storage[..body_len];
         let dec = FlatGroupDecoder::try_from(encoded)?;
         assert_eq!(dec.symbol(), 0);
 
-        let bids = dec.into_bids()?;
+        let bids = dec.bids()?;
         assert!(bids.is_empty(), "bids should be empty");
         let be: Vec<_> = bids.collect();
         assert_eq!(be.len(), 0, "bids len 0");
@@ -554,10 +565,7 @@ let mut buf1 = &mut buf1_storage[..body_len_0];
         assert_eq!(complete1.encoded_length_with_header(), body_len_0, "empty desc length match");
         let encoded1 = complete1.as_bytes_with_header();
         let dec1 = FlatGroupDecoder::try_from(encoded1)?;
-        let bids1 = dec1.into_bids()?;
-        let after_bids1 = bids1.finish()?;
-        let asks1 = after_bids1.into_asks()?;
-        let after_asks1 = asks1.finish()?;
+        let after_asks1 = dec1.skip_bids()?.skip_asks()?;
         let (desc, _c) = after_asks1.into_description()?;
         assert_eq!(desc, b"", "empty description");
 
@@ -573,19 +581,13 @@ let mut buf2 = &mut buf2_storage[..body_len_2];
         assert_eq!(complete2.encoded_length_with_header(), body_len_2, "utf-8 desc length match");
         let encoded2 = complete2.as_bytes_with_header();
         let dec2 = FlatGroupDecoder::try_from(encoded2)?;
-        let bids2 = dec2.into_bids()?;
-        let after_bids2 = bids2.finish()?;
-        let asks2 = after_bids2.into_asks()?;
-        let after_asks2 = asks2.finish()?;
+        let after_asks2 = dec2.skip_bids()?.skip_asks()?;
         let (desc2, _c2) = after_asks2.into_description()?;
         assert_eq!(desc2, "Hello, \u{4e16}\u{754c}!".as_bytes(), "utf-8 description");
 
         // as_str roundtrip via varStringEncoding
         let dec3 = FlatGroupDecoder::try_from(encoded2)?;
-        let bids3 = dec3.into_bids()?;
-        let after_bids3 = bids3.finish()?;
-        let asks3 = after_bids3.into_asks()?;
-        let after_asks3 = asks3.finish()?;
+        let after_asks3 = dec3.skip_bids()?.skip_asks()?;
         let (desc_str, _c3) = after_asks3.into_description_as_str()?;
         assert_eq!(desc_str, "Hello, \u{4e16}\u{754c}!", "utf-8 description as str");
 
@@ -668,7 +670,7 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
         truncated_group[18..20].copy_from_slice(&2u16.to_le_bytes());
         let decoded = FlatGroupDecoder::try_decode(truncated_group.as_slice(), 0)?;
         assert!(
-            decoded.into_bids().is_err(),
+            decoded.skip_bids().is_err(),
             "fixed-entry group extent must be validated before iteration"
         );
 

@@ -189,54 +189,6 @@ fn memoized_decoder_pays_one_boundary_cache() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The third lane's budget: `Decoder::ordered(self)`.
-///
-/// The ordered cursor must store the base decoder plus its own position —
-/// a tail offset and the next expected ordinal — and nothing else. It must
-/// never grow a boundary cache: it already carries its current offset and
-/// never re-walks an earlier tail, so a cache would be pure overhead.
-#[test]
-fn ordered_decoder_stores_only_the_decoder_core_and_a_cursor() -> Result<(), Box<dyn Error>> {
-    let (_schema, src) = generate(&Paths::example_schema(), "ts_size_ordered");
-    compile_and_run(
-        "ts_size_ordered",
-        &src,
-        r#"
-        use core::mem::size_of;
-
-        let base = size_of::<CarDecoder<'_>>();
-        let ord = size_of::<CarOrderedDecoder<'_>>();
-        let cursor = size_of::<usize>() + size_of::<u16>();
-        assert!(
-            ord <= base + cursor + size_of::<usize>(),
-            "ordered lane carries more than the decoder core plus a cursor: \
-             {ord} > {base} + {cursor} (+ padding)"
-        );
-        // Strictly smaller than the memoized lane. Compare the two concrete
-        // generated types — comparing against `base + size_of::<cache>()` only
-        // restates the memoized budget and would stay green if the ordered
-        // lane grew a cache of its own.
-        let memo = size_of::<CarMemoizedDecoder<'_>>();
-        assert!(
-            ord < memo,
-            "ordered lane is not smaller than the memoized lane: {ord} >= {memo}"
-        );
-        // And it must not have grown a cache-sized field by any other name.
-        let cache = size_of::<sbe_rt::TailBoundaryCache<5>>();
-        assert!(
-            ord < base + cache,
-            "ordered lane looks like it grew a boundary cache: {ord} vs {base} + {cache}"
-        );
-
-        // Sequential-only state is plain data, so the cursor stays shareable.
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<CarOrderedDecoder<'_>>();
-        assert!(!std::mem::needs_drop::<CarOrderedDecoder<'_>>());
-    "#,
-    );
-    Ok(())
-}
-
 fn generate_fixed_only(module: &str) -> Result<String, Box<dyn Error>> {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
         <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
@@ -326,8 +278,6 @@ fn car_full_generated_source_size_budget() -> Result<(), Box<dyn Error>> {
     let bytes = src.len();
     // Full Car has historically been hundreds of KiB of pretty source. Bound
     // growth without inventing a tiny number that fails on every docstring.
-    // The mutable ordered lane (`CarOrderedDecoder` + group guards) is always
-    // generated and is the bulk of the post-400 KiB growth.
     const MAX_BYTES: usize = 450_000;
     const MIN_BYTES: usize = 20_000;
     assert!(

@@ -1,47 +1,114 @@
 # Decoder Lanes
 
-A decoder for a message with groups or variable-data exposes **four lanes**
-(a fixed-block message has [exactly one](#fixed-block-messages-have-exactly-one-lane)).
-They read the same wire and return the same values; they differ in how order is
-enforced and what each dynamic-tail access costs. The standard group `Iterator`
-remains for
-compatibility and partial traversal. It is not a fifth message-decoding lane:
-`Iterator::next()` must learn the next entry position before yielding a
-dynamic entry, so it is not the ordered fast path.
+A decoder for a message with groups or variable-data has **two jobs**
+(a fixed-block message has [exactly one](#fixed-block-messages-have-exactly-one-lane)):
+read some fields in any order, or walk the whole message once in schema
+order. Those jobs share the wire and the values; they differ in how order is
+enforced and what each dynamic-tail access costs. The standard group
+`Iterator` remains for random-access / partial traversal. It is not a
+third message-decoding lane: `Iterator::next()` must learn the next entry
+position before yielding a dynamic entry, so it is not the sequential fast
+path.
+
+## Encoding: one state machine
+
+Encoding is the simple half of this page. It genuinely is a state machine —
+there is a cursor, and it does track your position in the message — the
+difference from a typical state machine is *where* that cursor lives. Each
+encoder stage is a distinct type that **is** the current position: fixed
+block written, then each group, then each var-data field, in schema order.
+Writing a field consumes that stage and returns the next one, so the cursor
+advances by becoming a new type rather than by mutating a field inside it.
+The compiler enforces the order simply by only giving the current stage's
+type a method for the next legal field. Skip a required tail or write two
+fields out of order and the code does not compile, full stop — the state
+machine is real, it is just resolved at compile time instead of carried at
+runtime.
+
+The cost of that safety is effectively zero: the stage types are concrete
+monomorphic structs with no data of their own beyond the buffer and offset
+already needed regardless, and the stage transitions disappear entirely under
+optimisation. See [Encode and Decode](../getting-started/encode-decode.md) for
+the `fixed()` / `raw_fixed()` mechanics and [Method
+Chaining](../getting-started/method-chaining.md) for why one chained
+expression is the idiom. Decoding is where the real choice lives, because a
+decoder can be asked to read in an order the encoder never had to think
+about — which is what the rest of this page is about.
 
 | Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
-| Memoized | `decoder.memoized()` | Any order | Walks each boundary at most once | no |
-| Staged | `into_*` and `visit_entries` | Compile time | One wire-order pass | yes |
-| Mutable ordered | `decoder.ordered()` | Runtime `OutOfOrder` | One wire-order pass plus order checks | yes |
+| Staged | `into_*(|entry|)` / `skip_*` | Compile time | One wire-order pass | yes |
 
-Fixed fields stay random-access in every lane. Groups and variable-data must
-be consumed in schema order in the staged and mutable ordered lanes.
+Fixed fields stay random-access in both. Groups and variable-data must be
+consumed in schema order on the staged lane. `.memoized()` is still
+generated for repeated out-of-order tail reads — it is not a third way to
+start a sequential walk.
 
 ## Fixed-block messages have exactly one lane
 
 A message with no repeating groups and no variable-data has no dynamic tail:
 every field sits at a compile-time offset inside the block, and the base
 decoder reads them all in any order at constant cost. There is nothing to
-memoize and nothing to order, so **`memoized()` and `ordered()` are not
-generated for those messages at all** — and `AnyMessage` offers only
-`into_<name>()` for them. This is not an omission you work around; the base
-decoder already is the whole story, and a second name for it would only invite
-the question of which one is faster.
+memoize, so **`memoized()` is not generated for those messages at all** —
+and `AnyMessage` offers only `into_<name>()` for them. This is not an
+omission you work around; the base decoder already is the whole story, and a
+second name for it would only invite the question of which one is faster.
 
 The lanes below therefore describe messages that *do* carry groups or
 variable-data.
 
 ## Choosing a lane
 
-- **Sparse or one-off access** — random access. Smallest decoder, `Sync`, no
-  cache to pay for. This is the default and the right answer surprisingly often.
-- **Repeated or out-of-order access through the same decoder instance** —
-  `.memoized()`.
-- **Complete sequential decoding** — `.ordered()` (or the staged lane when you
-  want the compiler, not the runtime, to enforce order). Fastest full-message
-  path.
+**Random access (the default) is what most code should reach for first.**
+It carries no cursor at all — no internal mutable state — so it is just a
+`&`-shared reference you can pass around freely: into a function, across a
+thread, held by several callers at once. You can read `manufacturer`, then a
+group three fields later, then jump back, in any order, and it always returns
+the correct value because it re-derives every offset from the start on each
+call rather than trusting a remembered position. Unlike sbe-tool, wrong order
+is not a silent correctness bug here — there is no "wrong order" to have. The
+one real cost is that a deeply nested read (nested groups, var-data inside
+entries, that kind of shape) recomputes preceding offsets each time, which is
+measurably slower than a lane that remembers where it is. In practice that gap
+is small enough that "default, plus benchmark if you're unsure" is the right
+starting posture, not a premature switch to something else.
+
+**The staged lane (`into_*(|entry|)` / `skip_*`) is sequential decode, the
+same idea as encode.** Each `into_*` consumes the current stage and returns
+the next one, so the type system — not a runtime check, and not `&mut` —
+makes reading out of order a compile error. Write it as one chain, the way
+the encoder is one chain: groups take a visit closure, `skip_*` jumps a
+tail you do not need, and you bind only var-data payloads (or the terminal
+complete). That ownership transfer is what buys back the performance random
+access gives up: each tail is walked exactly once. See
+[Staged](#staged-into_--skip_) below — it is the sample crate, not a sketch.
+
+**Memoized (`decoder.memoized()`) is the slowest lane and exists for one
+specific shape of problem: the same decoder instance gets handed to several
+functions, and each function reads tails in a different order.** Random
+access would recompute the same offsets over and over across those calls;
+memoized remembers each tail boundary the first time anything reaches it, so
+later reads — from any of those functions, in any order — are free. Outside
+that shape it is close to pure overhead: reading one tail and stopping never
+earns back the cache's bookkeeping, and if you are already reading in wire
+order, the staged lane beats it without carrying a cache at all. Do not
+reach for this lane by default — benchmark the concrete access pattern
+first; see [Memoized](#memoized-decodermemoized) below for the
+`versioned_l3_bench` numbers.
+
+**The short version:**
+
+| If you want… | Use |
+|---|---|
+| Some fields, any order, share `&Decoder` | Random access (the default) |
+| The whole message in wire order | Staged `into_*(|entry|)` — one chain, compile-time order |
+| The same decoder passed to many functions that each read tails in a different order | Memoized (`decoder.memoized()`) — benchmark it, don't reach for it by default |
+
+For a worked example that puts random-access and staged side by side over one
+genuinely nested schema (two repeating groups, each entry carrying its own
+nested `orders` group, plus trailing var-data), see the
+[L3 order book sample](../../samples/l3-book.md#decoding-random-access-or-one-staged-chain).
 
 Group entry decoders keep a one-shot extent cache in *every* lane: the group
 iterator computes an entry's end in order to advance, and the entry's last
@@ -49,11 +116,11 @@ var-data accessor reuses it rather than re-reading a length header. That is
 internal and needs no configuration.
 
 If you already know which template you want, `AnyMessage` will hand you the
-lane directly — `into_car()`, `into_car_memoized()`, `into_car_ordered()` —
-instead of making you take the base decoder and convert at the call site. A
-fixed-block message only offers `into_<name>()`, for the reason above.
+lane directly — `into_car()`, `into_car_memoized()` — instead of making you
+take the base decoder and convert at the call site. A fixed-block message
+only offers `into_<name>()`, for the reason above.
 
-## Why four lanes at all — the sbe-tool comparison
+## Why not one `&mut` cursor — the sbe-tool comparison
 
 sbe-tool's Rust generator gives you **one** decoder: a `&mut` flyweight
 carrying a `limit` cursor. Every group and var-data accessor reads at the
@@ -73,8 +140,7 @@ correct answer rather than a convention:
 |-----------|---------------------------|------------------|---------------|
 | Random access | *(no equivalent — sbe-tool cannot re-read)* | Order-independent reads from an `&` shared, `Sync` decoder | Each dynamic-tail read re-walks from the block |
 | Memoized | *(no equivalent)* | The same, but each boundary is walked at most once | One `usize` per tail, inline; not `Sync` |
-| Staged | `_decoder()` + `.parent()` chain | The wrong order is a **compile error**, not wrong bytes | Stage types appear in signatures |
-| Mutable ordered | `&mut` flyweight with `limit` | The wrong order is `DecodeError::OutOfOrder`, cursor unchanged and retryable | One runtime ordinal check per tail |
+| Staged | `_decoder()` + `.parent()` chain | The wrong order is a **compile error**, not wrong bytes; one chain, no `&mut` | Stage types appear in signatures if you bind them — don't |
 
 Two things are true in **every** ergon lane and in none of sbe-tool's:
 
@@ -88,9 +154,9 @@ Two things are true in **every** ergon lane and in none of sbe-tool's:
   `advance()` trusts the count and the read panics part-way through iteration.
 
 The trade is real and worth stating plainly: sbe-tool's single flyweight is
-less to learn. If your code always decodes complete messages in wire order and
-never re-reads, the mutable ordered lane is the like-for-like port and the
-other three are choices you can ignore.
+less to learn. If your code always decodes complete messages in wire order
+and never re-reads, the staged `into_*(|entry|)` chain is the port — it is
+the encoder dual, and it does not need to be mutable.
 
 ## Random access
 
@@ -152,7 +218,7 @@ never walked again.
 
 That matters because it is easy to assume the opposite. Reading in wire order
 does not make the base lane cheap; only a lane that *carries* its cursor —
-ordered or staged — gets that for free.
+the staged `into_*(|entry|)` chain — gets that for free.
 
 **Use it when**
 
@@ -167,8 +233,8 @@ ordered or staged — gets that for free.
 - You read one dynamic tail and stop. There is no second access to amortise
   the cache against, and reaching a late tail publishes every boundary it
   passes — so a single cold jump is *slower* than the base lane.
-- You are decoding the whole message in wire order anyway. Use `.ordered()` or
-  the staged lane: they carry the cursor without a cache and are faster still.
+- You are decoding the whole message in wire order anyway. Use the staged
+  lane: it carries the cursor without a cache and is faster still.
 - You need `Sync`.
 
 `just bench-diagnostics` runs `versioned_l3_bench`, whose `vl3/lane` group
@@ -188,11 +254,13 @@ Ordered and staged decoders are **not** memoized either: they already carry
 their current offset and never re-walk an earlier tail, so a cache would be
 pure overhead.
 
-## Staged (`into_*` / `visit_entries`)
+## Staged (`into_*` / `skip_*`)
 
-Maximum safety and the expected maximum-performance sequential path.
-Ownership and generated stage types make a later tail unreachable until the
-current one is consumed.
+Maximum safety and the expected maximum-performance sequential path — and
+the encoder dual: one chain, bind values not stages. Ownership and
+generated stage types make a later tail unreachable until the current one
+is consumed. Do not write `let after_bids = dec.into_bids(...)?`; continue
+the chain.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_decode_stages}}
@@ -208,26 +276,16 @@ remain valid simultaneously while the stage chain advances.
 
 Consuming stages (`CarDecoderAfterFuelFigures`, `…AfterManufacturer`,
 `CarDecoderComplete`, …) are `#[must_use]`. Dropping a stage without
-`into_*` / `finish` / `skip_remaining` **silently skips** remaining wire
-tails (groups and var-data). That is easy to miss when a function returns
-early — prefer advancing until `Complete` or an explicit skip.
+`into_*` / `skip_*` **silently skips** remaining wire tails (groups and
+var-data). That is easy to miss when a function returns early — prefer
+advancing until `Complete` or an explicit skip.
 
-### `finish` vs `skip_remaining`
+### One-pass `into_*(|entry|)`
 
-| Method | Meaning |
-|--------|---------|
-| `finish()` | Advance past any **remaining entries** of the current group and hand back the next named stage (or complete). |
-| `skip_remaining()` | Explicit sequential spelling of the same idea — “I am done with this group; jump to the next tail.” |
-
-Use `skip_remaining` when you want the intent obvious in review; both move the
-tail cursor in wire order.
-
-### Ordered one-pass `visit_entries`
-
-The group decoder keeps the next message stage until the group is fully
-consumed. `remaining_entries()` / `is_empty()` are O(1) observers of the
-wire-declared count (`into_*` already read `numInGroup`). `visit_entries`
-walks every remaining entry once and returns the next parent stage:
+`into_fuel_figures(|entry| …)` consumes the current stage, visits every
+entry of that group, and returns the next parent stage. There is no
+separate group object to hold: count lives on the wire, empty groups
+invoke the callback zero times, and skipping is `skip_fuel_figures()`.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_visit_entries}}
@@ -235,8 +293,7 @@ walks every remaining entry once and returns the next parent stage:
 
 Dynamic-entry callbacks return the generated completion stage so the next
 cursor comes from the walk, not from a pre-scan of `encoded_length()`.
-Fixed-stride callbacks return `Result<(), E>`. Empty groups invoke the
-callback zero times.
+Fixed-stride callbacks return `Result<(), E>`.
 
 **Advantages**
 
@@ -249,49 +306,9 @@ callback zero times.
 
 - Stage types appear in signatures; you cannot hold “the decoder” and pick
   tails later
-- Skipping a tail still requires an explicit `finish` / `skip_remaining`
-- Partial group walks use the `Iterator`, which is not the one-pass path
-
-## Mutable ordered (`ordered()`)
-
-The ergonomic sequential choice: one `&mut` cursor, schema-order tails, runtime
-`OutOfOrder` if you jump ahead. Fixed fields stay random-access. Group methods
-return a guard that borrows the parent until `visit_entries`, `finish`, or
-`skip_remaining` consumes it.
-
-```rust,no_run
-{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_mutable_ordered}}
-```
-
-A wrong dynamic-field call returns `DecodeError::OutOfOrder { owner, expected, requested }`
-and leaves the cursor unchanged, so the correct method can still be called.
-Calling an already-consumed field reports the next expected name; after
-completion `expected` is `"<complete>"`. `finish(self)` skips any unconsumed
-suffix and returns the existing complete stage.
-
-Group guards own a local cursor and commit the parent offset only after a
-successful completion. Dropping the guard, malformed data, or a callback error
-leaves the parent at the group start (retry from the beginning of that group).
-`remaining_entries()` is O(1). The guard does not implement `Iterator`. Nested
-group guards borrow their entry, so Rust prevents using the parent entry until
-the nested guard completes. Unread suffix of a dynamic entry is skipped once
-on successful callback return — you cannot omit an earlier tail and then
-request a later one.
-
-**Advantages**
-
-- One mutable value instead of a chain of stage types
-- Same one-pass walk as staged; order mistakes are `Result` errors, not
-  silent rescans
-- Dropped guards are retryable; operations are transactional (commit after
-  success, including UTF-8 / nested-message validation)
-
-**Disadvantages**
-
-- Order is checked at runtime, not by the type system
-- A live group guard borrows the parent, so you cannot interleave parent
-  access until the guard is consumed
-- Slightly more work than staged (predictable ordinal checks)
+- Skipping a tail requires an explicit `skip_*`
+- Partial group walks use the random-access `Iterator`, which is not the
+  one-pass path
 
 ## Full-frame bytes mid-walk
 

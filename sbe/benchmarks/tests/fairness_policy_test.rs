@@ -151,16 +151,10 @@ fn full_message_decode_arms_use_unchecked_wrap_and_include_ordered_path()
     let source = get_source(PERF_PARITY, "bench_decode_consuming_full")?;
     assert!(
         source.contains("assert_decode_parity()")
-            && source.contains("assert_ordered_decode_parity()")
-            && source.contains("assert_mutable_ordered_decode_parity()"),
-        "full-message decode must prove iterator, visit_entries, and mutable ordered value parity before timing"
+            && source.contains("assert_ordered_decode_parity()"),
+        "full-message decode must prove iterator and fused-visit value parity before timing"
     );
-    for arm in [
-        "ergo-sbe_random",
-        "ergo-sbe_consuming",
-        "ergo-sbe_ordered",
-        "ergo-sbe_mutable_ordered",
-    ] {
+    for arm in ["ergo-sbe_random", "ergo-sbe_consuming", "ergo-sbe_ordered"] {
         let body = timed_arm_body(source, arm).ok_or_else(|| format!("missing {arm} arm"))?;
         assert!(
             body.contains("CarDecoder::wrap_unchecked"),
@@ -173,14 +167,8 @@ fn full_message_decode_arms_use_unchecked_wrap_and_include_ordered_path()
     }
     let ordered = timed_arm_body(source, "ergo-sbe_ordered").ok_or("missing ordered arm")?;
     assert!(
-        ordered.contains("visit_entries"),
-        "ordered full-message arm must use visit_entries"
-    );
-    let mutable =
-        timed_arm_body(source, "ergo-sbe_mutable_ordered").ok_or("missing mutable ordered arm")?;
-    assert!(
-        mutable.contains(".ordered()") && mutable.contains("visit_entries"),
-        "mutable ordered full-message arm must use ordered() and visit_entries"
+        ordered.contains("into_fuel_figures"),
+        "ordered full-message arm must use fused into_fuel_figures(visit)"
     );
     Ok(())
 }

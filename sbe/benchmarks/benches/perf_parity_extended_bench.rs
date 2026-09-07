@@ -21,6 +21,7 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ergo_sbe_benchmarks::parity_group_with_data::{
     MessageHeader, TestMessage1Decoder, TestMessage1Encoder, TestMessage1FixedFields, read_bytes,
+    sbe_rt,
 };
 use ergo_sbe_benchmarks::parity_optional_enum_nullify::{
     EnumType, OptionalComposite, OptionalEncodingEnumType, OptionalEnumNullifyDecoder,
@@ -146,14 +147,17 @@ fn fold_group_entry(tag1: u32, symbol: &[u8], tag2: i64, var: &[u8]) -> u32 {
 fn decode_group_with_data_ergon(buf: &[u8], msg_offset: usize, bl: usize, version: u16) -> u32 {
     let dec = unsafe { TestMessage1Decoder::wrap_unchecked(buf, msg_offset, bl, version) };
     let tag1 = dec.tag1();
-    let mut entries = dec.into_entries().expect("entries");
-    let entry = entries.next().expect("one entry").expect("entry");
-    fold_group_entry(
-        tag1,
-        &entry.tag_group1(),
-        entry.tag_group2(),
-        entry.var_data_field().expect("var"),
-    )
+    let mut total = 0u32;
+    let _ = dec
+        .into_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            let symbol = entry.tag_group1();
+            let tag2 = entry.tag_group2();
+            let (var, complete) = entry.into_var_data_field()?;
+            total = fold_group_entry(tag1, &symbol, tag2, var);
+            Ok(complete)
+        })
+        .expect("entries");
+    total
 }
 
 fn decode_group_with_data_tool(buf: &[u8], msg_offset: usize, bl: u16, version: u16) -> u32 {

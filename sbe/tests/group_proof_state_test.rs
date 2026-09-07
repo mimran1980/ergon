@@ -271,10 +271,8 @@ fn attached_group_reached_through_a_message_tail_can_finish()
 
         // Reached through the message tail: attached, so completion works and
         // the next stage really is the next tail component.
-        let fuel = CarDecoder::try_from(&buf[..len])?.into_fuel_figures()?;
-        let after_fuel = fuel.finish()?;
-        let perf = after_fuel.into_performance_figures()?;
-        let after_perf = perf.skip_remaining()?;
+        let after_fuel = CarDecoder::try_from(&buf[..len])?.skip_fuel_figures()?;
+        let after_perf = after_fuel.skip_performance_figures()?;
         let (manufacturer, next) = after_perf.into_manufacturer()?;
         assert_eq!(manufacturer, b"H");
         let (model, next) = next.into_model()?;

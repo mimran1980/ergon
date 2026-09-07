@@ -85,21 +85,21 @@ access after the header is known. ergon’s entry points take **message start**
 
 See [Trust Boundary](../core-concepts/trust-boundary.md).
 
-## Decoding: one flyweight becomes four lanes
+## Decoding: two jobs
 
 sbe-tool gives you a single `&mut` decoder carrying a `limit` cursor. Every
 group and var-data accessor reads at `limit` and advances it, so the order you
-call methods in *is* the wire walk. ergon keeps that model — it is the
-`ordered()` lane — and adds three more, because the one model has to trust the
-caller on order, cannot re-read a tail, and cannot be shared behind `&`.
+call methods in *is* the wire walk. ergon does not keep that as the default.
+Sequential decode is the encoder dual: `into_*(|entry|)` consumes the stage
+and returns the next one, so the compiler proves order and nothing is
+`&mut`. Random-access `try_decode` is the other job — any order, `Sync`.
 
 **Start here when porting:**
 
 | Your sbe-tool code | Port to |
 |--------------------|---------|
-| Straight-line walk: group, group, var-data, done | `decoder.ordered()` — same shape, same one pass, wrong order now returns `OutOfOrder` instead of wrong bytes |
-| The same walk, and you want the compiler to prove it | staged `into_*` / `visit_entries` |
-| Re-wrapping the message a second time to read a field you passed | `decoder.memoized()` — read it in any order, each boundary walked once |
+| Straight-line walk: group, group, var-data, done | staged `into_*(|entry|)` / `skip_*` — one chain, compile-time order |
+| Re-wrapping the message a second time to read a field you passed | the base decoder, or `decoder.memoized()` if you re-read deep tails |
 | Reading two fixed fields and dropping the rest | the base decoder from `try_decode` — no cursor, `Sync`, nothing to consume |
 
 ```rust,ignore
@@ -112,21 +112,20 @@ let mut car = ff.parent()?;                            // hand it back
 let coords = car.manufacturer_decoder();               // (offset, len)
 let manufacturer = car.manufacturer_slice(coords);
 
-// ergo-sbe: same walk, order enforced at runtime
-let mut car = CarDecoder::try_decode(buf, 0)?.ordered();
-car.fuel_figures()?.visit_entries(|e| { /* … */ Ok(()) })?;
-let manufacturer = car.manufacturer()?;
+// ergo-sbe: same walk, order is a type, no `&mut`
+let (manufacturer, car) = CarDecoder::try_decode(buf, 0)?
+    .into_fuel_figures(|e| { /* … */ Ok(complete) })?
+    .skip_performance_figures()?
+    .into_manufacturer()?;
 ```
 
 Note what disappears in the port: no `.parent()` hop, no `(offset, length)`
 coordinate pair threaded to a second `_slice()` call, and no `&mut` on a
 decoder you only wanted to read.
 
-**Fixed-block messages** — no groups, no var-data — get **no** `memoized()` or
-`ordered()` method, and `AnyMessage` offers only `into_<name>()` for them.
-Every field is already random-access off the block, so the base decoder is the
-whole story. If you reach for `.ordered()` on such a message and the method
-does not exist, that is the answer, not a gap.
+**Fixed-block messages** — no groups, no var-data — get **no** `memoized()`
+method, and `AnyMessage` offers only `into_<name>()` for them. Every field is
+already random-access off the block, so the base decoder is the whole story.
 
 Full per-lane pros, cons, and cost table:
 [Decoder lanes](../feature-tour/decode-stages.md).
@@ -143,7 +142,7 @@ reading mixed-version streams.
 | sbe-tool habit | ergo-sbe |
 |----------------|----------|
 | `.parent()` ownership hop | Closures + consuming stage returns |
-| One `&mut` decoder with a `limit` cursor | Four lanes; `ordered()` is the like-for-like port ([decoder lanes](../feature-tour/decode-stages.md)) |
+| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or staged `into_*(|entry|)` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
 | `_decoder()` returning `(offset, len)` for a second `_slice()` call | Var-data accessors return `&'a [u8]` / `&'a str` directly |
 | Generic `Encoder<State>` spelling | Named stage structs + `H: HeaderState` only for header mode ([type-state note](../design-notes/type-state.md)) |
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |

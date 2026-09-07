@@ -458,48 +458,62 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(200, booster.horse_power(), "engine.booster.horsePower");
 
         // Group: fuelFigures (3 entries) — consuming stages, wire order.
-        let mut fuel = car.into_fuel_figures().unwrap();
-        let fuel_figures: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut fuel_figures = Vec::new();
+        let after_fuel = car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let speed = e.speed();
+            let mpg = e.mpg();
+            let (usage, complete) = e.into_usage_description()?;
+            fuel_figures.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        }).unwrap();
         assert_eq!(3, fuel_figures.len(), "fuelFigures count");
 
-        assert_eq!(30, fuel_figures[0].speed(), "ff[0].speed");
-        assert!((fuel_figures[0].mpg() - 35.9).abs() < 0.01, "ff[0].mpg");
-        assert_eq!(b"Urban Cycle",   fuel_figures[0].usage_description().unwrap(), "ff[0].usage");
+        assert_eq!(30, fuel_figures[0].0, "ff[0].speed");
+        assert!((fuel_figures[0].1 - 35.9).abs() < 0.01, "ff[0].mpg");
+        assert_eq!(b"Urban Cycle",   fuel_figures[0].2.as_slice(), "ff[0].usage");
 
-        assert_eq!(55, fuel_figures[1].speed(), "ff[1].speed");
-        assert!((fuel_figures[1].mpg() - 49.0).abs() < 0.01, "ff[1].mpg");
-        assert_eq!(b"Combined Cycle", fuel_figures[1].usage_description().unwrap(), "ff[1].usage");
+        assert_eq!(55, fuel_figures[1].0, "ff[1].speed");
+        assert!((fuel_figures[1].1 - 49.0).abs() < 0.01, "ff[1].mpg");
+        assert_eq!(b"Combined Cycle", fuel_figures[1].2.as_slice(), "ff[1].usage");
 
-        assert_eq!(75, fuel_figures[2].speed(), "ff[2].speed");
-        assert!((fuel_figures[2].mpg() - 40.0).abs() < 0.01, "ff[2].mpg");
-        assert_eq!(b"Highway Cycle",  fuel_figures[2].usage_description().unwrap(), "ff[2].usage");
+        assert_eq!(75, fuel_figures[2].0, "ff[2].speed");
+        assert!((fuel_figures[2].1 - 40.0).abs() < 0.01, "ff[2].mpg");
+        assert_eq!(b"Highway Cycle",  fuel_figures[2].2.as_slice(), "ff[2].usage");
 
-        let mut perf_iter = fuel.finish().unwrap().into_performance_figures().unwrap();
-        let perf: Vec<_> = perf_iter.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut perf = Vec::new();
+        let after_perf = after_fuel.into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let octane = e.octane_rating();
+            let mut accel = Vec::new();
+            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                accel.push((a.mph(), a.seconds()));
+                Ok(())
+            })?;
+            perf.push((octane, accel));
+            Ok(complete)
+        }).unwrap();
         assert_eq!(2, perf.len(), "performanceFigures count");
 
-        assert_eq!(95, perf[0].octane_rating(), "pf[0].octaneRating");
-        let accel0: Vec<_> = perf[0].acceleration().unwrap().collect::<Vec<_>>();
+        assert_eq!(95, perf[0].0, "pf[0].octaneRating");
+        let accel0 = &perf[0].1;
         assert_eq!(3, accel0.len(), "pf[0].acceleration count");
-        assert_eq!(30,  accel0[0].mph(), "pf[0].acc[0].mph");
-        assert!((accel0[0].seconds() - 4.0).abs() < 0.01, "pf[0].acc[0].seconds");
-        assert_eq!(60,  accel0[1].mph(), "pf[0].acc[1].mph");
-        assert!((accel0[1].seconds() - 7.5).abs() < 0.01, "pf[0].acc[1].seconds");
-        assert_eq!(100, accel0[2].mph(), "pf[0].acc[2].mph");
-        assert!((accel0[2].seconds() - 12.2).abs() < 0.01, "pf[0].acc[2].seconds");
+        assert_eq!(30,  accel0[0].0, "pf[0].acc[0].mph");
+        assert!((accel0[0].1 - 4.0).abs() < 0.01, "pf[0].acc[0].seconds");
+        assert_eq!(60,  accel0[1].0, "pf[0].acc[1].mph");
+        assert!((accel0[1].1 - 7.5).abs() < 0.01, "pf[0].acc[1].seconds");
+        assert_eq!(100, accel0[2].0, "pf[0].acc[2].mph");
+        assert!((accel0[2].1 - 12.2).abs() < 0.01, "pf[0].acc[2].seconds");
 
-        assert_eq!(99, perf[1].octane_rating(), "pf[1].octaneRating");
-        let accel1: Vec<_> = perf[1].acceleration().unwrap().collect::<Vec<_>>();
+        assert_eq!(99, perf[1].0, "pf[1].octaneRating");
+        let accel1 = &perf[1].1;
         assert_eq!(3, accel1.len(), "pf[1].acceleration count");
-        assert_eq!(30,  accel1[0].mph(), "pf[1].acc[0].mph");
-        assert!((accel1[0].seconds() - 3.8).abs() < 0.01, "pf[1].acc[0].seconds");
-        assert_eq!(60,  accel1[1].mph(), "pf[1].acc[1].mph");
-        assert!((accel1[1].seconds() - 7.1).abs() < 0.01, "pf[1].acc[1].seconds");
-        assert_eq!(100, accel1[2].mph(), "pf[1].acc[2].mph");
-        assert!((accel1[2].seconds() - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
+        assert_eq!(30,  accel1[0].0, "pf[1].acc[0].mph");
+        assert!((accel1[0].1 - 3.8).abs() < 0.01, "pf[1].acc[0].seconds");
+        assert_eq!(60,  accel1[1].0, "pf[1].acc[1].mph");
+        assert!((accel1[1].1 - 7.1).abs() < 0.01, "pf[1].acc[1].seconds");
+        assert_eq!(100, accel1[2].0, "pf[1].acc[2].mph");
+        assert!((accel1[2].1 - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
 
         // Var-data fields — continue the consuming chain in wire order.
-        let after_perf = perf_iter.finish().unwrap();
         let (manufacturer, c1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(b"Honda", manufacturer, "manufacturer");
         let (model, c2) = c1.into_model().unwrap();
@@ -617,25 +631,39 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(BoostType::NITROUS, e2.booster().boost_type(), "rt.engine.booster.boostType");
         assert_eq!(200, e2.booster().horse_power(), "rt.engine.booster.horsePower");
 
-        let mut fuel = car2.into_fuel_figures().unwrap();
-        let ff2: Vec<_> = fuel.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut ff2 = Vec::new();
+        let after_fuel = car2.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let speed = e.speed();
+            let mpg = e.mpg();
+            let (usage, complete) = e.into_usage_description()?;
+            ff2.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        }).unwrap();
         assert_eq!(3, ff2.len());
-        assert_eq!(30, ff2[0].speed());  assert!((ff2[0].mpg() - 35.9).abs() < 0.01);
-        assert_eq!(b"Urban Cycle", ff2[0].usage_description().unwrap());
-        assert_eq!(55, ff2[1].speed());  assert!((ff2[1].mpg() - 49.0).abs() < 0.01);
-        assert_eq!(b"Combined Cycle", ff2[1].usage_description().unwrap());
-        assert_eq!(75, ff2[2].speed());  assert!((ff2[2].mpg() - 40.0).abs() < 0.01);
-        assert_eq!(b"Highway Cycle", ff2[2].usage_description().unwrap());
+        assert_eq!(30, ff2[0].0);  assert!((ff2[0].1 - 35.9).abs() < 0.01);
+        assert_eq!(b"Urban Cycle", ff2[0].2.as_slice());
+        assert_eq!(55, ff2[1].0);  assert!((ff2[1].1 - 49.0).abs() < 0.01);
+        assert_eq!(b"Combined Cycle", ff2[1].2.as_slice());
+        assert_eq!(75, ff2[2].0);  assert!((ff2[2].1 - 40.0).abs() < 0.01);
+        assert_eq!(b"Highway Cycle", ff2[2].2.as_slice());
 
-        let mut perf_iter = fuel.finish().unwrap().into_performance_figures().unwrap();
-        let pf2: Vec<_> = perf_iter.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        let mut pf2 = Vec::new();
+        let after_perf = after_fuel.into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let octane = e.octane_rating();
+            let mut accel = Vec::new();
+            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                accel.push((a.mph(), a.seconds()));
+                Ok(())
+            })?;
+            pf2.push((octane, accel));
+            Ok(complete)
+        }).unwrap();
         assert_eq!(2, pf2.len());
-        assert_eq!(95, pf2[0].octane_rating());
-        let a0: Vec<_> = pf2[0].acceleration().unwrap().collect::<Vec<_>>();
+        assert_eq!(95, pf2[0].0);
+        let a0 = &pf2[0].1;
         assert_eq!(3, a0.len());
-        assert_eq!(30, a0[0].mph());  assert!((a0[0].seconds() - 4.0).abs() < 0.01);
+        assert_eq!(30, a0[0].0);  assert!((a0[0].1 - 4.0).abs() < 0.01);
 
-        let after_perf = perf_iter.finish().unwrap();
         let (mfr, c1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(b"Honda", mfr, "rt.manufacturer");
         let (model, c2) = c1.into_model().unwrap();
@@ -787,7 +815,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
-        assert!(car2.into_fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
+        assert!(car2.fuel_figures().unwrap().is_empty(), "0 fuel figures → is_empty == true");
 
         let mut buf = [0u8; 512];
         let car = CarEncoder::wrap_and_apply_header(&mut buf, 0)
@@ -812,7 +840,7 @@ fn group_decoder_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let car = car.activation_code(b"abcdef").unwrap();
         let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
-        assert!(!car2.into_fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
+        assert!(!car2.fuel_figures().unwrap().is_empty(), "3 fuel figures → is_empty == false");
     "#,
     );
     Ok(())
@@ -957,16 +985,8 @@ fn fixed_entry_group_entries_iterator() -> Result<(), Box<dyn std::error::Error>
         let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
-        let perf: Vec<_> = car2
-            .into_fuel_figures()
-            .unwrap()
-            .finish()
-            .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let mut accel = perf[0].acceleration().unwrap();
+        let pf = car2.performance_figures().unwrap().next().unwrap().unwrap();
+        let mut accel = pf.acceleration().unwrap();
         assert_eq!(accel.len(), 3);
         let a0 = accel.next().unwrap();
         assert_eq!(a0.mph(), 30);
@@ -1148,7 +1168,7 @@ fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn st
         let encoded = car.as_bytes_with_header();
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
-        let mut ff = car2.into_fuel_figures().unwrap();
+        let mut ff = car2.fuel_figures().unwrap();
         // scan_entry_at() bounds check is ALWAYS present (trust boundary — external idx input)
         let result = ff.scan_entry_at(999);
         assert!(result.is_err(), "scan_entry_at(999) on 0-entry group must return Err");
@@ -1190,7 +1210,7 @@ fn bounds_checks_disabled_with_feature_flag() -> Result<(), Box<dyn std::error::
         // Field accessors work (without bounds checks in fast path)
         assert_eq!(car2.serial_number(), 1234);
         assert_eq!(car2.model_year(), 2013);
-        let ff: Vec<_> = car2.into_fuel_figures().unwrap()
+        let ff: Vec<_> = car2.fuel_figures().unwrap()
             .collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(ff.len(), 1);
         assert_eq!(ff[0].speed(), 30);
@@ -1579,8 +1599,12 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
         "group decoder `remaining_entries` missing #[inline]"
     );
     assert!(
-        src.contains("#[inline]\n    pub fn visit_entries"),
-        "attached group decoder `visit_entries` missing #[inline]"
+        src.contains("#[inline]\n    pub fn into_fuel_figures"),
+        "fused into_fuel_figures(visit) missing #[inline]"
+    );
+    assert!(
+        src.contains("#[inline]\n    pub fn skip_fuel_figures"),
+        "skip_fuel_figures missing #[inline]"
     );
     // Group decoder wrap — #[inline] precedes `pub fn wrap(`, but acting_version
     // is on a subsequent line when prettyplease breaks the signature. Check
@@ -2184,19 +2208,22 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
         let d = grpvers_v2::GroupMsgDecoder::try_from(encoded).unwrap();
 
         // V2 decoder sees V1 entries (blockLength=12 on wire, not compiled 16)
-        let mut entries_iter = d.into_entries().unwrap();
-        let entries: Vec<_> = entries_iter.by_ref().collect::<Vec<_>>();
+        let mut entries = Vec::new();
+        let after_entries = d.into_entries(|entry| -> Result<(), grpvers_v2::sbe_rt::DecodeError> {
+            entries.push((entry.price(), entry.qty()));
+            Ok(())
+        }).unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Common fields (sinceVersion=0) — must decode
-        assert_eq!(entries[0].price(), 100);
-        assert_eq!(entries[0].qty(), 10);
-        assert_eq!(entries[1].price(), 200);
-        assert_eq!(entries[1].qty(), 20);
+        assert_eq!(entries[0].0, 100);
+        assert_eq!(entries[0].1, 10);
+        assert_eq!(entries[1].0, 200);
+        assert_eq!(entries[1].1, 20);
 
         // Trailer var-data must be at correct offset after group entries.
-        // This proves the iterator advances by wire blockLength, not compiled.
-        let (trailer, _done) = entries_iter.finish().unwrap().into_trailer().unwrap();
+        // This proves the walk advances by wire blockLength, not compiled.
+        let (trailer, _done) = after_entries.into_trailer().unwrap();
         assert_eq!(trailer, b"v1_trailer",
             "trailer must be at correct offset after V1-size group entries");
     "#,
@@ -2240,19 +2267,22 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
         let d = grpvers_v1b::GroupMsgDecoder::try_from(encoded).unwrap();
 
         // V1 decoder sees V2 entries (wire blockLength=16, compiled blockLength=12)
-        let mut entries_iter = d.into_entries().unwrap();
-        let entries: Vec<_> = entries_iter.by_ref().collect::<Vec<_>>();
+        let mut entries = Vec::new();
+        let after_entries = d.into_entries(|entry| -> Result<(), grpvers_v1b::sbe_rt::DecodeError> {
+            entries.push((entry.price(), entry.qty()));
+            Ok(())
+        }).unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Known fields correct — V1 decoder reads V2 entries using wire blockLength=16
-        assert_eq!(entries[0].price(), 111);
-        assert_eq!(entries[0].qty(), 22);
-        assert_eq!(entries[1].price(), 333);
-        assert_eq!(entries[1].qty(), 44);
+        assert_eq!(entries[0].0, 111);
+        assert_eq!(entries[0].1, 22);
+        assert_eq!(entries[1].0, 333);
+        assert_eq!(entries[1].1, 44);
 
         // Trailer must skip the extra 4 bytes per entry (flags field)
         // that V1 doesn't know about but the wire blockLength accounts for
-        let (trailer, _done) = entries_iter.finish().unwrap().into_trailer().unwrap();
+        let (trailer, _done) = after_entries.into_trailer().unwrap();
         assert_eq!(trailer, b"v2_trailer_data",
             "trailer must be at correct offset after V2-size group entries");
     "#,
@@ -2980,7 +3010,7 @@ fn group_entry_domain_mapped_set_formats_with_debug() -> Result<(), Box<dyn std:
             .encoded_length_with_header();
         assert_eq!(len, frame_len);
         let dec = BatchDecoder::try_decode(&buf[..len], 0)?;
-        let rendered = format!("{}", dec.into_rows()?.next().ok_or("missing row")?);
+        let rendered = format!("{}", dec.rows()?.next().ok_or("missing row")?);
         assert!(rendered.contains("0..1"), "group entry domain set missing: {rendered}");
         "#,
     );
@@ -3885,7 +3915,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
 
         let dec = BookDecoder::try_decode(&gen_bytes, 0).unwrap();
         assert_eq!(dec.mid_as::<Fixed>().unwrap(), Fixed { m: 5, e: -1 });
-        let mut g = dec.into_levels().unwrap();
+        let mut g = dec.levels().unwrap();
         let entry = g.next().unwrap();
         assert_eq!(entry.price_as::<Fixed>().unwrap(), Fixed { m: 500005, e: -1 });
         let raw = entry.price_wire();
@@ -4045,7 +4075,7 @@ fn group_entry_optional_domain_type_field_compiles_and_round_trips()
             })?
             .encoded_length_with_header();
         let dec = BatchDecoder::try_decode(&buf[..len], 0)?;
-        let entries: Vec<_> = dec.into_entries()?.collect();
+        let entries: Vec<_> = dec.entries()?.collect();
         assert_eq!(entries.len(), 2);
         let ts0 = entries[0].try_ts()?;
         assert!(ts0.is_some(), "entry 0 wrote ts, decode must see Some: {ts0:?}");

@@ -70,15 +70,15 @@ assert_eq!(len, actual);
 See [Exact sizing](../sbe/feature-tour/exact-sizing.md) and
 [Buffer sizing](../sbe/core-concepts/buffer-sizing.md).
 
-## Decoding: four lanes over the same nested book
+## Decoding: random access or one staged chain
 
 `L3Book` is the shape that makes the [decoder lanes](../sbe/feature-tour/decode-stages.md)
 worth distinguishing: two sibling groups, each entry carrying a nested
 `orders` group, then a trailing var-data `symbol`. Reaching `symbol` means
 walking past every order of every level.
 
-`tests/l3_tests.rs` encodes one ragged fixture and decodes it four ways,
-asserting all four produce an identical snapshot. Note what the snapshot holds:
+`tests/l3_tests.rs` encodes one ragged fixture and decodes it through the
+generated lanes, asserting they produce an identical snapshot. Note what the snapshot holds:
 the schema's **domain** types (`rust_decimal::Decimal`, `DateTime<Utc>`,
 `bool`) because that is what `with_domain_type` generates, and a **borrowed**
 `&'a str` for `symbol` — copying it would defeat the flyweight.
@@ -122,21 +122,9 @@ ask order to return to `symbol`; this lane reuses the boundary it already
 found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
-### Mutable ordered — one cursor, runtime order checks
-
-```rust,ignore
-{{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
-```
-
-Asking for `symbol` before the groups returns
-`DecodeError::OutOfOrder` and leaves the cursor untouched, so the correct call
-still works (`ordered_lane_rejects_out_of_order_tails` pins this). Nested
-guards borrow their entry, so the borrow checker prevents touching a level
-while its `orders` walk is live.
-
 ### On a hot path, collect nothing
 
-The four functions above build owned `Vec`s because a test has to materialise
+The three functions above build owned `Vec`s because a test has to materialise
 something to compare. Real consumption does not: the decoders are flyweights
 over the wire buffer, `&str` and `&[u8]` borrow from it, and a full nested walk
 needs no allocation at all.
@@ -154,7 +142,7 @@ pins the same property for generated decode under a counting allocator.
 | You are doing | Lane |
 |---------------|------|
 | Reading a couple of fields, or one tail | random access — smallest, `Sync` |
-| Decoding the whole book in wire order | `.ordered()`, or staged for compile-time enforcement |
+| Decoding the whole book in wire order | staged `into_*(|entry|)` — one chain, compile-time order |
 | Several helpers reading multiple tails, same thread | `.memoized()` |
 
 Full comparison, including how each differs from sbe-tool's single `limit`

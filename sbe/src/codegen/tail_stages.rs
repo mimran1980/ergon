@@ -100,72 +100,9 @@ pub(crate) fn generate_owner_consuming_stages(
         }
     };
 
-    // 2a. Group into_<g>() on the stage that precedes each group.
-    for (gi, tg) in groups.iter().enumerate() {
-        let i = gi;
-        let current_stage = if i == 0 {
-            initial_ident.clone()
-        } else {
-            stage_after_ident(i - 1)
-        };
-        let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
-        let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
-        let se = start_expr(i);
-        let pp = parent_pos_expr(i);
-        let absent_group = if tg.since_version > 0 {
-            let since_lit = syn::LitInt::new(
-                &tg.since_version.to_string(),
-                proc_macro2::Span::call_site(),
-            );
-            quote::quote! {
-                if self.acting_version < #since_lit {
-                    // SAFETY: this stage was reached in wire order, so `#pp`
-                    // and `self.acting_block_length` describe the real parent
-                    // body. The group is not on the wire at this version: it
-                    // occupies zero bytes and is immediately complete.
-                    return Ok(unsafe {
-                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_absent_parent(
-                            self.buf,
-                            group_start,
-                            self.acting_version,
-                            #pp,
-                            self.acting_block_length,
-                        )
-                    });
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
-        ts.extend(quote::quote! {
-            impl<'a> #current_stage<'a> {
-                /// Consume this stage and start decoding the next tail group,
-                /// enforcing wire order. The returned group decoder owns the
-                /// right to advance to the following stage via `finish()`.
-                #[inline]
-                pub fn #into_ident(
-                    self,
-                ) -> Result<#g_decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-                    let group_start = #se;
-                    #absent_group
-                    // SAFETY: this stage was reached by consuming the message in
-                    // wire order, so `#pp` and `self.acting_block_length`
-                    // describe the real parent body and `group_start` is this
-                    // group's genuine dimension-header offset. The header,
-                    // block length, and extent are still validated inside.
-                    unsafe {
-                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
-                            self.buf,
-                            group_start,
-                            self.acting_version,
-                            #pp,
-                            self.acting_block_length,
-                        )
-                    }
-                }
-            }
-        });
-    }
+    // 2a. Group into_<g>(closure) / skip_<g>() live on the stage that precedes
+    // each group. Generated together with the group decoder's internal
+    // `walk`/`skip_all` helpers, further down, once #next_stage is known.
 
     // 2b. Var-data into_<vd>(): read the field and advance.
     for (vi, vd) in vardata.iter().enumerate() {
@@ -509,10 +446,51 @@ pub(crate) fn generate_owner_consuming_stages(
 
     for (gi, tg) in groups.iter().enumerate() {
         let i = gi;
+        let current_stage = if i == 0 {
+            initial_ident.clone()
+        } else {
+            stage_after_ident(i - 1)
+        };
         let next_stage = stage_after_ident(i);
+        let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
+        let skip_ident = syn::Ident::new(&format!("skip_{}", tg.accessor_snake), span);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
         let g_name_lit = syn::LitStr::new(&tg.name, span);
+        let se = start_expr(i);
+        let pp = parent_pos_expr(i);
+        let (absent_visit, absent_skip) = if tg.since_version > 0 {
+            let since_lit = syn::LitInt::new(
+                &tg.since_version.to_string(),
+                proc_macro2::Span::call_site(),
+            );
+            let absent_attach = quote::quote! {
+                // SAFETY: this stage was reached in wire order, so `#pp`
+                // and `self.acting_block_length` describe the real parent
+                // body. The group is not on the wire at this version: it
+                // occupies zero bytes at `group_start`, which is therefore
+                // the next tail cursor.
+                let attached = unsafe {
+                    <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_absent_parent(
+                        self.buf,
+                        group_start,
+                        self.acting_version,
+                        #pp,
+                        self.acting_block_length,
+                    )
+                };
+                return Ok(attached.into_parent_stage(group_start));
+            };
+            (
+                quote::quote! { if self.acting_version < #since_lit { #absent_attach } },
+                quote::quote! { if self.acting_version < #since_lit { #absent_attach } },
+            )
+        } else {
+            (
+                proc_macro2::TokenStream::new(),
+                proc_macro2::TokenStream::new(),
+            )
+        };
         let poisoned_finish_guard = if tg.entries_have_tails {
             quote::quote! {
                 if let Some(error) = self.poisoned {
@@ -531,23 +509,34 @@ pub(crate) fn generate_owner_consuming_stages(
         } else {
             proc_macro2::TokenStream::new()
         };
+        let visit_closure_bound = if tg.entries_have_tails {
+            let entry_complete_ident =
+                syn::Ident::new(&format!("{entry_decoder_ident}Complete",), span);
+            quote::quote! {
+                F: FnMut(#entry_decoder_ident<'a>) -> Result<#entry_complete_ident<'a>, E>
+            }
+        } else {
+            quote::quote! {
+                F: FnMut(#entry_decoder_ident<'a>) -> Result<(), E>
+            }
+        };
         let visit_entries_body = if tg.entries_have_tails {
             let entry_complete_ident =
                 syn::Ident::new(&format!("{entry_decoder_ident}Complete",), span);
             quote::quote! {
-                /// Consume every remaining entry in one pass and return the next
-                /// parent stage.
-                ///
-                /// The callback must return this entry's generated completion
-                /// stage. Dynamic `visit_entries` does not pre-scan
-                /// `encoded_length()`; the next cursor comes from that
-                /// completion. Empty groups invoke the callback zero times.
-                ///
-                /// A callback or decoding error consumes this ordered stage and
-                /// returns no continuation. Returning a completion that does
-                /// not belong to the supplied entry panics.
+                // Internal implementation detail of the fused `into_*`/
+                // `skip_*` methods on the preceding stage — not part of the
+                // public API. Consumes every remaining entry in one pass and
+                // returns the next parent stage.
+                //
+                // The callback must return this entry's generated completion
+                // stage; the next cursor comes from that completion, not a
+                // pre-scan of `encoded_length()`. Empty groups invoke the
+                // callback zero times. A callback or decoding error consumes
+                // this stage and returns no continuation. Returning a
+                // completion that does not belong to the supplied entry panics.
                 #[inline]
-                pub fn visit_entries<E, F>(
+                fn walk<E, F>(
                     mut self,
                     mut visit: F,
                 ) -> Result<#next_stage<'a>, E>
@@ -586,7 +575,7 @@ pub(crate) fn generate_owner_consuming_stages(
                             || complete.acting_block_length != self.acting_block_length
                         {
                             panic!(
-                                "visit_entries callback returned a completion that does not belong to the supplied entry"
+                                "group visit callback returned a completion that does not belong to the supplied entry"
                             );
                         }
                         self.offset = complete.tail_start;
@@ -598,16 +587,12 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         } else {
             quote::quote! {
-                /// Consume every remaining entry in one pass and return the next
-                /// parent stage.
-                ///
-                /// Fixed-stride entries advance by the acting block length.
-                /// Empty groups invoke the callback zero times.
-                ///
-                /// A callback or decoding error consumes this ordered stage and
-                /// returns no continuation.
+                // Internal implementation detail of the fused `into_*`/
+                // `skip_*` methods on the preceding stage — not part of the
+                // public API. Fixed-stride entries advance by the acting
+                // block length. Empty groups invoke the callback zero times.
                 #[inline]
-                pub fn visit_entries<E, F>(
+                fn walk<E, F>(
                     mut self,
                     mut visit: F,
                 ) -> Result<#next_stage<'a>, E>
@@ -648,14 +633,16 @@ pub(crate) fn generate_owner_consuming_stages(
                         acting_block_length: self.parent_block_length,
                     }
                 }
-                /// Scan past any unread entries (including nested tails) in wire
-                /// order and return the next decoder stage.
-                ///
-                /// Only an *attached* group — one reached through its message's
-                /// tail — can complete into a message stage. A standalone
-                /// [`Self::wrap`] has no parent to return to.
+                // Internal implementation detail of the fused `skip_*`
+                // method on the preceding stage — not part of the public
+                // API. Scans past any unread entries (including nested
+                // tails) in wire order and returns the next decoder stage.
+                //
+                // Only an *attached* group — one reached through its
+                // message's tail — can complete into a message stage. A
+                // standalone [`Self::wrap`] has no parent to return to.
                 #[inline]
-                pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                fn skip_all(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
                     // A poisoned group's position came from an entry that
                     // failed to decode, so the next stage would be built at a
                     // meaningless offset. Return the stored error instead.
@@ -669,12 +656,55 @@ pub(crate) fn generate_owner_consuming_stages(
                     }
                     Ok(self.into_parent_stage(offset))
                 }
-                /// Explicit sequential spelling of "advance past the rest of this group".
-                #[inline]
-                pub fn skip_remaining(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
-                    self.finish()
-                }
                 #visit_entries_body
+            }
+            impl<'a> #current_stage<'a> {
+                /// Consume this stage, visit every entry of the next group in
+                /// wire order, and return the following stage. A callback
+                /// error consumes this stage and returns no continuation —
+                /// there is nothing to retry from a consuming lane.
+                #[inline]
+                pub fn #into_ident<E, F>(self, visit: F) -> Result<#next_stage<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    #visit_closure_bound,
+                {
+                    let group_start = #se;
+                    #absent_visit
+                    // SAFETY: this stage was reached by consuming the message
+                    // in wire order, so `#pp` and `self.acting_block_length`
+                    // describe the real parent body and `group_start` is this
+                    // group's genuine dimension-header offset. The header,
+                    // block length, and extent are still validated inside.
+                    let attached = unsafe {
+                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
+                            self.buf,
+                            group_start,
+                            self.acting_version,
+                            #pp,
+                            self.acting_block_length,
+                        )
+                    }?;
+                    attached.walk(visit)
+                }
+                /// Consume this stage, advance past the next group without
+                /// visiting any entry, and return the following stage.
+                #[inline]
+                pub fn #skip_ident(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
+                    let group_start = #se;
+                    #absent_skip
+                    // SAFETY: see `#into_ident` above — same call, same proof.
+                    let attached = unsafe {
+                        <#g_decoder_ident<'a, sbe_rt::Attached>>::wrap_with_parent(
+                            self.buf,
+                            group_start,
+                            self.acting_version,
+                            #pp,
+                            self.acting_block_length,
+                        )
+                    }?;
+                    attached.skip_all()
+                }
             }
         });
     }

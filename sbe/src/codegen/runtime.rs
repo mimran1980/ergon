@@ -156,12 +156,6 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 InvalidBoolean { field: &'static str, discriminant: u64 },
                 /// Domain `try_*` conversion failed.
                 DomainConversionFailed { field: &'static str, reason: &'static str },
-                /// Mutable ordered decoder called a dynamic tail out of schema order.
-                OutOfOrder {
-                    owner: &'static str,
-                    expected: &'static str,
-                    requested: &'static str,
-                },
             }
 
             impl core::fmt::Display for DecodeError {
@@ -179,7 +173,6 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::InvalidAscii { field } => write!(f, "field '{}': invalid ASCII", field),
                         Self::InvalidBoolean { field, discriminant } => write!(f, "field '{}': invalid boolean (discriminant {discriminant:#x})", field),
                         Self::DomainConversionFailed { field, reason } => write!(f, "field '{}': domain conversion failed: {}", field, reason),
-                        Self::OutOfOrder { owner, expected, requested } => write!(f, "{owner}: expected '{expected}', requested '{requested}'"),
                     }
                 }
             }
@@ -805,7 +798,7 @@ pub(crate) enum TextEncoding {
 /// schemas legally spell UTF-8 as `UTF-8` or `UTF8`, and ASCII as `ASCII` or
 /// `US-ASCII` (case-insensitively). Every location that emits a `*_as_str`
 /// accessor — message decode, group-entry decode, memoized decode,
-/// mutable-ordered decode, message/entry encode — must agree on what counts
+/// message/entry encode — must agree on what counts
 /// as text through this one function. A narrower match in only some of those
 /// locations doesn't error; it silently drops the accessor there while
 /// leaving it present elsewhere, which is worse than an error and exactly
@@ -2129,8 +2122,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 }
 
 /// Core generator for consuming tail stages, shared by message-level and
-/// entry-level tails. Emits non-`Copy` stage structs plus `into_*`, `finish`,
-/// and `skip_remaining`. Does not remove random-access `&self` accessors.
+/// entry-level tails. Emits non-`Copy` stage structs plus fused `into_*(visit)`
+/// and `skip_*`. Does not remove random-access `&self` accessors.
 ///
 /// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
 /// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.
@@ -2432,7 +2425,7 @@ pub(crate) fn generate_any_message(
                 )
             } else {
                 format!(
-                    "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized or ordered lane to take: every field is random-access off the block and this decoder reads them all."
+                    "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized lane to take: every field is random-access off the block and this decoder reads them all."
                 )
             };
             lane_accessors.extend(quote::quote! {
@@ -2448,14 +2441,9 @@ pub(crate) fn generate_any_message(
             });
             if m.has_tails() {
                 let memo = quote::format_ident!("{pascal}MemoizedDecoder");
-                let ordered = quote::format_ident!("{pascal}OrderedDecoder");
                 let into_memo = quote::format_ident!("into_{snake}_memoized");
-                let into_ordered = quote::format_ident!("into_{snake}_ordered");
                 let doc_memo = format!(
                     "Take the `{pascal}` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template."
-                );
-                let doc_ordered = format!(
-                    "Take the `{pascal}` decoder straight into the mutable ordered lane (complete sequential decoding), or `None` if this frame is a different template."
                 );
                 lane_accessors.extend(quote::quote! {
                     #[doc = #doc_memo]
@@ -2464,16 +2452,6 @@ pub(crate) fn generate_any_message(
                     pub fn #into_memo(self) -> Option<#memo<'a>> {
                         match self {
                             Self::#variant(d) => Some(d.memoized()),
-                            _ => None,
-                        }
-                    }
-
-                    #[doc = #doc_ordered]
-                    #[inline]
-                    #[must_use]
-                    pub fn #into_ordered(self) -> Option<#ordered<'a>> {
-                        match self {
-                            Self::#variant(d) => Some(d.ordered()),
                             _ => None,
                         }
                     }

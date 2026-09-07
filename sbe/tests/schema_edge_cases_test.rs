@@ -216,7 +216,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
             .fixed(&TestMessage1FixedFields { tag1: 0 })
             .entries(2, |group| group.bulk_add(&entries))?
             .encoded_length_with_header();
-        let mut decoded = TestMessage1Decoder::try_from(&buf[..len])?.into_entries()?;
+        let mut decoded = TestMessage1Decoder::try_from(&buf[..len])?.entries()?;
         let row = decoded.next().unwrap();
         assert_eq!(row.tag_group1(), first.tag_group1);
         assert_eq!(row.tag_group2(), first.tag_group2);
@@ -242,7 +242,7 @@ fn basic_group_bulk_add_encodes_and_checks_boundaries() -> Result<(), Box<dyn st
             .encoded_length_with_header();
         assert_eq!(
             TestMessage1Decoder::try_from(&full_buf[..len])?
-                .into_entries()?
+                .entries()?
                 .count(),
             1
         );
@@ -293,7 +293,7 @@ fn zero_block_group_bulk_add_records_count_without_chunks_panic()
             .encoded_length_with_header();
         assert_eq!(len, 12);
 
-        let decoded = ZeroBlockMessageDecoder::try_from(&buf[..len])?.into_entries()?;
+        let decoded = ZeroBlockMessageDecoder::try_from(&buf[..len])?.entries()?;
         assert_eq!(decoded.count(), 3);
         "#,
     );
@@ -542,7 +542,7 @@ fn group_extension_types_exist() -> Result<(), Box<dyn std::error::Error>> {
 
         let decoded = GroupExtensionMessageDecoder::try_from(v0.as_slice())?;
         assert_eq!(decoded.seq_num(), 77);
-        let rows: Vec<_> = decoded.into_entries()?.collect();
+        let rows: Vec<_> = decoded.entries()?.collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].price(), 101);
         assert_eq!(rows[0].volume(), 11);
@@ -569,7 +569,7 @@ fn group_extension_types_exist() -> Result<(), Box<dyn std::error::Error>> {
         append_u64(&mut v1, 4004);
 
         let decoded = GroupExtensionMessageDecoder::try_from(v1.as_slice())?;
-        let rows: Vec<_> = decoded.into_entries()?.collect();
+        let rows: Vec<_> = decoded.entries()?.collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].price(), 303);
         assert_eq!(rows[0].volume(), 33);
@@ -608,7 +608,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             7, 9,       // two version-0 entries
         ];
         let decoded = VersionedGroupMessageDecoder::try_from(wire.as_slice())?;
-        let rows: Vec<_> = decoded.into_entries()?.collect();
+        let rows: Vec<_> = decoded.entries()?.collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].base(), 7);
         assert_eq!(rows[1].base(), 9);
@@ -648,7 +648,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             wire.extend(std::iter::repeat(1u8).take(usize::from(entry_block_length) * 2));
 
             let decoded = VersionedGroupMessageDecoder::try_from(wire.as_slice())?;
-            let Err(_) = decoded.into_entries() else {
+            let Err(_) = decoded.entries() else {
                 panic!("blockLength {entry_block_length} cannot hold version-1 required fields");
             };
         }
@@ -677,7 +677,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             0,
         ];
         let decoded = VersionedGroupMessageDecoder::try_from(opt_short.as_slice())?;
-        let Some(first) = decoded.into_entries()?.next() else {
+        let Some(first) = decoded.entries()?.next() else {
             panic!("a well-formed v1 entry block must yield its entry");
         };
         assert_eq!(first.try_later_bool_bool().unwrap(), Some(true));
@@ -701,7 +701,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             })?
             .encoded_length_with_header();
         let decoded = VersionedGroupMessageDecoder::try_from(&latest[..len])?;
-        let row = decoded.into_entries()?.next().unwrap();
+        let row = decoded.entries()?.next().unwrap();
         assert_eq!(row.base(), 5);
         assert_eq!(row.later_array(), [0x1122, 0x3344]);
         assert_eq!(row.later_composite_value(), Some(LaterComposite::new(0x5566)));
@@ -745,7 +745,7 @@ fn group_primitive_array_respects_the_wire_entry_block_boundary()
             9, 8, 7, 6, 5, 4, 3, 2,
         ];
         let decoded = ArrayBoundaryMessageDecoder::try_from(short.as_slice())?;
-        let Err(_) = decoded.into_entries() else {
+        let Err(_) = decoded.entries() else {
             panic!("a group whose block length cannot hold its required fields must not expose an entry");
         };
 
@@ -756,7 +756,7 @@ fn group_primitive_array_respects_the_wire_entry_block_boundary()
             0, 0,       // count = 0
         ];
         let decoded = ArrayBoundaryMessageDecoder::try_from(empty.as_slice())?;
-        assert!(decoded.into_entries()?.is_empty());
+        assert!(decoded.entries()?.is_empty());
 
         let complete = [
             0, 0,       // root blockLength
@@ -770,7 +770,7 @@ fn group_primitive_array_respects_the_wire_entry_block_boundary()
             0x88, 0x77, 0x66, 0x55,
         ];
         let decoded = ArrayBoundaryMessageDecoder::try_from(complete.as_slice())?;
-        let Some(row) = decoded.into_entries()?.next() else {
+        let Some(row) = decoded.entries()?.next() else {
             panic!("a complete entry block must yield its entry");
         };
         assert_eq!(row.base(), 7);
@@ -852,7 +852,7 @@ fn multi_nested_group_compiles_and_roundtrips() -> Result<(), Box<dyn std::error
         // natural accessor keeps the schema name.
         assert_eq!(dec.header(), 0u32);
 
-        let mut entries = dec.into_parent()?;
+        let mut entries = dec.parent()?;
         let mut count = 0usize;
         while let Some(Ok(entry)) = entries.next() {
             assert_eq!(entry.parent_field(), 42u16);
@@ -942,7 +942,7 @@ fn group_entry_display_includes_fields() -> Result<(), Box<dyn std::error::Error
         let len = car.encoded_length_with_header();
 
         let dec = CarDecoder::try_from(&buf[..len])?;
-        let mut fuel = dec.into_fuel_figures()?;
+        let mut fuel = dec.fuel_figures()?;
         let mut i = 0usize;
         while let Some(Ok(entry)) = fuel.next() {
             let s = entry.to_string();

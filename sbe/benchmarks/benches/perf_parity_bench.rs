@@ -115,63 +115,79 @@ fn assert_decode_parity() {
     );
     assert_eq!(ergon_booster.horse_power(), sbe_tool_booster.horse_power());
 
-    let mut ergon_fuel = CarDecoder::try_from(BASELINE)
+    let mut ergon_fuel = Vec::new();
+    let ergon_after_fuel = CarDecoder::try_from(BASELINE)
         .unwrap()
-        .into_fuel_figures()
+        .into_fuel_figures(|ergon_entry| -> Result<_, sbe_rt::DecodeError> {
+            let speed = ergon_entry.speed();
+            let mpg = ergon_entry.mpg().to_bits();
+            let (usage, complete) = ergon_entry.into_usage_description()?;
+            ergon_fuel.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        })
         .unwrap();
-    let mut sbe_tool_fuel = sbe_tool_car_body_decoder(BASELINE, 0, bl, ver).fuel_figures_decoder();
-    while let Some(ergon_entry) = ergon_fuel.next() {
-        let ergon_entry = ergon_entry.unwrap();
-        assert!(sbe_tool_fuel.advance().unwrap().is_some());
-        assert_eq!(ergon_entry.speed(), sbe_tool_fuel.speed());
-        assert_eq!(ergon_entry.mpg().to_bits(), sbe_tool_fuel.mpg().to_bits());
-        let usage_description = sbe_tool_fuel.usage_description_decoder();
-        assert_eq!(
-            ergon_entry.usage_description().unwrap(),
-            sbe_tool_fuel.usage_description_slice(usage_description)
-        );
-    }
-    assert!(sbe_tool_fuel.advance().unwrap().is_none());
-
-    let ergon_after_fuel = ergon_fuel.finish().unwrap();
-    let mut sbe_tool_car = sbe_tool_fuel.parent().unwrap();
-    let mut ergon_performance = ergon_after_fuel.into_performance_figures().unwrap();
-    let mut sbe_tool_performance = sbe_tool_car.performance_figures_decoder();
-    while let Some(ergon_entry) = ergon_performance.next() {
-        let ergon_entry = ergon_entry.unwrap();
-        assert!(sbe_tool_performance.advance().unwrap().is_some());
-        assert_eq!(
-            ergon_entry.octane_rating(),
-            sbe_tool_performance.octane_rating()
-        );
-        let mut sbe_tool_acceleration = sbe_tool_performance.acceleration_decoder();
-        for ergon_acceleration in ergon_entry.acceleration().unwrap() {
-            assert!(sbe_tool_acceleration.advance().unwrap().is_some());
-            assert_eq!(ergon_acceleration.mph(), sbe_tool_acceleration.mph());
-            assert_eq!(
-                ergon_acceleration.seconds().to_bits(),
-                sbe_tool_acceleration.seconds().to_bits()
-            );
-        }
-        assert!(sbe_tool_acceleration.advance().unwrap().is_none());
-        sbe_tool_performance = sbe_tool_acceleration.parent().unwrap();
-    }
-    assert!(sbe_tool_performance.advance().unwrap().is_none());
-
-    let ergon_after_performance = ergon_performance.finish().unwrap();
-    sbe_tool_car = sbe_tool_performance.parent().unwrap();
+    let mut ergon_perf = Vec::new();
+    let ergon_after_performance = ergon_after_fuel
+        .into_performance_figures(|ergon_entry| -> Result<_, sbe_rt::DecodeError> {
+            let octane = ergon_entry.octane_rating();
+            let mut acc = Vec::new();
+            let complete = ergon_entry.into_acceleration(|ergon_acceleration| {
+                acc.push((
+                    ergon_acceleration.mph(),
+                    ergon_acceleration.seconds().to_bits(),
+                ));
+                Ok(())
+            })?;
+            ergon_perf.push((octane, acc));
+            Ok(complete)
+        })
+        .unwrap();
     let (ergon_manufacturer, ergon_after_manufacturer) =
         ergon_after_performance.into_manufacturer().unwrap();
+    let (ergon_model, ergon_after_model) = ergon_after_manufacturer.into_model().unwrap();
+    let (ergon_activation_code, _) = ergon_after_model.into_activation_code().unwrap();
+
+    let mut sbe_tool_car = sbe_tool_car_body_decoder(BASELINE, 0, bl, ver);
+    let mut sbe_tool_fuel = sbe_tool_car.fuel_figures_decoder();
+    let mut tool_fuel = Vec::new();
+    while sbe_tool_fuel.advance().unwrap().is_some() {
+        let usage_description = sbe_tool_fuel.usage_description_decoder();
+        tool_fuel.push((
+            sbe_tool_fuel.speed(),
+            sbe_tool_fuel.mpg().to_bits(),
+            sbe_tool_fuel
+                .usage_description_slice(usage_description)
+                .to_vec(),
+        ));
+    }
+    sbe_tool_car = sbe_tool_fuel.parent().unwrap();
+    let mut sbe_tool_performance = sbe_tool_car.performance_figures_decoder();
+    let mut tool_perf = Vec::new();
+    while sbe_tool_performance.advance().unwrap().is_some() {
+        let octane = sbe_tool_performance.octane_rating();
+        let mut sbe_tool_acceleration = sbe_tool_performance.acceleration_decoder();
+        let mut acc = Vec::new();
+        while sbe_tool_acceleration.advance().unwrap().is_some() {
+            acc.push((
+                sbe_tool_acceleration.mph(),
+                sbe_tool_acceleration.seconds().to_bits(),
+            ));
+        }
+        tool_perf.push((octane, acc));
+        sbe_tool_performance = sbe_tool_acceleration.parent().unwrap();
+    }
+    sbe_tool_car = sbe_tool_performance.parent().unwrap();
     let sbe_tool_manufacturer = sbe_tool_car.manufacturer_decoder();
+    let sbe_tool_model = sbe_tool_car.model_decoder();
+    let sbe_tool_activation_code = sbe_tool_car.activation_code_decoder();
+
+    assert_eq!(ergon_fuel, tool_fuel);
+    assert_eq!(ergon_perf, tool_perf);
     assert_eq!(
         ergon_manufacturer,
         sbe_tool_car.manufacturer_slice(sbe_tool_manufacturer)
     );
-    let (ergon_model, ergon_after_model) = ergon_after_manufacturer.into_model().unwrap();
-    let sbe_tool_model = sbe_tool_car.model_decoder();
     assert_eq!(ergon_model, sbe_tool_car.model_slice(sbe_tool_model));
-    let (ergon_activation_code, _) = ergon_after_model.into_activation_code().unwrap();
-    let sbe_tool_activation_code = sbe_tool_car.activation_code_decoder();
     assert_eq!(
         ergon_activation_code,
         sbe_tool_car.activation_code_slice(sbe_tool_activation_code)
@@ -188,9 +204,7 @@ fn assert_ordered_decode_parity() {
     let car = unsafe { CarDecoder::wrap_unchecked(BASELINE, 0, bl_e, ver_e) };
     let mut fuel_rows = Vec::new();
     let after_fuel = car
-        .into_fuel_figures()
-        .unwrap()
-        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             let speed = entry.speed();
             let mpg = entry.mpg().to_bits();
             let (usage, complete) = entry.into_usage_description()?;
@@ -201,17 +215,13 @@ fn assert_ordered_decode_parity() {
 
     let mut perf_rows = Vec::new();
     let after_perf = after_fuel
-        .into_performance_figures()
-        .unwrap()
-        .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             let octane = entry.octane_rating();
             let mut acc = Vec::new();
-            let complete = entry.into_acceleration()?.visit_entries(
-                |a| -> Result<(), sbe_rt::DecodeError> {
-                    acc.push((a.mph(), a.seconds().to_bits()));
-                    Ok(())
-                },
-            )?;
+            let complete = entry.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                acc.push((a.mph(), a.seconds().to_bits()));
+                Ok(())
+            })?;
             perf_rows.push((octane, acc));
             Ok(complete)
         })
@@ -220,12 +230,9 @@ fn assert_ordered_decode_parity() {
     let (model, after_model) = after_manufacturer.into_model().unwrap();
     let (activation_code, _) = after_model.into_activation_code().unwrap();
 
-    let mut ergon_fuel = CarDecoder::try_from(BASELINE)
-        .unwrap()
-        .into_fuel_figures()
-        .unwrap();
     let mut expected_fuel = Vec::new();
-    while let Some(entry) = ergon_fuel.next() {
+    let expected = CarDecoder::try_from(BASELINE).unwrap();
+    for entry in expected.fuel_figures().unwrap() {
         let entry = entry.unwrap();
         expected_fuel.push((
             entry.speed(),
@@ -233,10 +240,8 @@ fn assert_ordered_decode_parity() {
             entry.usage_description().unwrap().to_vec(),
         ));
     }
-    let after_fuel = ergon_fuel.finish().unwrap();
-    let mut ergon_perf = after_fuel.into_performance_figures().unwrap();
     let mut expected_perf = Vec::new();
-    while let Some(entry) = ergon_perf.next() {
+    for entry in expected.performance_figures().unwrap() {
         let entry = entry.unwrap();
         let acc: Vec<_> = entry
             .acceleration()
@@ -245,86 +250,13 @@ fn assert_ordered_decode_parity() {
             .collect();
         expected_perf.push((entry.octane_rating(), acc));
     }
-    let after_perf = ergon_perf.finish().unwrap();
-    let (expected_manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
-    let (expected_model, after_model) = after_manufacturer.into_model().unwrap();
-    let (expected_activation, _) = after_model.into_activation_code().unwrap();
-
-    assert_eq!(fuel_rows, expected_fuel);
-    assert_eq!(perf_rows, expected_perf);
-    assert_eq!(manufacturer, expected_manufacturer);
-    assert_eq!(model, expected_model);
-    assert_eq!(activation_code, expected_activation);
-}
-
-fn assert_mutable_ordered_decode_parity() {
-    let (bl_e, ver_e) = ergo_sbe_header_fields();
-    assert!(
-        CarDecoder::try_wrap(BASELINE, 0, bl_e, ver_e).is_ok(),
-        "baseline must pass the version-aware fixed extent proof"
-    );
-
-    let mut car = unsafe { CarDecoder::wrap_unchecked(BASELINE, 0, bl_e, ver_e) }.ordered();
-    let mut fuel_rows = Vec::new();
-    car.fuel_figures()
+    let (expected_manufacturer, after_manufacturer) = expected
+        .skip_fuel_figures()
         .unwrap()
-        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-            fuel_rows.push((
-                entry.speed(),
-                entry.mpg().to_bits(),
-                entry.usage_description()?.to_vec(),
-            ));
-            Ok(())
-        })
-        .unwrap();
-
-    let mut perf_rows = Vec::new();
-    car.performance_figures()
+        .skip_performance_figures()
         .unwrap()
-        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-            let octane = entry.octane_rating();
-            let mut acc = Vec::new();
-            entry
-                .acceleration()?
-                .visit_entries(|a| -> Result<(), sbe_rt::DecodeError> {
-                    acc.push((a.mph(), a.seconds().to_bits()));
-                    Ok(())
-                })?;
-            perf_rows.push((octane, acc));
-            Ok(())
-        })
+        .into_manufacturer()
         .unwrap();
-    let manufacturer = car.manufacturer().unwrap();
-    let model = car.model().unwrap();
-    let activation_code = car.activation_code().unwrap();
-
-    let mut ergon_fuel = CarDecoder::try_from(BASELINE)
-        .unwrap()
-        .into_fuel_figures()
-        .unwrap();
-    let mut expected_fuel = Vec::new();
-    while let Some(entry) = ergon_fuel.next() {
-        let entry = entry.unwrap();
-        expected_fuel.push((
-            entry.speed(),
-            entry.mpg().to_bits(),
-            entry.usage_description().unwrap().to_vec(),
-        ));
-    }
-    let after_fuel = ergon_fuel.finish().unwrap();
-    let mut ergon_perf = after_fuel.into_performance_figures().unwrap();
-    let mut expected_perf = Vec::new();
-    while let Some(entry) = ergon_perf.next() {
-        let entry = entry.unwrap();
-        let acc: Vec<_> = entry
-            .acceleration()
-            .unwrap()
-            .map(|a| (a.mph(), a.seconds().to_bits()))
-            .collect();
-        expected_perf.push((entry.octane_rating(), acc));
-    }
-    let after_perf = ergon_perf.finish().unwrap();
-    let (expected_manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
     let (expected_model, after_model) = after_manufacturer.into_model().unwrap();
     let (expected_activation, _) = after_model.into_activation_code().unwrap();
 
@@ -889,7 +821,7 @@ fn bench_encode_throughput(c: &mut Criterion) {
 }
 
 fn bench_decode_consuming_full(c: &mut Criterion) {
-    // Fair five-way full-message decode over the same BASELINE buffer. All
+    // Fair four-way full-message decode over the same BASELINE buffer. All
     // arms read all encoded fixed fields, both composite levels, every fuel entry
     // (speed, mpg, usage_description), every performance entry (octane_rating +
     // nested acceleration mph/seconds), and all message-level var-data. Constants
@@ -899,7 +831,6 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
     // timed wraps use the unchecked constructor.
     assert_decode_parity();
     assert_ordered_decode_parity();
-    assert_mutable_ordered_decode_parity();
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
@@ -978,20 +909,23 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     booster.boost_type(),
                     booster.horse_power(),
                 ));
-                let mut fuel = car.into_fuel_figures().unwrap();
-                while let Some(Ok(e)) = fuel.next() {
-                    black_box((e.speed(), e.mpg()));
-                    black_box(e.usage_description().unwrap());
-                }
-                let after_fuel = fuel.finish().unwrap();
-                let mut perf = after_fuel.into_performance_figures().unwrap();
-                while let Some(Ok(e)) = perf.next() {
-                    black_box(e.octane_rating());
-                    for a in e.acceleration().unwrap() {
-                        black_box((a.mph(), a.seconds()));
-                    }
-                }
-                let after_perf = perf.finish().unwrap();
+                let after_fuel = car
+                    .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                        black_box((e.speed(), e.mpg()));
+                        let (usage, complete) = e.into_usage_description()?;
+                        black_box(usage);
+                        Ok(complete)
+                    })
+                    .unwrap();
+                let after_perf = after_fuel
+                    .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                        black_box(e.octane_rating());
+                        e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                            black_box((a.mph(), a.seconds()));
+                            Ok(())
+                        })
+                    })
+                    .unwrap();
                 let (mfr, a1) = after_perf.into_manufacturer().unwrap();
                 let (model, a2) = a1.into_model().unwrap();
                 let (code, _done) = a2.into_activation_code().unwrap();
@@ -1026,9 +960,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     booster.horse_power(),
                 ));
                 let after_fuel = car
-                    .into_fuel_figures()
-                    .unwrap()
-                    .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+                    .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                         black_box((entry.speed(), entry.mpg()));
                         let (usage, complete) = entry.into_usage_description()?;
                         black_box(usage);
@@ -1036,77 +968,18 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     })
                     .unwrap();
                 let after_perf = after_fuel
-                    .into_performance_figures()
-                    .unwrap()
-                    .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+                    .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                         black_box(entry.octane_rating());
-                        entry.into_acceleration()?.visit_entries(
-                            |a| -> Result<(), sbe_rt::DecodeError> {
-                                black_box((a.mph(), a.seconds()));
-                                Ok(())
-                            },
-                        )
+                        entry.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                            black_box((a.mph(), a.seconds()));
+                            Ok(())
+                        })
                     })
                     .unwrap();
                 let (mfr, a1) = after_perf.into_manufacturer().unwrap();
                 let (model, a2) = a1.into_model().unwrap();
                 let (code, _done) = a2.into_activation_code().unwrap();
                 black_box((mfr, model, code));
-            }
-        });
-    });
-
-    group.bench_function("ergo-sbe_mutable_ordered", |b| {
-        b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                let mut car =
-                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) }
-                        .ordered();
-                black_box((
-                    car.serial_number(),
-                    car.model_year(),
-                    car.available(),
-                    car.code(),
-                    car.some_numbers(),
-                    car.vehicle_code(),
-                    car.extras(),
-                ));
-                let engine = car.engine();
-                let booster = engine.booster();
-                black_box((
-                    engine.capacity(),
-                    engine.num_cylinders(),
-                    engine.manufacturer_code(),
-                    engine.efficiency(),
-                    engine.booster_enabled(),
-                    booster.boost_type(),
-                    booster.horse_power(),
-                ));
-                car.fuel_figures()
-                    .unwrap()
-                    .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-                        black_box((entry.speed(), entry.mpg()));
-                        black_box(entry.usage_description()?);
-                        Ok(())
-                    })
-                    .unwrap();
-                car.performance_figures()
-                    .unwrap()
-                    .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-                        black_box(entry.octane_rating());
-                        entry.acceleration()?.visit_entries(
-                            |a| -> Result<(), sbe_rt::DecodeError> {
-                                black_box((a.mph(), a.seconds()));
-                                Ok(())
-                            },
-                        )
-                    })
-                    .unwrap();
-                black_box((
-                    car.manufacturer().unwrap(),
-                    car.model().unwrap(),
-                    car.activation_code().unwrap(),
-                ));
             }
         });
     });

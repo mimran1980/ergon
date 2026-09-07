@@ -214,14 +214,7 @@ proptest! {
         let encoded = car.as_bytes_with_header();
         let decoded = CarDecoder::try_decode(encoded, 0).unwrap();
         let after_perf = decoded
-            .into_fuel_figures()
-            .unwrap()
-            .finish()
-            .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .finish()
-            .unwrap();
+            .skip_fuel_figures().unwrap().skip_performance_figures().unwrap();
         let (dec_mfr, s1) = after_perf.into_manufacturer().unwrap();
         let (dec_model, s2) = s1.into_model().unwrap();
         let (dec_activation, _done) = s2.into_activation_code().unwrap();
@@ -291,18 +284,21 @@ proptest! {
         let encoded = car.as_bytes_with_header();
         let decoded = CarDecoder::try_decode(encoded, 0).unwrap();
 
-        let mut fuel_iter = decoded.into_fuel_figures().unwrap();
-        let fuel: Vec<_> = fuel_iter
-            .by_ref()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let mut fuel = Vec::new();
+        let _ = decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let speed = e.speed();
+            let mpg = e.mpg();
+            let (usage, complete) = e.into_usage_description()?;
+            fuel.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        }).unwrap();
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
 
         for (i, (speed, mpg, usage)) in entries.iter().enumerate() {
-            prop_assert_eq!(*speed, fuel[i].speed(), "ff[{}].speed", i);
-            let mpg_diff = (mpg - fuel[i].mpg()).abs();
+            prop_assert_eq!(*speed, fuel[i].0, "ff[{}].speed", i);
+            let mpg_diff = (mpg - fuel[i].1).abs();
             prop_assert!(mpg_diff < f32::EPSILON, "ff[{}].mpg diff={}", i, mpg_diff);
-            prop_assert_eq!(&usage[..], fuel[i].usage_description().unwrap(), "ff[{}].usage", i);
+            prop_assert_eq!(&usage[..], fuel[i].2.as_slice(), "ff[{}].usage", i);
         }
     }
 }
@@ -346,11 +342,12 @@ fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let decoded = CarDecoder::try_decode(encoded, 0).unwrap();
 
     assert_eq!(0, decoded.serial_number());
-    let fuel = decoded.into_fuel_figures().unwrap();
-    assert!(fuel.is_empty(), "fuel figures not empty");
-    let perf = fuel.finish().unwrap().into_performance_figures().unwrap();
-    assert!(perf.is_empty(), "perf figures not empty");
-    let after_perf = perf.finish().unwrap();
+    assert!(decoded.fuel_figures().unwrap().is_empty(), "fuel figures not empty");
+    let after_perf = decoded
+        .skip_fuel_figures()
+        .unwrap()
+        .skip_performance_figures()
+        .unwrap();
     let (mfr, a1) = after_perf.into_manufacturer().unwrap();
     assert_eq!(b"", mfr, "manufacturer");
     let (model, a2) = a1.into_model().unwrap();
@@ -422,23 +419,20 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(u16::MAX, de.capacity());
     assert_eq!(u8::MAX, de.num_cylinders());
 
-    let mut fuel_iter = decoded.into_fuel_figures().unwrap();
-    let ff: Vec<_> = fuel_iter
-        .by_ref()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let mut ff = Vec::new();
+    let after_fuel = decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+        let speed = e.speed();
+        let mpg = e.mpg();
+        let (_usage, complete) = e.into_usage_description()?;
+        ff.push((speed, mpg));
+        Ok(complete)
+    }).unwrap();
     assert_eq!(1, ff.len());
-    assert_eq!(u16::MAX, ff[0].speed());
+    assert_eq!(u16::MAX, ff[0].0);
     // f32::MAX is the largest finite f32; check round-trip within epsilon
-    assert!((f32::MAX - ff[0].mpg()).abs() < 1.0, "ff[0].mpg");
+    assert!((f32::MAX - ff[0].1).abs() < 1.0, "ff[0].mpg");
 
-    let after_perf = fuel_iter
-        .finish()
-        .unwrap()
-        .into_performance_figures()
-        .unwrap()
-        .finish()
-        .unwrap();
+    let after_perf = after_fuel.skip_performance_figures().unwrap();
     let (mfr, a1) = after_perf.into_manufacturer().unwrap();
     assert_eq!(b"MAX", mfr);
     let (model, a2) = a1.into_model().unwrap();

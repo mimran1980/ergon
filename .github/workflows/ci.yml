@@ -90,10 +90,12 @@ jobs:
   test:
     needs: policy
     runs-on: ubuntu-24.04
-    # Was 45; the workspace suite grew from ~9m (2026-08-01) to 45m+ as
-    # sbe_tool_multi_schema_wire_parity_test.rs and friends landed, and the
-    # job was routinely cancelled mid-suite (2026-08-18) rather than failing.
-    timeout-minutes: 90
+    # Was 45, then 90; the workspace suite keeps growing (sbe_tool_multi_schema_wire_parity_test.rs
+    # alone is 52 compile-and-run cases at ~30s each) and this job was
+    # cancelled mid-suite at 90m on 2026-09-06 with several test files still
+    # to go — same "cancelled, not failed" pattern as the 2026-08-18 bump.
+    # Bump this again when it recurs; do not shrink it back down.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,8 +133,12 @@ jobs:
     needs: gate
     runs-on: ubuntu-24.04
     # llvm-cov re-runs the ergo-sbe compile-and-run suite under
-    # instrumentation. 30m cancelled the 0.1.23 job mid-run.
-    timeout-minutes: 120
+    # instrumentation. Was 30 (cancelled the 0.1.23 job mid-run), then 120;
+    # cancelled again at 120m on 2026-09-06 once the uninstrumented `test`
+    # job itself had grown past 2 hours (see that job's timeout comment) —
+    # instrumentation overhead on top of a suite that size no longer fits.
+    # Bump again when it recurs; do not shrink it back down.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:

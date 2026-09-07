@@ -128,20 +128,6 @@ const PROBES: &[Probe] = &[
         run: run_tool_decode_full_message_ordered,
     },
     Probe {
-        symbol: "ergo_probe_decode_full_message_mutable_ordered",
-        arm: Arm::Ergon,
-        pair: "decode_full_message_mutable_ordered",
-        topic: "decode",
-        run: run_ergo_decode_full_message_mutable_ordered,
-    },
-    Probe {
-        symbol: "tool_probe_decode_full_message_mutable_ordered",
-        arm: Arm::SbeTool,
-        pair: "decode_full_message_mutable_ordered",
-        topic: "decode",
-        run: run_tool_decode_full_message_mutable_ordered,
-    },
-    Probe {
         symbol: "ergo_probe_optional_enum_nullify",
         arm: Arm::Ergon,
         pair: "extended_optional_enum_nullify",
@@ -354,23 +340,27 @@ pub fn ergo_probe_decode_full_message(buf: &[u8], block_length: usize, version: 
             .wrapping_add(u64::from(car.model_year()));
         let engine = car.engine();
         checksum = checksum.wrapping_add(u64::from(engine.capacity()));
-        let mut fuel = car.into_fuel_figures().expect("fuel figures");
-        while let Some(Ok(entry)) = fuel.next() {
-            checksum = checksum.wrapping_add(u64::from(entry.speed()));
-            checksum =
-                checksum.wrapping_add(entry.usage_description().expect("usage").len() as u64);
-        }
-        let after_fuel = fuel.finish().expect("fuel finish");
-        let mut perf = after_fuel
-            .into_performance_figures()
+        let after_fuel = car
+            .into_fuel_figures(
+                |entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
+                    checksum = checksum.wrapping_add(u64::from(entry.speed()));
+                    let (usage, complete) = entry.into_usage_description()?;
+                    checksum = checksum.wrapping_add(usage.len() as u64);
+                    Ok(complete)
+                },
+            )
+            .expect("fuel figures");
+        let after_perf = after_fuel
+            .into_performance_figures(
+                |entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
+                    checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
+                    entry.into_acceleration(|acceleration| {
+                        checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
+                        Ok(())
+                    })
+                },
+            )
             .expect("performance figures");
-        while let Some(Ok(entry)) = perf.next() {
-            checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
-            for acceleration in entry.acceleration().expect("acceleration") {
-                checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
-            }
-        }
-        let after_perf = perf.finish().expect("performance finish");
         let (manufacturer, next) = after_perf.into_manufacturer().expect("manufacturer");
         let (model, next) = next.into_model().expect("model");
         let (code, _) = next.into_activation_code().expect("activation code");
@@ -456,9 +446,7 @@ pub fn ergo_probe_decode_full_message_ordered(
         let engine = car.engine();
         checksum = checksum.wrapping_add(u64::from(engine.capacity()));
         let after_fuel = car
-            .into_fuel_figures()
-            .expect("fuel figures")
-            .visit_entries(
+            .into_fuel_figures(
                 |entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
                     checksum = checksum.wrapping_add(u64::from(entry.speed()));
                     let (usage, complete) = entry.into_usage_description()?;
@@ -468,11 +456,9 @@ pub fn ergo_probe_decode_full_message_ordered(
             )
             .expect("fuel visit");
         let after_perf = after_fuel
-            .into_performance_figures()
-            .expect("performance figures")
-            .visit_entries(|entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
+            .into_performance_figures(|entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
                 checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
-                entry.into_acceleration()?.visit_entries(
+                entry.into_acceleration(
                     |acceleration| -> Result<(), ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
                         checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
                         Ok(())
@@ -505,79 +491,6 @@ fn run_ergo_decode_full_message_ordered() -> u64 {
 fn run_tool_decode_full_message_ordered() -> u64 {
     let (bl, ver) = sbe_tool_header_fields();
     tool_probe_decode_full_message_ordered(BASELINE, bl, ver)
-}
-
-#[inline(never)]
-#[unsafe(no_mangle)]
-pub fn ergo_probe_decode_full_message_mutable_ordered(
-    buf: &[u8],
-    block_length: usize,
-    version: u16,
-) -> u64 {
-    let mut checksum = 0_u64;
-    for _ in 0..OPERATIONS {
-        // SAFETY: extent proven once by `assert_baseline_extent`.
-        let mut car =
-            unsafe { CarDecoder::wrap_unchecked(black_box(buf), 0, block_length, version) }
-                .ordered();
-        checksum = checksum
-            .wrapping_add(car.serial_number())
-            .wrapping_add(u64::from(car.model_year()));
-        let engine = car.engine();
-        checksum = checksum.wrapping_add(u64::from(engine.capacity()));
-        car.fuel_figures()
-            .expect("fuel figures")
-            .visit_entries(
-                |entry| -> Result<(), ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
-                    checksum = checksum.wrapping_add(u64::from(entry.speed()));
-                    checksum = checksum.wrapping_add(entry.usage_description()?.len() as u64);
-                    Ok(())
-                },
-            )
-            .expect("fuel visit");
-        car.performance_figures()
-            .expect("performance figures")
-            .visit_entries(
-                |entry| -> Result<(), ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
-                    checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
-                    entry.acceleration()?.visit_entries(
-                        |acceleration| -> Result<(), ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
-                            checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
-                            Ok(())
-                        },
-                    )
-                },
-            )
-            .expect("perf visit");
-        let manufacturer = car.manufacturer().expect("manufacturer");
-        let model = car.model().expect("model");
-        let code = car.activation_code().expect("activation code");
-        checksum = checksum
-            .wrapping_add(manufacturer.len() as u64)
-            .wrapping_add(model.len() as u64)
-            .wrapping_add(code.len() as u64);
-    }
-    black_box(checksum)
-}
-
-#[inline(never)]
-#[unsafe(no_mangle)]
-pub fn tool_probe_decode_full_message_mutable_ordered(
-    buf: &[u8],
-    block_length: u16,
-    version: u16,
-) -> u64 {
-    tool_probe_decode_full_message(buf, block_length, version)
-}
-
-fn run_ergo_decode_full_message_mutable_ordered() -> u64 {
-    let (bl, ver) = ergo_header_fields();
-    ergo_probe_decode_full_message_mutable_ordered(BASELINE, bl, ver)
-}
-
-fn run_tool_decode_full_message_mutable_ordered() -> u64 {
-    let (bl, ver) = sbe_tool_header_fields();
-    tool_probe_decode_full_message_mutable_ordered(BASELINE, bl, ver)
 }
 
 // ─── Probes: scalar encode (header + body) ─────────────────────────────────
@@ -859,14 +772,10 @@ pub fn ergo_probe_decode_vardata(buf: &[u8], block_length: usize, version: u16) 
         // SAFETY: extent proven once in assert_baseline_extent.
         let car = unsafe { CarDecoder::wrap_unchecked(black_box(buf), 0, block_length, version) };
         let (mfr, _after) = car
-            .into_fuel_figures()
+            .skip_fuel_figures()
             .expect("fuel figures")
-            .finish()
-            .expect("fuel finish")
-            .into_performance_figures()
+            .skip_performance_figures()
             .expect("perf figures")
-            .finish()
-            .expect("perf finish")
             .into_manufacturer()
             .expect("manufacturer");
         checksum = checksum.wrapping_add(mfr[0] as u64);
@@ -998,10 +907,20 @@ pub fn ergo_probe_group_with_data(buf: &[u8], block_length: usize, version: u16)
             TestMessage1Decoder::wrap_unchecked(black_box(buf), 0, block_length, version)
         };
         checksum = checksum.wrapping_add(u64::from(dec.tag1()));
-        let mut entries = dec.into_entries().expect("entries");
-        let entry = entries.next().expect("one entry").expect("entry");
-        checksum = checksum.wrapping_add(entry.tag_group2() as u64);
-        checksum = checksum.wrapping_add(entry.var_data_field().expect("var").len() as u64);
+        let _ =
+            dec
+                .into_entries(
+                    |entry| -> Result<
+                        _,
+                        ergo_sbe_benchmarks::parity_group_with_data::sbe_rt::DecodeError,
+                    > {
+                        checksum = checksum.wrapping_add(entry.tag_group2() as u64);
+                        let (var, complete) = entry.into_var_data_field()?;
+                        checksum = checksum.wrapping_add(var.len() as u64);
+                        Ok(complete)
+                    },
+                )
+                .expect("entries");
     }
     black_box(checksum)
 }

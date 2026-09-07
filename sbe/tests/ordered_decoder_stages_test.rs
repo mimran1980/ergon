@@ -3,15 +3,15 @@
 //! These tests prove the new sequential decoder API end-to-end:
 //!
 //! ```text
-//! CarDecoder --into_fuel_figures()--> FuelFiguresDecoder --finish()-->
-//! CarDecoderAfterFuelFigures --into_performance_figures()--> ... -->
+//! CarDecoder --into_fuel_figures(|entry|)--> CarDecoderAfterFuelFigures
+//! --into_performance_figures(|entry|)--> ... -->
 //! CarDecoderAfterManufacturer --into_model()--> CarDecoderAfterModel
 //! --into_activation_code()--> CarDecoderComplete
 //! ```
 //!
-//! Wire order is enforced by consumption: each `into_*`/`finish`/`skip_remaining`
-//! takes `self`, so a later tail component is unreachable until the current one
-//! is consumed. Random-access `&self` accessors remain; these tests exercise
+//! Wire order is enforced by consumption: each `into_*(visit)`/`skip_*` takes
+//! `self`, so a later tail component is unreachable until the current one is
+//! consumed. Random-access `&self` accessors remain; these tests exercise
 //! only the consuming path.
 
 #![allow(clippy::all)]
@@ -75,14 +75,15 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         assert_eq!(dec.serial_number(), 1234);
         assert_eq!(dec.model_year(), 2013);
 
-        // First group: consume the message stage, iterate, then finish().
-        let mut fuel = dec.into_fuel_figures().unwrap();
-        assert_eq!(fuel.remaining(), 3);
+        // First group: consume the message stage, visiting every entry.
         let mut rows = Vec::new();
-        while let Some(Ok(e)) = fuel.next() {
-            rows.push((e.speed(), e.mpg(), e.usage_description().unwrap().to_vec()));
-        }
-        let after_fuel = fuel.finish().unwrap();
+        let after_fuel = dec.into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            let speed = entry.speed();
+            let mpg = entry.mpg();
+            let (usage, complete) = entry.into_usage_description()?;
+            rows.push((speed, mpg, usage.to_vec()));
+            Ok(complete)
+        }).unwrap();
         assert_eq!(rows, vec![
             (30, 35.9_f32, b"Urban Cycle".to_vec()),
             (55, 49.0_f32, b"Combined Cycle".to_vec()),
@@ -90,13 +91,11 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
         ]);
 
         // Second group (entries carry a nested group dimension header even at 0).
-        let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.remaining(), 2);
         let mut octanes = Vec::new();
-        while let Some(Ok(e)) = perf.next() {
-            octanes.push(e.octane_rating());
-        }
-        let after_perf = perf.finish().unwrap();
+        let after_perf = after_fuel.into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            octanes.push(entry.octane_rating());
+            entry.into_acceleration(|_| Ok(()))
+        }).unwrap();
         assert_eq!(octanes, vec![95u8, 99u8]);
 
         // Message-level var-data: each into_* returns (bytes, next stage).
@@ -116,11 +115,11 @@ fn decode_car_through_consuming_stages() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// `finish()` must scan past UNREAD entries (not just fully-read ones): read one
-/// fuel figure, then finish() — the remaining two (with their var-data tails)
-/// must be skipped so the next stage lands at the right offset.
+/// `skip_fuel_figures()` must scan past every entry (with their var-data
+/// tails), not just the fixed block, so the next stage lands at the right
+/// offset.
 #[test]
-fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
+fn skip_scans_every_entry() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE_FINISH);
     compile_and_run(
         MODULE_FINISH,
@@ -152,15 +151,10 @@ fn finish_skips_unread_entries() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = complete.as_bytes_with_header();
 
         let dec = CarDecoder::try_decode(encoded, 0).unwrap();
-        let mut fuel = dec.into_fuel_figures().unwrap();
-        let first = fuel.next().unwrap().unwrap();
-        assert_eq!(first.speed(), 10);
-        let after_fuel = fuel.skip_remaining().unwrap();
+        let after_fuel = dec.skip_fuel_figures().unwrap();
 
         // We must still land at performance_figures, then the var-data, correctly.
-        let mut perf = after_fuel.into_performance_figures().unwrap();
-        assert_eq!(perf.remaining(), 0);
-        let after_perf = perf.finish().unwrap();
+        let after_perf = after_fuel.skip_performance_figures().unwrap();
         let (mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"M");
         let (model, after_model) = after_mfr.into_model().unwrap();
@@ -203,8 +197,8 @@ fn multiple_var_data_strings_coexist() -> Result<(), Box<dyn std::error::Error>>
         let encoded = complete.as_bytes_with_header();
 
         let decoder = CarDecoder::try_decode(encoded, 0)?;
-        let after_fuel = decoder.into_fuel_figures()?.finish()?;
-        let after_perf = after_fuel.into_performance_figures()?.finish()?;
+        let after_fuel = decoder.skip_fuel_figures()?;
+        let after_perf = after_fuel.skip_performance_figures()?;
 
         // All three into_*_as_str() calls complete before any assert.
         let (mfr, decoder) = after_perf.into_manufacturer_as_str()?;
@@ -265,10 +259,8 @@ fn optional_crate_var_data_accessors_run() -> Result<(), Box<dyn std::error::Err
             .to_vec();
 
         let after_perf = CarDecoder::try_decode(&encoded, 0)?
-            .into_fuel_figures()?
-            .finish()?
-            .into_performance_figures()?
-            .finish()?;
+            .skip_fuel_figures()?
+            .skip_performance_figures()?;
         let (mfr, next) = after_perf.into_manufacturer_as_compact_str()?;
         let (model, next) = next.into_model_as_smol_str()?;
         let (code, _done) = next.into_activation_code_as_bytes()?;
@@ -310,12 +302,8 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
         let encoded = complete.as_bytes_with_header();
 
         let dec = CarDecoder::try_decode(encoded, 0).unwrap();
-        let fuel = dec.into_fuel_figures().unwrap();
-        assert!(fuel.is_empty());
-        let after_fuel = fuel.finish().unwrap();
-        let perf = after_fuel.into_performance_figures().unwrap();
-        assert!(perf.is_empty());
-        let after_perf = perf.finish().unwrap();
+        let after_fuel = dec.skip_fuel_figures().unwrap();
+        let after_perf = after_fuel.skip_performance_figures().unwrap();
         let (mfr, after_mfr) = after_perf.into_manufacturer().unwrap();
         assert!(mfr.is_empty());
         let (model, after_model) = after_mfr.into_model().unwrap();
@@ -329,11 +317,10 @@ fn empty_tail_components_traverse_stages() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// `remaining_entries()` / `is_empty()` are O(1) observers of the wire count,
-/// including after partial iterator consumption.
+/// The fused visit calls back exactly once per wire-declared entry, in
+/// order — no more, no fewer, regardless of what earlier entries did.
 #[test]
-fn remaining_entries_and_is_empty_before_and_after_partial_consumption()
--> Result<(), Box<dyn std::error::Error>> {
+fn visit_calls_back_once_per_entry_in_order() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "remaining_entries_partial");
     compile_and_run(
         "remaining_entries_partial",
@@ -374,19 +361,13 @@ fn remaining_entries_and_is_empty_before_and_after_partial_consumption()
         let encoded = &storage[..len];
 
         let dec = CarDecoder::try_decode(encoded, 0)?;
-        let mut fuel = dec.into_fuel_figures()?;
-        assert_eq!(fuel.remaining_entries(), 3);
-        assert_eq!(fuel.remaining(), 3);
-        assert!(!fuel.is_empty());
-        let first = fuel.next().unwrap()?;
-        assert_eq!(first.speed(), 10);
-        assert_eq!(fuel.remaining_entries(), 2);
-        assert!(!fuel.is_empty());
-        let _ = fuel.next().unwrap()?;
-        let _ = fuel.next().unwrap()?;
-        assert_eq!(fuel.remaining_entries(), 0);
-        assert!(fuel.is_empty());
-        let _ = fuel.finish()?;
+        let mut speeds = Vec::new();
+        let _ = dec.into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            speeds.push(entry.speed());
+            let (_usage, complete) = entry.into_usage_description()?;
+            Ok(complete)
+        })?;
+        assert_eq!(speeds, vec![10, 20, 30], "one callback per entry, in wire order");
     "#,
     );
     Ok(())
@@ -447,11 +428,8 @@ fn visit_entries_dynamic_fuel_figures() -> Result<(), Box<dyn std::error::Error>
         let encoded = &storage[..len];
 
         let car = CarDecoder::try_decode(encoded, 0)?;
-        let figures = car.into_fuel_figures()?;
-        assert_eq!(figures.remaining_entries(), 3);
-        assert!(!figures.is_empty());
         let mut rows = Vec::new();
-        let car = figures.visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        let car = car.into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             let speed = entry.speed();
             let mpg = entry.mpg();
             let (usage, complete) = entry.into_usage_description()?;
@@ -466,12 +444,9 @@ fn visit_entries_dynamic_fuel_figures() -> Result<(), Box<dyn std::error::Error>
 
         let mut octanes = Vec::new();
         let (mfr, car) = car
-            .into_performance_figures()?
-            .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 octanes.push(entry.octane_rating());
-                entry
-                    .into_acceleration()?
-                    .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+                entry.into_acceleration(|_| Ok(()))
             })?
             .into_manufacturer()?;
         let (model, car) = car.into_model()?;
@@ -513,21 +488,15 @@ fn visit_entries_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = &storage[..len];
 
         let car = CarDecoder::try_decode(encoded, 0)?;
-        let figures = car.into_fuel_figures()?;
-        assert!(figures.is_empty());
-        assert_eq!(figures.remaining_entries(), 0);
         let mut visited = 0usize;
-        let (mfr, car) = figures
-            .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        let (mfr, car) = car
+            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 visited += 1;
                 entry.into_usage_description().map(|(_, c)| c)
             })?
-            .into_performance_figures()?
-            .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 visited += 1;
-                entry
-                    .into_acceleration()?
-                    .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+                entry.into_acceleration(|_| Ok(()))
             })?
             .into_manufacturer()?;
         let (model, car) = car.into_model()?;
@@ -585,8 +554,7 @@ fn visit_entries_callback_error_consumes_stage() -> Result<(), Box<dyn std::erro
             .encoded_length_with_header();
         let encoded = &storage[..len];
         let car = CarDecoder::try_decode(encoded, 0)?;
-        let figures = car.into_fuel_figures()?;
-        let err = figures.visit_entries(|entry| -> Result<FuelFiguresEntryDecoderComplete<'_>, Boom> {
+        let err = car.into_fuel_figures(|entry| -> Result<FuelFiguresEntryDecoderComplete<'_>, Boom> {
             let (_usage, complete) = entry.into_usage_description().map_err(Boom::from)?;
             let _ = complete;
             Err(Boom)
@@ -642,14 +610,13 @@ fn visit_entries_malformed_truncated_entry() -> Result<(), Box<dyn std::error::E
             header.block_length() as usize,
             header.version(),
         );
-        let figures = car.into_fuel_figures()?;
-        let err = figures.visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        let err = car.into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             entry.into_usage_description().map(|(_, c)| c)
         });
         match err {
             Err(sbe_rt::DecodeError::BufferTooShort { .. }) => {}
             Err(e) => panic!("expected BufferTooShort, got {e:?}"),
-            Ok(_) => panic!("expected BufferTooShort, visit_entries succeeded"),
+            Ok(_) => panic!("expected BufferTooShort, into_fuel_figures succeeded"),
         }
     "#,
     );
@@ -694,10 +661,9 @@ fn visit_entries_wrong_entry_completion_panics() -> Result<(), Box<dyn std::erro
             .encoded_length_with_header();
         let encoded = &storage[..len];
         let car = CarDecoder::try_decode(encoded, 0)?;
-        let figures = car.into_fuel_figures()?;
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut stolen = None;
-            figures.visit_entries(|entry| -> Result<FuelFiguresEntryDecoderComplete<'_>, sbe_rt::DecodeError> {
+            car.into_fuel_figures(|entry| -> Result<FuelFiguresEntryDecoderComplete<'_>, sbe_rt::DecodeError> {
                 let (_usage, complete) = entry.into_usage_description()?;
                 match stolen.take() {
                     None => {
@@ -749,12 +715,12 @@ fn visit_entries_lean_and_full_profiles() -> Result<(), Box<dyn std::error::Erro
         let (_schema, src) =
             generate_domain_with(&Paths::example_schema(), module, |c| c.profile(profile));
         assert!(
-            src.contains("fn remaining_entries"),
-            "{module} must emit remaining_entries"
+            src.contains("fn into_fuel_figures"),
+            "{module} must emit the fused into_fuel_figures(visit)"
         );
         assert!(
-            src.contains("fn visit_entries"),
-            "{module} must emit visit_entries"
+            src.contains("fn skip_fuel_figures"),
+            "{module} must emit skip_fuel_figures"
         );
         compile_and_run(
             module,
@@ -788,16 +754,12 @@ fn visit_entries_lean_and_full_profiles() -> Result<(), Box<dyn std::error::Erro
             let car = CarDecoder::try_decode(encoded, 0)?;
             let mut speeds = Vec::new();
             let (mfr, car) = car
-                .into_fuel_figures()?
-                .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+                .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                     speeds.push(entry.speed());
                     entry.into_usage_description().map(|(_, c)| c)
                 })?
-                .into_performance_figures()?
-                .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
-                    entry
-                        .into_acceleration()?
-                        .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+                .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                    entry.into_acceleration(|_| Ok(()))
                 })?
                 .into_manufacturer()?;
             let (model, car) = car.into_model()?;
@@ -847,16 +809,12 @@ fn visit_entries_with_domain_conversion() -> Result<(), Box<dyn std::error::Erro
         let encoded = &storage[..len];
         let car = CarDecoder::try_decode(encoded, 0)?;
         let (mfr, car) = car
-            .into_fuel_figures()?
-            .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 let _ = entry.speed();
                 entry.into_usage_description().map(|(_, c)| c)
             })?
-            .into_performance_figures()?
-            .visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
-                entry
-                    .into_acceleration()?
-                    .visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })
+            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                entry.into_acceleration(|_| Ok(()))
             })?
             .into_manufacturer()?;
         let (model, car) = car.into_model()?;
@@ -919,22 +877,16 @@ fn version_absent_groups_and_var_data() -> Result<(), Box<dyn std::error::Error>
         }
         assert_eq!(dec.note()?, b"hi");
 
-        let figures = dec.into_figures()?;
-        assert_eq!(figures.remaining_entries(), 1);
-        assert!(!figures.is_empty());
         let mut speeds = Vec::new();
         let mut labels = Vec::new();
-        let after_figures = figures.visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        let after_figures = dec.into_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             speeds.push(entry.speed());
             match entry.extras() {
                 Err(sbe_rt::DecodeError::FieldNotInVersion { .. }) => {}
                 Err(e) => panic!("expected FieldNotInVersion for extras, got {e:?}"),
                 Ok(_) => panic!("expected FieldNotInVersion for extras"),
             }
-            let extras = entry.into_extras()?;
-            assert!(extras.is_empty());
-            assert_eq!(extras.remaining_entries(), 0);
-            let entry = extras.visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
+            let entry = entry.into_extras(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
             let (label, complete) = entry.into_label()?;
             labels.push(label.to_vec());
             Ok(complete)
@@ -942,10 +894,8 @@ fn version_absent_groups_and_var_data() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(speeds, vec![30]);
         assert_eq!(labels, vec![b"urb".to_vec()]);
 
-        let extra = after_figures.into_extra_figures()?;
-        assert!(extra.is_empty());
-        assert_eq!(extra.remaining_entries(), 0);
-        let after_extra = extra.visit_entries(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
+        let after_extra =
+            after_figures.into_extra_figures(|_| -> Result<(), sbe_rt::DecodeError> { Ok(()) })?;
         let (note, after_note) = after_extra.into_note()?;
         assert_eq!(note, b"hi");
         let (extra_note, done) = after_note.into_extra_note()?;
@@ -999,9 +949,9 @@ fn version_present_groups_visit_entries() -> Result<(), Box<dyn std::error::Erro
         let dec = VersionedTailsDecoder::try_decode(encoded, 0)?;
         assert_eq!(dec.seq(), 9);
         let mut flags = Vec::new();
-        let after = dec.into_figures()?.visit_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
+        let after = dec.into_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
             assert_eq!(entry.speed(), 40);
-            let entry = entry.into_extras()?.visit_entries(|row| -> Result<(), sbe_rt::DecodeError> {
+            let entry = entry.into_extras(|row| -> Result<(), sbe_rt::DecodeError> {
                 flags.push(row.flag());
                 Ok(())
             })?;
@@ -1011,7 +961,7 @@ fn version_present_groups_visit_entries() -> Result<(), Box<dyn std::error::Erro
         })?;
         assert_eq!(flags, vec![7u8]);
         let mut amps = Vec::new();
-        let after = after.into_extra_figures()?.visit_entries(|e| -> Result<(), sbe_rt::DecodeError> {
+        let after = after.into_extra_figures(|e| -> Result<(), sbe_rt::DecodeError> {
             amps.push(e.amp());
             Ok(())
         })?;

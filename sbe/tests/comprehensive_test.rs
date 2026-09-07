@@ -231,14 +231,11 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         // Tail in wire order: fuel -> performance -> manufacturer/model/activation
-        let fuel = car2.into_fuel_figures().unwrap();
-        assert!(fuel.is_empty(), "empty fuel group");
-        let after_perf = fuel
-            .finish()
+        assert!(car2.fuel_figures().unwrap().is_empty(), "empty fuel group");
+        let after_perf = car2
+            .skip_fuel_figures()
             .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .finish()
+            .skip_performance_figures()
             .unwrap();
         let (mfr, a1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"", "empty var-data");
@@ -732,14 +729,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         // Valid varData reads — traverse the groups first (wire order).
         let after_perf = car2
-            .into_fuel_figures()
-            .unwrap()
-            .finish()
-            .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .finish()
-            .unwrap();
+            .skip_fuel_figures().unwrap().skip_performance_figures().unwrap();
         let (mfr, a1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"Porsche");
         let (model, a2) = a1.into_model().unwrap();
@@ -1194,8 +1184,12 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         "missing group remaining_entries()"
     );
     assert!(
-        src.contains("fn visit_entries"),
-        "missing group visit_entries()"
+        src.contains("fn into_fuel_figures"),
+        "missing fused into_fuel_figures(visit)"
+    );
+    assert!(
+        src.contains("fn skip_fuel_figures"),
+        "missing skip_fuel_figures()"
     );
 
     // Composite value type methods (engine_value returns Engine with fields)
