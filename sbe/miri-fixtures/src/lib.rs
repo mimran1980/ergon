@@ -71,13 +71,15 @@ mod tests {
             .encoded_length_with_header();
         nested::TreeDecoder::verify(&buffer[..len])?;
         let tree = nested::TreeDecoder::try_from(&buffer[..len])?;
-        let mut outer = tree.into_outer()?;
-        let entry = outer.next().expect("one outer entry")?;
-        assert_eq!(entry.value(), 7);
-        let mut inner = entry.into_inner()?;
-        let row = inner.next().expect("one inner entry")?;
-        assert_eq!(row.quantity(), 9);
-        assert_eq!(row.into_label()?.0, b"miri");
+        let _ = tree.into_outer(|entry| -> Result<_, nested::sbe_rt::DecodeError> {
+            assert_eq!(entry.value(), 7);
+            entry.into_inner(|row| -> Result<_, nested::sbe_rt::DecodeError> {
+                assert_eq!(row.quantity(), 9);
+                let (label, complete) = row.into_label()?;
+                assert_eq!(label, b"miri");
+                Ok(complete)
+            })
+        })?;
         Ok(())
     }
 }

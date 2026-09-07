@@ -99,15 +99,6 @@ pub mod sbe_rt {
             ///Generated field `reason`.
             reason: &'static str,
         },
-        /// Mutable ordered decoder called a dynamic tail out of schema order.
-        OutOfOrder {
-            ///Generated field `owner`.
-            owner: &'static str,
-            ///Generated field `expected`.
-            expected: &'static str,
-            ///Generated field `requested`.
-            requested: &'static str,
-        },
     }
     impl core::fmt::Display for DecodeError {
         #[cold]
@@ -172,9 +163,6 @@ pub mod sbe_rt {
                 }
                 Self::DomainConversionFailed { field, reason } => {
                     write!(f, "field '{}': domain conversion failed: {}", field, reason)
-                }
-                Self::OutOfOrder { owner, expected, requested } => {
-                    write!(f, "{owner}: expected '{expected}', requested '{requested}'")
                 }
             }
         }
@@ -5407,32 +5395,6 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
         self.acting_block_length
     }
 }
-impl<'a> PerformanceFiguresEntryDecoder<'a> {
-    /// Consume this stage and start decoding the next tail group,
-    /// enforcing wire order. The returned group decoder owns the
-    /// right to advance to the following stage via `finish()`.
-    #[inline]
-    pub fn into_acceleration(
-        self,
-    ) -> Result<
-        PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached>,
-        sbe_rt::DecodeError,
-    > {
-        let group_start = self.offset + self.acting_block_length;
-        unsafe {
-            <PerformanceFiguresAccelerationDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )
-        }
-    }
-}
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
     #[inline]
     fn into_parent_stage(
@@ -5447,14 +5409,8 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
             acting_block_length: self.parent_block_length,
         }
     }
-    /// Scan past any unread entries (including nested tails) in wire
-    /// order and return the next decoder stage.
-    ///
-    /// Only an *attached* group — one reached through its message's
-    /// tail — can complete into a message stage. A standalone
-    /// [`Self::wrap`] has no parent to return to.
     #[inline]
-    pub fn finish(
+    fn skip_all(
         self,
     ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
         let mut offset = self.offset;
@@ -5471,23 +5427,8 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
-    pub fn skip_remaining(
-        self,
-    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
-        self.finish()
-    }
-    /// Consume every remaining entry in one pass and return the next
-    /// parent stage.
-    ///
-    /// Fixed-stride entries advance by the acting block length.
-    /// Empty groups invoke the callback zero times.
-    ///
-    /// A callback or decoding error consumes this ordered stage and
-    /// returns no continuation.
-    #[inline]
-    pub fn visit_entries<E, F>(
+    fn walk<E, F>(
         mut self,
         mut visit: F,
     ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>
@@ -5510,6 +5451,57 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
         }
         let tail_start = self.offset;
         Ok(self.into_parent_stage(tail_start))
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    /// Consume this stage, visit every entry of the next group in
+    /// wire order, and return the following stage. A callback
+    /// error consumes this stage and returns no continuation —
+    /// there is nothing to retry from a consuming lane.
+    #[inline]
+    pub fn into_acceleration<E, F>(
+        self,
+        visit: F,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(PerformanceFiguresAccelerationEntryDecoder<'a>) -> Result<(), E>,
+    {
+        let group_start = self.offset + self.acting_block_length;
+        let attached = unsafe {
+            <PerformanceFiguresAccelerationDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )
+        }?;
+        attached.walk(visit)
+    }
+    /// Consume this stage, advance past the next group without
+    /// visiting any entry, and return the following stage.
+    #[inline]
+    pub fn skip_acceleration(
+        self,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
+        let group_start = self.offset + self.acting_block_length;
+        let attached = unsafe {
+            <PerformanceFiguresAccelerationDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )
+        }?;
+        attached.skip_all()
     }
 }
 impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
@@ -5670,52 +5662,6 @@ impl<'a> CarDecoderComplete<'a> {
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
-    }
-}
-impl<'a> CarDecoder<'a> {
-    /// Consume this stage and start decoding the next tail group,
-    /// enforcing wire order. The returned group decoder owns the
-    /// right to advance to the following stage via `finish()`.
-    #[inline]
-    pub fn into_fuel_figures(
-        self,
-    ) -> Result<FuelFiguresDecoder<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-        let group_start = self.byte_offset() + self.acting_block_length;
-        unsafe {
-            <FuelFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.byte_offset(),
-                self.acting_block_length,
-            )
-        }
-    }
-}
-impl<'a> CarDecoderAfterFuelFigures<'a> {
-    /// Consume this stage and start decoding the next tail group,
-    /// enforcing wire order. The returned group decoder owns the
-    /// right to advance to the following stage via `finish()`.
-    #[inline]
-    pub fn into_performance_figures(
-        self,
-    ) -> Result<PerformanceFiguresDecoder<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-        let group_start = self.tail_start;
-        unsafe {
-            <PerformanceFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )
-        }
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
@@ -6196,14 +6142,8 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
             acting_block_length: self.parent_block_length,
         }
     }
-    /// Scan past any unread entries (including nested tails) in wire
-    /// order and return the next decoder stage.
-    ///
-    /// Only an *attached* group — one reached through its message's
-    /// tail — can complete into a message stage. A standalone
-    /// [`Self::wrap`] has no parent to return to.
     #[inline]
-    pub fn finish(self) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
+    fn skip_all(self) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
         if let Some(error) = self.poisoned {
             return Err(error);
         }
@@ -6221,29 +6161,8 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
-    pub fn skip_remaining(
-        self,
-    ) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
-        self.finish()
-    }
-    /// Consume every remaining entry in one pass and return the next
-    /// parent stage.
-    ///
-    /// The callback must return this entry's generated completion
-    /// stage. Dynamic `visit_entries` does not pre-scan
-    /// `encoded_length()`; the next cursor comes from that
-    /// completion. Empty groups invoke the callback zero times.
-    ///
-    /// A callback or decoding error consumes this ordered stage and
-    /// returns no continuation. Returning a completion that does
-    /// not belong to the supplied entry panics.
-    #[inline]
-    pub fn visit_entries<E, F>(
-        mut self,
-        mut visit: F,
-    ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
+    fn walk<E, F>(mut self, mut visit: F) -> Result<CarDecoderAfterFuelFigures<'a>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnMut(
@@ -6279,7 +6198,7 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
                 || complete.acting_block_length != self.acting_block_length
             {
                 panic!(
-                    "visit_entries callback returned a completion that does not belong to the supplied entry"
+                    "group visit callback returned a completion that does not belong to the supplied entry"
                 );
             }
             self.offset = complete.tail_start;
@@ -6287,6 +6206,59 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         }
         let tail_start = self.offset;
         Ok(self.into_parent_stage(tail_start))
+    }
+}
+impl<'a> CarDecoder<'a> {
+    /// Consume this stage, visit every entry of the next group in
+    /// wire order, and return the following stage. A callback
+    /// error consumes this stage and returns no continuation —
+    /// there is nothing to retry from a consuming lane.
+    #[inline]
+    pub fn into_fuel_figures<E, F>(
+        self,
+        visit: F,
+    ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            FuelFiguresEntryDecoder<'a>,
+        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+    {
+        let group_start = self.byte_offset() + self.acting_block_length;
+        let attached = unsafe {
+            <FuelFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.byte_offset(),
+                self.acting_block_length,
+            )
+        }?;
+        attached.walk(visit)
+    }
+    /// Consume this stage, advance past the next group without
+    /// visiting any entry, and return the following stage.
+    #[inline]
+    pub fn skip_fuel_figures(
+        self,
+    ) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
+        let group_start = self.byte_offset() + self.acting_block_length;
+        let attached = unsafe {
+            <FuelFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.byte_offset(),
+                self.acting_block_length,
+            )
+        }?;
+        attached.skip_all()
     }
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
@@ -6303,14 +6275,8 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
             acting_block_length: self.parent_block_length,
         }
     }
-    /// Scan past any unread entries (including nested tails) in wire
-    /// order and return the next decoder stage.
-    ///
-    /// Only an *attached* group — one reached through its message's
-    /// tail — can complete into a message stage. A standalone
-    /// [`Self::wrap`] has no parent to return to.
     #[inline]
-    pub fn finish(
+    fn skip_all(
         self,
     ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
         if let Some(error) = self.poisoned {
@@ -6330,26 +6296,8 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    /// Explicit sequential spelling of "advance past the rest of this group".
     #[inline]
-    pub fn skip_remaining(
-        self,
-    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
-        self.finish()
-    }
-    /// Consume every remaining entry in one pass and return the next
-    /// parent stage.
-    ///
-    /// The callback must return this entry's generated completion
-    /// stage. Dynamic `visit_entries` does not pre-scan
-    /// `encoded_length()`; the next cursor comes from that
-    /// completion. Empty groups invoke the callback zero times.
-    ///
-    /// A callback or decoding error consumes this ordered stage and
-    /// returns no continuation. Returning a completion that does
-    /// not belong to the supplied entry panics.
-    #[inline]
-    pub fn visit_entries<E, F>(
+    fn walk<E, F>(
         mut self,
         mut visit: F,
     ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
@@ -6388,7 +6336,7 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
                 || complete.acting_block_length != self.acting_block_length
             {
                 panic!(
-                    "visit_entries callback returned a completion that does not belong to the supplied entry"
+                    "group visit callback returned a completion that does not belong to the supplied entry"
                 );
             }
             self.offset = complete.tail_start;
@@ -6396,6 +6344,59 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         }
         let tail_start = self.offset;
         Ok(self.into_parent_stage(tail_start))
+    }
+}
+impl<'a> CarDecoderAfterFuelFigures<'a> {
+    /// Consume this stage, visit every entry of the next group in
+    /// wire order, and return the following stage. A callback
+    /// error consumes this stage and returns no continuation —
+    /// there is nothing to retry from a consuming lane.
+    #[inline]
+    pub fn into_performance_figures<E, F>(
+        self,
+        visit: F,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            PerformanceFiguresEntryDecoder<'a>,
+        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
+    {
+        let group_start = self.tail_start;
+        let attached = unsafe {
+            <PerformanceFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )
+        }?;
+        attached.walk(visit)
+    }
+    /// Consume this stage, advance past the next group without
+    /// visiting any entry, and return the following stage.
+    #[inline]
+    pub fn skip_performance_figures(
+        self,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
+        let group_start = self.tail_start;
+        let attached = unsafe {
+            <PerformanceFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )
+        }?;
+        attached.skip_all()
     }
 }
 impl<'a> CarDecoderComplete<'a> {
@@ -6431,1188 +6432,6 @@ impl<'a> CarDecoderComplete<'a> {
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
-    }
-}
-impl<'a> CarDecoder<'a> {
-    /// Convert this flyweight into a mutable ordered cursor.
-    ///
-    /// Group and var-data methods must then be called in schema order;
-    /// a wrong call returns [`sbe_rt::DecodeError::OutOfOrder`] and
-    /// leaves the cursor unchanged. Fixed fields stay random-access.
-    #[inline]
-    pub fn ordered(self) -> CarOrderedDecoder<'a> {
-        let tail_offset = self.offset + self.acting_block_length;
-        CarOrderedDecoder {
-            inner: self,
-            tail_offset,
-            next_ordinal: 0,
-        }
-    }
-}
-/// Mutable ordered decoder — sequential dynamic tails, random-access
-/// fixed fields, runtime order checks.
-#[must_use = "decoder must be read or advanced; dropping is fine only after use"]
-pub struct CarOrderedDecoder<'a> {
-    inner: CarDecoder<'a>,
-    tail_offset: usize,
-    next_ordinal: u16,
-}
-impl<'a> CarOrderedDecoder<'a> {
-    /// Schema version from the message header (or wrap args).
-    #[inline]
-    pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
-    }
-    /// Block length from the wire header / wrap args.
-    #[inline]
-    pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
-    }
-    /// Placement utilities. Does not expose random-access dynamic tails.
-    #[must_use = "discarding this value is almost always a mistake"]
-    #[inline]
-    pub fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
-        self.inner.get_metadata()
-    }
-    ///Generated method `serial_number`.
-    #[inline]
-    pub fn serial_number(&self) -> u64 {
-        self.inner.serial_number()
-    }
-    ///Generated method `model_year`.
-    #[inline]
-    pub fn model_year(&self) -> u16 {
-        self.inner.model_year()
-    }
-    ///Generated method `available`.
-    #[inline]
-    pub fn available(&self) -> BooleanType {
-        self.inner.available()
-    }
-    ///Generated method `code`.
-    #[inline]
-    pub fn code(&self) -> Model {
-        self.inner.code()
-    }
-    ///Generated method `some_numbers`.
-    #[inline]
-    pub fn some_numbers(&self) -> [u32; 4] {
-        self.inner.some_numbers()
-    }
-    ///Generated method `vehicle_code`.
-    #[inline]
-    pub fn vehicle_code(&self) -> [u8; 6] {
-        self.inner.vehicle_code()
-    }
-    ///Generated method `extras`.
-    #[inline]
-    pub fn extras(&self) -> OptionalExtras {
-        self.inner.extras()
-    }
-    ///Generated method `discounted_model`.
-    #[inline]
-    pub fn discounted_model(&self) -> Model {
-        self.inner.discounted_model()
-    }
-    ///Generated method `engine`.
-    #[inline]
-    pub fn engine(&self) -> EngineDecoder<'_> {
-        self.inner.engine()
-    }
-    ///Generated method `engine_value`.
-    #[inline]
-    pub fn engine_value(&self) -> Engine {
-        self.inner.engine_value()
-    }
-}
-impl<'a> CarOrderedDecoder<'a> {
-    #[inline]
-    fn expect(
-        &self,
-        ordinal: u16,
-        requested: &'static str,
-    ) -> Result<(), sbe_rt::DecodeError> {
-        const NAMES: &[&str] = &[
-            "fuelFigures",
-            "performanceFigures",
-            "manufacturer",
-            "model",
-            "activationCode",
-        ];
-        let expected = if (self.next_ordinal as usize) < NAMES.len() {
-            NAMES[self.next_ordinal as usize]
-        } else {
-            "<complete>"
-        };
-        if self.next_ordinal != ordinal {
-            return Err(sbe_rt::DecodeError::OutOfOrder {
-                owner: "Car",
-                expected,
-                requested,
-            });
-        }
-        Ok(())
-    }
-    ///Generated method `fuel_figures`.
-    #[inline]
-    pub fn fuel_figures(
-        &mut self,
-    ) -> Result<FuelFiguresOrderedDecoder<'_, 'a>, sbe_rt::DecodeError> {
-        self.expect(0, "fuelFigures")?;
-        FuelFiguresOrderedDecoder::begin(self)
-    }
-    ///Generated method `performance_figures`.
-    #[inline]
-    pub fn performance_figures(
-        &mut self,
-    ) -> Result<PerformanceFiguresOrderedDecoder<'_, 'a>, sbe_rt::DecodeError> {
-        self.expect(1, "performanceFigures")?;
-        PerformanceFiguresOrderedDecoder::begin(self)
-    }
-    ///Generated method `manufacturer`.
-    #[inline]
-    pub fn manufacturer(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.expect(2, "manufacturer")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "manufacturer",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "manufacturer",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "manufacturer",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(data)
-    }
-    ///Generated method `manufacturer_as_str`.
-    #[inline]
-    pub fn manufacturer_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
-        self.expect(2, "manufacturer")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "manufacturer",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "manufacturer",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "manufacturer",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let s = core::str::from_utf8(data)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "manufacturer",
-                    error: e,
-                }
-            })?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(s)
-    }
-    ///Generated method `manufacturer_as_message`.
-    #[inline]
-    pub fn manufacturer_as_message(
-        &mut self,
-    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        self.expect(2, "manufacturer")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "manufacturer",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "manufacturer",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "manufacturer",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(frame)
-    }
-    ///Generated method `model`.
-    #[inline]
-    pub fn model(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.expect(3, "model")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "model",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "model",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "model",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(data)
-    }
-    ///Generated method `model_as_str`.
-    #[inline]
-    pub fn model_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
-        self.expect(3, "model")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "model",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "model",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "model",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let s = core::str::from_utf8(data)
-            .map_err(|e| {
-                sbe_rt::DecodeError::InvalidUtf8 {
-                    field: "model",
-                    error: e,
-                }
-            })?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(s)
-    }
-    ///Generated method `model_as_message`.
-    #[inline]
-    pub fn model_as_message(&mut self) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        self.expect(3, "model")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "model",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "model",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "model",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(frame)
-    }
-    ///Generated method `activation_code`.
-    #[inline]
-    pub fn activation_code(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.expect(4, "activationCode")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "activationCode",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "activationCode",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "activationCode",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(data)
-    }
-    ///Generated method `activation_code_as_str`.
-    #[inline]
-    pub fn activation_code_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
-        self.expect(4, "activationCode")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "activationCode",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "activationCode",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "activationCode",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        if !data.is_ascii() {
-            return Err(sbe_rt::DecodeError::InvalidAscii {
-                field: "activationCode",
-            });
-        }
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(unsafe { core::str::from_utf8_unchecked(data) })
-    }
-    ///Generated method `activation_code_as_message`.
-    #[inline]
-    pub fn activation_code_as_message(
-        &mut self,
-    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        self.expect(4, "activationCode")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "activationCode",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "activationCode",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "activationCode",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(frame)
-    }
-    /// Skip any unconsumed suffix and return the complete stage.
-    #[inline]
-    pub fn finish(mut self) -> Result<CarDecoderComplete<'a>, sbe_rt::DecodeError> {
-        while (self.next_ordinal as usize) < 5 {
-            match self.next_ordinal {
-                0 => self.fuel_figures()?.skip_remaining()?,
-                1 => self.performance_figures()?.skip_remaining()?,
-                2 => {
-                    let _ = self.manufacturer()?;
-                }
-                3 => {
-                    let _ = self.model()?;
-                }
-                4 => {
-                    let _ = self.activation_code()?;
-                }
-                _ => break,
-            }
-        }
-        Ok(CarDecoderComplete {
-            buf: self.inner.buf,
-            offset: self.inner.offset,
-            tail_start: self.tail_offset,
-            acting_version: self.inner.acting_version,
-            acting_block_length: self.inner.acting_block_length,
-        })
-    }
-}
-///Generated struct `FuelFiguresOrderedDecoder`.
-pub struct FuelFiguresOrderedDecoder<'p, 'a> {
-    buf: &'a [u8],
-    offset: usize,
-    count: usize,
-    acting_block_length: usize,
-    acting_version: u16,
-    min_entry_extent: usize,
-    parent: &'p mut CarOrderedDecoder<'a>,
-}
-impl<'p, 'a> FuelFiguresOrderedDecoder<'p, 'a> {
-    #[inline]
-    fn begin(
-        parent: &'p mut CarOrderedDecoder<'a>,
-    ) -> Result<Self, sbe_rt::DecodeError> {
-        let start = parent.tail_offset;
-        if 4 > parent.inner.buf.len().saturating_sub(start) {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: 4,
-                available: parent.inner.buf.len().saturating_sub(start),
-            });
-        }
-        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
-        let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
-            header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
-            header.block_length() as u64,
-        )?;
-        let min_fixed = <FuelFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(parent.inner.acting_version);
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
-        Ok(Self {
-            buf: parent.inner.buf,
-            offset: start + 4,
-            count,
-            acting_block_length: block_length,
-            acting_version: parent.inner.acting_version,
-            min_entry_extent,
-            parent,
-        })
-    }
-    ///Generated method `remaining_entries`.
-    #[inline]
-    pub const fn remaining_entries(&self) -> usize {
-        self.count
-    }
-    ///Generated method `is_empty`.
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-    ///Generated method `visit_entries`.
-    #[inline]
-    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(&mut FuelFiguresEntryOrderedDecoder<'a>) -> Result<(), E>,
-    {
-        while self.count > 0 {
-            let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
-                return Err(
-                    E::from(sbe_rt::DecodeError::BufferTooShort {
-                        field: "fuelFigures",
-                        needed: self.min_entry_extent,
-                        available,
-                    }),
-                );
-            }
-            let mut entry = FuelFiguresEntryOrderedDecoder::at(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            );
-            visit(&mut entry)?;
-            self.offset = entry.finish_unread()?;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `finish`.
-    #[inline]
-    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
-        while self.count > 0 {
-            self.offset = FuelFiguresEntryDecoder::skip(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            )?;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `skip_remaining`.
-    #[inline]
-    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
-        self.finish()
-    }
-    #[inline]
-    fn commit(self) {
-        self.parent.tail_offset = self.offset;
-        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
-    }
-}
-///Generated struct `FuelFiguresEntryOrderedDecoder`.
-pub struct FuelFiguresEntryOrderedDecoder<'a> {
-    inner: FuelFiguresEntryDecoder<'a>,
-    tail_offset: usize,
-    next_ordinal: u16,
-}
-impl<'a> FuelFiguresEntryOrderedDecoder<'a> {
-    #[inline]
-    fn at(
-        buf: &'a [u8],
-        offset: usize,
-        acting_block_length: usize,
-        acting_version: u16,
-    ) -> Self {
-        Self {
-            inner: unsafe {
-                FuelFiguresEntryDecoder::wrap(
-                    buf,
-                    offset,
-                    acting_block_length,
-                    acting_version,
-                )
-            },
-            tail_offset: offset + acting_block_length,
-            next_ordinal: 0,
-        }
-    }
-    #[inline]
-    fn expect(
-        &self,
-        ordinal: u16,
-        requested: &'static str,
-    ) -> Result<(), sbe_rt::DecodeError> {
-        const NAMES: &[&str] = &["usageDescription"];
-        let expected = if (self.next_ordinal as usize) < NAMES.len() {
-            NAMES[self.next_ordinal as usize]
-        } else {
-            "<complete>"
-        };
-        if self.next_ordinal != ordinal {
-            return Err(sbe_rt::DecodeError::OutOfOrder {
-                owner: "FuelFigures",
-                expected,
-                requested,
-            });
-        }
-        Ok(())
-    }
-    ///Generated method `speed`.
-    #[inline]
-    pub fn speed(&self) -> u16 {
-        self.inner.speed()
-    }
-    ///Generated method `mpg`.
-    #[inline]
-    pub fn mpg(&self) -> f32 {
-        self.inner.mpg()
-    }
-    ///Generated method `usage_description`.
-    #[inline]
-    pub fn usage_description(&mut self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        self.expect(0, "usageDescription")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "usageDescription",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "usageDescription",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "usageDescription",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(data)
-    }
-    ///Generated method `usage_description_as_str`.
-    #[inline]
-    pub fn usage_description_as_str(&mut self) -> Result<&'a str, sbe_rt::DecodeError> {
-        self.expect(0, "usageDescription")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "usageDescription",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "usageDescription",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "usageDescription",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        if !data.is_ascii() {
-            return Err(sbe_rt::DecodeError::InvalidAscii {
-                field: "usageDescription",
-            });
-        }
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(unsafe { core::str::from_utf8_unchecked(data) })
-    }
-    ///Generated method `usage_description_as_message`.
-    #[inline]
-    pub fn usage_description_as_message(
-        &mut self,
-    ) -> Result<DecodedFrame<'a>, sbe_rt::DecodeError> {
-        self.expect(0, "usageDescription")?;
-        let (data, end) = {
-            let offset = self.tail_offset;
-            if offset + 4 > self.inner.buf.len() {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: "usageDescription",
-                    needed: 4,
-                    available: self.inner.buf.len().saturating_sub(offset),
-                });
-            }
-            let bytes: [u8; 4] = read_bytes::<4>(self.inner.buf, offset);
-            let len = u32::from_le_bytes(bytes) as u64;
-            if len > 1073741824 {
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: "usageDescription",
-                    length: len,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-                "usageDescription",
-                offset,
-                4,
-                len,
-                self.inner.buf.len(),
-            )?;
-            (&self.inner.buf[data_start..data_end], data_end)
-        };
-        let frame = AnyMessage::decode_frame(data, 0, data.len())?;
-        self.tail_offset = end;
-        self.next_ordinal = self.next_ordinal.saturating_add(1);
-        Ok(frame)
-    }
-    #[inline]
-    fn finish_unread(mut self) -> Result<usize, sbe_rt::DecodeError> {
-        while (self.next_ordinal as usize) < 1 {
-            match self.next_ordinal {
-                0 => {
-                    let _ = self.usage_description()?;
-                }
-                _ => break,
-            }
-        }
-        Ok(self.tail_offset)
-    }
-}
-///Generated struct `PerformanceFiguresOrderedDecoder`.
-pub struct PerformanceFiguresOrderedDecoder<'p, 'a> {
-    buf: &'a [u8],
-    offset: usize,
-    count: usize,
-    acting_block_length: usize,
-    acting_version: u16,
-    min_entry_extent: usize,
-    parent: &'p mut CarOrderedDecoder<'a>,
-}
-impl<'p, 'a> PerformanceFiguresOrderedDecoder<'p, 'a> {
-    #[inline]
-    fn begin(
-        parent: &'p mut CarOrderedDecoder<'a>,
-    ) -> Result<Self, sbe_rt::DecodeError> {
-        let start = parent.tail_offset;
-        if 4 > parent.inner.buf.len().saturating_sub(start) {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: 4,
-                available: parent.inner.buf.len().saturating_sub(start),
-            });
-        }
-        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
-        let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
-            header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
-            header.block_length() as u64,
-        )?;
-        let min_fixed = <PerformanceFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(parent.inner.acting_version);
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
-        Ok(Self {
-            buf: parent.inner.buf,
-            offset: start + 4,
-            count,
-            acting_block_length: block_length,
-            acting_version: parent.inner.acting_version,
-            min_entry_extent,
-            parent,
-        })
-    }
-    ///Generated method `remaining_entries`.
-    #[inline]
-    pub const fn remaining_entries(&self) -> usize {
-        self.count
-    }
-    ///Generated method `is_empty`.
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-    ///Generated method `visit_entries`.
-    #[inline]
-    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(&mut PerformanceFiguresEntryOrderedDecoder<'a>) -> Result<(), E>,
-    {
-        while self.count > 0 {
-            let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
-                return Err(
-                    E::from(sbe_rt::DecodeError::BufferTooShort {
-                        field: "performanceFigures",
-                        needed: self.min_entry_extent,
-                        available,
-                    }),
-                );
-            }
-            let mut entry = PerformanceFiguresEntryOrderedDecoder::at(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            );
-            visit(&mut entry)?;
-            self.offset = entry.finish_unread()?;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `finish`.
-    #[inline]
-    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
-        while self.count > 0 {
-            self.offset = PerformanceFiguresEntryDecoder::skip(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            )?;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `skip_remaining`.
-    #[inline]
-    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
-        self.finish()
-    }
-    #[inline]
-    fn commit(self) {
-        self.parent.tail_offset = self.offset;
-        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
-    }
-}
-///Generated struct `PerformanceFiguresEntryOrderedDecoder`.
-pub struct PerformanceFiguresEntryOrderedDecoder<'a> {
-    inner: PerformanceFiguresEntryDecoder<'a>,
-    tail_offset: usize,
-    next_ordinal: u16,
-}
-impl<'a> PerformanceFiguresEntryOrderedDecoder<'a> {
-    #[inline]
-    fn at(
-        buf: &'a [u8],
-        offset: usize,
-        acting_block_length: usize,
-        acting_version: u16,
-    ) -> Self {
-        Self {
-            inner: unsafe {
-                PerformanceFiguresEntryDecoder::wrap(
-                    buf,
-                    offset,
-                    acting_block_length,
-                    acting_version,
-                )
-            },
-            tail_offset: offset + acting_block_length,
-            next_ordinal: 0,
-        }
-    }
-    #[inline]
-    fn expect(
-        &self,
-        ordinal: u16,
-        requested: &'static str,
-    ) -> Result<(), sbe_rt::DecodeError> {
-        const NAMES: &[&str] = &["acceleration"];
-        let expected = if (self.next_ordinal as usize) < NAMES.len() {
-            NAMES[self.next_ordinal as usize]
-        } else {
-            "<complete>"
-        };
-        if self.next_ordinal != ordinal {
-            return Err(sbe_rt::DecodeError::OutOfOrder {
-                owner: "PerformanceFigures",
-                expected,
-                requested,
-            });
-        }
-        Ok(())
-    }
-    ///Generated method `octane_rating`.
-    #[inline]
-    pub fn octane_rating(&self) -> u8 {
-        self.inner.octane_rating()
-    }
-    ///Generated method `acceleration`.
-    #[inline]
-    pub fn acceleration(
-        &mut self,
-    ) -> Result<
-        PerformanceFiguresAccelerationOrderedDecoder<'_, 'a>,
-        sbe_rt::DecodeError,
-    > {
-        self.expect(0, "acceleration")?;
-        PerformanceFiguresAccelerationOrderedDecoder::begin_entry(self)
-    }
-    #[inline]
-    fn finish_unread(mut self) -> Result<usize, sbe_rt::DecodeError> {
-        while (self.next_ordinal as usize) < 1 {
-            match self.next_ordinal {
-                0 => {
-                    self.acceleration()?.skip_remaining()?;
-                }
-                _ => break,
-            }
-        }
-        Ok(self.tail_offset)
-    }
-}
-///Generated struct `PerformanceFiguresAccelerationOrderedDecoder`.
-pub struct PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
-    buf: &'a [u8],
-    offset: usize,
-    count: usize,
-    acting_block_length: usize,
-    acting_version: u16,
-    min_entry_extent: usize,
-    parent: &'p mut PerformanceFiguresEntryOrderedDecoder<'a>,
-}
-impl<'p, 'a> PerformanceFiguresAccelerationOrderedDecoder<'p, 'a> {
-    #[inline]
-    fn begin_entry(
-        parent: &'p mut PerformanceFiguresEntryOrderedDecoder<'a>,
-    ) -> Result<Self, sbe_rt::DecodeError> {
-        let start = parent.tail_offset;
-        if 4 > parent.inner.buf.len().saturating_sub(start) {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: 4,
-                available: parent.inner.buf.len().saturating_sub(start),
-            });
-        }
-        let bytes: [u8; 4] = read_bytes::<4>(parent.inner.buf, start);
-        let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
-            header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
-            header.block_length() as u64,
-        )?;
-        let min_entry_extent = 0usize;
-        let min_fixed = <PerformanceFiguresAccelerationDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(parent.inner.acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
-        let entries_start = start + 4;
-        let available = parent.inner.buf.len().saturating_sub(entries_start);
-        let entries_length = count
-            .checked_mul(block_length)
-            .ok_or(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: usize::MAX,
-                available,
-            })?;
-        if entries_length > available {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: entries_length,
-                available,
-            });
-        }
-        Ok(Self {
-            buf: parent.inner.buf,
-            offset: start + 4,
-            count,
-            acting_block_length: block_length,
-            acting_version: parent.inner.acting_version,
-            min_entry_extent,
-            parent,
-        })
-    }
-    ///Generated method `remaining_entries`.
-    #[inline]
-    pub const fn remaining_entries(&self) -> usize {
-        self.count
-    }
-    ///Generated method `is_empty`.
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-    ///Generated method `visit_entries`.
-    #[inline]
-    pub fn visit_entries<E, F>(mut self, mut visit: F) -> Result<(), E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            &mut PerformanceFiguresAccelerationEntryOrderedDecoder<'a>,
-        ) -> Result<(), E>,
-    {
-        while self.count > 0 {
-            let mut entry = PerformanceFiguresAccelerationEntryOrderedDecoder::at(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            );
-            visit(&mut entry)?;
-            self.offset += self.acting_block_length;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `finish`.
-    #[inline]
-    pub fn finish(mut self) -> Result<(), sbe_rt::DecodeError> {
-        while self.count > 0 {
-            self.offset = PerformanceFiguresAccelerationEntryDecoder::skip(
-                self.buf,
-                self.offset,
-                self.acting_block_length,
-                self.acting_version,
-            )?;
-            self.count -= 1;
-        }
-        self.commit();
-        Ok(())
-    }
-    ///Generated method `skip_remaining`.
-    #[inline]
-    pub fn skip_remaining(self) -> Result<(), sbe_rt::DecodeError> {
-        self.finish()
-    }
-    #[inline]
-    fn commit(self) {
-        self.parent.tail_offset = self.offset;
-        self.parent.next_ordinal = self.parent.next_ordinal.saturating_add(1);
-    }
-}
-///Generated struct `PerformanceFiguresAccelerationEntryOrderedDecoder`.
-pub struct PerformanceFiguresAccelerationEntryOrderedDecoder<'a> {
-    inner: PerformanceFiguresAccelerationEntryDecoder<'a>,
-}
-impl<'a> PerformanceFiguresAccelerationEntryOrderedDecoder<'a> {
-    #[inline]
-    fn at(
-        buf: &'a [u8],
-        offset: usize,
-        acting_block_length: usize,
-        acting_version: u16,
-    ) -> Self {
-        Self {
-            inner: unsafe {
-                PerformanceFiguresAccelerationEntryDecoder::wrap(
-                    buf,
-                    offset,
-                    acting_block_length,
-                    acting_version,
-                )
-            },
-        }
-    }
-    ///Generated method `mph`.
-    #[inline]
-    pub fn mph(&self) -> u16 {
-        self.inner.mph()
-    }
-    ///Generated method `seconds`.
-    #[inline]
-    pub fn seconds(&self) -> f32 {
-        self.inner.seconds()
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.
@@ -8142,9 +6961,9 @@ impl<'a> CarDecoder<'a> {
     /// Reading exactly one tail and stopping is the case that gains
     /// nothing: there is no second access to amortise against, and
     /// reaching a late tail publishes every boundary it passes. If you
-    /// are decoding the whole message in wire order, `ordered()` or
-    /// the staged lane carries the cursor without a cache and is
-    /// faster still.
+    /// are decoding the whole message in wire order, the staged
+    /// `into_*(|entry|)` / `skip_*` chain carries the cursor without a
+    /// cache and is faster still.
     ///
     /// The cache covers this message's own groups and var-data. Group
     /// entries are decoded by ordinary entry decoders and are not
@@ -12210,15 +11029,6 @@ impl<'a> AnyMessage<'a> {
     pub fn into_car_memoized(self) -> Option<CarMemoizedDecoder<'a>> {
         match self {
             Self::Car(d) => Some(d.memoized()),
-            _ => None,
-        }
-    }
-    ///Take the `Car` decoder straight into the mutable ordered lane (complete sequential decoding), or `None` if this frame is a different template.
-    #[inline]
-    #[must_use]
-    pub fn into_car_ordered(self) -> Option<CarOrderedDecoder<'a>> {
-        match self {
-            Self::Car(d) => Some(d.ordered()),
             _ => None,
         }
     }

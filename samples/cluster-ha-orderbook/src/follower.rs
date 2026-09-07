@@ -4,7 +4,7 @@
 
 use crate::ha_book::{ApplyOutcome, LeadershipAwareBook};
 use crate::market::{Level, WireDec};
-use crate::normalized_app::{AppMessageDecoder, L2BookDecoder};
+use crate::normalized_app::{AppMessageDecoder, L2BookDecoder, sbe_rt};
 
 /// Follower view of the HA book with apply counters.
 pub struct BookFollower {
@@ -98,29 +98,28 @@ impl BookFollower {
         let exchange_ts = book.exchange_timestamp();
         let seq = book.sequence();
 
-        let mut bids_dec = book.into_bids()?;
-        let mut bids = Vec::with_capacity(bids_dec.remaining());
-        for entry in &mut bids_dec {
-            let px = entry.price_wire();
-            let sz = entry.size_wire();
-            bids.push(Level {
-                price: WireDec::new(px.mantissa(), px.exponent()),
-                size: WireDec::new(sz.mantissa(), sz.exponent()),
-            });
-        }
-        let after_bids = bids_dec.finish()?;
-        let mut asks_dec = after_bids.into_asks()?;
-        let mut asks = Vec::with_capacity(asks_dec.remaining());
-        for entry in &mut asks_dec {
-            let px = entry.price_wire();
-            let sz = entry.size_wire();
-            asks.push(Level {
-                price: WireDec::new(px.mantissa(), px.exponent()),
-                size: WireDec::new(sz.mantissa(), sz.exponent()),
-            });
-        }
-        let after_asks = asks_dec.finish()?;
-        let (symbol, _) = after_asks.into_symbol_as_str()?;
+        let mut bids = Vec::new();
+        let mut asks = Vec::new();
+        let (symbol, _) = book
+            .into_bids(|entry| -> Result<(), sbe_rt::DecodeError> {
+                let px = entry.price_wire();
+                let sz = entry.size_wire();
+                bids.push(Level {
+                    price: WireDec::new(px.mantissa(), px.exponent()),
+                    size: WireDec::new(sz.mantissa(), sz.exponent()),
+                });
+                Ok(())
+            })?
+            .into_asks(|entry| -> Result<(), sbe_rt::DecodeError> {
+                let px = entry.price_wire();
+                let sz = entry.size_wire();
+                asks.push(Level {
+                    price: WireDec::new(px.mantissa(), px.exponent()),
+                    size: WireDec::new(sz.mantissa(), sz.exponent()),
+                });
+                Ok(())
+            })?
+            .into_symbol_as_str()?;
 
         let outcome = if self.book.is_serving() {
             self.apply_increment(term, seq, bids, asks, exchange_ts)

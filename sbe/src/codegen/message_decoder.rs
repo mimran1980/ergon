@@ -19,7 +19,6 @@ use super::conversion_helpers::{
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
-use super::ordered_decoder::generate_ordered_decoder;
 use super::runtime::{
     constant_value_expr, deprecated_attr_tokens, doc_attr_tokens, emit_field_consts,
     schema_marker_ident, to_pascal_case, to_snake_case,
@@ -1766,20 +1765,6 @@ pub(crate) fn generate_message_decoder(
         multi_message,
         &group_unique_names,
         enable_dispatch,
-    ));
-    ts.extend(generate_ordered_decoder(
-        msg,
-        elements,
-        &name,
-        header_size,
-        byte_order,
-        multi_message,
-        &group_unique_names,
-        conversions,
-        domain_types,
-        enable_dispatch,
-        null_as_option,
-        all_enums_as_option,
     ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)

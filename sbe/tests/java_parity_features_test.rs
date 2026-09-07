@@ -845,7 +845,7 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
             .rows(1, |g| { g.add(|mut e| { e.side(Side::Buy).flags(flags).price(price); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;
-        let mut rows = dec.into_rows()?;
+        let mut rows = dec.rows()?;
         let entry = rows.next().expect("one row");
         let dbg = format!("{entry}");
         assert!(dbg.contains("side: Side"),  "entry enum: {dbg}");
@@ -891,7 +891,7 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
             .rows(1, |g| { g.add(|mut e| { e.pair([100u16, 200]); Ok(()) })?; Ok(()) })?
             .encoded_length_with_header();
         let dec = MDecoder::try_from(&buf[..len])?;
-        let mut rows = dec.into_rows()?;
+        let mut rows = dec.rows()?;
         let entries: Vec<RowsEntry> = rows.bulk_decode()?;
         assert_eq!(entries.len(), 1);
         let pair: [u16; 2] = entries[0].pair;

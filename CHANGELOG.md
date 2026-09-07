@@ -2,27 +2,39 @@
 
 ## [Unreleased]
 
+## [0.1.26] — 2026-09-07
+
 ### Added
 - Var-data declared with `characterEncoding="UTF-8"` or `"ASCII"` now gets a
   `*_as_str(&str)` encode-side setter, at both message and group-entry level,
   alongside the existing `*_as_str` decode-side accessors — writes through
   the checked byte setter after validating ASCII where the schema requires it.
 
+### Changed
+- Sequential decode is the staged `into_*(|entry|)` / `skip_*` chain — the
+  encoder dual, compile-time order, no `&mut`.
+
 ### Fixed
 - `characterEncoding` spelling variants legal under the SBE spec —
   `US-ASCII` and `UTF8` (no hyphen), used by real schemas including this
   repo's own Aeron cluster codecs — were silently dropped by message-level
   decode, the memoized decode lane, and group-entry decode, though the
-  mutable-ordered and staged-consuming lanes already recognised them. All
-  four locations, plus the new encoder, now classify `characterEncoding`
-  through one shared function so they can't drift again.
+  staged-consuming lane already recognised them. Message-level decode,
+  group-entry decode, the memoized lane, and the new encoder now classify
+  `characterEncoding` through one shared function so they can't drift again.
+
+### Removed
+- The mutable ordered decoder lane: `{Name}Decoder::ordered()`,
+  `{Name}OrderedDecoder`, `AnyMessage::into_<name>_ordered()`, and
+  `DecodeError::OutOfOrder`. Sequential decode is the staged
+  `into_*(|entry|)` / `skip_*` chain; random-access and `.memoized()` remain.
 
 ## [0.1.25] — 2026-09-06
 
 ### Added
 - **Four decoder lanes, generated for every message with groups or var-data:**
-  random access (`try_decode`, any order, `Sync`), staged (`into_*` /
-  `visit_entries`, compile-time order), mutable ordered (`.ordered()`, one
+  random access (`try_decode`, any order, `Sync`), staged (`into_*(|entry|)` /
+  `skip_*`, compile-time order), mutable ordered (`.ordered()`, one
   cursor, runtime order checks), and memoized (`.ordered()`'s sibling —
   `decoder.memoized()` consumes the base decoder and returns a progressive
   `Cell`-backed tail-boundary cache, so repeated or out-of-order tail reads

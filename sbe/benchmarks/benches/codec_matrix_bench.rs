@@ -119,15 +119,15 @@ fn bench_groups(c: &mut Criterion) {
             &frame,
             |b, frame| {
                 b.iter(|| {
-                    let mut rows = GroupedDecoder::try_from(black_box(frame.as_slice()))
-                        .unwrap()
-                        .into_rows()
-                        .unwrap();
                     let mut sum = 0u64;
-                    for row in rows.by_ref() {
-                        sum = sum.wrapping_add(row.value());
-                    }
-                    black_box((sum, rows.finish().unwrap()));
+                    let done = GroupedDecoder::try_from(black_box(frame.as_slice()))
+                        .unwrap()
+                        .into_rows(|row| -> Result<(), sbe_rt::DecodeError> {
+                            sum = sum.wrapping_add(row.value());
+                            Ok(())
+                        })
+                        .unwrap();
+                    black_box((sum, done));
                 });
             },
         );
@@ -135,7 +135,7 @@ fn bench_groups(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("nth_last", count), &frame, |b, frame| {
                 let rows = GroupedDecoder::try_from(frame.as_slice())
                     .unwrap()
-                    .into_rows()
+                    .rows()
                     .unwrap();
                 b.iter(|| black_box(rows.entry_at(usize::from(count - 1)).unwrap().value()));
             });
@@ -285,21 +285,21 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
     });
     group.bench_function("nested_ragged_traversal", |b| {
         b.iter(|| {
-            let mut outer = NestedDecoder::try_from(black_box(nested.as_slice()))
-                .unwrap()
-                .into_outer()
-                .unwrap();
             let mut sum = 0u64;
-            while let Some(Ok(entry)) = outer.next() {
-                sum = sum.wrapping_add(entry.value());
-                let mut inner = entry.into_inner().unwrap();
-                while let Some(Ok(row)) = inner.next() {
-                    sum = sum.wrapping_add(row.value());
-                    black_box(row.into_payload().unwrap());
-                }
-                black_box(inner.finish().unwrap());
-            }
-            black_box((sum, outer.finish().unwrap()));
+            let done = NestedDecoder::try_from(black_box(nested.as_slice()))
+                .unwrap()
+                .into_outer(|entry| -> Result<_, sbe_rt::DecodeError> {
+                    sum = sum.wrapping_add(entry.value());
+                    entry.into_inner(|row| -> Result<_, sbe_rt::DecodeError> {
+                        sum = sum.wrapping_add(row.value());
+                        row.into_payload().map(|(payload, complete)| {
+                            black_box(payload);
+                            complete
+                        })
+                    })
+                })
+                .unwrap();
+            black_box((sum, done));
         });
     });
     group.finish();
