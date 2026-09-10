@@ -2122,8 +2122,8 @@ pub(crate) fn generate_composite(src: &mut String, tokens: &[Token], byte_order:
 }
 
 /// Core generator for consuming tail stages, shared by message-level and
-/// entry-level tails. Emits non-`Copy` stage structs plus fused `into_*(visit)`
-/// and `skip_*`. Does not remove random-access `&self` accessors.
+/// entry-level tails. Emits non-`Copy` stage structs plus `into_*` and
+/// `skip_*`. Does not remove random-access `&self` accessors.
 ///
 /// `initial_ident` is the existing decoder (e.g. `CarDecoder`, `BidsEntryDecoder`);
 /// `stage_prefix` is its string form, used to name the `After*`/`Complete` stages.

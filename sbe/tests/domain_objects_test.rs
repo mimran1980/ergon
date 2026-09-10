@@ -99,14 +99,15 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         assert_eq!(&dto_buf[..dto_len], &wire_bulk_buf[..wire_bulk_len]);
 
         let mut i = 0usize;
-        let _ = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels(|actual| -> Result<(), sbe_rt::DecodeError> {
+        let mut levels_iter = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels()?;
+        for actual in &mut levels_iter {
+            let actual = actual?;
             let expected = &levels[i];
             assert_eq!(actual.price(), expected.price);
             assert_eq!(actual.qty(), expected.qty);
             assert_eq!(actual.num_orders(), expected.num_orders);
             i += 1;
-            Ok(())
-        })?;
+        }
         assert_eq!(i, levels.len());
 
         let invalid_levels = [BookSnapshotLevelsEntryDomain {

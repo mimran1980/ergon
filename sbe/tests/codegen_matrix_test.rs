@@ -472,7 +472,175 @@ fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
         };
         // Panics with the compiler diagnostics on failure; the module name in
         // the scratch crate path names the failing variant.
-        compile_and_run_with_deps(&module, &src, prelude, deps);
+        compile_and_run_with_deps(
+            &module,
+            &src,
+            &format!(
+                "{prelude}\n{}",
+                iterator_surface_body(v.name != "flyweight_encode_version_0")
+            ),
+            deps,
+        );
     }
     Ok(())
+}
+
+// Exercise both iterator shapes at all three owner depths. Removing any
+// location's len/iterator emission breaks compilation; wrong remaining counts,
+// cursor advancement or byte lengths fail the running scratch program.
+fn iterator_surface_body(encode_extra: bool) -> String {
+    fn length_entry(depth: usize, extra: &str, future: &str) -> String {
+        if depth == 3 {
+            return "b.add()?.payload(4)?;".into();
+        }
+        format!(
+            "b.add()?.items(|b| {{ b.uniform(count)?; Ok(()) }})?\
+            .records(|b| {{ for _ in 0..count {{ {} }} Ok(()) }})?\
+            {future}.note(3)?{extra};",
+            length_entry(depth + 1, extra, future)
+        )
+    }
+    fn encode_owner(depth: usize, extra: &str, future: &str) -> String {
+        if depth == 3 {
+            return "e.payload(b\"leaf\")".into();
+        }
+        format!(
+            "e.items(count as u16, |g| {{\
+            for value in 0..count {{ g.add(|mut e| {{ e.value(value as u32); Ok(()) }})?; }} Ok(())\
+        }})?.records(count as u16, |g| {{\
+            for _ in 0..count {{ g.add(|e| {{ {} }})?; }} Ok(())\
+        }})?{future}.note(b\"abc\"){extra}",
+            encode_owner(depth + 1, extra, future)
+        )
+    }
+    fn decode_owner(depth: usize) -> String {
+        if depth == 3 {
+            return "assert_eq!(d.payload_len()?, 4); let (bytes, _) = d.into_payload()?; assert_eq!(bytes, b\"leaf\");".into();
+        }
+        let prefix = format!("IteratorSurface{}", "Records".repeat(depth));
+        format!(
+            r#"
+            assert_eq!(d.items_count()?, count);
+            assert_eq!(d.records_count()?, count);
+            assert_eq!(d.future_items_count()?, 0);
+            assert_eq!(d.future_records_count()?, 0);
+            assert_eq!(d.note_len()?, 3);
+            assert_eq!(d.extra_len()?, 0);
+            let mut items = d.into_items()?;
+            assert_eq!(items.remaining_entries(), count);
+            exact(&mut items, count);
+            for value in 0..count {{
+                let entry: {prefix}ItemsEntryDecoder<'_> = (&mut items).next().unwrap()?;
+                assert_eq!(entry.value(), value as u32);
+                assert_eq!(items.remaining_entries(), count - value - 1);
+                exact(&mut items, count - value - 1);
+            }}
+            assert!((&mut items).next().is_none());
+            assert_eq!(items.remaining_entries(), 0);
+            exact(&mut items, 0);
+            let mut records = items.into_records()?;
+            assert_eq!(records.remaining_entries(), count);
+            for index in 0..count {{
+                let d: {prefix}RecordsEntryDecoder<'_> = (&mut records).next().unwrap()?;
+                assert_eq!(records.remaining_entries(), count - index - 1);
+                {nested}
+            }}
+            assert!((&mut records).next().is_none());
+            assert_eq!(records.remaining_entries(), 0);
+            let mut items = records.into_future_items()?;
+            assert_eq!(items.remaining_entries(), 0);
+            exact(&mut items, 0);
+            let mut records = items.into_future_records()?;
+            assert_eq!(records.remaining_entries(), 0);
+            let (note, d) = records.into_note()?;
+            assert_eq!(note, b"abc");
+            assert_eq!(d.extra_len()?, 0);
+            let (extra, _) = d.into_extra()?;
+            assert_eq!(extra, b"");
+        "#,
+            nested = decode_owner(depth + 1)
+        )
+    }
+    format!(
+        r#"
+        fn exact(iter: impl ExactSizeIterator, expected: usize) {{
+            assert_eq!(iter.len(), expected);
+            assert_eq!(iter.size_hint(), (expected, Some(expected)));
+        }}
+        for count in [0usize, 1, 2] {{
+            let length = IteratorSurfaceEncodedLength::new().items(count as u16)?
+                .records_ragged(count as u16, |b| {{
+                    for _ in 0..count {{ {length_entry} }} Ok(())
+                }})?{future_length}.note(3)?{length_extra}.encoded_length_with_header();
+            let mut buf = vec![0; length];
+            let e = IteratorSurfaceEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+                .fixed(&IteratorSurfaceFixedFields {{}});
+            let written = ({encode})?.encoded_length_with_header();
+            assert_eq!(written, length);
+            let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
+            {decode}
+
+            // A partially read iterator still reaches the next tail: into_* /
+            // finish() skip unread entries.
+            let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
+            let mut items = d.into_items()?;
+            let _ = (&mut items).next();
+            let mut records = items.into_records()?;
+            let _ = (&mut records).next();
+            let mut items = records.into_future_items()?;
+            assert_eq!(items.remaining_entries(), 0);
+            exact(&mut items, 0);
+            let records = items.into_future_records()?;
+            assert_eq!(records.remaining_entries(), 0);
+            let (note, _) = records.into_note()?;
+            assert_eq!(note, b"abc");
+
+            // The original fixed-stride random-access iterator also promises an exact hint.
+            let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
+            exact(d.items()?, count);
+            if count > 0 {{
+                let payload = buf.windows(4).position(|w| w == b"leaf").unwrap();
+                buf[payload - 4..payload].fill(0xff);
+                let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
+                assert_eq!(d.records_count()?, count);
+                let items = d.into_items()?;
+                let mut records = items.into_records()?;
+                // Dynamic entry extents are validated as the iterator walks,
+                // not at construction.
+                assert!(matches!((&mut records).next(), Some(Err(_))));
+            }}
+        }}
+    "#,
+        length_extra = if encode_extra { ".extra(0)?" } else { "" },
+        future_length = if encode_extra {
+            ".future_items(0)?.future_records(0).finish_empty()?"
+        } else {
+            ""
+        },
+        length_entry = length_entry(
+            1,
+            if encode_extra { ".extra(0)?" } else { "" },
+            if encode_extra {
+                ".future_items(|_| Ok(()))?.future_records(|_| Ok(()))?"
+            } else {
+                ""
+            }
+        ),
+        encode = encode_owner(
+            0,
+            if encode_extra { "?.extra(b\"\")" } else { "" },
+            if encode_extra {
+                ".future_items(0, |_| Ok(()))?.future_records(0, |_| Ok(()))?"
+            } else {
+                ""
+            }
+        ),
+        decode = decode_owner(0)
+    )
+}
+
+#[test]
+fn decoder_iterator_surface_matrix() {
+    let (_, src) = generate_domain_with(&matrix_schema(), "cm_iterators", |c| c);
+    compile_and_run_with_deps("cm_iterators", &src, &iterator_surface_body(true), "");
 }

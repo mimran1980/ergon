@@ -120,13 +120,15 @@ fn bench_groups(c: &mut Criterion) {
             |b, frame| {
                 b.iter(|| {
                     let mut sum = 0u64;
-                    let done = GroupedDecoder::try_from(black_box(frame.as_slice()))
+                    let mut rows = GroupedDecoder::try_from(black_box(frame.as_slice()))
                         .unwrap()
-                        .into_rows(|row| -> Result<(), sbe_rt::DecodeError> {
-                            sum = sum.wrapping_add(row.value());
-                            Ok(())
-                        })
+                        .into_rows()
                         .unwrap();
+                    for row in &mut rows {
+                        let row = row.unwrap();
+                        sum = sum.wrapping_add(row.value());
+                    }
+                    let done = rows.finish().unwrap();
                     black_box((sum, done));
                 });
             },
@@ -286,19 +288,22 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
     group.bench_function("nested_ragged_traversal", |b| {
         b.iter(|| {
             let mut sum = 0u64;
-            let done = NestedDecoder::try_from(black_box(nested.as_slice()))
+            let mut outer = NestedDecoder::try_from(black_box(nested.as_slice()))
                 .unwrap()
-                .into_outer(|entry| -> Result<_, sbe_rt::DecodeError> {
-                    sum = sum.wrapping_add(entry.value());
-                    entry.into_inner(|row| -> Result<_, sbe_rt::DecodeError> {
-                        sum = sum.wrapping_add(row.value());
-                        row.into_payload().map(|(payload, complete)| {
-                            black_box(payload);
-                            complete
-                        })
-                    })
-                })
+                .into_outer()
                 .unwrap();
+            for entry in &mut outer {
+                let entry = entry.unwrap();
+                sum = sum.wrapping_add(entry.value());
+                let mut inner = entry.into_inner().unwrap();
+                for row in &mut inner {
+                    let row = row.unwrap();
+                    sum = sum.wrapping_add(row.value());
+                    let (payload, _) = row.into_payload().unwrap();
+                    black_box(payload);
+                }
+            }
+            let done = outer.finish().unwrap();
             black_box((sum, done));
         });
     });

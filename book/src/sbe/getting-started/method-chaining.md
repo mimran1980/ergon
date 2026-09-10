@@ -43,23 +43,22 @@ For the full Car example with groups and var-data, see the
 
 ## Decoding
 
-Sequential decode is the same rule: **one chain, bind values not stages.**
-`into_*(|entry|)` visits a group and returns the next stage; `skip_*` jumps
-a tail you do not need; var-data `into_*` returns `(value, next)` because
-the bytes *are* the result.
+Sequential decode is **one consume per tail.** The group iterator *is* the
+stage: `into_bids()` yields an iterator; `for entry in &mut iter` walks
+entries; a following `into_*` / `skip_*` / `finish()` skips unread entries
+and continues. Var-data still returns `(payload, next)`.
 
 **Prefer:**
 
 ```rust,ignore
-let mut bids = Vec::new();
-let (symbol, _done) = L3BookDecoder::try_decode(wire, 0)?
-    .into_bids(|level| {
-        let complete = level.into_orders(|order| { /* … */ Ok(()) })?;
-        bids.push(/* … */);
-        Ok(complete)
-    })?
-    .skip_asks()?
-    .into_symbol_as_str()?;
+let mut bids = L3BookDecoder::try_decode(wire, 0)?.into_bids()?;
+for level in &mut bids {
+    let level = level?;
+    let mut orders = level.into_orders()?;
+    for order in &mut orders {
+        let order = order?;
+        /* … */
+    }
+}
+let (symbol, _done) = bids.skip_asks()?.into_symbol_as_str()?;
 ```
-
-**Avoid:** `let after_bids = dec.into_bids(...)?; let after_asks = after_bids.into_asks(...)?;` — those names are the decoder equivalent of `let enc = enc.bids(...)`.

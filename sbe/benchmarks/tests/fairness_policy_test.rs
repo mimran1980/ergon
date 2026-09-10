@@ -168,7 +168,7 @@ fn full_message_decode_arms_use_unchecked_wrap_and_include_ordered_path()
     let ordered = timed_arm_body(source, "ergo-sbe_ordered").ok_or("missing ordered arm")?;
     assert!(
         ordered.contains("into_fuel_figures"),
-        "ordered full-message arm must use fused into_fuel_figures(visit)"
+        "ordered full-message arm must use into_fuel_figures"
     );
     Ok(())
 }

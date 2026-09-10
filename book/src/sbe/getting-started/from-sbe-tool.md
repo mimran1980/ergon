@@ -90,15 +90,15 @@ See [Trust Boundary](../core-concepts/trust-boundary.md).
 sbe-tool gives you a single `&mut` decoder carrying a `limit` cursor. Every
 group and var-data accessor reads at `limit` and advances it, so the order you
 call methods in *is* the wire walk. ergon does not keep that as the default.
-Sequential decode is the encoder dual: `into_*(|entry|)` consumes the stage
-and returns the next one, so the compiler proves order and nothing is
+Sequential decode is the encoder dual: `into_*` / `skip_*` consumes the stage
+(the group iterator *is* the stage) so the compiler proves order and nothing is
 `&mut`. Random-access `try_decode` is the other job — any order, `Sync`.
 
 **Start here when porting:**
 
 | Your sbe-tool code | Port to |
 |--------------------|---------|
-| Straight-line walk: group, group, var-data, done | staged `into_*(|entry|)` / `skip_*` — one chain, compile-time order |
+| Straight-line walk: group, group, var-data, done | staged `into_*` / `skip_*` — iterator is the stage, compile-time order |
 | Re-wrapping the message a second time to read a field you passed | the base decoder, or `decoder.memoized()` if you re-read deep tails |
 | Reading two fixed fields and dropping the rest | the base decoder from `try_decode` — no cursor, `Sync`, nothing to consume |
 
@@ -113,10 +113,12 @@ let coords = car.manufacturer_decoder();               // (offset, len)
 let manufacturer = car.manufacturer_slice(coords);
 
 // ergo-sbe: same walk, order is a type, no `&mut`
-let (manufacturer, car) = CarDecoder::try_decode(buf, 0)?
-    .into_fuel_figures(|e| { /* … */ Ok(complete) })?
-    .skip_performance_figures()?
-    .into_manufacturer()?;
+let mut fuel = CarDecoder::try_decode(buf, 0)?.into_fuel_figures()?;
+for e in &mut fuel {
+    let e = e?;
+    /* … */
+}
+let (manufacturer, car) = fuel.skip_performance_figures()?.into_manufacturer()?;
 ```
 
 Note what disappears in the port: no `.parent()` hop, no `(offset, length)`
@@ -142,7 +144,7 @@ reading mixed-version streams.
 | sbe-tool habit | ergo-sbe |
 |----------------|----------|
 | `.parent()` ownership hop | Closures + consuming stage returns |
-| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or staged `into_*(|entry|)` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
+| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or staged `into_*` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
 | `_decoder()` returning `(offset, len)` for a second `_slice()` call | Var-data accessors return `&'a [u8]` / `&'a str` directly |
 | Generic `Encoder<State>` spelling | Named stage structs + `H: HeaderState` only for header mode ([type-state note](../design-notes/type-state.md)) |
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |

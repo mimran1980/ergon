@@ -358,13 +358,13 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
         assert_eq!(mem.note_as_str()?, "héllo");
 
         // Staged chain — wire order is legs, then note.
-        let (note, _) = MsgDecoder::try_decode(buf, 0)?
-            .into_legs(|e| -> Result<_, sbe_rt::DecodeError> {
-                let (tag, complete) = e.into_leg_tag_as_str()?;
-                assert_eq!(tag, "xyz");
-                Ok(complete)
-            })?
-            .into_note_as_str()?;
+        let mut legs = MsgDecoder::try_decode(buf, 0)?.into_legs()?;
+        for e in &mut legs {
+            let e = e?;
+            let (tag, _) = e.into_leg_tag_as_str()?;
+            assert_eq!(tag, "xyz");
+        }
+        let (note, _) = legs.into_note_as_str()?;
         assert_eq!(note, "héllo");
         "#,
     );

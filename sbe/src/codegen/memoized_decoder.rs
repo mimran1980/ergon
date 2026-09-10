@@ -69,7 +69,7 @@ pub(crate) fn generate_memoized_decoder(
             /// nothing: there is no second access to amortise against, and
             /// reaching a late tail publishes every boundary it passes. If you
             /// are decoding the whole message in wire order, the staged
-            /// `into_*(|entry|)` / `skip_*` chain carries the cursor without a
+            /// `into_*` / `skip_*` chain carries the cursor without a
             /// cache and is faster still.
             ///
             /// The cache covers this message's own groups and var-data. Group
@@ -159,7 +159,22 @@ pub(crate) fn generate_memoized_decoder(
         if let Some(ref desc) = g.description {
             impl_body.extend(doc_attr_tokens(desc));
         }
+        let count_ident = quote::format_ident!("{g_snake}_count");
+        let absent_count = if g.since_version > 0 {
+            let since_lit = syn::LitInt::new(&g.since_version.to_string(), span);
+            quote::quote! {
+                if self.inner.acting_version < #since_lit { return Ok(0); }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         impl_body.extend(quote::quote! {
+            /// Wire-declared entry count without advancing this decoder.
+            #[inline]
+            pub fn #count_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                #absent_count
+                Ok(self.#g_snake_ident()?.remaining_entries())
+            }
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
             pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
@@ -192,7 +207,22 @@ pub(crate) fn generate_memoized_decoder(
         if let Some(ref desc) = vd.description {
             impl_body.extend(doc_attr_tokens(desc));
         }
+        let len_ident = quote::format_ident!("{vd_snake}_len");
+        let absent_len = if vd.since_version > 0 {
+            let since_lit = syn::LitInt::new(&vd.since_version.to_string(), span);
+            quote::quote! {
+                if self.inner.acting_version < #since_lit { return Ok(0); }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         impl_body.extend(quote::quote! {
+            /// Byte length without advancing this decoder.
+            #[inline]
+            pub fn #len_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                #absent_len
+                Ok(self.#vd_ident()?.len())
+            }
             #[inline]
             pub fn #vd_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check

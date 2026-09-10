@@ -285,13 +285,14 @@ proptest! {
         let decoded = CarDecoder::try_decode(encoded, 0).unwrap();
 
         let mut fuel = Vec::new();
-        let _ = decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+        let mut figs = decoded.into_fuel_figures().unwrap();
+        for e in &mut figs {
+            let e = e.unwrap();
             let speed = e.speed();
             let mpg = e.mpg();
-            let (usage, complete) = e.into_usage_description()?;
+            let (usage, _) = e.into_usage_description().unwrap();
             fuel.push((speed, mpg, usage.to_vec()));
-            Ok(complete)
-        }).unwrap();
+        }
         prop_assert_eq!(entries.len(), fuel.len(), "fuel figures count");
 
         for (i, (speed, mpg, usage)) in entries.iter().enumerate() {
@@ -420,13 +421,15 @@ fn boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(u8::MAX, de.num_cylinders());
 
     let mut ff = Vec::new();
-    let after_fuel = decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+    let mut figs = decoded.into_fuel_figures().unwrap();
+    for e in &mut figs {
+        let e = e.unwrap();
         let speed = e.speed();
         let mpg = e.mpg();
-        let (_usage, complete) = e.into_usage_description()?;
+        let (_usage, _) = e.into_usage_description().unwrap();
         ff.push((speed, mpg));
-        Ok(complete)
-    }).unwrap();
+    }
+    let after_fuel = figs.finish().unwrap();
     assert_eq!(1, ff.len());
     assert_eq!(u16::MAX, ff[0].0);
     // f32::MAX is the largest finite f32; check round-trip within epsilon

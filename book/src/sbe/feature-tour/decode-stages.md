@@ -38,7 +38,7 @@ about — which is what the rest of this page is about.
 | Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
-| Staged | `into_*(|entry|)` / `skip_*` | Compile time | One wire-order pass | yes |
+| Staged | `into_*` / `skip_*` | Compile time | One wire-order pass; the group iterator is the stage | yes |
 
 Fixed fields stay random-access in both. Groups and variable-data must be
 consumed in schema order on the staged lane. `.memoized()` is still
@@ -74,14 +74,13 @@ measurably slower than a lane that remembers where it is. In practice that gap
 is small enough that "default, plus benchmark if you're unsure" is the right
 starting posture, not a premature switch to something else.
 
-**The staged lane (`into_*(|entry|)` / `skip_*`) is sequential decode, the
-same idea as encode.** Each `into_*` consumes the current stage and returns
-the next one, so the type system — not a runtime check, and not `&mut` —
-makes reading out of order a compile error. Write it as one chain, the way
-the encoder is one chain: groups take a visit closure, `skip_*` jumps a
-tail you do not need, and you bind only var-data payloads (or the terminal
-complete). That ownership transfer is what buys back the performance random
-access gives up: each tail is walked exactly once. See
+**The staged lane (`into_*` / `skip_*`) is sequential decode, the same idea
+as encode.** Each `into_*` consumes the current stage. For a group, the
+iterator *is* the stage: `for entry in &mut iter { let entry = entry?; }` yields entries, and a following
+`into_*` / `skip_*` / `finish()` skips unread entries and continues. The
+type system — not a runtime check, and not `&mut` — makes reading out of
+order a compile error. That ownership transfer is what buys back the
+performance random access gives up: each tail is walked exactly once. See
 [Staged](#staged-into_--skip_) below — it is the sample crate, not a sketch.
 
 **Memoized (`decoder.memoized()`) is the slowest lane and exists for one
@@ -102,7 +101,7 @@ first; see [Memoized](#memoized-decodermemoized) below for the
 | If you want… | Use |
 |---|---|
 | Some fields, any order, share `&Decoder` | Random access (the default) |
-| The whole message in wire order | Staged `into_*(|entry|)` — one chain, compile-time order |
+| The whole message in wire order | Staged `into_*` — iterator is the stage, compile-time order |
 | The same decoder passed to many functions that each read tails in a different order | Memoized (`decoder.memoized()`) — benchmark it, don't reach for it by default |
 
 For a worked example that puts random-access and staged side by side over one
@@ -155,7 +154,7 @@ Two things are true in **every** ergon lane and in none of sbe-tool's:
 
 The trade is real and worth stating plainly: sbe-tool's single flyweight is
 less to learn. If your code always decodes complete messages in wire order
-and never re-reads, the staged `into_*(|entry|)` chain is the port — it is
+and never re-reads, the staged `into_*` chain is the port — it is
 the encoder dual, and it does not need to be mutable.
 
 ## Random access
@@ -218,7 +217,7 @@ never walked again.
 
 That matters because it is easy to assume the opposite. Reading in wire order
 does not make the base lane cheap; only a lane that *carries* its cursor —
-the staged `into_*(|entry|)` chain — gets that for free.
+the staged `into_*` chain — gets that for free.
 
 **Use it when**
 
@@ -257,10 +256,11 @@ pure overhead.
 ## Staged (`into_*` / `skip_*`)
 
 Maximum safety and the expected maximum-performance sequential path — and
-the encoder dual: one chain, bind values not stages. Ownership and
-generated stage types make a later tail unreachable until the current one
-is consumed. Do not write `let after_bids = dec.into_bids(...)?`; continue
-the chain.
+the encoder dual. Ownership and generated stage types make a later tail
+unreachable until the current one is consumed. `into_bids()` returns the
+iterator; `Iterator` is implemented only for `&mut Iter` so
+`for entry in iter` cannot drop the rest of the message. Prefer
+`for entry in &mut iter { let entry = entry?; }`.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_decode_stages}}
@@ -275,40 +275,34 @@ remain valid simultaneously while the stage chain advances.
 ### `#[must_use]` on stages
 
 Consuming stages (`CarDecoderAfterFuelFigures`, `…AfterManufacturer`,
-`CarDecoderComplete`, …) are `#[must_use]`. Dropping a stage without
-`into_*` / `skip_*` **silently skips** remaining wire tails (groups and
-var-data). That is easy to miss when a function returns early — prefer
-advancing until `Complete` or an explicit skip.
+`CarDecoderComplete`, …) and group iterators are `#[must_use]`. Dropping a
+stage without `into_*` / `skip_*` / `finish()` **silently skips** remaining
+wire tails (groups and var-data). That is easy to miss when a function
+returns early — prefer advancing until `Complete` or an explicit skip.
 
-### One-pass `into_*(|entry|)`
+### `for entry in &mut iter`
 
-`into_fuel_figures(|entry| …)` consumes the current stage, visits every
-entry of that group, and returns the next parent stage. There is no
-separate group object to hold: count lives on the wire, empty groups
-invoke the callback zero times, and skipping is `skip_fuel_figures()`.
+Every staged group yields `Result<Entry>`, so the loop is one shape.
+Empty groups yield nothing; skipping is `skip_fuel_figures()` or
+`iter.finish()`.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_visit_entries}}
 ```
-
-Dynamic-entry callbacks return the generated completion stage so the next
-cursor comes from the walk, not from a pre-scan of `encoded_length()`.
-Fixed-stride callbacks return `Result<(), E>`.
 
 **Advantages**
 
 - Wrong order is a compile error (missing method on this stage)
 - One pass; no offset rescan
 - Expected fastest sequential decode; maintained benches require it ≤ sbe-tool
-  and ≤ iterator decode
 
 **Disadvantages**
 
 - Stage types appear in signatures; you cannot hold “the decoder” and pick
   tails later
 - Skipping a tail requires an explicit `skip_*`
-- Partial group walks use the random-access `Iterator`, which is not the
-  one-pass path
+- `for entry in iter` (by value) does not compile — iterate `&mut iter` so
+  the rest of the message is not dropped
 
 ## Full-frame bytes mid-walk
 

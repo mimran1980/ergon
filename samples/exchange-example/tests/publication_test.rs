@@ -5,7 +5,7 @@
 //! the generated consuming decoders.
 
 use exchange_example::market::{Level, NormalizedEventRef, WireDec};
-use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source, sbe_rt};
+use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 use exchange_example::publication::{
     ClaimPublisher, DropReason, PublishOutcome, RecordingPublication,
 };
@@ -56,22 +56,20 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
 
     let mut got_bids = Vec::new();
     let mut got_asks = Vec::new();
-    let (symbol, _) = book
-        .into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
-            got_bids.push((
-                (e.price_wire().mantissa(), e.price_wire().exponent()),
-                (e.size_wire().mantissa(), e.size_wire().exponent()),
-            ));
-            Ok(())
-        })
-        .unwrap()
-        .into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
-            got_asks.push((e.price_wire().mantissa(), e.price_wire().exponent()));
-            Ok(())
-        })
-        .unwrap()
-        .into_symbol_as_str()
-        .unwrap();
+    let mut bid_iter = book.into_bids().unwrap();
+    for e in &mut bid_iter {
+        let e = e.unwrap();
+        got_bids.push((
+            (e.price_wire().mantissa(), e.price_wire().exponent()),
+            (e.size_wire().mantissa(), e.size_wire().exponent()),
+        ));
+    }
+    let mut ask_iter = bid_iter.into_asks().unwrap();
+    for e in &mut ask_iter {
+        let e = e.unwrap();
+        got_asks.push((e.price_wire().mantissa(), e.price_wire().exponent()));
+    }
+    let (symbol, _) = ask_iter.into_symbol_as_str().unwrap();
     assert_eq!(
         got_bids,
         vec![((500005, -1), (15, -1)), ((500000, -1), (20, -1))]

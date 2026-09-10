@@ -2765,12 +2765,22 @@ impl<'a> CarDecoder<'a> {
         let start = self.tail_offset_4()?;
         self.walk_tail_4(start)
     }
+    /// Wire-declared entry count without advancing this decoder.
+    #[inline]
+    pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.fuel_figures()?.remaining_entries())
+    }
     ///Generated method `fuel_figures`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.buf, offset, self.acting_version)
+    }
+    /// Wire-declared entry count without advancing this decoder.
+    #[inline]
+    pub fn performance_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.performance_figures()?.remaining_entries())
     }
     ///Generated method `performance_figures`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -2780,6 +2790,11 @@ impl<'a> CarDecoder<'a> {
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_1()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
+    }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn manufacturer_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.manufacturer()?.len())
     }
     ///Generated method `manufacturer`.
     #[inline]
@@ -2836,6 +2851,11 @@ impl<'a> CarDecoder<'a> {
         let bytes = self.manufacturer()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn model_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.model()?.len())
+    }
     ///Generated method `model`.
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -2888,6 +2908,11 @@ impl<'a> CarDecoder<'a> {
     pub unsafe fn model_as_str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn activation_code_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.activation_code()?.len())
     }
     ///Generated method `activation_code`.
     #[inline]
@@ -3292,7 +3317,8 @@ pub struct FuelFiguresDecoder<'a, C: sbe_rt::GroupContext = sbe_rt::Detached> {
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     /// Proof-dependent constructor: like `wrap()` but remembers the
     /// parent message body position and acting block length so
-    /// `finish()` can rebuild the next stage.
+    /// `skip_all` / the staged iterator's `finish()` can rebuild the
+    /// next stage.
     ///
     /// Private to the generated module — a caller outside it cannot
     /// invent parent state and then `finish()` into a message stage
@@ -3839,6 +3865,11 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let start = self.tail_offset_0()?;
         self.walk_tail_0(start)
     }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn usage_description_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.usage_description()?.len())
+    }
     ///Generated method `usage_description`.
     #[inline]
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -3942,9 +3973,9 @@ impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct FuelFiguresEntryDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -4188,7 +4219,8 @@ pub struct PerformanceFiguresDecoder<'a, C: sbe_rt::GroupContext = sbe_rt::Detac
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     /// Proof-dependent constructor: like `wrap()` but remembers the
     /// parent message body position and acting block length so
-    /// `finish()` can rebuild the next stage.
+    /// `skip_all` / the staged iterator's `finish()` can rebuild the
+    /// next stage.
     ///
     /// Private to the generated module — a caller outside it cannot
     /// invent parent state and then `finish()` into a message stage
@@ -4725,6 +4757,11 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let start = self.tail_offset_0()?;
         self.walk_tail_0(start)
     }
+    /// Wire-declared entry count without advancing this decoder.
+    #[inline]
+    pub fn acceleration_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.acceleration()?.remaining_entries())
+    }
     ///Generated method `acceleration`.
     #[inline]
     pub fn acceleration(
@@ -4831,7 +4868,8 @@ pub struct PerformanceFiguresAccelerationDecoder<
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     /// Proof-dependent constructor: like `wrap()` but remembers the
     /// parent message body position and acting block length so
-    /// `finish()` can rebuild the next stage.
+    /// `skip_all` / the staged iterator's `finish()` can rebuild the
+    /// next stage.
     ///
     /// Private to the generated module — a caller outside it cannot
     /// invent parent state and then `finish()` into a message stage
@@ -5213,6 +5251,10 @@ for PerformanceFiguresAccelerationDecoder<'a, C> {
         self.count -= 1;
         Some(entry)
     }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.count, Some(self.count))
+    }
 }
 impl<'a, C: sbe_rt::GroupContext> ExactSizeIterator
 for PerformanceFiguresAccelerationDecoder<'a, C> {
@@ -5370,9 +5412,9 @@ impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
         write!(f, " }}")
     }
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct PerformanceFiguresEntryDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5393,6 +5435,76 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
         self.acting_block_length
+    }
+}
+/// Sequential group iterator — this type *is* the decoder stage for
+/// the group. Call [`Self::finish`] or a following `into_*` /
+/// `skip_*` to reach the next tail. Iterate with
+/// `for entry in &mut iter { let entry = entry?; }`.
+#[must_use = "call finish() or a following into_*/skip_* or remaining tails are skipped"]
+pub struct PerformanceFiguresAccelerationDecoderIter<'a> {
+    inner: PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached>,
+}
+impl<'a> PerformanceFiguresAccelerationDecoderIter<'a> {
+    /// Wire-declared entries not yet yielded. For dynamic groups this
+    /// is not a decode promise — a malformed entry can end iteration
+    /// early.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.inner.remaining_entries()
+    }
+    /// Skip any unread entries and return the following decoder stage.
+    #[inline]
+    pub fn finish(
+        self,
+    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
+        self.inner.skip_all()
+    }
+}
+impl<'a> Iterator for &mut PerformanceFiguresAccelerationDecoderIter<'a> {
+    type Item = Result<
+        PerformanceFiguresAccelerationEntryDecoder<'a>,
+        sbe_rt::DecodeError,
+    >;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(Ok)
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+impl<'a> ExactSizeIterator for &mut PerformanceFiguresAccelerationDecoderIter<'a> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.inner.remaining_entries()
+    }
+}
+impl<'a> core::iter::FusedIterator
+for &mut PerformanceFiguresAccelerationDecoderIter<'a> {}
+impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    /// Consume this stage into a group iterator. The iterator *is* this tail: unread entries are skipped when you [`PerformanceFiguresAccelerationDecoderIter::finish`] or call a following `into_*` / `skip_*`. Fixed-stride entries implement [`ExactSizeIterator`] for `&mut iter`. Iterate with `for entry in &mut iter { let entry = entry?; }`. `for entry in iter` does not compile, so the rest of the message is not dropped.
+    #[inline]
+    pub fn into_acceleration(
+        self,
+    ) -> Result<PerformanceFiguresAccelerationDecoderIter<'a>, sbe_rt::DecodeError> {
+        let group_start = self.offset + self.acting_block_length;
+        let inner = unsafe {
+            <PerformanceFiguresAccelerationDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )?
+        };
+        Ok(PerformanceFiguresAccelerationDecoderIter {
+            inner,
+        })
     }
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
@@ -5427,61 +5539,8 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    #[inline]
-    fn walk<E, F>(
-        mut self,
-        mut visit: F,
-    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(PerformanceFiguresAccelerationEntryDecoder<'a>) -> Result<(), E>,
-    {
-        while self.count > 0 {
-            let entry = unsafe {
-                PerformanceFiguresAccelerationEntryDecoder::wrap(
-                    self.buf,
-                    self.offset,
-                    self.acting_block_length,
-                    self.acting_version,
-                )
-            };
-            visit(entry)?;
-            self.offset += self.acting_block_length;
-            self.count -= 1;
-        }
-        let tail_start = self.offset;
-        Ok(self.into_parent_stage(tail_start))
-    }
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
-    /// Consume this stage, visit every entry of the next group in
-    /// wire order, and return the following stage. A callback
-    /// error consumes this stage and returns no continuation —
-    /// there is nothing to retry from a consuming lane.
-    #[inline]
-    pub fn into_acceleration<E, F>(
-        self,
-        visit: F,
-    ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(PerformanceFiguresAccelerationEntryDecoder<'a>) -> Result<(), E>,
-    {
-        let group_start = self.offset + self.acting_block_length;
-        let attached = unsafe {
-            <PerformanceFiguresAccelerationDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )
-        }?;
-        attached.walk(visit)
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -5539,9 +5598,9 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct CarDecoderAfterFuelFigures<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5549,9 +5608,9 @@ pub struct CarDecoderAfterFuelFigures<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct CarDecoderAfterPerformanceFigures<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5559,9 +5618,9 @@ pub struct CarDecoderAfterPerformanceFigures<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct CarDecoderAfterManufacturer<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5569,9 +5628,9 @@ pub struct CarDecoderAfterManufacturer<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct CarDecoderAfterModel<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5579,9 +5638,9 @@ pub struct CarDecoderAfterModel<'a> {
     pub(crate) acting_version: u16,
     pub(crate) acting_block_length: usize,
 }
-/// Consuming decoder stage — drop without `into_*` / `finish` skips
-/// remaining wire tails.
-#[must_use = "decoder stage must be advanced with into_*/finish or tails are skipped"]
+/// Consuming decoder stage — drop without `into_*` / `skip_*`
+/// skips remaining wire tails.
+#[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
 pub struct CarDecoderComplete<'a> {
     pub(crate) buf: &'a [u8],
     pub(crate) offset: usize,
@@ -5665,6 +5724,11 @@ impl<'a> CarDecoderComplete<'a> {
     }
 }
 impl<'a> CarDecoderAfterPerformanceFigures<'a> {
+    /// Byte length without advancing this decoder stage.
+    #[inline]
+    pub fn manufacturer_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.manufacturer_slice()?.len())
+    }
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
     #[inline]
@@ -5826,6 +5890,11 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     }
 }
 impl<'a> CarDecoderAfterManufacturer<'a> {
+    /// Byte length without advancing this decoder stage.
+    #[inline]
+    pub fn model_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.model_slice()?.len())
+    }
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
     #[inline]
@@ -5978,6 +6047,11 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     }
 }
 impl<'a> CarDecoderAfterModel<'a> {
+    /// Byte length without advancing this decoder stage.
+    #[inline]
+    pub fn activation_code_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.activation_code_slice()?.len())
+    }
     /// Consume this stage, read the next var-data field, and advance
     /// to the following stage. Wire order is enforced by consumption.
     #[inline]
@@ -6131,6 +6205,62 @@ impl<'a> CarDecoderAfterModel<'a> {
         Ok(next)
     }
 }
+/// Sequential group iterator — this type *is* the decoder stage for
+/// the group. Call [`Self::finish`] or a following `into_*` /
+/// `skip_*` to reach the next tail. Iterate with
+/// `for entry in &mut iter { let entry = entry?; }`.
+#[must_use = "call finish() or a following into_*/skip_* or remaining tails are skipped"]
+pub struct FuelFiguresDecoderIter<'a> {
+    inner: FuelFiguresDecoder<'a, sbe_rt::Attached>,
+}
+impl<'a> FuelFiguresDecoderIter<'a> {
+    /// Wire-declared entries not yet yielded. For dynamic groups this
+    /// is not a decode promise — a malformed entry can end iteration
+    /// early.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.inner.remaining_entries()
+    }
+    /// Skip any unread entries and return the following decoder stage.
+    #[inline]
+    pub fn finish(self) -> Result<CarDecoderAfterFuelFigures<'a>, sbe_rt::DecodeError> {
+        self.inner.skip_all()
+    }
+}
+impl<'a> Iterator for &mut FuelFiguresDecoderIter<'a> {
+    type Item = Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+impl<'a> core::iter::FusedIterator for &mut FuelFiguresDecoderIter<'a> {}
+impl<'a> CarDecoder<'a> {
+    /// Consume this stage into a group iterator. The iterator *is* this tail: unread entries are skipped when you [`FuelFiguresDecoderIter::finish`] or call a following `into_*` / `skip_*`. Iterate with `for entry in &mut iter { let entry = entry?; }`. `for entry in iter` does not compile, so the rest of the message is not dropped.
+    #[inline]
+    pub fn into_fuel_figures(
+        self,
+    ) -> Result<FuelFiguresDecoderIter<'a>, sbe_rt::DecodeError> {
+        let group_start = self.byte_offset() + self.acting_block_length;
+        let inner = unsafe {
+            <FuelFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.byte_offset(),
+                self.acting_block_length,
+            )?
+        };
+        Ok(FuelFiguresDecoderIter { inner })
+    }
+}
 impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
     #[inline]
     fn into_parent_stage(self, tail_start: usize) -> CarDecoderAfterFuelFigures<'a> {
@@ -6161,84 +6291,8 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    #[inline]
-    fn walk<E, F>(mut self, mut visit: F) -> Result<CarDecoderAfterFuelFigures<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            FuelFiguresEntryDecoder<'a>,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
-    {
-        if let Some(error) = self.poisoned {
-            return Err(E::from(error));
-        }
-        while self.count > 0 {
-            let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
-                return Err(
-                    E::from(sbe_rt::DecodeError::BufferTooShort {
-                        field: "fuelFigures",
-                        needed: self.min_entry_extent,
-                        available,
-                    }),
-                );
-            }
-            let entry = unsafe {
-                FuelFiguresEntryDecoder::wrap(
-                    self.buf,
-                    self.offset,
-                    self.acting_block_length,
-                    self.acting_version,
-                )
-            };
-            let complete = visit(entry)?;
-            if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
-                || complete.buf.len() != self.buf.len() || complete.offset != self.offset
-                || complete.acting_version != self.acting_version
-                || complete.acting_block_length != self.acting_block_length
-            {
-                panic!(
-                    "group visit callback returned a completion that does not belong to the supplied entry"
-                );
-            }
-            self.offset = complete.tail_start;
-            self.count -= 1;
-        }
-        let tail_start = self.offset;
-        Ok(self.into_parent_stage(tail_start))
-    }
 }
 impl<'a> CarDecoder<'a> {
-    /// Consume this stage, visit every entry of the next group in
-    /// wire order, and return the following stage. A callback
-    /// error consumes this stage and returns no continuation —
-    /// there is nothing to retry from a consuming lane.
-    #[inline]
-    pub fn into_fuel_figures<E, F>(
-        self,
-        visit: F,
-    ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            FuelFiguresEntryDecoder<'a>,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
-    {
-        let group_start = self.byte_offset() + self.acting_block_length;
-        let attached = unsafe {
-            <FuelFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.byte_offset(),
-                self.acting_block_length,
-            )
-        }?;
-        attached.walk(visit)
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -6259,6 +6313,84 @@ impl<'a> CarDecoder<'a> {
             )
         }?;
         attached.skip_all()
+    }
+}
+/// Sequential group iterator — this type *is* the decoder stage for
+/// the group. Call [`Self::finish`] or a following `into_*` /
+/// `skip_*` to reach the next tail. Iterate with
+/// `for entry in &mut iter { let entry = entry?; }`.
+#[must_use = "call finish() or a following into_*/skip_* or remaining tails are skipped"]
+pub struct PerformanceFiguresDecoderIter<'a> {
+    inner: PerformanceFiguresDecoder<'a, sbe_rt::Attached>,
+}
+impl<'a> PerformanceFiguresDecoderIter<'a> {
+    /// Wire-declared entries not yet yielded. For dynamic groups this
+    /// is not a decode promise — a malformed entry can end iteration
+    /// early.
+    #[inline]
+    pub const fn remaining_entries(&self) -> usize {
+        self.inner.remaining_entries()
+    }
+    /// Skip any unread entries and return the following decoder stage.
+    #[inline]
+    pub fn finish(
+        self,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
+        self.inner.skip_all()
+    }
+}
+impl<'a> Iterator for &mut PerformanceFiguresDecoderIter<'a> {
+    type Item = Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+impl<'a> core::iter::FusedIterator for &mut PerformanceFiguresDecoderIter<'a> {}
+impl<'a> CarDecoderAfterFuelFigures<'a> {
+    /// Wire-declared entry count without advancing this decoder stage.
+    #[inline]
+    pub fn performance_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let group_start = self.tail_start;
+        let inner = unsafe {
+            <PerformanceFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )?
+        };
+        Ok(inner.remaining_entries())
+    }
+    /// Consume this stage into a group iterator. The iterator *is* this tail: unread entries are skipped when you [`PerformanceFiguresDecoderIter::finish`] or call a following `into_*` / `skip_*`. Iterate with `for entry in &mut iter { let entry = entry?; }`. `for entry in iter` does not compile, so the rest of the message is not dropped.
+    #[inline]
+    pub fn into_performance_figures(
+        self,
+    ) -> Result<PerformanceFiguresDecoderIter<'a>, sbe_rt::DecodeError> {
+        let group_start = self.tail_start;
+        let inner = unsafe {
+            <PerformanceFiguresDecoder<
+                'a,
+                sbe_rt::Attached,
+            >>::wrap_with_parent(
+                self.buf,
+                group_start,
+                self.acting_version,
+                self.offset,
+                self.acting_block_length,
+            )?
+        };
+        Ok(PerformanceFiguresDecoderIter {
+            inner,
+        })
     }
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
@@ -6296,87 +6428,8 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         }
         Ok(self.into_parent_stage(offset))
     }
-    #[inline]
-    fn walk<E, F>(
-        mut self,
-        mut visit: F,
-    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            PerformanceFiguresEntryDecoder<'a>,
-        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
-    {
-        if let Some(error) = self.poisoned {
-            return Err(E::from(error));
-        }
-        while self.count > 0 {
-            let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
-                return Err(
-                    E::from(sbe_rt::DecodeError::BufferTooShort {
-                        field: "performanceFigures",
-                        needed: self.min_entry_extent,
-                        available,
-                    }),
-                );
-            }
-            let entry = unsafe {
-                PerformanceFiguresEntryDecoder::wrap(
-                    self.buf,
-                    self.offset,
-                    self.acting_block_length,
-                    self.acting_version,
-                )
-            };
-            let complete = visit(entry)?;
-            if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
-                || complete.buf.len() != self.buf.len() || complete.offset != self.offset
-                || complete.acting_version != self.acting_version
-                || complete.acting_block_length != self.acting_block_length
-            {
-                panic!(
-                    "group visit callback returned a completion that does not belong to the supplied entry"
-                );
-            }
-            self.offset = complete.tail_start;
-            self.count -= 1;
-        }
-        let tail_start = self.offset;
-        Ok(self.into_parent_stage(tail_start))
-    }
 }
 impl<'a> CarDecoderAfterFuelFigures<'a> {
-    /// Consume this stage, visit every entry of the next group in
-    /// wire order, and return the following stage. A callback
-    /// error consumes this stage and returns no continuation —
-    /// there is nothing to retry from a consuming lane.
-    #[inline]
-    pub fn into_performance_figures<E, F>(
-        self,
-        visit: F,
-    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
-    where
-        E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            PerformanceFiguresEntryDecoder<'a>,
-        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
-    {
-        let group_start = self.tail_start;
-        let attached = unsafe {
-            <PerformanceFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )
-        }?;
-        attached.walk(visit)
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -6397,6 +6450,38 @@ impl<'a> CarDecoderAfterFuelFigures<'a> {
             )
         }?;
         attached.skip_all()
+    }
+}
+impl<'a> FuelFiguresDecoderIter<'a> {
+    /// Skip any unread `fuel_figures` entries and consume `performance_figures` as an iterator.
+    #[inline]
+    pub fn into_performance_figures(
+        self,
+    ) -> Result<PerformanceFiguresDecoderIter<'a>, sbe_rt::DecodeError> {
+        self.finish()?.into_performance_figures()
+    }
+    /// Skip any unread `fuel_figures` entries and skip `performance_figures`.
+    #[inline]
+    pub fn skip_performance_figures(
+        self,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, sbe_rt::DecodeError> {
+        self.finish()?.skip_performance_figures()
+    }
+}
+impl<'a> PerformanceFiguresDecoderIter<'a> {
+    /// Skip any unread `performance_figures` entries and read `manufacturer`.
+    #[inline]
+    pub fn into_manufacturer(
+        self,
+    ) -> Result<(&'a [u8], CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
+        self.finish()?.into_manufacturer()
+    }
+    /// Skip any unread `performance_figures` entries and read `manufacturer` as `&str`.
+    #[inline]
+    pub fn into_manufacturer_as_str(
+        self,
+    ) -> Result<(&'a str, CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
+        self.finish()?.into_manufacturer_as_str()
     }
 }
 impl<'a> CarDecoderComplete<'a> {
@@ -6962,7 +7047,7 @@ impl<'a> CarDecoder<'a> {
     /// nothing: there is no second access to amortise against, and
     /// reaching a late tail publishes every boundary it passes. If you
     /// are decoding the whole message in wire order, the staged
-    /// `into_*(|entry|)` / `skip_*` chain carries the cursor without a
+    /// `into_*` / `skip_*` chain carries the cursor without a
     /// cache and is faster still.
     ///
     /// The cache covers this message's own groups and var-data. Group
@@ -7124,12 +7209,22 @@ impl<'a> CarMemoizedDecoder<'a> {
     pub fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
         self.cache.stats()
     }
+    /// Wire-declared entry count without advancing this decoder.
+    #[inline]
+    pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.fuel_figures()?.remaining_entries())
+    }
     ///Generated method `fuel_figures`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn fuel_figures(&self) -> Result<FuelFiguresDecoder<'a>, sbe_rt::DecodeError> {
         let offset = self.tail_offset_0()?;
         FuelFiguresDecoder::wrap(self.inner.buf, offset, self.inner.acting_version)
+    }
+    /// Wire-declared entry count without advancing this decoder.
+    #[inline]
+    pub fn performance_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.performance_figures()?.remaining_entries())
     }
     ///Generated method `performance_figures`.
     #[must_use = "discarding this value is almost always a mistake"]
@@ -7143,6 +7238,11 @@ impl<'a> CarMemoizedDecoder<'a> {
             offset,
             self.inner.acting_version,
         )
+    }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn manufacturer_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.manufacturer()?.len())
     }
     ///Generated method `manufacturer`.
     #[inline]
@@ -7203,6 +7303,11 @@ impl<'a> CarMemoizedDecoder<'a> {
         let bytes = self.manufacturer()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn model_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.model()?.len())
+    }
     ///Generated method `model`.
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
@@ -7259,6 +7364,11 @@ impl<'a> CarMemoizedDecoder<'a> {
     pub unsafe fn model_as_str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
         let bytes = self.model()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+    }
+    /// Byte length without advancing this decoder.
+    #[inline]
+    pub fn activation_code_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        Ok(self.activation_code()?.len())
     }
     ///Generated method `activation_code`.
     #[inline]

@@ -1,6 +1,6 @@
 //! The mutable ordered decoder lane is gone.
 //!
-//! Sequential decode is the staged `into_*(|entry|)` / `skip_*` chain.
+//! Sequential decode is the staged `into_*` / `skip_*` chain.
 //! Random-access and `.memoized()` remain. This file asserts the ordered
 //! surface is not generated, then compile-and-runs the remaining lanes.
 
@@ -124,21 +124,24 @@ fn remaining_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::E
         let s_year = staged.model_year();
         let s_code = staged.code();
         let s_eng = staged.engine().capacity();
-        let (s_mfr, staged) = staged
-            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-                let speed = entry.speed();
-                let (usage, complete) = entry.into_usage_description_as_str()?;
-                s_fuel.push((speed, usage.to_owned()));
-                Ok(complete)
-            })?
-            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-                s_octane.push(entry.octane_rating());
-                entry.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
-                    s_acc.push((a.mph(), a.seconds().to_bits()));
-                    Ok(())
-                })
-            })?
-            .into_manufacturer_as_str()?;
+        let mut fuel = staged.into_fuel_figures()?;
+        for entry in &mut fuel {
+            let entry = entry?;
+            let speed = entry.speed();
+            let (usage, _) = entry.into_usage_description_as_str()?;
+            s_fuel.push((speed, usage.to_owned()));
+        }
+        let mut perf = fuel.into_performance_figures()?;
+        for entry in &mut perf {
+            let entry = entry?;
+            s_octane.push(entry.octane_rating());
+            let mut acc = entry.into_acceleration()?;
+            for a in &mut acc {
+                let a = a?;
+                s_acc.push((a.mph(), a.seconds().to_bits()));
+            }
+        }
+        let (s_mfr, staged) = perf.into_manufacturer_as_str()?;
         let (s_model, staged) = staged.into_model_as_str()?;
         let (s_code_vd, _) = staged.into_activation_code_as_str()?;
 
@@ -230,10 +233,11 @@ fn schema_field_named_ordered_is_the_getter() -> Result<(), Box<dyn std::error::
         assert_eq!(dec.ordered(), 7);
         assert_eq!(dec.acting_version(), 0);
         let mut n = 0u32;
-        let _ = dec.into_legs(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut legs = dec.into_legs()?;
+        for e in &mut legs {
+            let e = e?;
             n += e.qty();
-            Ok(())
-        })?;
+        }
         assert_eq!(n, 3);
     "#,
     );
@@ -300,11 +304,13 @@ fn random_access_and_iterator_still_work() -> Result<(), Box<dyn std::error::Err
         }
         assert_eq!(n, 1);
         let mut n2 = 0usize;
-        let _ = car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+        let mut fuel = car.into_fuel_figures()?;
+        for e in &mut fuel {
+            let e = e?;
             n2 += 1;
             assert_eq!(e.speed(), 10);
-            e.into_usage_description().map(|(_, c)| c)
-        })?;
+            let _ = e.into_usage_description()?;
+        }
         assert_eq!(n2, 1);
     "#,
     );

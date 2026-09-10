@@ -87,10 +87,11 @@ let mut buf = &mut buf_storage[..body_len];
         assert_eq!(dec.symbol(), 42, "symbol");
 
         let mut bid_entries = Vec::new();
-        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut bids = dec.into_bids()?;
+        for e in &mut bids {
+            let e = e?;
             bid_entries.push((e.price(), e.qty()));
-            Ok(())
-        })?;
+        }
         assert_eq!(bid_entries.len(), 2, "expected 2 bids");
         assert_eq!(bid_entries[0].0, 100, "bid[0].price");
         assert_eq!(bid_entries[0].1, 10, "bid[0].qty");
@@ -98,10 +99,12 @@ let mut buf = &mut buf_storage[..body_len];
         assert_eq!(bid_entries[1].1, 20, "bid[1].qty");
 
         let mut ask_entries = Vec::new();
-        let after_asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut asks = bids.into_asks()?;
+        for e in &mut asks {
+            let e = e?;
             ask_entries.push((e.price(), e.qty()));
-            Ok(())
-        })?;
+        }
+        let after_asks = asks.finish()?;
         assert_eq!(ask_entries.len(), 1, "expected 1 ask");
         assert_eq!(ask_entries[0].0, 200, "ask[0].price");
         assert_eq!(ask_entries[0].1, 30, "ask[0].qty");
@@ -140,18 +143,20 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         assert_eq!(dec.symbol(), 99, "symbol");
 
         let mut be = Vec::new();
-        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut bids = dec.into_bids()?;
+        for e in &mut bids {
+            let e = e?;
             be.push(e.price());
-            Ok(())
-        })?;
+        }
         assert_eq!(be.len(), 1);
         assert_eq!(be[0], 10);
 
         let mut ae = Vec::new();
-        let _asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut asks = bids.into_asks()?;
+        for e in &mut asks {
+            let e = e?;
             ae.push(e.price());
-            Ok(())
-        })?;
+        }
         assert_eq!(ae.len(), 1);
         assert_eq!(ae[0], 20);
 
@@ -187,18 +192,21 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         assert_eq!(dec.symbol(), 7);
 
         let mut be = Vec::new();
-        let after_bids = dec.into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut bids = dec.into_bids()?;
+        for e in &mut bids {
+            let e = e?;
             be.push(e.price());
-            Ok(())
-        })?;
+        }
         assert_eq!(be.len(), 1);
         assert_eq!(be[0], 1);
 
         let mut ae = Vec::new();
-        let after_asks = after_bids.into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut asks = bids.into_asks()?;
+        for e in &mut asks {
+            let e = e?;
             ae.push(e.price());
-            Ok(())
-        })?;
+        }
+        let after_asks = asks.finish()?;
         assert_eq!(ae.len(), 1);
         assert_eq!(ae[0], 3);
         let (desc, _c) = after_asks.into_description()?;
@@ -422,10 +430,12 @@ let mut buf = &mut buf_storage[..body_len];
         assert_eq!(dec.prices(), 9999, "prices");
 
         let mut entry_vec = Vec::new();
-        let after_ents = dec.into_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
+        let mut ents = dec.into_entries()?;
+        for entry in &mut ents {
+            let entry = entry?;
             entry_vec.push((entry.key(), entry.value()));
-            Ok(())
-        })?;
+        }
+        let after_ents = ents.finish()?;
         assert_eq!(entry_vec.len(), 2, "expected 2 entries");
         assert_eq!(entry_vec[0].0, 1, "entry[0].key");
         assert_eq!(entry_vec[0].1, 10, "entry[0].value");
@@ -483,17 +493,19 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         assert_eq!(dec.id(), 42, "id");
 
         let mut record_vec = Vec::new();
-        let _ = dec.into_records(|r| -> Result<_, sbe_rt::DecodeError> {
+        let mut records = dec.into_records()?;
+        for r in &mut records {
+            let r = r?;
             let key = r.key();
             let value = r.value();
             let mut tags = Vec::new();
-            let complete = r.into_tags(|t| -> Result<(), sbe_rt::DecodeError> {
+            let mut tag_iter = r.into_tags()?;
+            for t in &mut tag_iter {
+                let t = t?;
                 tags.push((t.tag_id(), t.tag_val()));
-                Ok(())
-            })?;
+            }
             record_vec.push((key, value, tags));
-            Ok(complete)
-        })?;
+        }
         assert_eq!(record_vec.len(), 2, "expected 2 records");
 
         assert_eq!(record_vec[0].0, 100, "record[0].key");

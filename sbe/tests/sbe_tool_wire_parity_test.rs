@@ -502,37 +502,37 @@ fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(eng.booster().horse_power(), p.horse_power);
 
     let mut fuel_i = 0usize;
-    let after = car
-        .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let expected = &p.fuel[fuel_i];
-            assert_eq!(e.speed(), expected.speed);
-            assert_eq!(e.mpg().to_bits(), expected.mpg.to_bits());
-            let (usage, complete) = e.into_usage_description()?;
-            assert_eq!(usage, expected.usage);
-            fuel_i += 1;
-            Ok(complete)
-        })
-        .unwrap();
+    let mut fuel = car.into_fuel_figures().unwrap();
+    for e in &mut fuel {
+        let e = e.unwrap();
+        let expected = &p.fuel[fuel_i];
+        assert_eq!(e.speed(), expected.speed);
+        assert_eq!(e.mpg().to_bits(), expected.mpg.to_bits());
+        let (usage, _) = e.into_usage_description().unwrap();
+        assert_eq!(usage, expected.usage);
+        fuel_i += 1;
+    }
     assert_eq!(fuel_i, p.fuel.len());
 
     let mut perf_i = 0usize;
-    let after_p = after
-        .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let expected = &p.perf[perf_i];
-            assert_eq!(e.octane_rating(), expected.octane);
-            let mut acc_i = 0usize;
-            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
-                let exp = &expected.accel[acc_i];
-                assert_eq!(a.mph(), exp.mph);
-                assert_eq!(a.seconds().to_bits(), exp.seconds.to_bits());
-                acc_i += 1;
-                Ok(())
-            })?;
-            assert_eq!(acc_i, expected.accel.len());
-            perf_i += 1;
-            Ok(complete)
-        })
-        .unwrap();
+    let mut perf = fuel.into_performance_figures().unwrap();
+    for e in &mut perf {
+        let e = e.unwrap();
+        let expected = &p.perf[perf_i];
+        assert_eq!(e.octane_rating(), expected.octane);
+        let mut acc_i = 0usize;
+        let mut acc = e.into_acceleration().unwrap();
+        for a in &mut acc {
+            let a = a.unwrap();
+            let exp = &expected.accel[acc_i];
+            assert_eq!(a.mph(), exp.mph);
+            assert_eq!(a.seconds().to_bits(), exp.seconds.to_bits());
+            acc_i += 1;
+        }
+        assert_eq!(acc_i, expected.accel.len());
+        perf_i += 1;
+    }
+    let after_p = perf.finish().unwrap();
     assert_eq!(perf_i, p.perf.len());
     let (mfr, a1) = after_p.into_manufacturer().unwrap();
     assert_eq!(mfr, p.manufacturer);

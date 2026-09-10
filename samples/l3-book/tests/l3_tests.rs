@@ -957,7 +957,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
 // group, then a trailing var-data `symbol`. Reaching `symbol` means walking
 // past every order of every level.
 //
-// Sequential decode is the staged `into_*(|entry|)` chain (encoder dual).
+// Sequential decode is the staged `into_*` chain (encoder dual).
 // Random-access and memoized remain for any-order reads.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1077,8 +1077,8 @@ fn decode_random_access(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error:
 // ANCHOR_END: decode_random_access
 
 // ANCHOR: decode_staged
-/// Sequential decode — `into_*(|entry|)` / `skip_*`, one chain, compile-time
-/// order. Same idea as the encoder: do not bind intermediate stages.
+/// Sequential decode — `into_*` / `skip_*`, compile-time order. The group
+/// iterator is the stage: `into_asks` skips unread bids.
 fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
     let dec = L3BookDecoder::try_decode(wire, 0)?;
     let timestamp = dec.try_exchange_timestamp()?;
@@ -1087,35 +1087,33 @@ fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>
 
     let mut bids = Vec::new();
     let mut asks = Vec::new();
-    // One chain, schema order. Nested `into_orders` returns this level's
-    // completion stage — that is how the outer walk learns where the next
-    // level begins. `into_symbol_as_str` exists only after `asks`.
-    let (symbol, _complete) = dec
-        .into_bids(|level| -> Result<_, Box<dyn std::error::Error>> {
-            let price = level.try_price()?;
-            let size = level.try_size()?;
-            let mut orders = Vec::new();
-            let complete =
-                level.into_orders(|order| -> Result<(), Box<dyn std::error::Error>> {
-                    orders.push((order.order_id(), order.try_quantity()?));
-                    Ok(())
-                })?;
-            bids.push((price, size, orders));
-            Ok(complete)
-        })?
-        .into_asks(|level| -> Result<_, Box<dyn std::error::Error>> {
-            let price = level.try_price()?;
-            let size = level.try_size()?;
-            let mut orders = Vec::new();
-            let complete =
-                level.into_orders(|order| -> Result<(), Box<dyn std::error::Error>> {
-                    orders.push((order.order_id(), order.try_quantity()?));
-                    Ok(())
-                })?;
-            asks.push((price, size, orders));
-            Ok(complete)
-        })?
-        .into_symbol_as_str()?;
+    let mut bid_iter = dec.into_bids()?;
+    for level in &mut bid_iter {
+        let level = level?;
+        let price = level.try_price()?;
+        let size = level.try_size()?;
+        let mut orders = Vec::new();
+        let mut order_iter = level.into_orders()?;
+        for order in &mut order_iter {
+            let order = order?;
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        bids.push((price, size, orders));
+    }
+    let mut ask_iter = bid_iter.into_asks()?;
+    for level in &mut ask_iter {
+        let level = level?;
+        let price = level.try_price()?;
+        let size = level.try_size()?;
+        let mut orders = Vec::new();
+        let mut order_iter = level.into_orders()?;
+        for order in &mut order_iter {
+            let order = order?;
+            orders.push((order.order_id(), order.try_quantity()?));
+        }
+        asks.push((price, size, orders));
+    }
+    let (symbol, _complete) = ask_iter.into_symbol_as_str()?;
 
     Ok(Snapshot {
         timestamp,
@@ -1193,20 +1191,21 @@ fn best_bid_and_depth(wire: &[u8]) -> Result<(i64, u64, usize, &str), sbe_rt::De
     let mut total_orders = 0u64;
     let mut levels = 0usize;
 
-    let (symbol, _done) = L3BookDecoder::try_decode(wire, 0)?
-        .into_bids(|level| -> Result<_, sbe_rt::DecodeError> {
-            levels += 1;
-            let px = level.price_value().mantissa();
-            if px > best_bid {
-                best_bid = px;
-            }
-            level.into_orders(|_order| -> Result<(), sbe_rt::DecodeError> {
-                total_orders += 1;
-                Ok(())
-            })
-        })?
-        .skip_asks()?
-        .into_symbol_as_str()?;
+    let mut bid_iter = L3BookDecoder::try_decode(wire, 0)?.into_bids()?;
+    for level in &mut bid_iter {
+        let level = level?;
+        levels += 1;
+        let px = level.price_value().mantissa();
+        if px > best_bid {
+            best_bid = px;
+        }
+        let mut orders = level.into_orders()?;
+        for order in &mut orders {
+            let _ = order?;
+            total_orders += 1;
+        }
+    }
+    let (symbol, _done) = bid_iter.skip_asks()?.into_symbol_as_str()?;
 
     Ok((best_bid, total_orders, levels, symbol))
 }

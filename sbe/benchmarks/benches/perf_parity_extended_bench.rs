@@ -148,15 +148,14 @@ fn decode_group_with_data_ergon(buf: &[u8], msg_offset: usize, bl: usize, versio
     let dec = unsafe { TestMessage1Decoder::wrap_unchecked(buf, msg_offset, bl, version) };
     let tag1 = dec.tag1();
     let mut total = 0u32;
-    let _ = dec
-        .into_entries(|entry| -> Result<_, sbe_rt::DecodeError> {
-            let symbol = entry.tag_group1();
-            let tag2 = entry.tag_group2();
-            let (var, complete) = entry.into_var_data_field()?;
-            total = fold_group_entry(tag1, &symbol, tag2, var);
-            Ok(complete)
-        })
-        .expect("entries");
+    let mut entries = dec.into_entries().expect("entries");
+    for entry in &mut entries {
+        let entry = entry.expect("entry");
+        let symbol = entry.tag_group1();
+        let tag2 = entry.tag_group2();
+        let (var, _) = entry.into_var_data_field().expect("var");
+        total = fold_group_entry(tag1, &symbol, tag2, var);
+    }
     total
 }
 

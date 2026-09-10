@@ -125,19 +125,27 @@ fn generated_verify_dispatch_cursor_and_nested_decode_corpus_is_panic_free()
 
                 if verified.is_ok() {{
                     let message = L3BookDecoder::try_from(bytes.as_slice()).unwrap();
-                    let _ = message.into_bids(|level| -> Result<_, sbe_rt::DecodeError> {{
-                        level.into_orders(|order| -> Result<_, sbe_rt::DecodeError> {{
-                            let (_id, complete) = order.into_order_id()?;
-                            Ok(complete)
-                        }})
-                    }}).and_then(|after_bids| {{
-                        after_bids.into_asks(|level| -> Result<_, sbe_rt::DecodeError> {{
-                            level.into_orders(|order| -> Result<_, sbe_rt::DecodeError> {{
-                                let (_id, complete) = order.into_order_id()?;
-                                Ok(complete)
-                            }})
-                        }})
-                    }});
+                    let _ = (|| -> Result<(), sbe_rt::DecodeError> {{
+                        let mut bids = message.into_bids()?;
+                        for level in &mut bids {{
+                            let level = level?;
+                            let mut orders = level.into_orders()?;
+                            for order in &mut orders {{
+                                let order = order?;
+                                let (_id, _) = order.into_order_id()?;
+                            }}
+                        }}
+                        let mut asks = bids.into_asks()?;
+                        for level in &mut asks {{
+                            let level = level?;
+                            let mut orders = level.into_orders()?;
+                            for order in &mut orders {{
+                                let order = order?;
+                                let (_id, _) = order.into_order_id()?;
+                            }}
+                        }}
+                        Ok(())
+                    }})();
                 }}
             }});
             assert!(result.is_ok(), "hostile corpus case {{case}} panicked");

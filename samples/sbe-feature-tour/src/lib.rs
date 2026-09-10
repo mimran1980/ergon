@@ -10,8 +10,8 @@
 //! |------|---------|
 //! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
-//! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` groups → var-data) |
-//! | [`demo_car_visit_entries`] | Staged one-pass `into_*(|entry|)` group walk |
+//! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` iterators → var-data) |
+//! | [`demo_car_visit_entries`] | Staged `for entry in &mut iter` group walk |
 //! | [`demo_car_random_access`] | Random-access lane (any-order dynamic getters) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
@@ -274,21 +274,23 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.engine().capacity(), 2000);
     // ANCHOR_END: flyweight_access
 
-    // One chain, schema order: groups then var-data. Bind the strings, not
-    // intermediate group stages.
+    // Schema order: groups then var-data. The group iterator *is* the stage —
+    // `into_performance_figures` skips unread fuel figures if any remain.
     let mut speeds = Vec::new();
+    let mut figs = car.into_fuel_figures()?;
+    for entry in &mut figs {
+        let entry = entry?;
+        speeds.push(entry.speed());
+        let (_usage, _) = entry.into_usage_description()?;
+    }
     let mut octanes = Vec::new();
-    let (mfr, decoder) = car
-        .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-            speeds.push(entry.speed());
-            let (_usage, complete) = entry.into_usage_description()?;
-            Ok(complete)
-        })?
-        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-            octanes.push(entry.octane_rating());
-            entry.into_acceleration(|_| Ok(()))
-        })?
-        .into_manufacturer_as_str()?;
+    let mut perfs = figs.into_performance_figures()?;
+    for entry in &mut perfs {
+        let entry = entry?;
+        octanes.push(entry.octane_rating());
+        let _ = entry.into_acceleration()?;
+    }
+    let (mfr, decoder) = perfs.into_manufacturer_as_str()?;
     assert_eq!(speeds, vec![30, 60]);
     assert_eq!(octanes, vec![95]);
     let (model, decoder) = decoder.into_model_as_str()?;
@@ -306,17 +308,19 @@ pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 
     let mut speeds = Vec::new();
     let mut octanes = Vec::new();
-    let (mfr, car) = car
-        .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-            speeds.push(entry.speed());
-            let (_usage, complete) = entry.into_usage_description_as_str()?;
-            Ok(complete)
-        })?
-        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-            octanes.push(entry.octane_rating());
-            entry.into_acceleration(|_| Ok(()))
-        })?
-        .into_manufacturer_as_str()?;
+    let mut figs = car.into_fuel_figures()?;
+    for entry in &mut figs {
+        let entry = entry?;
+        speeds.push(entry.speed());
+        let (_usage, _) = entry.into_usage_description_as_str()?;
+    }
+    let mut perfs = figs.into_performance_figures()?;
+    for entry in &mut perfs {
+        let entry = entry?;
+        octanes.push(entry.octane_rating());
+        let _ = entry.into_acceleration()?;
+    }
+    let (mfr, car) = perfs.into_manufacturer_as_str()?;
     let (model, car) = car.into_model_as_str()?;
     let (code, _) = car.into_activation_code_as_str()?;
     assert_eq!(speeds, vec![30, 60]);
@@ -719,7 +723,7 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
     demo_car_decode_stages(&car)?;
     println!("   ok\n");
 
-    println!("3b) Car staged into_*(|entry|) walk");
+    println!("3b) Car staged iterator walk");
     demo_car_visit_entries(&car)?;
     println!("   ok\n");
 

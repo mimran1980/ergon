@@ -102,19 +102,20 @@ fn warm_up_all() {
 
     // Group + var-data iteration in wire order via the consuming stages
     // (settles per-entry/per-field lazy-inits).
-    let after_fuel = car
-        .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let _speed = e.speed();
-            let _mpg = e.mpg();
-            e.into_usage_description().map(|(_, c)| c)
-        })
-        .unwrap();
-    let after_perf = after_fuel
-        .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let _ = e.octane_rating();
-            e.into_acceleration(|_| Ok(()))
-        })
-        .unwrap();
+    let mut fuel = car.into_fuel_figures().unwrap();
+    for e in &mut fuel {
+        let e = e.unwrap();
+        let _speed = e.speed();
+        let _mpg = e.mpg();
+        let _ = e.into_usage_description().unwrap();
+    }
+    let mut perf = fuel.into_performance_figures().unwrap();
+    for e in &mut perf {
+        let e = e.unwrap();
+        let _ = e.octane_rating();
+        let _ = e.into_acceleration().unwrap();
+    }
+    let after_perf = perf.finish().unwrap();
     let (_mfr, a1) = after_perf.into_manufacturer().unwrap();
     let (_mod, _a2) = a1.into_model().unwrap();
 
@@ -254,12 +255,12 @@ fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     measure("group iteration", || {
         let mut count = 0u64;
-        let _ = car
-            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-                count += u64::from(entry.speed());
-                entry.into_usage_description().map(|(_, c)| c)
-            })
-            .unwrap();
+        let mut fuel = car.into_fuel_figures().unwrap();
+        for entry in &mut fuel {
+            let entry = entry.unwrap();
+            count += u64::from(entry.speed());
+            let _ = entry.into_usage_description().unwrap();
+        }
         black_box(count);
     });
     Ok(())

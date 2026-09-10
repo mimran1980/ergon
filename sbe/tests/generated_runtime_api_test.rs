@@ -200,12 +200,13 @@ fn any_message_lane_accessors_exist_only_for_messages_with_tails()
         assert_eq!(memo.y(), 99);
 
         let mut n = 0u32;
-        let _ = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed()
+        let mut legs = AnyMessage::try_decode(&tbuf[..actual], 0)?.into_tailed()
             .ok_or("expected Tailed")?
-            .into_legs(|e| -> Result<(), sbe_rt::DecodeError> {
-                n += e.qty();
-                Ok(())
-            })?;
+            .into_legs()?;
+        for e in &mut legs {
+            let e = e?;
+            n += e.qty();
+        }
         assert_eq!(n, 7);
 
         assert!(AnyMessage::try_decode(&fbuf[..flen], 0)?.into_tailed_memoized().is_none());
