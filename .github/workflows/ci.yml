@@ -105,7 +105,7 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -133,8 +133,12 @@ jobs:
     needs: gate
     runs-on: ubuntu-24.04
     # llvm-cov re-runs the ergo-sbe compile-and-run suite under
-    # instrumentation. 30m cancelled the 0.1.23 job mid-run.
-    timeout-minutes: 120
+    # instrumentation. Was 30 (cancelled the 0.1.23 job mid-run), then 120;
+    # cancelled again at 120m on 2026-09-06 once the uninstrumented `test`
+    # job itself had grown past 2 hours (see that job's timeout comment) —
+    # instrumentation overhead on top of a suite that size no longer fits.
+    # Bump again when it recurs; do not shrink it back down.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,7 +185,7 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -322,7 +326,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '21'

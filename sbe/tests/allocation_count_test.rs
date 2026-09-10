@@ -102,18 +102,19 @@ fn warm_up_all() {
 
     // Group + var-data iteration in wire order via the consuming stages
     // (settles per-entry/per-field lazy-inits).
-    let mut fuel = car.into_fuel_figures().unwrap();
-    for entry in fuel.by_ref() {
-        let e = entry.unwrap();
-        let _speed = e.speed();
-        let _mpg = e.mpg();
-        let _desc = e.usage_description();
-    }
-    let mut perf = fuel.finish().unwrap().into_performance_figures().unwrap();
-    for entry in perf.by_ref() {
-        let _ = entry.unwrap().octane_rating();
-    }
-    let after_perf = perf.finish().unwrap();
+    let after_fuel = car
+        .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let _speed = e.speed();
+            let _mpg = e.mpg();
+            e.into_usage_description().map(|(_, c)| c)
+        })
+        .unwrap();
+    let after_perf = after_fuel
+        .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+            let _ = e.octane_rating();
+            e.into_acceleration(|_| Ok(()))
+        })
+        .unwrap();
     let (_mfr, a1) = after_perf.into_manufacturer().unwrap();
     let (_mod, _a2) = a1.into_model().unwrap();
 
@@ -121,18 +122,6 @@ fn warm_up_all() {
     let _ = cached.activation_code();
     let _ = cached.manufacturer();
     let _ = cached.fuel_figures();
-
-    let mut ordered = CarDecoder::try_from(BASELINE).unwrap().ordered();
-    ordered
-        .fuel_figures()
-        .unwrap()
-        .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-            let _ = entry.speed();
-            let _ = entry.usage_description()?;
-            Ok(())
-        })
-        .unwrap();
-    let _ = ordered.finish().unwrap();
 
     // Frame cursor — actually unwrap and inspect to settle lazy-inits
     let msg = AnyMessage::decode_frame(BASELINE, 0, BASELINE.len()).unwrap();
@@ -261,37 +250,16 @@ fn memoized_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 #[serial(alloc_count)]
-fn mutable_ordered_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
-    measure("mutable ordered decode", || {
-        let mut car = CarDecoder::try_from(black_box(BASELINE)).unwrap().ordered();
-        black_box(car.serial_number());
-        car.fuel_figures()
-            .unwrap()
-            .visit_entries(|entry| -> Result<(), sbe_rt::DecodeError> {
-                black_box(entry.speed());
-                black_box(entry.usage_description()?);
-                Ok(())
-            })
-            .unwrap();
-        car.performance_figures().unwrap().skip_remaining().unwrap();
-        black_box(car.manufacturer().unwrap());
-        black_box(car.model().unwrap());
-        black_box(car.activation_code().unwrap());
-        black_box(car.finish().unwrap().encoded_length_with_header());
-    });
-    Ok(())
-}
-
-#[test]
-#[serial(alloc_count)]
 fn group_iteration_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(BASELINE).unwrap();
-    let mut ff = car.into_fuel_figures().unwrap();
     measure("group iteration", || {
         let mut count = 0u64;
-        for entry in ff.by_ref() {
-            count += u64::from(entry.unwrap().speed());
-        }
+        let _ = car
+            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                count += u64::from(entry.speed());
+                entry.into_usage_description().map(|(_, c)| c)
+            })
+            .unwrap();
         black_box(count);
     });
     Ok(())
@@ -380,13 +348,9 @@ fn vardata_decode_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(BASELINE).unwrap();
     measure("var-data decode", || {
         let (mfr, a1) = car
-            .into_fuel_figures()
+            .skip_fuel_figures()
             .unwrap()
-            .finish()
-            .unwrap()
-            .into_performance_figures()
-            .unwrap()
-            .finish()
+            .skip_performance_figures()
             .unwrap()
             .into_manufacturer()
             .unwrap();

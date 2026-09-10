@@ -19,8 +19,7 @@ book/src/samples/l3-book.md:90 — deliberate; {{#include}} of the l3-book sampl
 book/src/samples/l3-book.md:96 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:106 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:115 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/samples/l3-book.md:127 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/samples/l3-book.md:144 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:132 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context
@@ -49,7 +48,7 @@ book/src/sbe/design-notes/nullval.md:90 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:104 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:10 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:51 — deliberate; see page context
-book/src/sbe/feature-tour/decode-stages.md:126 — deliberate; names generated CarDecoder types that do not exist in the book harness
+book/src/sbe/feature-tour/decode-stages.md:192 — deliberate; names generated CarDecoder types that do not exist in the book harness
 book/src/sbe/feature-tour/generated-code.md:7 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:47 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:101 — deliberate; see page context
@@ -65,6 +64,7 @@ book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
 book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
+book/src/sbe/getting-started/method-chaining.md:53 — deliberate; names generated L3BookDecoder types that do not exist in the book harness
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context

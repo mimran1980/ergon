@@ -148,7 +148,7 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         let decoder = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(decoder.timestamp(), 12345, "timestamp");
         assert_eq!(decoder.sequence(), 1, "sequence");
-        let mut bids = decoder.into_bids().unwrap();
+        let mut bids = decoder.bids().unwrap();
         let bid_levels: Vec<_> = bids.by_ref().collect();
         assert_eq!(bid_levels.len(), 2, "expected 2 bid levels");
         let b0 = bid_levels[0].as_ref().unwrap();
@@ -160,7 +160,7 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         let o0 = b0_order_entries[0].as_ref().unwrap();
         assert_eq!(o0.order_qty(), 5, "bid[0].order[0].qty");
         assert_eq!(o0.order_id().unwrap(), b"ORD-001", "bid[0].order[0].id");
-        let asks = bids.finish().unwrap().into_asks().unwrap();
+        let asks = decoder.asks().unwrap();
         let ask_levels: Vec<_> = asks.collect();
         assert_eq!(ask_levels.len(), 1, "expected 1 ask level");
         let a0 = ask_levels[0].as_ref().unwrap();
@@ -255,7 +255,7 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
         let encoded = complete.as_bytes_with_header();
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 999);
-        let levels: Vec<_> = dec.into_bids().unwrap().collect();
+        let levels: Vec<_> = dec.bids().unwrap().collect();
         assert_eq!(levels.len(), 1);
         let l0 = levels[0].as_ref().unwrap();
         assert_eq!(l0.price(), 100);
@@ -326,7 +326,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
         let dec = L3BookDecoder::try_from(encoded).unwrap();
         assert_eq!(dec.timestamp(), 555);
         assert_eq!(dec.sequence(), 42);
-        let mut bids = dec.into_bids().unwrap();
+        let mut bids = dec.bids().unwrap();
         let bid_levels: Vec<_> = bids.by_ref().collect();
         assert_eq!(bid_levels.len(), 1);
         let b0 = bid_levels[0].as_ref().unwrap();
@@ -341,7 +341,7 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let expected = format!("ORDER-{:02}", i);
             assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "bid order {} id", i);
         }
-        let asks = bids.finish().unwrap().into_asks().unwrap();
+        let asks = dec.asks().unwrap();
         let ask_levels: Vec<_> = asks.collect();
         assert_eq!(ask_levels.len(), 1);
         let a0 = ask_levels[0].as_ref().unwrap();

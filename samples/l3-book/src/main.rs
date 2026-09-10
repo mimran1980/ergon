@@ -156,15 +156,15 @@ fn example_4_depth3() -> Result<(), Box<dyn std::error::Error>> {
     println!("  {dec}");
 
     // Verify ragged structure.
-    let mut lvl = dec.into_levels()?;
+    let mut lvl = dec.levels()?;
     let l1 = lvl.next().transpose()?.unwrap();
-    let mut it1 = l1.into_items()?;
+    let mut it1 = l1.items()?;
     assert_eq!(it1.next().transpose()?.unwrap().tag_as_str()?, "A");
     assert_eq!(it1.next().transpose()?.unwrap().tag_as_str()?, "BB");
     assert!(it1.next().is_none());
 
     let l2 = lvl.next().transpose()?.unwrap();
-    let mut it2 = l2.into_items()?;
+    let mut it2 = l2.items()?;
     assert_eq!(it2.next().transpose()?.unwrap().tag_as_str()?, "CCC");
     assert!(it2.next().is_none());
     assert!(lvl.next().is_none());

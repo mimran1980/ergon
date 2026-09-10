@@ -224,8 +224,6 @@ pub(crate) const DECODER_RESERVED: &[&str] = &[
     "acting_block_length",
     // Consuming stage transition (self → Self) when the message has tails.
     "rewind",
-    // Mutable ordered-decoder conversion.
-    "ordered",
     // Memoized-lane conversion, on the base decoder.
     "memoized",
     // Inherent methods on `{Name}MemoizedDecoder`. Fixed fields are forwarded
