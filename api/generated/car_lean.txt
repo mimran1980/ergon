@@ -173,6 +173,12 @@
 # [must_use = "length builder must be completed"] struct CarEncodedLengthComplete {  }
 # [must_use = "length builder must be consumed"] struct CarEncodedLength {  }
 # [must_use = "memoized() returns a new decoder; the original is consumed"] CarDecoder::fn memoized (self) -> CarMemoizedDecoder < 'a >
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrdered< 'a > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrderedActivationCode< 'a > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrderedFuelFigures< 'a > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrderedManufacturer< 'a > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrderedModel< 'a > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] struct CarDecoderOrderedPerformanceFigures< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarFuelFiguresRaggedBuilder< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresAccelerationRaggedBuilder< 'a > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct CarPerformanceFiguresRaggedBuilder< 'a > {  }
@@ -206,10 +212,14 @@
 # [must_use] FuelFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (FuelFiguresEntryEncoder < 'b > ,) -> Result < FuelFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 # [must_use] FuelFiguresEntryEncoder::fn usage_description (mut self , data : & [u8] ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
 # [must_use] FuelFiguresEntryEncoder::fn usage_description_as_str (self , src : & str ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
+# [must_use] PerformanceFiguresAccelerationDecoderIter::const fn entry_block_length (& self) -> usize
 # [must_use] PerformanceFiguresAccelerationEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
 # [must_use] PerformanceFiguresAccelerationEncoder::fn start_entry (& mut self ,) -> Result < PerformanceFiguresAccelerationEntryEncoder < '_ > , sbe_rt :: EncodeError >
 # [must_use] PerformanceFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresEntryEncoder < 'b > ,) -> Result < PerformanceFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 # [must_use] PerformanceFiguresEntryEncoder::fn acceleration < F > (mut self , count : u16 , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
+# [must_use] sbe_rt::EntryInfo::const fn is_last (& self) -> bool
+# [must_use] sbe_rt::EntryInfo::const fn remaining (& self) -> usize
 # [repr (transparent)] struct Booster { 0: [u8 ; 2] }
 # [repr (transparent)] struct Engine { 0: [u8 ; 10] }
 # [repr (transparent)] struct GroupSizeEncoding { 0: [u8 ; 4] }
@@ -242,6 +252,7 @@ CarDecoder::fn manufacturer_len (& self) -> Result < usize , sbe_rt :: DecodeErr
 CarDecoder::fn model (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 CarDecoder::fn model_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
 CarDecoder::fn model_len (& self) -> Result < usize , sbe_rt :: DecodeError >
+CarDecoder::fn ordered (self) -> CarDecoderOrdered < 'a >
 CarDecoder::fn performance_figures_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 CarDecoder::fn rewind (self) -> Self
 CarDecoder::fn skip_fuel_figures (self ,) -> Result < CarDecoderAfterFuelFigures < 'a > , sbe_rt :: DecodeError >
@@ -286,6 +297,16 @@ CarDecoderAfterPerformanceFigures::fn try_manufacturer < E , F > (self , f : F ,
 CarDecoderAfterPerformanceFigures::unsafe fn into_manufacturer_as_str_unchecked (self ,) -> Result < (& 'a str , CarDecoderAfterManufacturer < 'a >) , sbe_rt :: DecodeError >
 CarDecoderComplete::const fn acting_block_length (& self) -> usize
 CarDecoderComplete::const fn acting_version (& self) -> u16
+CarDecoderOrdered::fn fixed < E , F > (self , f : F) -> Result < Self , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& CarDecoder < 'a >) -> Result < () , E > ,
+CarDecoderOrdered::fn fuel_figures < E , F > (self , mut f : F ,) -> Result < CarDecoderOrderedFuelFigures < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (FuelFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < FuelFiguresEntryDecoderComplete < 'a > , E > ,
+CarDecoderOrderedActivationCode::fn done (self) -> CarDecoderComplete < 'a >
+CarDecoderOrderedFuelFigures::fn performance_figures < E , F > (self , mut f : F ,) -> Result < CarDecoderOrderedPerformanceFigures < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , E > ,
+CarDecoderOrderedManufacturer::fn model < E , F > (self , f : F) -> Result < CarDecoderOrderedModel < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
+CarDecoderOrderedManufacturer::fn model_as_str < E , F > (self , f : F) -> Result < CarDecoderOrderedModel < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
+CarDecoderOrderedModel::fn activation_code < E , F > (self , f : F ,) -> Result < CarDecoderOrderedActivationCode < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
+CarDecoderOrderedModel::fn activation_code_as_str < E , F > (self , f : F ,) -> Result < CarDecoderOrderedActivationCode < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
+CarDecoderOrderedPerformanceFigures::fn manufacturer < E , F > (self , f : F) -> Result < CarDecoderOrderedManufacturer < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
+CarDecoderOrderedPerformanceFigures::fn manufacturer_as_str < E , F > (self , f : F ,) -> Result < CarDecoderOrderedManufacturer < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
 CarEncodedLength::const ACTIVATIONCODE_PREFIX: usize
 CarEncodedLength::const BLOCK_LENGTH: usize
 CarEncodedLength::const FUELFIGURES_USAGEDESCRIPTION_PREFIX: usize
@@ -536,6 +557,7 @@ sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize
 sbe_rt::struct Attached {  }
 sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
+sbe_rt::struct EntryInfo { index: usize, count: usize, block_length: usize }
 sbe_rt::struct FieldsFixed {  }
 sbe_rt::struct FieldsUnfixed {  }
 sbe_rt::struct HeaderAbsent {  }

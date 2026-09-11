@@ -11,6 +11,7 @@
 //! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
 //! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` iterators → var-data) |
+//! | [`demo_car_ordered_lane`] | Ordered lane: one callback per tail, with `EntryInfo` |
 //! | [`demo_car_visit_entries`] | Non-advancing `*_count` / `*_len`, then a partial `&mut iter` walk |
 //! | [`demo_car_random_access`] | Random-access lane (any-order dynamic getters) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
@@ -335,6 +336,55 @@ pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 // ANCHOR_END: demo_car_visit_entries
+
+/// Ordered lane: one callback per tail, in wire order, same spelling at every
+/// tail. A façade over the staged stages — same single traversal.
+// ANCHOR: demo_car_ordered_lane
+pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut speeds = Vec::new();
+    let mut octanes = Vec::new();
+    let mut text = Vec::new();
+
+    let done = CarDecoder::try_decode(wire, 0)?
+        .ordered()
+        .fixed(|car| -> Result<(), sbe_rt::DecodeError> {
+            assert_eq!(car.serial_number(), 1234);
+            Ok(())
+        })?
+        .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+            // `info` carries the position the wire declares.
+            assert_eq!(info.count, 2);
+            assert_eq!(info.is_last(), info.index == 1);
+            speeds.push(entry.speed());
+            entry.into_usage_description().map(|(_usage, done)| done)
+        })?
+        .performance_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
+            octanes.push(entry.octane_rating());
+            // Nested tails still use the staged entry stages.
+            entry.into_acceleration()?.finish()
+        })?
+        .manufacturer_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+            text.push(s.to_owned());
+            Ok(())
+        })?
+        .model_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+            text.push(s.to_owned());
+            Ok(())
+        })?
+        .activation_code_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+            text.push(s.to_owned());
+            Ok(())
+        })?
+        .done();
+
+    assert_eq!(speeds, vec![30, 60]);
+    assert_eq!(octanes, vec![95]);
+    assert_eq!(text, vec!["Honda", "Civic VTi", "abcdef"]);
+    // `done()` hands back the staged complete stage, so extents still work.
+    assert_eq!(done.encoded_length_with_header(), wire.len());
+    Ok(())
+}
+// ANCHOR_END: demo_car_ordered_lane
 
 /// Random-access lane: dynamic getters may be called in any order.
 // ANCHOR: demo_car_random_access
@@ -731,6 +781,7 @@ pub fn run_all() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("3b) Car staged iterator walk");
     demo_car_visit_entries(&car)?;
+    demo_car_ordered_lane(&car)?;
     println!("   ok\n");
 
     println!("3c) Car random-access lane");

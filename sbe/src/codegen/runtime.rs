@@ -34,6 +34,43 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 boundary_calcs: core::cell::Cell<u32>,
             }
 
+            /// Position of a group entry within its group, handed to every
+            /// ordered-lane entry callback.
+            ///
+            /// `count` is the wire-declared `numInGroup` and `block_length`
+            /// the group's acting block length, so both are known before the
+            /// walk starts. A group's total *byte* length is not: for entries
+            /// carrying their own tails it is only settled by traversing them.
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            pub struct EntryInfo {
+                /// Zero-based position of this entry within the group.
+                pub index: usize,
+                /// Wire-declared number of entries in this group.
+                pub count: usize,
+                /// Acting block length of one entry's fixed block.
+                pub block_length: usize,
+            }
+
+            impl EntryInfo {
+                /// True for the first entry of the group.
+                #[inline]
+                #[must_use]
+                pub const fn is_first(&self) -> bool { self.index == 0 }
+                /// True for the last entry the wire declares.
+                #[inline]
+                #[must_use]
+                pub const fn is_last(&self) -> bool { self.index + 1 == self.count }
+                /// Entries after this one, per the wire-declared count.
+                ///
+                /// Saturating: `EntryInfo` is a public struct, so an
+                /// independently constructed value must not panic here.
+                #[inline]
+                #[must_use]
+                pub const fn remaining(&self) -> usize {
+                    self.count.saturating_sub(self.index + 1)
+                }
+            }
+
             /// Debug-only counters for the memoized random-access prototype.
             #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
             pub struct DecodeCacheStats {

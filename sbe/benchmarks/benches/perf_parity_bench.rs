@@ -956,27 +956,40 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     booster.boost_type(),
                     booster.horse_power(),
                 ));
-                let after_perf = car
-                    .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-                        black_box((entry.speed(), entry.mpg()));
+                // The ordered lane, not a second copy of the staged one:
+                // same fields, same traversal, one callback per tail.
+                car.ordered()
+                    .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+                        black_box((entry.speed(), entry.mpg(), info.index));
                         let (usage, complete) = entry.into_usage_description()?;
                         black_box(usage);
                         Ok(complete)
                     })
                     .unwrap()
-                    .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-                        black_box(entry.octane_rating());
+                    .performance_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+                        black_box((entry.octane_rating(), info.index));
                         let mut acc = entry.into_acceleration()?;
                         for a in &mut acc {
                             black_box((a.mph(), a.seconds()));
                         }
                         acc.finish()
                     })
+                    .unwrap()
+                    .manufacturer(|mfr| -> Result<(), sbe_rt::DecodeError> {
+                        black_box(mfr);
+                        Ok(())
+                    })
+                    .unwrap()
+                    .model(|model| -> Result<(), sbe_rt::DecodeError> {
+                        black_box(model);
+                        Ok(())
+                    })
+                    .unwrap()
+                    .activation_code(|code| -> Result<(), sbe_rt::DecodeError> {
+                        black_box(code);
+                        Ok(())
+                    })
                     .unwrap();
-                let (mfr, a1) = after_perf.into_manufacturer().unwrap();
-                let (model, a2) = a1.into_model().unwrap();
-                let (code, _done) = a2.into_activation_code().unwrap();
-                black_box((mfr, model, code));
             }
         });
     });

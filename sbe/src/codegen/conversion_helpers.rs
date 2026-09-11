@@ -224,8 +224,9 @@ pub(crate) const DECODER_RESERVED: &[&str] = &[
     "acting_block_length",
     // Consuming stage transition (self → Self) when the message has tails.
     "rewind",
-    // Memoized-lane conversion, on the base decoder.
+    // Lane conversions on the base decoder.
     "memoized",
+    "ordered",
     // Inherent methods on `{Name}MemoizedDecoder`. Fixed fields are forwarded
     // onto that type by `forward_fixed_fields` under the same names they have
     // on the base decoder, so a field colliding with any of these breaks the
@@ -301,16 +302,22 @@ pub(crate) fn resolve_field_ident(
     syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
-/// Accessor names an owner's fixed fields already occupy, after `_wire` and
-/// `_field` resolution.
+/// Accessor names an owner already occupies: its fixed fields (after `_wire`
+/// and `_field` resolution), its groups, and its var-data.
+///
+/// Sibling tails belong in this set, not only fields. A group named
+/// `ordersCount` spells exactly the method that the count accessor for a group
+/// named `orders` wants, so checking fields alone still lets two definitions
+/// of `orders_count` reach the same `impl`.
 ///
 /// Pass `reserved` exactly as the owner's own emission site passes it:
 /// [`DECODER_RESERVED`] for message decoders and the memoized wrapper, and an
 /// empty slice for group entries, which do not rename.
-pub(crate) fn field_accessor_names(
+pub(crate) fn owner_accessor_names<'n>(
     fields: &[MessageField],
     conversions: &[crate::ConversionSelector],
     reserved: &[&str],
+    tail_names: impl IntoIterator<Item = &'n str>,
 ) -> Vec<String> {
     fields
         .iter()
@@ -320,6 +327,11 @@ pub(crate) fn field_accessor_names(
                 field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
             resolve_field_ident(&snake, &wire_name, reserved).to_string()
         })
+        .chain(
+            tail_names
+                .into_iter()
+                .map(crate::codegen::runtime::to_snake_case),
+        )
         .collect()
 }
 

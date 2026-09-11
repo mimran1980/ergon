@@ -11,8 +11,8 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    enum_uses_null_as_option, field_accessor_names, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes, tail_accessor_ident,
+    enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
+    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -1430,7 +1430,15 @@ pub(crate) fn generate_group_decoder(
     // Entry field accessor names. Group entries do not rename against the
     // static reserved list, so the empty slice matches how their fixed
     // accessors are emitted above.
-    let taken_entry_accessors = field_accessor_names(&g.fields, conversions, &[]);
+    let taken_entry_accessors = owner_accessor_names(
+        &g.fields,
+        conversions,
+        &[],
+        g.groups
+            .iter()
+            .map(|ng| ng.name.as_str())
+            .chain(g.var_data.iter().map(|v| v.name.as_str())),
+    );
 
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;

@@ -4,9 +4,24 @@
 
 ### SBE codec gate — `just bench`
 
-Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
-ceiling with zero tolerance** for both SBE and cluster. The
-executable policy is in `scripts/check-bench-gate.sh`.
+Ratios are ergon / sbe-tool. The project target is **`1.00`**, enforced with
+**zero tolerance**: `check-bench-gate.sh` fails on `ratio > ceiling + tolerance`
+with both `SBE_TOLERANCE` and `CLUSTER_TOLERANCE` set to `0`, so there is no
+slack beyond a comparison's ceiling.
+
+The ceiling itself is per-comparison, and is not `1.00` everywhere. The current
+executable gate has these explicit exceptions:
+
+| Comparison | no-LTO ceiling | LTO ceiling |
+|---|---:|---:|
+| SBE `optional_enum_nullify` | 1.01 | 1.00 |
+| Cluster session-message-header decode | 1.01 | 1.01 |
+| Cluster session-event decode | 1.05 | 1.01 |
+| All other maintained comparisons | 1.00 | 1.00 |
+
+These allowances already exist in the script and its tests. A gate pass alone
+therefore does not prove every ratio meets the `1.00` target; inspect the
+actual ratios and profile-specific ceilings printed by the run.
 
 Do not copy point estimates into this file. Current results live in
 provenance-stamped artifacts under `target/bench-runs/<run-id>/`. Quote a
@@ -23,17 +38,12 @@ lto = true
 codegen-units = 1
 ```
 
-Generated codecs are many small `#[inline]` methods spread across a generated
-module, and the decode path is dominated by wrapper construction and field
-address arithmetic that only fully collapses across codegen units. With LTO the
-generated code inlines into the caller and ergon's margin over sbe-tool is at
-its widest across every maintained scenario. Without it the margin narrows, and
-on the tightest scenario — `optional_enum_nullify`, a memory-bound two-byte-enum
-load with almost no work to hide — the two codecs land at parity.
-
-That is a profile recommendation, not a defect: ergon's own timing is stable
-across both profiles. Both profiles remain blocking gates precisely so this
-stays visible rather than being papered over by LTO.
+LTO gives the optimizer more scope across crate boundaries. Public generated
+hot-path methods also carry `#[inline]` so downstream crates can optimize calls
+without LTO. The effect depends on the schema, access pattern, compiler, and
+surrounding application; this profile does not by itself establish parity or
+a speed advantage. Measure both profiles. Both remain required by the
+maintained gate.
 
 ### Prior cycle notes
 
@@ -78,13 +88,10 @@ methods carry explicit inline intent; ergon's group entry setters now carry
 the same intent (fixed after a prior defect where LTO-off ergon lost to
 sbe-tool for want of `#[inline]`).
 
-Ranking, `just bench-groups`: `bulk_add` is the fastest generated write path
-for both primitive and `Decimal`-composite entries, ahead of `add_struct` and
-the `add_closure` path, with sbe-tool consistently the slowest across both
-profiles. On the owned-DTO diagnostic (unequal work vs. sbe-tool — checked
-buffer entry plus schema min/max validation per field, so not presented as a
-direct ratio), `bulk_add_domain` substantially reduces latency versus the
-prior per-entry `add` path in both profiles.
+`just bench-groups` compares `bulk_add`, `add_struct`, and `add_closure`
+against sbe-tool for primitive and `Decimal`-composite entries in both
+profiles. Read the current results to establish their ranking. The owned-DTO
+diagnostic does additional validation and is not an equal-work sbe-tool ratio.
 
 This diagnostic is unprovenanced: unlike the gated `just bench` / `just
 bench-cluster` suites, `group_encode_bench` / `group_encode_decimal_bench` do
@@ -100,14 +107,21 @@ Every gated ergon/sbe-tool pair uses the same header mode on both arms:
 | Gate | Mode | ergon | sbe-tool |
 |------|------|-------|----------|
 | encode/scalar header+body | full wire | `wrap_and_apply_header` + 2 fields | `wrap(8)` + `header(0).parent()` + 2 fields |
-| encode/scalar body only | body only | `wrap(0)` + 2 fields | `wrap(8)` + 2 fields, no header |
+| encode/scalar body only | body only | `wrap_unchecked(0)` + 2 fields | `wrap(8)` + 2 fields, no header |
 | encode/throughput 10k | full wire | apply-header + 2 fields | wrap+header+parent + 2 fields |
 | wire_parity encode full | full wire | apply-header + full Car | wrap+header+parent + full Car |
 | decode scalar/array/composite | accessors only | prebuilt decoder | prebuilt decoder |
-| decode entry wrap | body wrap | `wrap(…, 8, …)` | body decoder at `msg+8` |
+| decode entry wrap | unchecked fixed extent | `wrap_unchecked(buf, msg, bl, ver)` | body decoder at `msg+8` |
 | decode full / batch 10k | body wrap + same fields | same | same |
 | cluster encode (all 3+claim) | **body only** | `wrap(0)` + fields | `wrap(8)` + fields, no header |
 | cluster decode | extent wrap + same field reads | `wrap(buf, 0, block, version)` | `wrap(ReadBuf, 8, block, version)` — no header identity |
+
+The ergon constructor tier deliberately varies by row and is not a
+transcription slip: each arm matches the checking its sbe-tool counterpart
+does in that mode. `header+body` pairs ergon's capacity-checked
+`wrap_and_apply_header` against sbe-tool's `parent()` Result; `body only`
+pairs `wrap_unchecked` against sbe-tool's unchecked `wrap`. Making the column
+uniform would break the pairing, not improve it.
 
 Diagnostics (encode_style, encode_bench, l2_book, group_decimal DTO arms,
 throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
@@ -431,9 +445,10 @@ Capture immutable numbers in a release artifact when a particular release needs
 a benchmark record; refresh the **Latest run** table after material hot-path
 work.
 
-## Benchmark-only APIs
+## Unchecked constructors
 
-The `unsafe` unchecked constructor lane exists for explicit comparison
-work. Application code should use checked generated entry points for untrusted
-buffers and reserve trusted-buffer methods for data whose complete bounds have
-already been established.
+The `unsafe` unchecked constructor lane is a supported opt-in for callers
+that independently establish its safety requirements. Maintained benchmarks
+use it to match the unchecked reference's constructor work. Application code
+should use `try_*` constructors for untrusted input; changing the constructor
+failure contract does not eliminate dynamic-tail validation.

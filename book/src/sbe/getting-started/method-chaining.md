@@ -43,15 +43,18 @@ For the full Car example with groups and var-data, see the
 
 ## Decoding
 
-Sequential decode is **one consume per tail**, and it is still one chain. The
-shape of the group decides how you spell the step:
+Sequential decode consumes each tail in wire order. The current API has
+different spellings for groups and var-data, so a complete walk can need
+iterator and tuple bindings:
 
 | Group entries | `into_<group>` gives you | Why |
 |---|---|---|
 | Carry their own groups or var-data | a visit closure, returning the entry's completion | no stride — the completion *is* where the next entry starts |
 | Fixed-stride (no tails of their own) | an iterator, `for e in &mut iter` | the next entry is `offset + block length`, so nothing has to be measured |
 
-Var-data always returns `(payload, next)`, because the bytes are the result.
+Var-data `into_<name>()` returns `(payload, next)`. Text fields also offer
+`into_<name>_as_str()`, with strict validation and the same tuple shape.
+These borrowed payloads can be retained while advancing later stages.
 
 **Prefer:**
 
@@ -61,5 +64,21 @@ Var-data always returns `(payload, next)`, because the bytes are the result.
 
 *(Real code from the `sbe-feature-tour` sample. `fuelFigures` and
 `performanceFigures` entries carry tails, so they take closures;
-`acceleration` is fixed-stride, so it is an iterator — both spellings in one
-chain.)*
+`acceleration` is fixed-stride, so it is an iterator.)*
+
+When the payload is processed inside a callback, `try_<name>(|bytes| ...)`
+returns the next stage directly. This existing byte API keeps consecutive
+var-data fields in one expression:
+
+```rust,no_run
+{{#include ../../../examples/car-decode-closures.rs:var_data_callbacks}}
+```
+
+The callback returns `Result<(), E>` where `E: From<DecodeError>`. Its bytes
+are scoped to the callback; use `into_<name>()` when retaining a borrowed
+slice. There is currently no `try_<name>_as_str` callback companion: use the
+strict tuple-returning accessor for schema-declared text.
+
+The generated staged walk advances once through dynamic tails. Random-access
+getters used before that walk, including counts or lengths for later tails,
+can add scans. See [Keeping the walk single-pass](../feature-tour/decode-stages.md#keeping-the-walk-single-pass).

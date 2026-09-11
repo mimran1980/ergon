@@ -1,5 +1,11 @@
-//! Verify that `check-bench-gate.sh` tolerance constants match the
-//! documented policy: SBE and cluster both use a literal 1.00 ceiling.
+//! Verify that `check-bench-gate.sh` tolerance constants match the documented
+//! policy: zero tolerance, i.e. no slack beyond a comparison's ceiling.
+//!
+//! Tolerance and ceiling are distinct. The gate fails on
+//! `ratio > ceiling + tolerance`; these tests pin `tolerance` at zero. The
+//! ceiling is per-comparison and the project target of `1.00` has three
+//! documented exceptions — see the table in `book/src/sbe/benchmarks.md` and
+//! the allowlist in `sbe/benchmarks/tests/bench_gate_test.rs`.
 #![allow(clippy::expect_used, clippy::literal_string_with_formatting_args)]
 
 #[test]

@@ -411,15 +411,17 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
     ] {
         assert!(src.contains(renamed), "missing rename: {renamed}");
     }
-    // A field named `ordered` keeps that name now that the conversion is gone.
+    // `ordered` is a reserved decoder method name again: the callback lane put
+    // `ordered()` back on the base decoder, so a field of that name renames,
+    // exactly as one named `memoized` always has.
     assert!(
-        src.contains("fn ordered(") && !src.contains("fn ordered_field("),
-        "field named ordered must stay ordered(), not ordered_field()"
+        src.contains("fn ordered_field("),
+        "field named ordered must rename to ordered_field()"
     );
     assert!(src.contains("pub fn memoized(self)"), "memoized() lost");
     assert!(
-        !src.contains("pub fn ordered(self)"),
-        "ordered() conversion must not exist"
+        src.contains("pub fn ordered(self)"),
+        "ordered() lane conversion must exist on the base decoder"
     );
 
     compile_and_run(
@@ -443,7 +445,7 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         // Base lane: renamed getters, real lane conversions.
         let dec = MsgDecoder::try_decode(&buf[..len], 0)?;
         assert_eq!(dec.memoized_field(), 1);
-        assert_eq!(dec.ordered(), 5);
+        assert_eq!(dec.ordered_field(), 5);
 
         // Memoized lane: same renamed getters plus the real wrapper methods.
         let memo = MsgDecoder::try_decode(&buf[..len], 0)?.memoized();
@@ -451,7 +453,7 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         assert_eq!(memo.inner_field(), 2);
         assert_eq!(memo.into_inner_field(), 3);
         assert_eq!(memo.decode_cache_stats_field(), 4);
-        assert_eq!(memo.ordered(), 5);
+        assert_eq!(memo.ordered_field(), 5);
         assert_eq!(memo.label()?, b"abc");
         assert_eq!(memo.inner().memoized_field(), 1);
         let _ = memo.decode_cache_stats();

@@ -580,9 +580,11 @@ fn iterator_surface_body(encode_extra: bool) -> String {
             let written = ({encode})?.encoded_length_with_header();
             assert_eq!(written, length);
             let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
-            // Depth 0 is a statement block, not a closure body, so the
-            // shared walk's tail expression is bound and typed here.
-            let _: Result<_, sbe_rt::DecodeError> = (|| {{ {decode} }})();
+            // Depth 0 is a statement block, not a closure body, so the shared
+            // walk's tail expression is typed here. `?` on the result is
+            // load-bearing: binding it to `_` let a decoding failure pass.
+            let _stage: IteratorSurfaceDecoderComplete<'_> =
+                (|| -> Result<_, sbe_rt::DecodeError> {{ {decode} }})()?;
 
             // A partially read iterator still reaches the next tail: into_* /
             // finish() skip unread entries.

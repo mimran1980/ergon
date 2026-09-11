@@ -14,7 +14,7 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, enum_uses_null_as_option, field_accessor_names, field_has_conversion_free,
+    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names,
     resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
@@ -1153,7 +1153,15 @@ pub(crate) fn generate_message_decoder(
 
     // Fixed-field accessor names, so a tail-derived `<group>_count` /
     // `<field>_len` never defines a method the fields already define.
-    let taken_accessor_names = field_accessor_names(&msg.fields, conversions, DECODER_RESERVED);
+    let taken_accessor_names = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
 
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
@@ -1183,7 +1191,10 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {}
         };
-        let absent_len = super::tail_stages::absent_tail_length(g.since_version, &super::tail_stages::own_acting_version());
+        let absent_len = super::tail_stages::absent_tail_length(
+            g.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
         // Omitted when a fixed field already defines this name — see
         // `tail_accessor_ident`.
         if let Some(count_ident) =
@@ -1213,7 +1224,10 @@ pub(crate) fn generate_message_decoder(
     let mut vd_idx = msg.groups.len();
     for vd in &msg.var_data {
         let accessor = quote::format_ident!("{}", to_snake_case(&vd.name));
-        let absent_len = super::tail_stages::absent_tail_length(vd.since_version, &super::tail_stages::own_acting_version());
+        let absent_len = super::tail_stages::absent_tail_length(
+            vd.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
         if let Some(len_ident) =
             tail_accessor_ident(&to_snake_case(&vd.name), "len", &taken_accessor_names)
         {

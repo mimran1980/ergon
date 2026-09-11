@@ -63,6 +63,9 @@
 # [must_use] AnyMessage::fn into_common_message (self) -> Option < CommonMessageDecoder < 'a > >
 # [must_use] CommonMessageEncoder::fn fixed (mut self , fixed : & CommonMessageFixedFields ,) -> CommonMessageEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] CommonMessageEncoder::fn raw_fixed (self) -> CommonMessageRawFixedWriter < 'a >
+# [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
+# [must_use] sbe_rt::EntryInfo::const fn is_last (& self) -> bool
+# [must_use] sbe_rt::EntryInfo::const fn remaining (& self) -> usize
 # [non_exhaustive] enum AnyMessage< 'a >
 # [repr (transparent)] struct Decimal { 0: [u8 ; 9] }
 # [repr (transparent)] struct GroupSizeEncoding { 0: [u8 ; 4] }
@@ -209,6 +212,7 @@ sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize
 sbe_rt::struct Attached {  }
 sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
+sbe_rt::struct EntryInfo { index: usize, count: usize, block_length: usize }
 sbe_rt::struct FieldsFixed {  }
 sbe_rt::struct FieldsUnfixed {  }
 sbe_rt::struct HeaderAbsent {  }

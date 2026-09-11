@@ -20,7 +20,7 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, field_accessor_names, field_has_conversion_free, find_domain_type,
+    DECODER_RESERVED, field_has_conversion_free, find_domain_type, owner_accessor_names,
     resolve_field_ident, tail_accessor_ident,
 };
 use super::converter_impls::is_optional_domain_field;
@@ -151,7 +151,15 @@ pub(crate) fn generate_memoized_decoder(
 
     // The memoized wrapper forwards fixed fields under the same names the base
     // decoder gives them, so it inherits the same taken-accessor set.
-    let taken_accessor_names = field_accessor_names(&msg.fields, conversions, DECODER_RESERVED);
+    let taken_accessor_names = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
     let inner_acting_version = quote::quote! { self.inner.acting_version };
 
     // Group getters: identical names, cached tail starts.
@@ -167,9 +175,7 @@ pub(crate) fn generate_memoized_decoder(
         }
         let absent_count =
             super::tail_stages::absent_tail_length(g.since_version, &inner_acting_version);
-        if let Some(count_ident) =
-            tail_accessor_ident(&g_snake, "count", &taken_accessor_names)
-        {
+        if let Some(count_ident) = tail_accessor_ident(&g_snake, "count", &taken_accessor_names) {
             impl_body.extend(quote::quote! {
                 /// Wire-declared entry count without advancing this decoder.
                 #[inline]

@@ -574,6 +574,22 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
             }
         });
+        // Dimension read for the ordered lane's *dynamic* branch, which has no
+        // iterator to ask: `(count, block_length)` without advancing. Always
+        // emitted — unlike the public `<group>_count()`, this one cannot be
+        // suppressed by a name collision, because the `__sbe_` prefix is not
+        // reachable from any schema element name.
+        let dim_helper = quote::format_ident!("__sbe_{}_dim", tg.accessor_snake);
+        let stage_dim = quote::quote! {
+            #[doc(hidden)]
+            #[inline]
+            pub(crate) fn #dim_helper(&self) -> Result<(usize, usize), sbe_rt::DecodeError> {
+                let group_start = #se;
+                // SAFETY: same proof as `into_*` / `skip_*` on this stage.
+                let inner = unsafe { #versioned_wrap };
+                Ok((inner.remaining_entries(), inner.acting_block_length))
+            }
+        };
 
         if tg.entries_have_tails {
             let entry_complete_ident =
@@ -693,6 +709,13 @@ pub(crate) fn generate_owner_consuming_stages(
                     pub const fn remaining_entries(&self) -> usize {
                         self.inner.remaining_entries()
                     }
+                    /// Acting block length of one entry, from the group's
+                    /// dimension header.
+                    #[inline]
+                    #[must_use]
+                    pub const fn entry_block_length(&self) -> usize {
+                        self.inner.acting_block_length
+                    }
                     /// Skip any unread entries and return the following decoder stage.
                     #[inline]
                     pub fn finish(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
@@ -735,6 +758,42 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
             }
         });
+        // Entries with tails have no stride, so the end of the group is only
+        // knowable by walking them. Fixed-stride entries all occupy the acting
+        // block length, so the end is `count * block_length` — one multiply and
+        // one bounds check instead of a loop that the optimiser does not
+        // collapse.
+        let skip_all_body = if tg.entries_have_tails {
+            quote::quote! {
+                let mut offset = self.offset;
+                let mut remaining = self.count;
+                let block_len = self.acting_block_length;
+                while remaining > 0 {
+                    offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
+                    remaining -= 1;
+                }
+                Ok(self.into_parent_stage(offset))
+            }
+        } else {
+            quote::quote! {
+                let span = self
+                    .count
+                    .checked_mul(self.acting_block_length)
+                    .ok_or(sbe_rt::DecodeError::BufferTooShort {
+                        field: #g_name_lit,
+                        needed: usize::MAX,
+                        available: self.buf.len().saturating_sub(self.offset),
+                    })?;
+                let end = self.offset.checked_add(span).filter(|e| *e <= self.buf.len()).ok_or(
+                    sbe_rt::DecodeError::BufferTooShort {
+                        field: #g_name_lit,
+                        needed: span,
+                        available: self.buf.len().saturating_sub(self.offset),
+                    },
+                )?;
+                Ok(self.into_parent_stage(end))
+            }
+        };
         ts.extend(quote::quote! {
             impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                 #[inline]
@@ -761,18 +820,12 @@ pub(crate) fn generate_owner_consuming_stages(
                     // failed to decode, so the next stage would be built at a
                     // meaningless offset. Return the stored error instead.
                     #poisoned_finish_guard
-                    let mut offset = self.offset;
-                    let mut remaining = self.count;
-                    let block_len = self.acting_block_length;
-                    while remaining > 0 {
-                        offset = #entry_decoder_ident::skip(self.buf, offset, block_len, self.acting_version)?;
-                        remaining -= 1;
-                    }
-                    Ok(self.into_parent_stage(offset))
+                    #skip_all_body
                 }
             }
             impl<'a> #current_stage<'a> {
                 #stage_count
+                #stage_dim
                 /// Consume this stage, advance past the next group without
                 /// visiting any entry, and return the following stage.
                 #[inline]
@@ -811,7 +864,8 @@ pub(crate) fn generate_owner_consuming_stages(
             );
             if ng.entries_have_tails {
                 let next_entry = syn::Ident::new(&ng.entry_decoder_ident, span);
-                let next_complete = syn::Ident::new(&format!("{}Complete", ng.entry_decoder_ident), span);
+                let next_complete =
+                    syn::Ident::new(&format!("{}Complete", ng.entry_decoder_ident), span);
                 next_tail.extend(quote::quote! {
                     #[doc = #into_doc]
                     #[inline]
@@ -973,8 +1027,8 @@ pub(crate) fn generate_decoder_consuming_stages(
             }
         })
         .collect();
-    generate_owner_consuming_stages(
-        initial_ident,
+    let mut ts = generate_owner_consuming_stages(
+        initial_ident.clone(),
         &stage_prefix,
         header_size,
         byte_order,
@@ -982,7 +1036,16 @@ pub(crate) fn generate_decoder_consuming_stages(
         &vardata,
         enable_dispatch,
         true,
-    )
+    );
+    // Message level only: entries reach their nested tails through the staged
+    // entry stages, which already give one callback per tail.
+    ts.extend(generate_ordered_lane(
+        &initial_ident,
+        &stage_prefix,
+        &groups,
+        &vardata,
+    ));
+    ts
 }
 
 /// Entry-level consuming tail stages for a group whose entries have nested
@@ -1044,4 +1107,232 @@ pub(crate) fn generate_entry_consuming_stages(
         enable_dispatch,
         false,
     )
+}
+
+/// Ordered lane: one callback per tail, in wire order, over the staged stages.
+///
+/// The staged lane spells a group two ways because the shapes genuinely differ.
+/// The ordered lane offers one spelling for callers who want the whole message
+/// in order and would rather write the same thing at every tail: every group
+/// takes `FnMut(Entry, EntryInfo)`, every var-data takes `FnOnce(&[u8])`. It
+/// owns no cursor of its own — each method delegates to the staged stage it
+/// wraps, so the one-pass property and the compile-time ordering come from
+/// there rather than being re-implemented.
+///
+/// Entries that carry their own tails still return their completion stage from
+/// the callback: that completion *is* where the next entry starts, and giving
+/// it up would mean pre-scanning every entry.
+pub(crate) fn generate_ordered_lane(
+    initial_ident: &syn::Ident,
+    stage_prefix: &str,
+    groups: &[OwnerTailGroup],
+    vardata: &[OwnerTailVarData],
+) -> proc_macro2::TokenStream {
+    let total_tail = groups.len() + vardata.len();
+    if total_tail == 0 {
+        return proc_macro2::TokenStream::new();
+    }
+    let span = proc_macro2::Span::call_site();
+    let field_pascals: Vec<String> = groups
+        .iter()
+        .map(|g| g.field_pascal.clone())
+        .chain(vardata.iter().map(|v| v.field_pascal.clone()))
+        .collect();
+
+    let staged_stage =
+        |i: usize| decoder_stage_after_ident(stage_prefix, &field_pascals[i], i, total_tail, span);
+    let ordered_ident = syn::Ident::new(&format!("{stage_prefix}Ordered"), span);
+    let ordered_stage =
+        |i: usize| syn::Ident::new(&format!("{stage_prefix}Ordered{}", field_pascals[i]), span);
+
+    let mut ts = proc_macro2::TokenStream::new();
+
+    // Stage 0 wraps the base decoder; every later stage wraps its staged peer.
+    ts.extend(quote::quote! {
+        /// Ordered decode lane — one callback per tail, in wire order.
+        ///
+        /// Reached with [`Self::inner`]'s `ordered()`. Each method consumes
+        /// this stage and returns the next, so the compiler enforces tail
+        /// order exactly as the staged lane does.
+        #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+        pub struct #ordered_ident<'a> {
+            inner: #initial_ident<'a>,
+        }
+        impl<'a> #initial_ident<'a> {
+            /// Walk the whole message in wire order with one callback per tail.
+            ///
+            /// A façade over the staged `into_*` / `skip_*` stages: same single
+            /// traversal, same compile-time ordering, one uniform spelling.
+            #[inline]
+            pub fn ordered(self) -> #ordered_ident<'a> {
+                #ordered_ident { inner: self }
+            }
+        }
+        impl<'a> #ordered_ident<'a> {
+            /// Read the fixed block before any tail. Does not advance.
+            #[inline]
+            pub fn fixed<E, F>(self, f: F) -> Result<Self, E>
+            where
+                E: From<sbe_rt::DecodeError>,
+                F: FnOnce(&#initial_ident<'a>) -> Result<(), E>,
+            {
+                f(&self.inner)?;
+                Ok(self)
+            }
+        }
+    });
+    for i in 0..total_tail {
+        let stage = ordered_stage(i);
+        let staged = staged_stage(i);
+        ts.extend(quote::quote! {
+            /// Ordered decode stage — the tail named by this type has been read.
+            #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+            pub struct #stage<'a> {
+                inner: #staged<'a>,
+            }
+        });
+    }
+    // Terminal stage hands the staged complete back, so extent helpers and
+    // full-frame byte views stay reachable without a second set of methods.
+    let last = ordered_stage(total_tail - 1);
+    let last_staged = staged_stage(total_tail - 1);
+    ts.extend(quote::quote! {
+        impl<'a> #last<'a> {
+            /// The completed staged decoder, for extent and byte-range helpers.
+            #[inline]
+            pub fn done(self) -> #last_staged<'a> { self.inner }
+        }
+    });
+
+    for (i, tg) in groups.iter().enumerate() {
+        let current: syn::Ident = if i == 0 {
+            ordered_ident.clone()
+        } else {
+            ordered_stage(i - 1)
+        };
+        let next = ordered_stage(i);
+        let method = syn::Ident::new(&tg.accessor_snake, span);
+        let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
+        let entry_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
+        let dim_helper = quote::format_ident!("__sbe_{}_dim", tg.accessor_snake);
+        let doc = format!(
+            " Visit every `{}` entry in wire order, then advance to the next tail.\n\n\
+             The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying\n\
+             its index, the wire-declared count, and the acting block length.\n\
+             Empty groups invoke it zero times.",
+            tg.accessor_snake
+        );
+        let body = if tg.entries_have_tails {
+            let complete_ident =
+                syn::Ident::new(&format!("{}Complete", tg.entry_decoder_ident), span);
+            quote::quote! {
+                #[doc = #doc]
+                ///
+                /// These entries carry tails of their own, so the callback
+                /// returns the entry's completion — that is where the next
+                /// entry starts, so nothing is scanned twice.
+                #[inline]
+                pub fn #method<E, F>(self, mut f: F) -> Result<#next<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnMut(#entry_ident<'a>, sbe_rt::EntryInfo) -> Result<#complete_ident<'a>, E>,
+                {
+                    let (count, block_length) = self.inner.#dim_helper()?;
+                    let mut index = 0usize;
+                    let inner = self.inner.#into_ident(|entry| {
+                        let info = sbe_rt::EntryInfo { index, count, block_length };
+                        index += 1;
+                        f(entry, info)
+                    })?;
+                    Ok(#next { inner })
+                }
+            }
+        } else {
+            quote::quote! {
+                #[doc = #doc]
+                ///
+                /// These entries have a fixed stride, so the callback returns
+                /// `()` — there is no tail to complete.
+                #[inline]
+                pub fn #method<E, F>(self, mut f: F) -> Result<#next<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnMut(#entry_ident<'a>, sbe_rt::EntryInfo) -> Result<(), E>,
+                {
+                    // No pre-read: the iterator itself carries the count and
+                    // the stride, so this adds nothing to the staged walk.
+                    let mut iter = self.inner.#into_ident()?;
+                    let count = iter.remaining_entries();
+                    let block_length = iter.entry_block_length();
+                    let mut index = 0usize;
+                    for entry in &mut iter {
+                        f(entry, sbe_rt::EntryInfo { index, count, block_length })?;
+                        index += 1;
+                    }
+                    let inner = iter.finish()?;
+                    Ok(#next { inner })
+                }
+            }
+        };
+        ts.extend(quote::quote! { impl<'a> #current<'a> { #body } });
+    }
+
+    for (vi, vd) in vardata.iter().enumerate() {
+        let i = groups.len() + vi;
+        let current: syn::Ident = if i == 0 {
+            ordered_ident.clone()
+        } else {
+            ordered_stage(i - 1)
+        };
+        let next = ordered_stage(i);
+        let method = syn::Ident::new(&vd.accessor_snake, span);
+        let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
+        let doc = format!(
+            " Read `{}` as bytes, then advance to the next tail.",
+            vd.accessor_snake
+        );
+        ts.extend(quote::quote! {
+            impl<'a> #current<'a> {
+                #[doc = #doc]
+                #[inline]
+                pub fn #method<E, F>(self, f: F) -> Result<#next<'a>, E>
+                where
+                    E: From<sbe_rt::DecodeError>,
+                    F: FnOnce(&'a [u8]) -> Result<(), E>,
+                {
+                    let (bytes, inner) = self.inner.#into_ident()?;
+                    f(bytes)?;
+                    Ok(#next { inner })
+                }
+            }
+        });
+        // Strict text callback, only where the schema declares an encoding.
+        if super::runtime::text_encoding_kind(vd.character_encoding.as_deref()).is_some() {
+            let str_method = syn::Ident::new(&format!("{}_as_str", vd.accessor_snake), span);
+            let into_str = syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
+            let str_doc = format!(
+                " Read `{}` as `&str`, then advance to the next tail.\n\n\
+                 Validation covers this field only — there is no whole-message\n\
+                 text pass. Invalid text is an error, never a sentinel.",
+                vd.accessor_snake
+            );
+            ts.extend(quote::quote! {
+                impl<'a> #current<'a> {
+                    #[doc = #str_doc]
+                    #[inline]
+                    pub fn #str_method<E, F>(self, f: F) -> Result<#next<'a>, E>
+                    where
+                        E: From<sbe_rt::DecodeError>,
+                        F: FnOnce(&'a str) -> Result<(), E>,
+                    {
+                        let (text, inner) = self.inner.#into_str()?;
+                        f(text)?;
+                        Ok(#next { inner })
+                    }
+                }
+            });
+        }
+    }
+
+    ts
 }

@@ -4,8 +4,10 @@
 
 > Did compile-time wire-order enforcement cost anything on the hot path?
 
-**No.** Named stage structs and marker generics are zero-sized compile-time
-constructs. Every transition is a **move** of the same three runtime fields:
+Stage identity adds no runtime tag. The named structs themselves are not
+zero-sized: they carry buffer and cursor state. Marker types such as
+`HeaderPresent` are zero-sized. A transition moves the state into the next
+concrete type; for an encoder this is schematically:
 
 ```rust,ignore
 (buf, msg_offset, pos)  +  PhantomData / zero-sized stage identity
@@ -14,8 +16,9 @@ constructs. Every transition is a **move** of the same three runtime fields:
 There is no heap allocation, no vtable, no enum discriminant on the wire path,
 and no extra branch for “which stage am I in?” — the stage is in the **type**,
 so the methods that exist are exactly the ones legal at that point in the
-schema. Generated machine code is identical in shape to a single-struct
-encoder with the same field writes.
+schema. Inlining can remove the intermediate moves. Decoder stages additionally
+carry acting version and block length, and dynamic group callbacks check that
+the returned completion belongs to the supplied entry.
 
 Benchmarks that show “no difference vs a single struct / vs sbe-tool at the
 1.00 ceiling” are therefore the **expected proof** that the abstraction is
@@ -23,9 +26,10 @@ zero-cost — not a lucky accident and not a reason to doubt the design. If a
 type-state transition ever showed up as a measurable cost under a fair,
 amplified, dual-LTO comparison, that would be a codegen defect.
 
-All maintained SBE parity scenarios pass at or below the strict `1.00×`
-sbe-tool ceiling under **both** LTO-on and LTO-off profiles. Methodology and
-ceilings: [Benchmarks](../benchmarks.md).
+The project performance target is `1.00×` sbe-tool under **both** LTO-on
+and LTO-off profiles. Whether a particular revision passes requires a fresh
+run; the type-state design alone does not prove it. Methodology and evidence
+locations: [Benchmarks](../benchmarks.md).
 
 ## Type-state = multiple named structs
 
