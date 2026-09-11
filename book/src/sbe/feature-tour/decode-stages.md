@@ -4,11 +4,9 @@ A decoder for a message with groups or variable-data has **two jobs**
 (a fixed-block message has [exactly one](#fixed-block-messages-have-exactly-one-lane)):
 read some fields in any order, or walk the whole message once in schema
 order. Those jobs share the wire and the values; they differ in how order is
-enforced and what each dynamic-tail access costs. The standard group
-`Iterator` remains for random-access / partial traversal. It is not a
-third message-decoding lane: `Iterator::next()` must learn the next entry
-position before yielding a dynamic entry, so it is not the sequential fast
-path.
+enforced and what each dynamic-tail access costs. The group decoder reached
+from a random-access getter implements `Iterator` for partial traversal; it is
+not a third message-decoding lane, and it does not advance a staged cursor.
 
 ## Encoding: one state machine
 
@@ -38,7 +36,7 @@ about — which is what the rest of this page is about.
 | Lane | Entry point | Ordering | Dynamic-tail cost | `Sync` |
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
-| Staged | `into_*` / `skip_*` | Compile time | One wire-order pass; the group iterator is the stage | yes |
+| Staged | `into_*` / `skip_*` | Compile time | One pass; the cursor is carried forward, never re-derived | yes |
 
 Fixed fields stay random-access in both. Groups and variable-data must be
 consumed in schema order on the staged lane. `.memoized()` is still
@@ -75,13 +73,13 @@ is small enough that "default, plus benchmark if you're unsure" is the right
 starting posture, not a premature switch to something else.
 
 **The staged lane (`into_*` / `skip_*`) is sequential decode, the same idea
-as encode.** Each `into_*` consumes the current stage. For a group, the
-iterator *is* the stage: `for entry in &mut iter { let entry = entry?; }` yields entries, and a following
-`into_*` / `skip_*` / `finish()` skips unread entries and continues. The
-type system — not a runtime check, and not `&mut` — makes reading out of
-order a compile error. That ownership transfer is what buys back the
-performance random access gives up: each tail is walked exactly once. See
-[Staged](#staged-into_--skip_) below — it is the sample crate, not a sketch.
+as encode.** Each `into_*` consumes the current stage and returns the next
+one, so the type system — not a runtime check, and not `&mut` — makes
+reading out of order a compile error. A group's step is spelled one of two
+ways depending on whether its entries have a stride; both walk the group
+exactly once, and that is what buys back the performance random access gives
+up. See [Staged](#staged-into_--skip_) below — it is the sample crate, not a
+sketch.
 
 **Memoized (`decoder.memoized()`) is the slowest lane and exists for one
 specific shape of problem: the same decoder instance gets handed to several
@@ -101,7 +99,7 @@ first; see [Memoized](#memoized-decodermemoized) below for the
 | If you want… | Use |
 |---|---|
 | Some fields, any order, share `&Decoder` | Random access (the default) |
-| The whole message in wire order | Staged `into_*` — iterator is the stage, compile-time order |
+| The whole message in wire order | Staged `into_*` — one chain, compile-time order |
 | The same decoder passed to many functions that each read tails in a different order | Memoized (`decoder.memoized()`) — benchmark it, don't reach for it by default |
 
 For a worked example that puts random-access and staged side by side over one
@@ -255,12 +253,27 @@ pure overhead.
 
 ## Staged (`into_*` / `skip_*`)
 
-Maximum safety and the expected maximum-performance sequential path — and
-the encoder dual. Ownership and generated stage types make a later tail
-unreachable until the current one is consumed. `into_bids()` returns the
-iterator; `Iterator` is implemented only for `&mut Iter` so
-`for entry in iter` cannot drop the rest of the message. Prefer
-`for entry in &mut iter { let entry = entry?; }`.
+Maximum safety and the maximum-performance sequential path — and the encoder
+dual. Ownership and generated stage types make a later tail unreachable until
+the current one is consumed.
+
+**The shape of a group decides how `into_<group>` is spelled**, because the
+shape decides what it costs to know where an entry ends:
+
+| Group entries | `into_<group>` | Why |
+|---|---|---|
+| Carry their own groups or var-data | takes a visit closure that returns the entry's completion | These entries have no stride. The completion the closure hands back *is* the next entry's offset, so the group is walked exactly once. |
+| Fixed-stride (no tails of their own) | returns an iterator | The next entry is `offset + acting block length`. Nothing has to be measured, so a plain `Iterator` costs nothing. |
+
+That split is not cosmetic. An iterator over dynamic entries would have to
+resolve each entry's extent *before* yielding it — `Iterator::next` cannot
+learn where an entry ended from the entry it already gave away — and your own
+walk of that entry's tail would traverse it a second time. The closure exists
+precisely so that never happens.
+
+Fixed-stride iterators implement `Iterator` for `&mut Iter` and never for
+`Iter`, so `for entry in iter` does not compile and a loop cannot drop the
+rest of the message. They are also `ExactSizeIterator` and `FusedIterator`.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_decode_stages}}
@@ -280,11 +293,29 @@ stage without `into_*` / `skip_*` / `finish()` **silently skips** remaining
 wire tails (groups and var-data). That is easy to miss when a function
 returns early — prefer advancing until `Complete` or an explicit skip.
 
-### `for entry in &mut iter`
+### Partial walks and `finish()`
 
-Every staged group yields `Result<Entry>`, so the loop is one shape.
-Empty groups yield nothing; skipping is `skip_fuel_figures()` or
-`iter.finish()`.
+A fixed-stride iterator does not have to be drained. Read what you need and
+move on — `finish()`, or the next tail's `into_*` / `skip_*` called straight
+on the iterator, skips whatever is unread. Because the stride is known, that
+skip is arithmetic, not a walk. Empty groups yield nothing.
+
+### Asking before walking
+
+Sizing a `Vec`, logging a count, or deciding whether a tail is worth
+reading should not cost you the stage. These accessors read the wire and
+return without advancing anything:
+
+| Accessor | Answers | Where |
+|----------|---------|-------|
+| `<group>_count()` | wire-declared entry count | base decoder, `.memoized()`, every stage that precedes the group, and group entries for nested groups |
+| `<field>_len()` | var-data byte length | same four places |
+| `iter.remaining_entries()` | entries this iterator has not yielded yet | the group iterator |
+
+All three are `Result` — the wire is still validated — and all three return
+`0` for a tail that is absent at the acting version. `remaining_entries()`
+is a wire declaration, not a decode promise: for a dynamic group a
+malformed entry can still end iteration early.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_visit_entries}}
@@ -293,16 +324,19 @@ Empty groups yield nothing; skipping is `skip_fuel_figures()` or
 **Advantages**
 
 - Wrong order is a compile error (missing method on this stage)
-- One pass; no offset rescan
-- Expected fastest sequential decode; maintained benches require it ≤ sbe-tool
+- One pass, every shape: the cursor is carried forward, so no tail is ever
+  measured and then walked again
+- Fastest sequential decode; maintained benches require it ≤ sbe-tool
 
 **Disadvantages**
 
 - Stage types appear in signatures; you cannot hold “the decoder” and pick
   tails later
 - Skipping a tail requires an explicit `skip_*`
-- `for entry in iter` (by value) does not compile — iterate `&mut iter` so
-  the rest of the message is not dropped
+- Two spellings to learn, closure and iterator, decided by the group's shape
+  rather than by preference
+- A closure error consumes the stage and returns no continuation — there is
+  nothing to retry from a consuming lane
 
 ## Full-frame bytes mid-walk
 

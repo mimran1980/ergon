@@ -89,7 +89,6 @@ let mut buf = &mut buf_storage[..body_len];
         let mut bid_entries = Vec::new();
         let mut bids = dec.into_bids()?;
         for e in &mut bids {
-            let e = e?;
             bid_entries.push((e.price(), e.qty()));
         }
         assert_eq!(bid_entries.len(), 2, "expected 2 bids");
@@ -101,7 +100,6 @@ let mut buf = &mut buf_storage[..body_len];
         let mut ask_entries = Vec::new();
         let mut asks = bids.into_asks()?;
         for e in &mut asks {
-            let e = e?;
             ask_entries.push((e.price(), e.qty()));
         }
         let after_asks = asks.finish()?;
@@ -145,7 +143,6 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         let mut be = Vec::new();
         let mut bids = dec.into_bids()?;
         for e in &mut bids {
-            let e = e?;
             be.push(e.price());
         }
         assert_eq!(be.len(), 1);
@@ -154,7 +151,6 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         let mut ae = Vec::new();
         let mut asks = bids.into_asks()?;
         for e in &mut asks {
-            let e = e?;
             ae.push(e.price());
         }
         assert_eq!(ae.len(), 1);
@@ -194,7 +190,6 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         let mut be = Vec::new();
         let mut bids = dec.into_bids()?;
         for e in &mut bids {
-            let e = e?;
             be.push(e.price());
         }
         assert_eq!(be.len(), 1);
@@ -203,7 +198,6 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         let mut ae = Vec::new();
         let mut asks = bids.into_asks()?;
         for e in &mut asks {
-            let e = e?;
             ae.push(e.price());
         }
         let after_asks = asks.finish()?;
@@ -432,7 +426,6 @@ let mut buf = &mut buf_storage[..body_len];
         let mut entry_vec = Vec::new();
         let mut ents = dec.into_entries()?;
         for entry in &mut ents {
-            let entry = entry?;
             entry_vec.push((entry.key(), entry.value()));
         }
         let after_ents = ents.finish()?;
@@ -493,19 +486,17 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         assert_eq!(dec.id(), 42, "id");
 
         let mut record_vec = Vec::new();
-        let mut records = dec.into_records()?;
-        for r in &mut records {
-            let r = r?;
+        dec.into_records(|r| -> Result<_, sbe_rt::DecodeError> {
             let key = r.key();
             let value = r.value();
             let mut tags = Vec::new();
             let mut tag_iter = r.into_tags()?;
             for t in &mut tag_iter {
-                let t = t?;
                 tags.push((t.tag_id(), t.tag_val()));
             }
             record_vec.push((key, value, tags));
-        }
+            tag_iter.finish()
+        })?;
         assert_eq!(record_vec.len(), 2, "expected 2 records");
 
         assert_eq!(record_vec[0].0, 100, "record[0].key");

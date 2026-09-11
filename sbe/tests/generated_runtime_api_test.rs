@@ -204,7 +204,6 @@ fn any_message_lane_accessors_exist_only_for_messages_with_tails()
             .ok_or("expected Tailed")?
             .into_legs()?;
         for e in &mut legs {
-            let e = e?;
             n += e.qty();
         }
         assert_eq!(n, 7);

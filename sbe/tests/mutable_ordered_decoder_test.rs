@@ -124,24 +124,22 @@ fn remaining_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::E
         let s_year = staged.model_year();
         let s_code = staged.code();
         let s_eng = staged.engine().capacity();
-        let mut fuel = staged.into_fuel_figures()?;
-        for entry in &mut fuel {
-            let entry = entry?;
-            let speed = entry.speed();
-            let (usage, _) = entry.into_usage_description_as_str()?;
-            s_fuel.push((speed, usage.to_owned()));
-        }
-        let mut perf = fuel.into_performance_figures()?;
-        for entry in &mut perf {
-            let entry = entry?;
-            s_octane.push(entry.octane_rating());
-            let mut acc = entry.into_acceleration()?;
-            for a in &mut acc {
-                let a = a?;
-                s_acc.push((a.mph(), a.seconds().to_bits()));
-            }
-        }
-        let (s_mfr, staged) = perf.into_manufacturer_as_str()?;
+        let (s_mfr, staged) = staged
+            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                let speed = entry.speed();
+                let (usage, done) = entry.into_usage_description_as_str()?;
+                s_fuel.push((speed, usage.to_owned()));
+                Ok(done)
+            })?
+            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                s_octane.push(entry.octane_rating());
+                let mut acc = entry.into_acceleration()?;
+                for a in &mut acc {
+                    s_acc.push((a.mph(), a.seconds().to_bits()));
+                }
+                acc.finish()
+            })?
+            .into_manufacturer_as_str()?;
         let (s_model, staged) = staged.into_model_as_str()?;
         let (s_code_vd, _) = staged.into_activation_code_as_str()?;
 
@@ -235,7 +233,6 @@ fn schema_field_named_ordered_is_the_getter() -> Result<(), Box<dyn std::error::
         let mut n = 0u32;
         let mut legs = dec.into_legs()?;
         for e in &mut legs {
-            let e = e?;
             n += e.qty();
         }
         assert_eq!(n, 3);
@@ -304,13 +301,11 @@ fn random_access_and_iterator_still_work() -> Result<(), Box<dyn std::error::Err
         }
         assert_eq!(n, 1);
         let mut n2 = 0usize;
-        let mut fuel = car.into_fuel_figures()?;
-        for e in &mut fuel {
-            let e = e?;
+        car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             n2 += 1;
             assert_eq!(e.speed(), 10);
-            let _ = e.into_usage_description()?;
-        }
+            e.into_usage_description().map(|(_u, done)| done)
+        })?;
         assert_eq!(n2, 1);
     "#,
     );

@@ -58,7 +58,6 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
     let mut got_asks = Vec::new();
     let mut bid_iter = book.into_bids().unwrap();
     for e in &mut bid_iter {
-        let e = e.unwrap();
         got_bids.push((
             (e.price_wire().mantissa(), e.price_wire().exponent()),
             (e.size_wire().mantissa(), e.size_wire().exponent()),
@@ -66,7 +65,6 @@ fn publish_l2book_encodes_app_message_on_typed_stream() -> Result<(), Box<dyn st
     }
     let mut ask_iter = bid_iter.into_asks().unwrap();
     for e in &mut ask_iter {
-        let e = e.unwrap();
         got_asks.push((e.price_wire().mantissa(), e.price_wire().exponent()));
     }
     let (symbol, _) = ask_iter.into_symbol_as_str().unwrap();

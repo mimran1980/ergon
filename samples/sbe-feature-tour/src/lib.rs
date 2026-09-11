@@ -11,7 +11,7 @@
 //! | [`demo_fixed_heartbeat`] | Fixed message + `compute_length_with_header()` |
 //! | [`demo_car_size_and_encode`] | Staged `CarEncodedLength` + exact buffer encode |
 //! | [`demo_car_decode_stages`] | Staged decoder lane (`into_*` iterators → var-data) |
-//! | [`demo_car_visit_entries`] | Staged `for entry in &mut iter` group walk |
+//! | [`demo_car_visit_entries`] | Non-advancing `*_count` / `*_len`, then a partial `&mut iter` walk |
 //! | [`demo_car_random_access`] | Random-access lane (any-order dynamic getters) |
 //! | [`demo_car_domain_dto`] | Owned `CarDomain` DTO + re-encode round-trip |
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
@@ -274,23 +274,27 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.engine().capacity(), 2000);
     // ANCHOR_END: flyweight_access
 
-    // Schema order: groups then var-data. The group iterator *is* the stage —
-    // `into_performance_figures` skips unread fuel figures if any remain.
+    // Schema order: groups then var-data, one chain. Both of Car's groups have
+    // entries that carry their own tails, so both take a visit closure: the
+    // completion the closure returns is where the next entry starts, so the
+    // group is walked exactly once.
     let mut speeds = Vec::new();
-    let mut figs = car.into_fuel_figures()?;
-    for entry in &mut figs {
-        let entry = entry?;
-        speeds.push(entry.speed());
-        let (_usage, _) = entry.into_usage_description()?;
-    }
     let mut octanes = Vec::new();
-    let mut perfs = figs.into_performance_figures()?;
-    for entry in &mut perfs {
-        let entry = entry?;
-        octanes.push(entry.octane_rating());
-        let _ = entry.into_acceleration()?;
-    }
-    let (mfr, decoder) = perfs.into_manufacturer_as_str()?;
+    let (mfr, decoder) = car
+        .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            speeds.push(entry.speed());
+            // usageDescription is this entry's only tail, so reading it
+            // completes the entry.
+            entry.into_usage_description().map(|(_usage, done)| done)
+        })?
+        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            octanes.push(entry.octane_rating());
+            // acceleration has fixed-stride entries, so it is a real iterator.
+            let mut accel = entry.into_acceleration()?;
+            assert_eq!((&mut accel).len(), 2);
+            accel.finish()
+        })?
+        .into_manufacturer_as_str()?;
     assert_eq!(speeds, vec![30, 60]);
     assert_eq!(octanes, vec![95]);
     let (model, decoder) = decoder.into_model_as_str()?;
@@ -301,31 +305,33 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 }
 // ANCHOR_END: demo_car_decode_stages
 
-/// Walk Car through the staged one-pass group path.
+/// Size the walk before it starts, then stop it early: `*_count` / `*_len`
+/// read the wire without advancing, and an unfinished iterator still knows
+/// how to reach the next tail.
 // ANCHOR: demo_car_visit_entries
 pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_decode(wire, 0)?;
 
-    let mut speeds = Vec::new();
-    let mut octanes = Vec::new();
-    let mut figs = car.into_fuel_figures()?;
-    for entry in &mut figs {
-        let entry = entry?;
-        speeds.push(entry.speed());
-        let (_usage, _) = entry.into_usage_description_as_str()?;
-    }
-    let mut perfs = figs.into_performance_figures()?;
-    for entry in &mut perfs {
-        let entry = entry?;
-        octanes.push(entry.octane_rating());
-        let _ = entry.into_acceleration()?;
-    }
-    let (mfr, car) = perfs.into_manufacturer_as_str()?;
-    let (model, car) = car.into_model_as_str()?;
-    let (code, _) = car.into_activation_code_as_str()?;
-    assert_eq!(speeds, vec![30, 60]);
-    assert_eq!(octanes, vec![95]);
-    assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
+    // Non-advancing: `car` is untouched and still owns every tail.
+    assert_eq!(car.fuel_figures_count()?, 2);
+    assert_eq!(car.manufacturer_len()?, 5);
+
+    // A fixed-stride group is a real iterator, and it does not have to be
+    // drained. Read one acceleration entry, then let the walk move on — the
+    // unread entries are skipped by the next step, not lost.
+    let (mfr, _rest) = car
+        .skip_fuel_figures()?
+        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            let mut accel = entry.into_acceleration()?;
+            assert_eq!((&mut accel).len(), 2);
+            let first = (&mut accel).next().expect("acceleration is not empty");
+            assert_eq!(first.mph(), 30);
+            assert_eq!(accel.remaining_entries(), 1);
+            // `finish()` skips the entry we did not read and completes.
+            accel.finish()
+        })?
+        .into_manufacturer_as_str()?;
+    assert_eq!(mfr, "Honda");
     Ok(())
 }
 // ANCHOR_END: demo_car_visit_entries

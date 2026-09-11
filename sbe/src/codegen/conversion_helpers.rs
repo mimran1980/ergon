@@ -301,6 +301,51 @@ pub(crate) fn resolve_field_ident(
     syn::Ident::new(resolved, proc_macro2::Span::call_site())
 }
 
+/// Accessor names an owner's fixed fields already occupy, after `_wire` and
+/// `_field` resolution.
+///
+/// Pass `reserved` exactly as the owner's own emission site passes it:
+/// [`DECODER_RESERVED`] for message decoders and the memoized wrapper, and an
+/// empty slice for group entries, which do not rename.
+pub(crate) fn field_accessor_names(
+    fields: &[MessageField],
+    conversions: &[crate::ConversionSelector],
+    reserved: &[&str],
+) -> Vec<String> {
+    fields
+        .iter()
+        .map(|f| {
+            let snake = crate::codegen::runtime::to_snake_case(&f.name);
+            let wire_name =
+                field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
+            resolve_field_ident(&snake, &wire_name, reserved).to_string()
+        })
+        .collect()
+}
+
+/// Name for a tail-derived convenience accessor (`<group>_count`,
+/// `<field>_len`), or `None` when a fixed field already defines that method.
+///
+/// These names are schema-derived, so they cannot live in [`DECODER_RESERVED`]:
+/// `orders_count` is only reserved because the schema happens to declare a
+/// group called `orders`. When a field named `ordersCount` sits beside it, both
+/// would define `orders_count` on the same type and the generated module would
+/// not compile.
+///
+/// The field wins, and nothing is renamed. Renaming the field to
+/// `orders_count_field` would change an accessor that worked before these
+/// convenience methods existed; omitting the convenience method costs that one
+/// schema a shorthand and leaves every other accessor exactly where it was.
+/// `orders_count()` still resolves — to the field the schema asked for.
+pub(crate) fn tail_accessor_ident(
+    base_snake: &str,
+    suffix: &str,
+    taken: &[String],
+) -> Option<syn::Ident> {
+    let name = format!("{base_snake}_{suffix}");
+    (!taken.contains(&name)).then(|| syn::Ident::new(&name, proc_macro2::Span::call_site()))
+}
+
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
 ///
 /// Version numbers are per-schema. A shared type with members added in a later

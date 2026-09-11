@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+- **Fixed-stride groups decode as real iterators.** A group whose entries carry
+  no tails of their own has a known stride, so `into_<group>()` hands back an
+  iterator: `for entry in &mut iter`. It implements `Iterator` only for
+  `&mut Iter`, never for `Iter`, so `for entry in iter` does not compile and a
+  loop cannot silently drop the rest of the message. Also `ExactSizeIterator`
+  and `FusedIterator`. The iterator does not have to be drained — `finish()`,
+  or the next tail's `into_*` / `skip_*` called straight on it, skips the rest
+  by arithmetic.
+- Non-advancing `<group>_count()` and `<field>_len()` accessors, generated at
+  every decode location: the base decoder, `.memoized()`, group entries, and
+  each staged stage that precedes the tail. Both return `Result<usize>` and
+  yield `0` when the tail is absent at the acting version, so sizing a `Vec` or
+  logging a count no longer costs a stage.
+- `iter.remaining_entries()` on the staged iterator.
+
+### Changed
+- Groups whose entries carry their own groups or var-data keep the visit
+  closure, and now that is a deliberate split rather than an accident of
+  history. Such entries have no stride, and `Iterator::next` cannot learn where
+  an entry ended from the entry it already handed away, so an iterator would
+  have to measure every entry before yielding it and the caller's own walk
+  would traverse it again. The closure returns the entry's completion, and that
+  *is* the next cursor. One pass, both shapes.
+- `absent_tail_length` is now the single predicate for "this tail is not on the
+  wire at this version", shared by all four locations that emit a count or
+  length accessor; the memoized lane no longer carries its own copy.
+
+### Fixed
+- **`<group>_count` / `<field>_len` could collide with a field of the same
+  name and produce a module that did not compile.** A schema declaring a group
+  `orders` and a field `ordersCount` emitted `orders_count()` twice (E0592), at
+  message, memoized and group-entry level alike. These names are derived from
+  the schema, so they cannot live in the static reserved list that drives field
+  renaming. The field now wins and keeps its name — renaming it would change an
+  accessor that worked before these convenience methods existed — and the
+  convenience accessor is simply not generated for that tail. Consuming stages
+  carry no fields, so they still get it. Covered by
+  `reserved_name_clash_test::tail_accessors_yield_to_colliding_field_names`,
+  which compiles the colliding schema.
+- The fixed-stride group decoder gained the `size_hint` that its
+  `ExactSizeIterator` implementation already implied; it was returning the
+  default `(0, None)`.
+
 ## [0.1.26] — 2026-09-07
 
 ### Added

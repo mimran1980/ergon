@@ -65,8 +65,11 @@ time, so enable the feature on `ergo-sbe` in both `[build-dependencies]` and
 `[dependencies]` — a build-dependency without it produces no accessor:
 
 ```rust,ignore
-let stage = dec.fuel_figures()?;
-let (symbol, next_stage) = stage.into_symbol_as_compact_str()?;
+// `symbol` is L3Book's var-data tail, so it is reached after both groups.
+let (symbol, _next_stage) = L3BookDecoder::try_decode(wire, 0)?
+    .skip_bids()?
+    .skip_asks()?
+    .into_symbol_as_compact_str()?;
 // symbol: CompactString — no heap allocation for ≤24B symbols
 ```
 

@@ -700,3 +700,81 @@ fn reserved_names_match_emitted_inherent_methods() -> Result<(), Box<dyn std::er
 
     Ok(())
 }
+
+/// A tail-derived convenience accessor must never define a method that a fixed
+/// field already defines. A group `orders` wants `orders_count()`; a field
+/// `ordersCount` already has it. Before this was guarded, both were emitted and
+/// the generated module failed to compile with E0592.
+///
+/// The field wins and keeps its name — renaming it would change an accessor
+/// that worked before `*_count()` existed. The same rule covers `<field>_len`
+/// for var-data, at message, memoized and group-entry level.
+const TAIL_CLASH_XML: &str = r#"<messageSchema package="tailclash" id="9" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varString">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="Msg" id="1" blockLength="8">
+    <field name="ordersCount" id="1" type="uint32" offset="0"/>
+    <field name="noteLen" id="2" type="uint32" offset="4"/>
+    <group name="orders" id="3" dimensionType="groupSizeEncoding" blockLength="8">
+      <field name="fillsCount" id="4" type="uint32" offset="0"/>
+      <field name="memoLen" id="5" type="uint32" offset="4"/>
+      <group name="fills" id="6" dimensionType="groupSizeEncoding" blockLength="4">
+        <field name="qty" id="7" type="uint32" offset="0"/>
+      </group>
+      <data name="memo" id="8" type="varString"/>
+    </group>
+    <data name="note" id="9" type="varString"/>
+  </message>
+</messageSchema>"#;
+
+#[test]
+fn tail_accessors_yield_to_colliding_field_names() -> Result<(), Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(TAIL_CLASH_XML)?);
+    let src = Generator::new(GenerationConfig::new("tailclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+
+    // The field keeps its natural name and its own return type on every type
+    // that carries it.
+    for (name, signature) in [
+        ("orders_count", "pub fn orders_count(&self) -> u32"),
+        ("note_len", "pub fn note_len(&self) -> u32"),
+        ("fills_count", "pub fn fills_count(&self) -> u32"),
+        ("memo_len", "pub fn memo_len(&self) -> u32"),
+    ] {
+        assert!(
+            src.contains(signature),
+            "field accessor `{name}` must keep its natural name and type"
+        );
+    }
+
+    // Consuming stages carry no fields, so they still get the tail accessor —
+    // the guard is per-type, not per-schema.
+    assert!(
+        src.contains("pub fn note_len(&self) -> Result<usize, sbe_rt::DecodeError>"),
+        "a stage with no colliding field must still get the tail length accessor"
+    );
+
+    // Compilation is the assertion: emitting both on one type is E0592.
+    // Verified to fail before the guard existed.
+    compile_and_run("tail_clash_rt", &src, "let _ = 1;");
+    Ok(())
+}

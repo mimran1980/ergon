@@ -108,17 +108,17 @@ fn bench_group_iteration(c: &mut Criterion) {
             let mut n = 0usize;
             let mut sum_speed: u64 = 0;
             let mut sum_mpg: f64 = 0.0;
-            let mut fuel = CarDecoder::try_from(black_box(BASELINE))
+            let _ = CarDecoder::try_from(black_box(BASELINE))
                 .unwrap()
-                .into_fuel_figures()
+                .into_fuel_figures(
+                    |entry| -> Result<_, ergo_sbe_benchmarks::ergo_car::sbe_rt::DecodeError> {
+                        n += 1;
+                        sum_speed += entry.speed() as u64;
+                        sum_mpg += entry.mpg() as f64;
+                        entry.into_usage_description().map(|(_, complete)| complete)
+                    },
+                )
                 .unwrap();
-            for entry in &mut fuel {
-                let entry = entry.unwrap();
-                n += 1;
-                sum_speed += entry.speed() as u64;
-                sum_mpg += entry.mpg() as f64;
-                let _ = entry.into_usage_description().unwrap();
-            }
             black_box((n, sum_speed, sum_mpg));
         });
     });

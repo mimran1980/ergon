@@ -515,7 +515,7 @@ fn iterator_surface_body(encode_extra: bool) -> String {
     }
     fn decode_owner(depth: usize) -> String {
         if depth == 3 {
-            return "assert_eq!(d.payload_len()?, 4); let (bytes, _) = d.into_payload()?; assert_eq!(bytes, b\"leaf\");".into();
+            return "assert_eq!(d.payload_len()?, 4); let (bytes, done) = d.into_payload()?; assert_eq!(bytes, b\"leaf\"); Ok(done)".into();
         }
         let prefix = format!("IteratorSurface{}", "Records".repeat(depth));
         format!(
@@ -526,11 +526,12 @@ fn iterator_surface_body(encode_extra: bool) -> String {
             assert_eq!(d.future_records_count()?, 0);
             assert_eq!(d.note_len()?, 3);
             assert_eq!(d.extra_len()?, 0);
+            // `items` entries have no tails: fixed stride, so a real iterator.
             let mut items = d.into_items()?;
             assert_eq!(items.remaining_entries(), count);
             exact(&mut items, count);
             for value in 0..count {{
-                let entry: {prefix}ItemsEntryDecoder<'_> = (&mut items).next().unwrap()?;
+                let entry: {prefix}ItemsEntryDecoder<'_> = (&mut items).next().unwrap();
                 assert_eq!(entry.value(), value as u32);
                 assert_eq!(items.remaining_entries(), count - value - 1);
                 exact(&mut items, count - value - 1);
@@ -538,25 +539,26 @@ fn iterator_surface_body(encode_extra: bool) -> String {
             assert!((&mut items).next().is_none());
             assert_eq!(items.remaining_entries(), 0);
             exact(&mut items, 0);
-            let mut records = items.into_records()?;
-            assert_eq!(records.remaining_entries(), count);
-            for index in 0..count {{
-                let d: {prefix}RecordsEntryDecoder<'_> = (&mut records).next().unwrap()?;
-                assert_eq!(records.remaining_entries(), count - index - 1);
+            // `records` entries carry their own tails: visit closure, and the
+            // completion it returns is the next entry's offset.
+            let mut visited = 0usize;
+            let stage = items.into_records(|d: {prefix}RecordsEntryDecoder<'_>| -> Result<_, sbe_rt::DecodeError> {{
+                visited += 1;
                 {nested}
-            }}
-            assert!((&mut records).next().is_none());
-            assert_eq!(records.remaining_entries(), 0);
-            let mut items = records.into_future_items()?;
+            }})?;
+            assert_eq!(visited, count);
+            let mut items = stage.into_future_items()?;
             assert_eq!(items.remaining_entries(), 0);
             exact(&mut items, 0);
-            let mut records = items.into_future_records()?;
-            assert_eq!(records.remaining_entries(), 0);
-            let (note, d) = records.into_note()?;
+            let stage = items.into_future_records(|_d| -> Result<_, sbe_rt::DecodeError> {{
+                unreachable!("futureRecords is absent at this version")
+            }})?;
+            let (note, d) = stage.into_note()?;
             assert_eq!(note, b"abc");
             assert_eq!(d.extra_len()?, 0);
-            let (extra, _) = d.into_extra()?;
+            let (extra, done) = d.into_extra()?;
             assert_eq!(extra, b"");
+            Ok(done)
         "#,
             nested = decode_owner(depth + 1)
         )
@@ -578,21 +580,28 @@ fn iterator_surface_body(encode_extra: bool) -> String {
             let written = ({encode})?.encoded_length_with_header();
             assert_eq!(written, length);
             let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
-            {decode}
+            // Depth 0 is a statement block, not a closure body, so the
+            // shared walk's tail expression is bound and typed here.
+            let _: Result<_, sbe_rt::DecodeError> = (|| {{ {decode} }})();
 
             // A partially read iterator still reaches the next tail: into_* /
             // finish() skip unread entries.
             let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
             let mut items = d.into_items()?;
             let _ = (&mut items).next();
-            let mut records = items.into_records()?;
-            let _ = (&mut records).next();
-            let mut items = records.into_future_items()?;
+            let stage = items.into_records(|d| -> Result<_, sbe_rt::DecodeError> {{
+                // Read nothing from this entry: skip_* reaches its completion.
+                d.skip_items()?.skip_records()?.skip_future_items()?
+                    .skip_future_records()?.into_note().map(|(_n, s)| s)?
+                    .into_extra().map(|(_e, done)| done)
+            }})?;
+            let mut items = stage.into_future_items()?;
             assert_eq!(items.remaining_entries(), 0);
             exact(&mut items, 0);
-            let records = items.into_future_records()?;
-            assert_eq!(records.remaining_entries(), 0);
-            let (note, _) = records.into_note()?;
+            let stage = items.into_future_records(|_d| -> Result<_, sbe_rt::DecodeError> {{
+                unreachable!("futureRecords is absent at this version")
+            }})?;
+            let (note, _) = stage.into_note()?;
             assert_eq!(note, b"abc");
 
             // The original fixed-stride random-access iterator also promises an exact hint.
@@ -604,10 +613,14 @@ fn iterator_surface_body(encode_extra: bool) -> String {
                 let d = IteratorSurfaceDecoder::wrap(&buf, 0, 0, IteratorSurfaceEncoder::SCHEMA_VERSION);
                 assert_eq!(d.records_count()?, count);
                 let items = d.into_items()?;
-                let mut records = items.into_records()?;
-                // Dynamic entry extents are validated as the iterator walks,
-                // not at construction.
-                assert!(matches!((&mut records).next(), Some(Err(_))));
+                // Dynamic entry extents are validated as the walk reaches
+                // them, not at construction, so the visit fails.
+                let walked = items.into_records(|d| -> Result<_, sbe_rt::DecodeError> {{
+                    d.skip_items()?.skip_records()?.skip_future_items()?
+                        .skip_future_records()?.into_note().map(|(_n, s)| s)?
+                        .into_extra().map(|(_e, done)| done)
+                }});
+                assert!(walked.is_err());
             }}
         }}
     "#,

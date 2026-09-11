@@ -1085,35 +1085,35 @@ fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>
     let sequence = dec.sequence();
     let is_active = dec.try_is_active()?;
 
+    // Levels carry a nested `orders` group, so they have no stride and take a
+    // visit closure — the completion it returns is where the next level starts.
+    // `orders` entries are fixed-stride, so they are a plain iterator.
     let mut bids = Vec::new();
     let mut asks = Vec::new();
-    let mut bid_iter = dec.into_bids()?;
-    for level in &mut bid_iter {
-        let level = level?;
-        let price = level.try_price()?;
-        let size = level.try_size()?;
-        let mut orders = Vec::new();
-        let mut order_iter = level.into_orders()?;
-        for order in &mut order_iter {
-            let order = order?;
-            orders.push((order.order_id(), order.try_quantity()?));
-        }
-        bids.push((price, size, orders));
-    }
-    let mut ask_iter = bid_iter.into_asks()?;
-    for level in &mut ask_iter {
-        let level = level?;
-        let price = level.try_price()?;
-        let size = level.try_size()?;
-        let mut orders = Vec::new();
-        let mut order_iter = level.into_orders()?;
-        for order in &mut order_iter {
-            let order = order?;
-            orders.push((order.order_id(), order.try_quantity()?));
-        }
-        asks.push((price, size, orders));
-    }
-    let (symbol, _complete) = ask_iter.into_symbol_as_str()?;
+    let (symbol, _complete) = dec
+        .into_bids(|level| -> Result<_, Box<dyn std::error::Error>> {
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            let mut orders = Vec::new();
+            let mut order_iter = level.into_orders()?;
+            for order in &mut order_iter {
+                orders.push((order.order_id(), order.try_quantity()?));
+            }
+            bids.push((price, size, orders));
+            Ok(order_iter.finish()?)
+        })?
+        .into_asks(|level| -> Result<_, Box<dyn std::error::Error>> {
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            let mut orders = Vec::new();
+            let mut order_iter = level.into_orders()?;
+            for order in &mut order_iter {
+                orders.push((order.order_id(), order.try_quantity()?));
+            }
+            asks.push((price, size, orders));
+            Ok(order_iter.finish()?)
+        })?
+        .into_symbol_as_str()?;
 
     Ok(Snapshot {
         timestamp,
@@ -1191,21 +1191,20 @@ fn best_bid_and_depth(wire: &[u8]) -> Result<(i64, u64, usize, &str), sbe_rt::De
     let mut total_orders = 0u64;
     let mut levels = 0usize;
 
-    let mut bid_iter = L3BookDecoder::try_decode(wire, 0)?.into_bids()?;
-    for level in &mut bid_iter {
-        let level = level?;
-        levels += 1;
-        let px = level.price_value().mantissa();
-        if px > best_bid {
-            best_bid = px;
-        }
-        let mut orders = level.into_orders()?;
-        for order in &mut orders {
-            let _ = order?;
-            total_orders += 1;
-        }
-    }
-    let (symbol, _done) = bid_iter.skip_asks()?.into_symbol_as_str()?;
+    let (symbol, _done) = L3BookDecoder::try_decode(wire, 0)?
+        .into_bids(|level| -> Result<_, sbe_rt::DecodeError> {
+            levels += 1;
+            let px = level.price_value().mantissa();
+            if px > best_bid {
+                best_bid = px;
+            }
+            let mut orders = level.into_orders()?;
+            // Fixed stride, so the count is exact without walking.
+            total_orders += (&mut orders).len() as u64;
+            orders.finish()
+        })?
+        .skip_asks()?
+        .into_symbol_as_str()?;
 
     Ok((best_bid, total_orders, levels, symbol))
 }

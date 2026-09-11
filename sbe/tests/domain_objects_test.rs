@@ -101,7 +101,6 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         let mut i = 0usize;
         let mut levels_iter = BookSnapshotDecoder::try_from(&dto_buf[..dto_len])?.into_levels()?;
         for actual in &mut levels_iter {
-            let actual = actual?;
             let expected = &levels[i];
             assert_eq!(actual.price(), expected.price);
             assert_eq!(actual.qty(), expected.qty);

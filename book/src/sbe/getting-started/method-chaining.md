@@ -43,22 +43,23 @@ For the full Car example with groups and var-data, see the
 
 ## Decoding
 
-Sequential decode is **one consume per tail.** The group iterator *is* the
-stage: `into_bids()` yields an iterator; `for entry in &mut iter` walks
-entries; a following `into_*` / `skip_*` / `finish()` skips unread entries
-and continues. Var-data still returns `(payload, next)`.
+Sequential decode is **one consume per tail**, and it is still one chain. The
+shape of the group decides how you spell the step:
+
+| Group entries | `into_<group>` gives you | Why |
+|---|---|---|
+| Carry their own groups or var-data | a visit closure, returning the entry's completion | no stride — the completion *is* where the next entry starts |
+| Fixed-stride (no tails of their own) | an iterator, `for e in &mut iter` | the next entry is `offset + block length`, so nothing has to be measured |
+
+Var-data always returns `(payload, next)`, because the bytes are the result.
 
 **Prefer:**
 
-```rust,ignore
-let mut bids = L3BookDecoder::try_decode(wire, 0)?.into_bids()?;
-for level in &mut bids {
-    let level = level?;
-    let mut orders = level.into_orders()?;
-    for order in &mut orders {
-        let order = order?;
-        /* … */
-    }
-}
-let (symbol, _done) = bids.skip_asks()?.into_symbol_as_str()?;
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_decode_stages}}
 ```
+
+*(Real code from the `sbe-feature-tour` sample. `fuelFigures` and
+`performanceFigures` entries carry tails, so they take closures;
+`acceleration` is fixed-stride, so it is an iterator — both spellings in one
+chain.)*

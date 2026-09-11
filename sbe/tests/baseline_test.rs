@@ -459,14 +459,13 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
 
         // Group: fuelFigures (3 entries) — consuming stages, wire order.
         let mut fuel_figures = Vec::new();
-        let mut fuel = car.into_fuel_figures().unwrap();
-        for e in &mut fuel {
-            let e = e.unwrap();
+        let after_fuel = car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let speed = e.speed();
             let mpg = e.mpg();
-            let (usage, _) = e.into_usage_description().unwrap();
+            let (usage, complete) = e.into_usage_description()?;
             fuel_figures.push((speed, mpg, usage.to_vec()));
-        }
+            Ok(complete)
+        }).unwrap();
         assert_eq!(3, fuel_figures.len(), "fuelFigures count");
 
         assert_eq!(30, fuel_figures[0].0, "ff[0].speed");
@@ -482,19 +481,18 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(b"Highway Cycle",  fuel_figures[2].2.as_slice(), "ff[2].usage");
 
         let mut perf = Vec::new();
-        let mut perf_iter = fuel.into_performance_figures().unwrap();
-        for e in &mut perf_iter {
-            let e = e.unwrap();
-            let octane = e.octane_rating();
-            let mut accel = Vec::new();
-            let mut acc = e.into_acceleration().unwrap();
-            for a in &mut acc {
-                let a = a.unwrap();
-                accel.push((a.mph(), a.seconds()));
-            }
-            perf.push((octane, accel));
-        }
-        let after_perf = perf_iter.finish().unwrap();
+        let after_perf = after_fuel
+            .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                let octane = e.octane_rating();
+                let mut accel = Vec::new();
+                let mut acc = e.into_acceleration()?;
+                for a in &mut acc {
+                    accel.push((a.mph(), a.seconds()));
+                }
+                perf.push((octane, accel));
+                acc.finish()
+            })
+            .unwrap();
         assert_eq!(2, perf.len(), "performanceFigures count");
 
         assert_eq!(95, perf[0].0, "pf[0].octaneRating");
@@ -636,14 +634,13 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(200, e2.booster().horse_power(), "rt.engine.booster.horsePower");
 
         let mut ff2 = Vec::new();
-        let mut fuel = car2.into_fuel_figures().unwrap();
-        for e in &mut fuel {
-            let e = e.unwrap();
+        let after_fuel = car2.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let speed = e.speed();
             let mpg = e.mpg();
-            let (usage, _) = e.into_usage_description().unwrap();
+            let (usage, complete) = e.into_usage_description()?;
             ff2.push((speed, mpg, usage.to_vec()));
-        }
+            Ok(complete)
+        }).unwrap();
         assert_eq!(3, ff2.len());
         assert_eq!(30, ff2[0].0);  assert!((ff2[0].1 - 35.9).abs() < 0.01);
         assert_eq!(b"Urban Cycle", ff2[0].2.as_slice());
@@ -653,19 +650,18 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(b"Highway Cycle", ff2[2].2.as_slice());
 
         let mut pf2 = Vec::new();
-        let mut perf_iter = fuel.into_performance_figures().unwrap();
-        for e in &mut perf_iter {
-            let e = e.unwrap();
-            let octane = e.octane_rating();
-            let mut accel = Vec::new();
-            let mut acc = e.into_acceleration().unwrap();
-            for a in &mut acc {
-                let a = a.unwrap();
-                accel.push((a.mph(), a.seconds()));
-            }
-            pf2.push((octane, accel));
-        }
-        let after_perf = perf_iter.finish().unwrap();
+        let after_perf = after_fuel
+            .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                let octane = e.octane_rating();
+                let mut accel = Vec::new();
+                let mut acc = e.into_acceleration()?;
+                for a in &mut acc {
+                    accel.push((a.mph(), a.seconds()));
+                }
+                pf2.push((octane, accel));
+                acc.finish()
+            })
+            .unwrap();
         assert_eq!(2, pf2.len());
         assert_eq!(95, pf2[0].0);
         let a0 = &pf2[0].1;
@@ -2223,7 +2219,6 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
         let mut entries = Vec::new();
         let mut ents = d.into_entries().unwrap();
         for entry in &mut ents {
-            let entry = entry.unwrap();
             entries.push((entry.price(), entry.qty()));
         }
         let after_entries = ents.finish().unwrap();
@@ -2284,7 +2279,6 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
         let mut entries = Vec::new();
         let mut ents = d.into_entries().unwrap();
         for entry in &mut ents {
-            let entry = entry.unwrap();
             entries.push((entry.price(), entry.qty()));
         }
         let after_entries = ents.finish().unwrap();

@@ -126,24 +126,17 @@ fn generated_verify_dispatch_cursor_and_nested_decode_corpus_is_panic_free()
                 if verified.is_ok() {{
                     let message = L3BookDecoder::try_from(bytes.as_slice()).unwrap();
                     let _ = (|| -> Result<(), sbe_rt::DecodeError> {{
-                        let mut bids = message.into_bids()?;
-                        for level in &mut bids {{
-                            let level = level?;
-                            let mut orders = level.into_orders()?;
-                            for order in &mut orders {{
-                                let order = order?;
-                                let (_id, _) = order.into_order_id()?;
-                            }}
-                        }}
-                        let mut asks = bids.into_asks()?;
-                        for level in &mut asks {{
-                            let level = level?;
-                            let mut orders = level.into_orders()?;
-                            for order in &mut orders {{
-                                let order = order?;
-                                let (_id, _) = order.into_order_id()?;
-                            }}
-                        }}
+                        message
+                            .into_bids(|level| {{
+                                level.into_orders(
+                                    |order| order.into_order_id().map(|(_id, done)| done),
+                                )
+                            }})?
+                            .into_asks(|level| {{
+                                level.into_orders(
+                                    |order| order.into_order_id().map(|(_id, done)| done),
+                                )
+                            }})?;
                         Ok(())
                     }})();
                 }}

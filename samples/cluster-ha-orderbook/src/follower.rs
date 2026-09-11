@@ -102,7 +102,6 @@ impl BookFollower {
         let mut asks = Vec::new();
         let mut bid_iter = book.into_bids()?;
         for entry in &mut bid_iter {
-            let entry = entry?;
             let px = entry.price_wire();
             let sz = entry.size_wire();
             bids.push(Level {
@@ -112,7 +111,6 @@ impl BookFollower {
         }
         let mut ask_iter = bid_iter.into_asks()?;
         for entry in &mut ask_iter {
-            let entry = entry?;
             let px = entry.price_wire();
             let sz = entry.size_wire();
             asks.push(Level {

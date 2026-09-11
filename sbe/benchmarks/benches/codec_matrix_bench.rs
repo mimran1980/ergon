@@ -125,7 +125,6 @@ fn bench_groups(c: &mut Criterion) {
                         .into_rows()
                         .unwrap();
                     for row in &mut rows {
-                        let row = row.unwrap();
                         sum = sum.wrapping_add(row.value());
                     }
                     let done = rows.finish().unwrap();
@@ -288,22 +287,20 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
     group.bench_function("nested_ragged_traversal", |b| {
         b.iter(|| {
             let mut sum = 0u64;
-            let mut outer = NestedDecoder::try_from(black_box(nested.as_slice()))
+            let done = NestedDecoder::try_from(black_box(nested.as_slice()))
                 .unwrap()
-                .into_outer()
+                .into_outer(|entry| -> Result<_, sbe_rt::DecodeError> {
+                    sum = sum.wrapping_add(entry.value());
+                    // Inner rows carry var-data, so they take a callback too,
+                    // and it returns this outer entry's completion directly.
+                    entry.into_inner(|row| -> Result<_, sbe_rt::DecodeError> {
+                        sum = sum.wrapping_add(row.value());
+                        let (payload, complete) = row.into_payload()?;
+                        black_box(payload);
+                        Ok(complete)
+                    })
+                })
                 .unwrap();
-            for entry in &mut outer {
-                let entry = entry.unwrap();
-                sum = sum.wrapping_add(entry.value());
-                let mut inner = entry.into_inner().unwrap();
-                for row in &mut inner {
-                    let row = row.unwrap();
-                    sum = sum.wrapping_add(row.value());
-                    let (payload, _) = row.into_payload().unwrap();
-                    black_box(payload);
-                }
-            }
-            let done = outer.finish().unwrap();
             black_box((sum, done));
         });
     });

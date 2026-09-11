@@ -197,12 +197,10 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut bid_prices = Vec::new();
     let mut asks = decoder.into_asks().expect("asks group decode");
     for e in &mut asks {
-        let e = e.expect("ask entry");
         ask_prices.push(e.price());
     }
     let mut bids = asks.into_bids().expect("bids group decode");
     for e in &mut bids {
-        let e = e.expect("bid entry");
         bid_prices.push(e.price());
     }
     let (symbol, _done) = bids.into_symbol_as_str().expect("symbol decode");
@@ -361,7 +359,6 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let mut entries = Vec::new();
     let mut trades = decoder.into_trades().expect("trades group decode");
     for entry in &mut trades {
-        let entry = entry?;
         entries.push((
             entry.ts(),
             entry.exec_id(),
@@ -495,7 +492,6 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut trades = decoder.into_trades().expect("trades group decode");
     for entry in &mut trades {
-        let entry = entry?;
         assert_eq!(entry.ts(), 0, "entry ts");
         assert_eq!(entry.exec_id(), 0, "entry exec_id");
         assert_eq!(entry.price(), 0, "entry price");
@@ -649,7 +645,6 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let mut entries = Vec::new();
     let mut rates = decoder.into_rate_limits().expect("rate_limits group decode");
     for entry in &mut rates {
-        let entry = entry?;
         entries.push((
             entry.rate_limit_type(),
             entry.interval(),

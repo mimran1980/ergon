@@ -67,40 +67,34 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         let mut level_prices = Vec::new();
         let mut level_qtys = Vec::new();
         let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
-        let mut bids = dec.into_bids().unwrap();
-        for lvl in &mut bids {
-            let lvl = lvl.unwrap();
-            level_prices.push(lvl.price());
-            level_qtys.push(lvl.qty());
-            let mut ids: Vec<Vec<u8>> = Vec::new();
-            let mut orders = lvl.into_orders().unwrap();
-            for ord in &mut orders {
-                let ord = ord.unwrap();
-                let (id, _) = ord.into_order_id().unwrap();
-                ids.push(id.to_vec());
-            }
-            all_order_ids.push(ids);
-        }
+        let mut ask_prices = Vec::new();
+        let mut ask_order_qtys = Vec::new();
+        let done = dec
+            .into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                level_prices.push(lvl.price());
+                level_qtys.push(lvl.qty());
+                let mut ids: Vec<Vec<u8>> = Vec::new();
+                let complete = lvl.into_orders(|ord| {
+                    let (id, done) = ord.into_order_id()?;
+                    ids.push(id.to_vec());
+                    Ok(done)
+                })?;
+                all_order_ids.push(ids);
+                Ok(complete)
+            })
+            .unwrap()
+            .into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                ask_prices.push(lvl.price());
+                assert_eq!(lvl.qty(), 20);
+                lvl.into_orders(|ord| {
+                    ask_order_qtys.push(ord.order_qty());
+                    ord.into_order_id().map(|(_id, done)| done)
+                })
+            })
+            .unwrap();
         assert_eq!(level_prices, vec![100i64, 101]);
         assert_eq!(level_qtys, vec![10i64, 5]);
         assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
-
-        // asks: only reachable after bids finished.
-        let mut ask_prices = Vec::new();
-        let mut ask_order_qtys = Vec::new();
-        let mut asks = bids.into_asks().unwrap();
-        for lvl in &mut asks {
-            let lvl = lvl.unwrap();
-            ask_prices.push(lvl.price());
-            assert_eq!(lvl.qty(), 20);
-            let mut orders = lvl.into_orders().unwrap();
-            for ord in &mut orders {
-                let ord = ord.unwrap();
-                ask_order_qtys.push(ord.order_qty());
-                let (_id, _) = ord.into_order_id().unwrap();
-            }
-        }
-        let done = asks.finish().unwrap();
         assert_eq!(ask_prices, vec![200i64]);
         assert_eq!(ask_order_qtys, vec![8i64]);
 
@@ -166,34 +160,25 @@ fn decode_l3_through_into_entries() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut level_prices = Vec::new();
         let mut all_order_ids: Vec<Vec<Vec<u8>>> = Vec::new();
-        let mut bids = dec.into_bids()?;
-        for lvl in &mut bids {
-            let lvl = lvl?;
-            level_prices.push(lvl.price());
-            let mut ids = Vec::new();
-            let mut orders = lvl.into_orders()?;
-            for ord in &mut orders {
-                let ord = ord?;
-                let (id, _) = ord.into_order_id()?;
-                ids.push(id.to_vec());
-            }
-            all_order_ids.push(ids);
-        }
+        let mut ask_prices = Vec::new();
+        let done = dec
+            .into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                level_prices.push(lvl.price());
+                let mut ids = Vec::new();
+                let complete = lvl.into_orders(|ord| {
+                    let (id, done) = ord.into_order_id()?;
+                    ids.push(id.to_vec());
+                    Ok(done)
+                })?;
+                all_order_ids.push(ids);
+                Ok(complete)
+            })?
+            .into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                ask_prices.push(lvl.price());
+                lvl.into_orders(|ord| ord.into_order_id().map(|(_id, done)| done))
+            })?;
         assert_eq!(level_prices, vec![100i64, 101]);
         assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
-
-        let mut ask_prices = Vec::new();
-        let mut asks = bids.into_asks()?;
-        for lvl in &mut asks {
-            let lvl = lvl?;
-            ask_prices.push(lvl.price());
-            let mut orders = lvl.into_orders()?;
-            for ord in &mut orders {
-                let ord = ord?;
-                let (_id, _) = ord.into_order_id()?;
-            }
-        }
-        let done = asks.finish()?;
         assert_eq!(ask_prices, vec![200i64]);
         assert_eq!(done.encoded_length_with_header(), len);
         assert_eq!(done.as_bytes_with_header(), encoded);
@@ -238,7 +223,9 @@ fn cf_finish_consumes_group_decoder() -> Result<(), Box<dyn std::error::Error>> 
         .fixed(&L3BookFixedFields { timestamp: 1, sequence: 1 })
         .bids(0, |_| Ok(())).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
-        let _after = dec.into_bids().unwrap();
+        let _after = dec.into_bids(|lvl| lvl.into_orders(
+            |ord| ord.into_order_id().map(|(_id, done)| done),
+        )).unwrap();
         let _ = dec.timestamp(); // ILLEGAL: use of moved value `dec`
     "#,
         &["borrow of moved value: `dec`"],
@@ -282,22 +269,23 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
         let mut order_ids = Vec::new();
         let mut prices = Vec::new();
-        let mut bids = dec.into_bids().unwrap();
-        for lvl in &mut bids {
-            let lvl = lvl.unwrap();
-            prices.push(lvl.price());
-            let mut orders = lvl.into_orders().unwrap();
-            for ord in &mut orders {
-                let ord = ord.unwrap();
-                let (id, _) = ord.into_order_id().unwrap();
-                order_ids.push(id.to_vec());
-            }
-        }
+        let done = dec
+            .into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                prices.push(lvl.price());
+                lvl.into_orders(|ord| {
+                    let (id, done) = ord.into_order_id()?;
+                    order_ids.push(id.to_vec());
+                    Ok(done)
+                })
+            })
+            .unwrap()
+            // asks is empty, so the closure runs zero times.
+            .into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
+                lvl.into_orders(|ord| ord.into_order_id().map(|(_id, done)| done))
+            })
+            .unwrap();
         assert_eq!(prices, vec![100i64, 101]);
         assert_eq!(order_ids, vec![b"ord-1".to_vec(), b"ord-2".to_vec()]);
-
-        // bids -> into_asks (empty) -> complete.
-        let done = bids.into_asks().unwrap().finish().unwrap();
         assert_eq!(done.encoded_length_with_header(), encoded.len());
         assert_eq!(done.as_bytes_with_header(), encoded);
     "#,
@@ -322,10 +310,13 @@ fn cf_entry_consumed_by_into_orders() -> Result<(), Box<dyn std::error::Error>> 
             g.add(|mut lvl| { lvl.price(1); lvl.qty(1); lvl.orders(0, |_| Ok(())) })
         }).unwrap().asks(0, |_| Ok(())).unwrap();
         let dec = L3BookDecoder::try_decode(c.as_bytes_with_header(), 0).unwrap();
-        let mut bids = dec.into_bids().unwrap();
-        let lvl = (&mut bids).next().unwrap().unwrap();
-        let _orders = lvl.into_orders().unwrap();
-        let _p = lvl.price(); // ILLEGAL: use of moved value `lvl`
+        let _ = dec.into_bids(|lvl| -> Result<_, sbe_rt::DecodeError> {
+            let complete = lvl.into_orders(
+                |ord| ord.into_order_id().map(|(_id, done)| done),
+            )?;
+            let _p = lvl.price(); // ILLEGAL: use of moved value `lvl`
+            Ok(complete)
+        });
     "#,
         &["borrow of moved value: `lvl`"],
     );
