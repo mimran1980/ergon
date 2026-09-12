@@ -11,7 +11,8 @@ use std::fmt::Write;
 /// The progressive tail-boundary cache runtime, used by every generated
 /// `{Name}MemoizedDecoder`. Emitted unconditionally: `Decoder::memoized()` is
 /// always available on a tail-bearing message, so the type is always reachable.
-fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
+fn tail_boundary_cache_tokens(with_entry_info: bool) -> proc_macro2::TokenStream {
+    let entry_info = entry_info_tokens(with_entry_info);
     quote::quote! {
             /// Progressive cache of dynamic-tail *end* offsets.
             ///
@@ -34,42 +35,7 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 boundary_calcs: core::cell::Cell<u32>,
             }
 
-            /// Position of a group entry within its group, handed to every
-            /// ordered-lane entry callback.
-            ///
-            /// `count` is the wire-declared `numInGroup` and `block_length`
-            /// the group's acting block length, so both are known before the
-            /// walk starts. A group's total *byte* length is not: for entries
-            /// carrying their own tails it is only settled by traversing them.
-            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-            pub struct EntryInfo {
-                /// Zero-based position of this entry within the group.
-                pub index: usize,
-                /// Wire-declared number of entries in this group.
-                pub count: usize,
-                /// Acting block length of one entry's fixed block.
-                pub block_length: usize,
-            }
-
-            impl EntryInfo {
-                /// True for the first entry of the group.
-                #[inline]
-                #[must_use]
-                pub const fn is_first(&self) -> bool { self.index == 0 }
-                /// True for the last entry the wire declares.
-                #[inline]
-                #[must_use]
-                pub const fn is_last(&self) -> bool { self.index + 1 == self.count }
-                /// Entries after this one, per the wire-declared count.
-                ///
-                /// Saturating: `EntryInfo` is a public struct, so an
-                /// independently constructed value must not panic here.
-                #[inline]
-                #[must_use]
-                pub const fn remaining(&self) -> usize {
-                    self.count.saturating_sub(self.index + 1)
-                }
-            }
+            #entry_info
 
             /// Debug-only counters for the memoized random-access prototype.
             #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -165,8 +131,56 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
     }
 }
 
-pub(crate) fn generate_sbe_rt_src() -> String {
-    let tail_boundary_cache = tail_boundary_cache_tokens();
+/// `EntryInfo` is only reachable through the ordered lane's group callbacks, so
+/// a schema with no groups would carry it as dead code. That is not merely
+/// tidiness: emitting an unused struct perturbs code placement enough to move
+/// sub-nanosecond benchmark arms (see `optional_enum_nullify`, 2026-09-12).
+fn entry_info_tokens(enabled: bool) -> proc_macro2::TokenStream {
+    if !enabled {
+        return proc_macro2::TokenStream::new();
+    }
+    quote::quote! {
+        /// Position of a group entry within its group, handed to every
+        /// ordered-lane entry callback.
+        ///
+        /// `count` is the wire-declared `numInGroup` and `block_length`
+        /// the group's acting block length, so both are known before the
+        /// walk starts. A group's total *byte* length is not: for entries
+        /// carrying their own tails it is only settled by traversing them.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct EntryInfo {
+            /// Zero-based position of this entry within the group.
+            pub index: usize,
+            /// Wire-declared number of entries in this group.
+            pub count: usize,
+            /// Acting block length of one entry's fixed block.
+            pub block_length: usize,
+        }
+
+        impl EntryInfo {
+            /// True for the first entry of the group.
+            #[inline]
+            #[must_use]
+            pub const fn is_first(&self) -> bool { self.index == 0 }
+            /// True for the last entry the wire declares.
+            #[inline]
+            #[must_use]
+            pub const fn is_last(&self) -> bool { self.index + 1 == self.count }
+            /// Entries after this one, per the wire-declared count.
+            ///
+            /// Saturating: `EntryInfo` is a public struct, so an
+            /// independently constructed value must not panic here.
+            #[inline]
+            #[must_use]
+            pub const fn remaining(&self) -> usize {
+                self.count.saturating_sub(self.index + 1)
+            }
+        }
+    }
+}
+
+pub(crate) fn generate_sbe_rt_src(with_entry_info: bool) -> String {
+    let tail_boundary_cache = tail_boundary_cache_tokens(with_entry_info);
     let module = quote::quote! {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]

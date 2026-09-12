@@ -187,6 +187,14 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
     # loss — LTO measures 0.7593 — so a 1.01 no-LTO allowance admits it while
     # still catching any real regression above 1%. LTO stays literal 1.00.
     # See tests/bench_gate_test.rs for the matching explicit allowlist.
+    #
+    # 2026-09-12: the scenario now also reads the optional composite's counter.
+    # The enum-only form was not gateable — both codecs emit the same two-byte
+    # loads, so the true ratio was ~1.00 and the measured one was decided by
+    # code placement (a 2.6% change in unrelated generated code moved ergon's
+    # arm 37% with the decoder source byte-identical). With the composite read
+    # the ratio is ~0.78 in both profiles, so this allowance is no longer
+    # exercised and is a candidate for tightening to a literal 1.00.
     for pair in "${pairs[@]}"; do
         IFS='|' read -r label group ergo_fn ref_fn ceiling <<< "$pair"
         if [ "$profile" = "no-lto" ] && [ "$label" = "extended_optional_enum_nullify" ]; then

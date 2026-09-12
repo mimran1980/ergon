@@ -1146,7 +1146,17 @@ impl Generator {
                 emit_conversion_traits(&mut src);
             }
         } else if emit_sbe_rt {
-            src.push_str(&generate_sbe_rt_src());
+            // `EntryInfo` only exists for the ordered lane's group callbacks. A
+            // schema with no groups would carry it as dead code, which measurably
+            // perturbs code placement on sub-nanosecond paths. In shared-module
+            // mode this module's runtime also serves its siblings, so emit it
+            // unconditionally there rather than guess at their shapes.
+            let needs_entry_info = self.config.shared_module.is_some()
+                || ir
+                    .tokens
+                    .iter()
+                    .any(|t| t.signal == crate::ir::Signal::BeginGroup);
+            src.push_str(&generate_sbe_rt_src(needs_entry_info));
             // A shared runtime is implemented against by sibling modules, so its
             // sealing module widens to `pub(super)`. A self-contained module
             // keeps it private, which is what makes `SbeMessage` unimplementable

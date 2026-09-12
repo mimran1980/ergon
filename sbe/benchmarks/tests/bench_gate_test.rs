@@ -473,9 +473,13 @@ fn tree_with_ratio(
 const NULLIFY: &str = "parity_extended_optional_enum_nullify";
 
 /// `extended_optional_enum_nullify` carries a documented **no-LTO only**
-/// allowance: it decodes two 1-byte enums from a static fixture, so without
-/// cross-unit inlining the two codecs land at parity. See the rationale block
-/// in `scripts/check-bench-gate.sh`.
+/// allowance dating from when the scenario decoded only two 1-byte enums from
+/// a static fixture and the two codecs landed at parity without cross-unit
+/// inlining. The scenario now also reads the optional composite's counter and
+/// measures ~0.78, so the allowance is no longer exercised and could be
+/// tightened to a literal 1.00 in its own change. It is retained here because
+/// it still bounds the case safely. See the rationale block in
+/// `scripts/check-bench-gate.sh`.
 #[test]
 fn nullify_within_the_no_lto_allowance_passes() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.005)?;
