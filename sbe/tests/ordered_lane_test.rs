@@ -253,3 +253,86 @@ fn ordered_lane_callback_error_propagates() -> Result<(), Box<dyn std::error::Er
     );
     Ok(())
 }
+
+/// A schema with var-data but **no groups** still gets an ordered lane, and it
+/// must compile without `EntryInfo` — which is emitted only for schemas that
+/// declare a group, because nothing else can reach it.
+///
+/// This is its own cell on purpose. Every other test here uses the Car schema,
+/// which has groups, so it proves the opposite branch. "The group case compiles
+/// so the group-less case compiles" is the inference that shipped fifteen
+/// codegen defects; the two are separate branches.
+#[test]
+fn ordered_lane_without_groups_compiles_without_entry_info()
+-> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="nogroups" id="901" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <sbe:message name="Flat" id="1">
+    <field name="seq" id="10" type="uint32"/>
+    <data name="label" id="20" type="varStringEncoding"/>
+    <data name="note" id="21" type="varStringEncoding"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("nogroups"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+
+    assert!(
+        !src.contains("struct EntryInfo"),
+        "a group-less schema must not carry EntryInfo as dead code"
+    );
+    assert!(
+        src.contains("pub fn ordered(self)"),
+        "the ordered lane is generated regardless of groups"
+    );
+
+    // Compilation is the assertion: the lane must walk fixed + both var-data
+    // tails and reach done() with no EntryInfo in the module.
+    compile_and_run(
+        "nogroups",
+        &src,
+        r#"
+        let mut storage = [0u8; 256];
+        let len = FlatEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&FlatFixedFields { seq: 9 })
+            .label(b"abc")?
+            .note(b"de")?
+            .encoded_length_with_header();
+        let encoded = &storage[..len];
+
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        let complete = FlatDecoder::try_decode(encoded, 0)?
+            .ordered()
+            .fixed(|d| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(d.seq(), 9);
+                Ok(())
+            })?
+            .label(|b| -> Result<(), sbe_rt::DecodeError> { seen.push(b.to_vec()); Ok(()) })?
+            .note(|b| -> Result<(), sbe_rt::DecodeError> { seen.push(b.to_vec()); Ok(()) })?
+            .done();
+        assert_eq!(seen, vec![b"abc".to_vec(), b"de".to_vec()]);
+        assert_eq!(complete.encoded_length_with_header(), len);
+    "#,
+    );
+    Ok(())
+}

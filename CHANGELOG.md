@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.27] — 2026-09-12
+
 ### Added
 - **Ordered decode lane — `decoder.ordered()`.** One callback per tail, in
   wire order, with the same spelling at every tail: `fixed(|&Decoder|)`, then
@@ -34,7 +36,9 @@
   each staged stage that precedes the tail. Both return `Result<usize>` and
   yield `0` when the tail is absent at the acting version, so sizing a `Vec` or
   logging a count no longer costs a stage.
-- `iter.remaining_entries()` on the staged iterator.
+- `iter.remaining_entries()` and `iter.entry_block_length()` on the staged
+  fixed-stride iterator. The ordered lane fills `EntryInfo` from these for
+  fixed-stride groups, so that shape costs nothing over the staged walk.
 
 ### Changed
 - **`ordered` is a reserved decoder method name again.** 0.1.26 removed the
@@ -58,6 +62,18 @@
 - `absent_tail_length` is now the single predicate for "this tail is not on the
   wire at this version", shared by all four locations that emit a count or
   length accessor; the memoized lane no longer carries its own copy.
+- `sbe_rt::EntryInfo` is emitted only for schemas that declare at least one
+  group (and unconditionally in shared-module mode, where one module's runtime
+  serves its siblings). It is reachable only through the ordered lane's group
+  callbacks, so a group-less schema was carrying it as dead code.
+- `extended_optional_enum_nullify` now decodes the optional composite's counter
+  alongside the two enums, on both arms. The enum-only form was not gateable:
+  both codecs compile those two-byte loads to the same shape, so the true ratio
+  is ~1.00 and the measured one was decided by code placement rather than codec
+  work — a 2.6% change in unrelated generated code in the benchmarks crate moved
+  ergon's arm 37% while the decoder's generated source stayed byte-identical.
+  Reading the composite adds equal logical work to both arms and leaves the
+  ratio near 0.78, with enough margin that placement drift cannot flip it.
 
 ### Fixed
 - **`<group>_count` / `<field>_len` could collide with a sibling accessor and
@@ -85,6 +101,10 @@
   so a decoding failure in the walk could not fail the test. It now propagates
   with `?`; verified by injecting a truncated buffer, which the bound-to-`_`
   form passed and the fixed form fails.
+- `EntryInfo::remaining()` underflowed for a zero-`count` value. `EntryInfo` is
+  a public struct, so an independently constructed one could panic in debug
+  builds; it now saturates. Its three queries also carry `#[must_use]`, since
+  discarding a pure position query is always a bug.
 
 ## [0.1.26] — 2026-09-07
 
