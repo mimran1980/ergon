@@ -154,9 +154,10 @@ fn poisoned_group_completion_returns_the_stored_error() -> Result<(), Box<dyn st
         let prefix = group_start + 4 + 6; // dimension + first fixed block
         buf[prefix..prefix + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
-        let err = CarDecoder::try_from(&buf[..len])?.into_fuel_figures(|entry| {
-            entry.into_usage_description().map(|(_, c)| c)
-        });
+        let err = CarDecoder::try_from(&buf[..len])?
+            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+                entry.into_usage_description().map(|(_u, done)| done)
+            });
         assert!(err.is_err(), "the corrupt entry must error");
 
         // skip_* reports the same failure and must not fabricate the next stage.

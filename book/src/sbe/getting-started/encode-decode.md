@@ -61,9 +61,19 @@ let len = OrderEncoder::wrap_and_apply_header(&mut buf, 0)
 
 `apply_nulls()` remains on the unfixed encoder after `wrap*`, for the case
 where you set individual optional fields yourself and no `FixedFields` value
-describes which optionals are unset.
+describes which optionals are unset. It is generated only for messages that
+declare at least one optional field, and it is the counterpart to sbe-tool's
+`nullify_optional_fields()`.
 
-See [Why NullVal Instead of Option](../design-notes/nullval.md).
+**Group entries need no call at all.** Every `add()` writes the null image for
+the entry's optional fields before your setters run, so a reused buffer cannot
+leak a previous entry's value. The cover is narrower than the message-level
+path, though: it applies to optional fields with a declared `nullValue` and a
+width of 1-8 bytes. An optional **array or composite** inside a group entry is
+not nulled — set it explicitly if your schema has one.
+
+See [Why NullVal Instead of Option](../design-notes/nullval.md) and, when
+porting, [Coming from sbe-tool](from-sbe-tool.md#optional-fields-nullify_optional_fields--apply_nulls).
 
 **Character arrays:** fixed-width `char` fields become `[u8; N]`. Pass a shorter
 `&str` via the `_str` setter — auto-padded with NULs. On decode, `copy_*`

@@ -182,4 +182,46 @@
             <data name="rowNote" id="901" type="varStringEncoding"/>
         </group>
     </sbe:message>
+    <sbe:message name="IteratorSurface" id="3">
+        <group name="items" id="1000" dimensionType="groupSizeEncoding">
+            <field name="value" id="1001" type="uint32"/>
+        </group>
+        <group name="records" id="1002" dimensionType="groupSizeEncoding">
+            <group name="items" id="1010" dimensionType="groupSizeEncoding">
+                <field name="value" id="1011" type="uint32"/>
+            </group>
+            <group name="records" id="1012" dimensionType="groupSizeEncoding">
+                <group name="items" id="1020" dimensionType="groupSizeEncoding">
+                    <field name="value" id="1021" type="uint32"/>
+                </group>
+                <group name="records" id="1022" dimensionType="groupSizeEncoding">
+                    <data name="payload" id="1030" type="varStringEncoding"/>
+                </group>
+                <group name="futureItems" id="1120" dimensionType="groupSizeEncoding" sinceVersion="1">
+                    <field name="value" id="1121" type="uint32"/>
+                </group>
+                <group name="futureRecords" id="1122" dimensionType="groupSizeEncoding" sinceVersion="1">
+                    <data name="payload" id="1123" type="varStringEncoding"/>
+                </group>
+                <data name="note" id="1023" type="varStringEncoding"/>
+                <data name="extra" id="1024" type="varStringEncoding" sinceVersion="1"/>
+            </group>
+            <group name="futureItems" id="1110" dimensionType="groupSizeEncoding" sinceVersion="1">
+                <field name="value" id="1111" type="uint32"/>
+            </group>
+            <group name="futureRecords" id="1112" dimensionType="groupSizeEncoding" sinceVersion="1">
+                <data name="payload" id="1113" type="varStringEncoding"/>
+            </group>
+            <data name="note" id="1013" type="varStringEncoding"/>
+            <data name="extra" id="1014" type="varStringEncoding" sinceVersion="1"/>
+        </group>
+        <group name="futureItems" id="1100" dimensionType="groupSizeEncoding" sinceVersion="1">
+            <field name="value" id="1101" type="uint32"/>
+        </group>
+        <group name="futureRecords" id="1102" dimensionType="groupSizeEncoding" sinceVersion="1">
+            <data name="payload" id="1103" type="varStringEncoding"/>
+        </group>
+        <data name="note" id="1003" type="varStringEncoding"/>
+        <data name="extra" id="1004" type="varStringEncoding" sinceVersion="1"/>
+    </sbe:message>
 </sbe:messageSchema>

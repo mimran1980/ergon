@@ -285,7 +285,7 @@ proptest! {
         let decoded = CarDecoder::try_decode(encoded, 0).unwrap();
 
         let mut fuel = Vec::new();
-        let _ = decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+        decoded.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let speed = e.speed();
             let mpg = e.mpg();
             let (usage, complete) = e.into_usage_description()?;

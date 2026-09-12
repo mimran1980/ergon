@@ -71,9 +71,11 @@ mod tests {
             .encoded_length_with_header();
         nested::TreeDecoder::verify(&buffer[..len])?;
         let tree = nested::TreeDecoder::try_from(&buffer[..len])?;
-        let _ = tree.into_outer(|entry| -> Result<_, nested::sbe_rt::DecodeError> {
+        // Rows carry `label` var-data, so both levels are visit closures and
+        // the inner walk returns the outer entry's completion directly.
+        tree.into_outer(|entry| -> Result<_, nested::sbe_rt::DecodeError> {
             assert_eq!(entry.value(), 7);
-            entry.into_inner(|row| -> Result<_, nested::sbe_rt::DecodeError> {
+            entry.into_inner(|row| {
                 assert_eq!(row.quantity(), 9);
                 let (label, complete) = row.into_label()?;
                 assert_eq!(label, b"miri");

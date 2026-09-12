@@ -120,13 +120,14 @@ fn bench_groups(c: &mut Criterion) {
             |b, frame| {
                 b.iter(|| {
                     let mut sum = 0u64;
-                    let done = GroupedDecoder::try_from(black_box(frame.as_slice()))
+                    let mut rows = GroupedDecoder::try_from(black_box(frame.as_slice()))
                         .unwrap()
-                        .into_rows(|row| -> Result<(), sbe_rt::DecodeError> {
-                            sum = sum.wrapping_add(row.value());
-                            Ok(())
-                        })
+                        .into_rows()
                         .unwrap();
+                    for row in &mut rows {
+                        sum = sum.wrapping_add(row.value());
+                    }
+                    let done = rows.finish().unwrap();
                     black_box((sum, done));
                 });
             },
@@ -290,12 +291,13 @@ fn bench_dispatch_metadata_dto_and_nested(c: &mut Criterion) {
                 .unwrap()
                 .into_outer(|entry| -> Result<_, sbe_rt::DecodeError> {
                     sum = sum.wrapping_add(entry.value());
+                    // Inner rows carry var-data, so they take a callback too,
+                    // and it returns this outer entry's completion directly.
                     entry.into_inner(|row| -> Result<_, sbe_rt::DecodeError> {
                         sum = sum.wrapping_add(row.value());
-                        row.into_payload().map(|(payload, complete)| {
-                            black_box(payload);
-                            complete
-                        })
+                        let (payload, complete) = row.into_payload()?;
+                        black_box(payload);
+                        Ok(complete)
                     })
                 })
                 .unwrap();

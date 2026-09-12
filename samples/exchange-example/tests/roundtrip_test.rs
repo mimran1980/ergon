@@ -195,19 +195,15 @@ fn bitget_depth50_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     // Stages enforce this order; symbol is read last.
     let mut ask_prices = Vec::new();
     let mut bid_prices = Vec::new();
-    let (symbol, _done) = decoder
-        .into_asks(|e| -> Result<(), sbe_rt::DecodeError> {
-            ask_prices.push(e.price());
-            Ok(())
-        })
-        .expect("asks group decode")
-        .into_bids(|e| -> Result<(), sbe_rt::DecodeError> {
-            bid_prices.push(e.price());
-            Ok(())
-        })
-        .expect("bids group decode")
-        .into_symbol_as_str()
-        .expect("symbol decode");
+    let mut asks = decoder.into_asks().expect("asks group decode");
+    for e in &mut asks {
+        ask_prices.push(e.price());
+    }
+    let mut bids = asks.into_bids().expect("bids group decode");
+    for e in &mut bids {
+        bid_prices.push(e.price());
+    }
+    let (symbol, _done) = bids.into_symbol_as_str().expect("symbol decode");
     assert_eq!(ask_prices, vec![100, 200, 300], "ask prices");
     assert_eq!(bid_prices, vec![1000, 2000], "bid prices");
     assert_eq!(symbol, "BTCUSDT", "symbol");
@@ -361,18 +357,17 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
 
     let mut entries = Vec::new();
-    let after_trades = decoder
-        .into_trades(|entry| -> Result<(), Box<dyn std::error::Error>> {
-            entries.push((
-                entry.ts(),
-                entry.exec_id(),
-                entry.price(),
-                entry.size(),
-                entry.side(),
-            ));
-            Ok(())
-        })
-        .expect("trades group decode");
+    let mut trades = decoder.into_trades().expect("trades group decode");
+    for entry in &mut trades {
+        entries.push((
+            entry.ts(),
+            entry.exec_id(),
+            entry.price(),
+            entry.size(),
+            entry.side(),
+        ));
+    }
+    let after_trades = trades.finish().expect("trades group finish");
     assert_eq!(entries.len(), 2, "should have 2 trade entries");
 
     assert_eq!(entries[0].0, 1000, "entry 0 ts");
@@ -495,16 +490,15 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoder.sts(), 0, "sts");
     assert_eq!(decoder.category(), InstCategory::Spot, "category");
 
-    let after_trades = decoder
-        .into_trades(|entry| -> Result<(), Box<dyn std::error::Error>> {
-            assert_eq!(entry.ts(), 0, "entry ts");
-            assert_eq!(entry.exec_id(), 0, "entry exec_id");
-            assert_eq!(entry.price(), 0, "entry price");
-            assert_eq!(entry.size(), 0, "entry size");
-            assert_eq!(entry.side(), TradeSide::Buy, "entry side");
-            Ok(())
-        })
-        .expect("trades group decode");
+    let mut trades = decoder.into_trades().expect("trades group decode");
+    for entry in &mut trades {
+        assert_eq!(entry.ts(), 0, "entry ts");
+        assert_eq!(entry.exec_id(), 0, "entry exec_id");
+        assert_eq!(entry.price(), 0, "entry price");
+        assert_eq!(entry.size(), 0, "entry size");
+        assert_eq!(entry.side(), TradeSide::Buy, "entry side");
+    }
+    let after_trades = trades.finish().expect("trades group finish");
     let (symbol, _complete) = after_trades.into_symbol_as_str().expect("symbol");
     assert_eq!(symbol, "", "empty symbol");
 
@@ -649,18 +643,17 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     assert_eq!(decoder.status(), 200, "status");
 
     let mut entries = Vec::new();
-    let after_rates = decoder
-        .into_rate_limits(|entry| -> Result<(), Box<dyn std::error::Error>> {
-            entries.push((
-                entry.rate_limit_type(),
-                entry.interval(),
-                entry.interval_num(),
-                entry.rate_limit(),
-                entry.current(),
-            ));
-            Ok(())
-        })
-        .expect("rate_limits group decode");
+    let mut rates = decoder.into_rate_limits().expect("rate_limits group decode");
+    for entry in &mut rates {
+        entries.push((
+            entry.rate_limit_type(),
+            entry.interval(),
+            entry.interval_num(),
+            entry.rate_limit(),
+            entry.current(),
+        ));
+    }
+    let after_rates = rates.finish().expect("rate_limits group finish");
     assert_eq!(entries.len(), 2, "should have 2 rate limit entries");
 
     assert_eq!(entries[0].0, RateLimitType::RequestWeight, "entry 0 type");
@@ -703,7 +696,7 @@ fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std
     // The buffer has no group dimension or var data — accessing group should fail
     let decoder = WebSocketResponseDecoder::try_from(&buf[..])
         .expect("try_from should succeed at header level");
-    let result = decoder.into_rate_limits(|_| Ok(()) as Result<(), Box<dyn std::error::Error>>);
+    let result = decoder.into_rate_limits();
     assert!(
         result.is_err(),
         "rate_limits() on buffer without group dim should fail"

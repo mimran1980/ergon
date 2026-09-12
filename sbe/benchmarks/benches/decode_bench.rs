@@ -103,7 +103,7 @@ fn bench_group_iteration(c: &mut Criterion) {
             black_box((n, sum_speed, sum_mpg));
         });
     });
-    group.bench_function("fuel_figures_visit_entries", |b| {
+    group.bench_function("fuel_figures_into_entries", |b| {
         b.iter(|| {
             let mut n = 0usize;
             let mut sum_speed: u64 = 0;

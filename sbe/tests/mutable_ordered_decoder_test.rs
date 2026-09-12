@@ -1,8 +1,10 @@
-//! The mutable ordered decoder lane is gone.
+//! The *mutable* ordered decoder lane is gone.
 //!
-//! Sequential decode is the staged `into_*(|entry|)` / `skip_*` chain.
-//! Random-access and `.memoized()` remain. This file asserts the ordered
-//! surface is not generated, then compile-and-runs the remaining lanes.
+//! What 0.1.26 removed was the `&mut` cursor with runtime `OutOfOrder`
+//! checks. The name `ordered()` was later reused for the callback lane in
+//! `ordered_lane_test.rs`, which is a façade over the staged stages and has
+//! no runtime order check — so this file asserts the *mutable* surface stays
+//! gone, then compile-and-runs the remaining lanes.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -15,14 +17,10 @@ use common::{
 };
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema, parse};
 
-fn assert_ordered_lane_absent(src: &str) {
+fn assert_mutable_ordered_lane_absent(src: &str) {
     assert!(
         !src.contains("OrderedDecoder"),
-        "must not emit *OrderedDecoder types"
-    );
-    assert!(
-        !src.contains("pub fn ordered(self)"),
-        "must not emit Decoder::ordered()"
+        "must not emit the mutable *OrderedDecoder types"
     );
     assert!(
         !src.contains("into_car_ordered") && !src.contains("_ordered("),
@@ -30,23 +28,14 @@ fn assert_ordered_lane_absent(src: &str) {
     );
     assert!(
         !src.contains("DecodeError::OutOfOrder"),
-        "must not emit OutOfOrder checks"
+        "the callback lane has no runtime order check — order is a type"
     );
 }
 
 #[test]
-fn ordered_lane_is_not_generated() -> Result<(), Box<dyn std::error::Error>> {
+fn mutable_ordered_lane_is_not_generated() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "no_ordered");
-    assert_ordered_lane_absent(&src);
-    compile_fails_with_diagnostics(
-        "no_ordered_method",
-        &src,
-        r#"
-        let buf = [0u8; 16];
-        let _ = unsafe { CarDecoder::wrap_unchecked(&buf, 0, 45, 0) }.ordered();
-        "#,
-        &["no method named `ordered`"],
-    );
+    assert_mutable_ordered_lane_absent(&src);
     Ok(())
 }
 
@@ -54,7 +43,7 @@ fn ordered_lane_is_not_generated() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn remaining_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "remaining_lanes");
-    assert_ordered_lane_absent(&src);
+    assert_mutable_ordered_lane_absent(&src);
     compile_and_run(
         "remaining_lanes",
         &src,
@@ -127,16 +116,17 @@ fn remaining_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::E
         let (s_mfr, staged) = staged
             .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 let speed = entry.speed();
-                let (usage, complete) = entry.into_usage_description_as_str()?;
+                let (usage, done) = entry.into_usage_description_as_str()?;
                 s_fuel.push((speed, usage.to_owned()));
-                Ok(complete)
+                Ok(done)
             })?
             .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
                 s_octane.push(entry.octane_rating());
-                entry.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+                let mut acc = entry.into_acceleration()?;
+                for a in &mut acc {
                     s_acc.push((a.mph(), a.seconds().to_bits()));
-                    Ok(())
-                })
+                }
+                acc.finish()
             })?
             .into_manufacturer_as_str()?;
         let (s_model, staged) = staged.into_model_as_str()?;
@@ -171,10 +161,13 @@ fn remaining_lanes_decode_identical_values() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// A schema field named `ordered` keeps that name: the conversion method
-/// that forced `ordered_field` is gone.
+/// A schema field named `ordered` renames to `ordered_field`, because
+/// `ordered()` is a lane conversion on the base decoder again — the same rule
+/// that has always applied to `memoized`. This reverses the 0.1.26 behaviour,
+/// which held only while no `ordered()` method existed.
 #[test]
-fn schema_field_named_ordered_is_the_getter() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_field_named_ordered_yields_to_the_lane_conversion()
+-> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<messageSchema package="ordclash" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -204,18 +197,17 @@ fn schema_field_named_ordered_is_the_getter() -> Result<(), Box<dyn std::error::
         .source
         .clone();
     assert!(
-        src.contains("fn ordered("),
-        "field named ordered is the getter"
+        src.contains("fn ordered_field("),
+        "field named ordered must rename when ordered() is a lane conversion"
     );
     assert!(
-        !src.contains("fn ordered_field("),
-        "no rename without ordered() conversion"
+        src.contains("pub fn ordered(self)"),
+        "ordered() lane conversion must exist on the base decoder"
     );
     assert!(
-        !src.contains("pub fn ordered(self)"),
-        "lane conversion must not exist"
+        !src.contains("OrderedDecoder"),
+        "no mutable ordered decoder"
     );
-    assert!(!src.contains("OrderedDecoder"));
     compile_and_run(
         "ordclash",
         &src,
@@ -227,22 +219,23 @@ fn schema_field_named_ordered_is_the_getter() -> Result<(), Box<dyn std::error::
             .encoded_length_with_header();
         assert_eq!(storage.len(), len);
         let dec = MsgDecoder::try_decode(&storage[..len], 0)?;
-        assert_eq!(dec.ordered(), 7);
+        assert_eq!(dec.ordered_field(), 7);
         assert_eq!(dec.acting_version(), 0);
         let mut n = 0u32;
-        let _ = dec.into_legs(|e| -> Result<(), sbe_rt::DecodeError> {
+        let mut legs = dec.into_legs()?;
+        for e in &mut legs {
             n += e.qty();
-            Ok(())
-        })?;
+        }
         assert_eq!(n, 3);
     "#,
     );
     Ok(())
 }
 
-/// Lean and Full both omit the mutable ordered lane.
+/// Lean and Full both omit the *mutable* ordered lane, and both carry the
+/// callback lane.
 #[test]
-fn lean_and_full_profiles_omit_ordered() -> Result<(), Box<dyn std::error::Error>> {
+fn lean_and_full_profiles_omit_mutable_ordered() -> Result<(), Box<dyn std::error::Error>> {
     for (module, profile) in [
         ("mo_lean", GenerationProfile::Lean),
         ("mo_full", GenerationProfile::Full),
@@ -250,12 +243,12 @@ fn lean_and_full_profiles_omit_ordered() -> Result<(), Box<dyn std::error::Error
         let (_schema, src) =
             generate_domain_with(&Paths::example_schema(), module, |c| c.profile(profile));
         assert!(
-            !src.contains("pub fn ordered(self)"),
-            "{module} must not emit ordered()"
+            !src.contains("OrderedDecoder"),
+            "{module} must not emit the mutable OrderedDecoder"
         );
         assert!(
-            !src.contains("OrderedDecoder"),
-            "{module} must not emit OrderedDecoder"
+            src.contains("pub fn ordered(self)"),
+            "{module} must emit the callback lane conversion"
         );
     }
     Ok(())
@@ -300,10 +293,10 @@ fn random_access_and_iterator_still_work() -> Result<(), Box<dyn std::error::Err
         }
         assert_eq!(n, 1);
         let mut n2 = 0usize;
-        let _ = car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+        car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             n2 += 1;
             assert_eq!(e.speed(), 10);
-            e.into_usage_description().map(|(_, c)| c)
+            e.into_usage_description().map(|(_u, done)| done)
         })?;
         assert_eq!(n2, 1);
     "#,

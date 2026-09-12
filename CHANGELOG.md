@@ -2,6 +2,110 @@
 
 ## [Unreleased]
 
+## [0.1.27] — 2026-09-12
+
+### Added
+- **Ordered decode lane — `decoder.ordered()`.** One callback per tail, in
+  wire order, with the same spelling at every tail: `fixed(|&Decoder|)`, then
+  `group(|entry, EntryInfo|)` for each group, then `field(|&[u8]|)` (or
+  `field_as_str(|&str|)` where the schema declares a text encoding). `done()`
+  returns the staged complete stage, so extent and full-frame helpers stay
+  reachable. It is a façade over the staged stages and owns no cursor, so the
+  entry traversal and compile-time tail ordering come from there rather than
+  being re-implemented; entries carrying their own tails still return their
+  completion from the callback, which is what keeps the walk one-pass. It is
+  free over the staged lane for fixed-stride groups, and costs one extra
+  dimension-header read per *dynamic* group per message — never per entry, and
+  never a scan — because a visit closure exposes no handle to ask for the
+  count. The staged lane stays the floor for all-dynamic messages.
+- `sbe_rt::EntryInfo { index, count, block_length }`, handed to every ordered
+  entry callback, with `is_first()`, `is_last()` and `remaining()`. Both
+  `count` and `block_length` come from the group's dimension header, so neither
+  costs a scan. A group's total *byte* length is deliberately absent: for
+  entries with tails it is only settled by traversing them.
+- **Fixed-stride groups decode as real iterators.** A group whose entries carry
+  no tails of their own has a known stride, so `into_<group>()` hands back an
+  iterator: `for entry in &mut iter`. It implements `Iterator` only for
+  `&mut Iter`, never for `Iter`, so `for entry in iter` does not compile and a
+  loop cannot silently drop the rest of the message. Also `ExactSizeIterator`
+  and `FusedIterator`. The iterator does not have to be drained — `finish()`,
+  or the next tail's `into_*` / `skip_*` called straight on it, skips the rest
+  by arithmetic.
+- Non-advancing `<group>_count()` and `<field>_len()` accessors, generated at
+  every decode location: the base decoder, `.memoized()`, group entries, and
+  each staged stage that precedes the tail. Both return `Result<usize>` and
+  yield `0` when the tail is absent at the acting version, so sizing a `Vec` or
+  logging a count no longer costs a stage.
+- `iter.remaining_entries()` and `iter.entry_block_length()` on the staged
+  fixed-stride iterator. The ordered lane fills `EntryInfo` from these for
+  fixed-stride groups, so that shape costs nothing over the staged walk.
+
+### Changed
+- **`ordered` is a reserved decoder method name again.** 0.1.26 removed the
+  mutable ordered lane and, with it, the rename that a schema field named
+  `ordered` used to take; the new callback lane puts `ordered()` back on the
+  base decoder, so such a field is once more generated as `ordered_field()` —
+  the same rule that has always applied to `memoized`. The *mutable* lane
+  (`{Name}OrderedDecoder`, runtime `OutOfOrder` checks) stays deleted; the new
+  lane enforces order through types, not at runtime.
+- The `ergo-sbe_ordered` benchmark arm now exercises the ordered lane. It and
+  `ergo-sbe_consuming` were both measuring the staged API, so the two labels
+  reported the same thing; `fairness_policy_test` now asserts each arm uses its
+  own lane.
+- Groups whose entries carry their own groups or var-data keep the visit
+  closure, and now that is a deliberate split rather than an accident of
+  history. Such entries have no stride, and `Iterator::next` cannot learn where
+  an entry ended from the entry it already handed away, so an iterator would
+  have to measure every entry before yielding it and the caller's own walk
+  would traverse it again. The closure returns the entry's completion, and that
+  *is* the next cursor. One pass, both shapes.
+- `absent_tail_length` is now the single predicate for "this tail is not on the
+  wire at this version", shared by all four locations that emit a count or
+  length accessor; the memoized lane no longer carries its own copy.
+- `sbe_rt::EntryInfo` is emitted only for schemas that declare at least one
+  group (and unconditionally in shared-module mode, where one module's runtime
+  serves its siblings). It is reachable only through the ordered lane's group
+  callbacks, so a group-less schema was carrying it as dead code.
+- `extended_optional_enum_nullify` now decodes the optional composite's counter
+  alongside the two enums, on both arms. The enum-only form was not gateable:
+  both codecs compile those two-byte loads to the same shape, so the true ratio
+  is ~1.00 and the measured one was decided by code placement rather than codec
+  work — a 2.6% change in unrelated generated code in the benchmarks crate moved
+  ergon's arm 37% while the decoder's generated source stayed byte-identical.
+  Reading the composite adds equal logical work to both arms and leaves the
+  ratio near 0.78, with enough margin that placement drift cannot flip it.
+
+### Fixed
+- **`<group>_count` / `<field>_len` could collide with a sibling accessor and
+  produce a module that did not compile.** A schema declaring a group `orders`
+  beside a field `ordersCount` emitted `orders_count()` twice (E0592), at
+  message, memoized and group-entry level alike. Sibling *tails* collided the
+  same way: a group `fills` beside a group `fillsCount`, or a var-data `blob`
+  beside a var-data `blobLen`. These names are derived from the schema, so they
+  cannot live in the static reserved list that drives field renaming. The
+  existing accessor now wins and keeps its name — renaming it would change an
+  accessor that worked before these convenience methods existed — and the
+  convenience accessor is not generated for that tail. Consuming stages carry
+  no fields or sibling tails, so they still get it. Covered by
+  `reserved_name_clash_test::tail_accessors_yield_to_colliding_field_names`,
+  which compiles a schema containing all three collision shapes.
+- **`finish()` / `skip_*` on a fixed-stride group stepped over each unread
+  entry.** Every entry occupies the acting block length, so the group's end is
+  `count * block_length`; the loop was doing a bounds check per entry for a
+  result that one multiply gives. Groups whose entries carry tails still walk,
+  because without a stride there is nothing to compute.
+- The fixed-stride group decoder gained the `size_hint` that its
+  `ExactSizeIterator` implementation already implied; it was returning the
+  default `(0, None)`.
+- The codegen matrix's iterator-surface probe bound its message walk to `_`,
+  so a decoding failure in the walk could not fail the test. It now propagates
+  with `?`; verified by injecting a truncated buffer, which the bound-to-`_`
+  form passed and the fixed form fails.
+- `EntryInfo::remaining()` underflowed for a zero-`count` value. `EntryInfo` is
+  a public struct, so an independently constructed one could panic in debug
+  builds; it now saturates. Its three queries also carry `#[must_use]`, since
+  discarding a pure position query is always a bug.
+
 ## [0.1.26] — 2026-09-07
 
 ### Added

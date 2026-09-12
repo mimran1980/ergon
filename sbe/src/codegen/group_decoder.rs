@@ -12,7 +12,7 @@ use crate::structured_ir::{
 
 use super::conversion_helpers::{
     enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes,
+    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -194,9 +194,10 @@ pub(crate) fn generate_group_decoder(
             total: usize,
             acting_version: u16,
             acting_block_length: usize,
-            // Parent message body position + acting block length, so `finish()`
-            // can reconstruct the next message decoder stage. Unused by
-            // random-access entry accessors.
+            // Parent message body position + acting block length, so
+            // `skip_all` / the staged iterator's `finish()` can reconstruct
+            // the next message decoder stage. Unused by random-access entry
+            // accessors.
             parent_pos: usize,
             parent_block_length: usize,
             #poison_field
@@ -208,7 +209,8 @@ pub(crate) fn generate_group_decoder(
         impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
             /// Proof-dependent constructor: like `wrap()` but remembers the
             /// parent message body position and acting block length so
-            /// `finish()` can rebuild the next stage.
+            /// `skip_all` / the staged iterator's `finish()` can rebuild the
+            /// next stage.
             ///
             /// Private to the generated module — a caller outside it cannot
             /// invent parent state and then `finish()` into a message stage
@@ -742,6 +744,11 @@ pub(crate) fn generate_group_decoder(
                     self.offset += self.acting_block_length;
                     self.count -= 1;
                     Some(entry)
+                }
+
+                #[inline]
+                fn size_hint(&self) -> (usize, Option<usize>) {
+                    (self.count, Some(self.count))
                 }
             }
 
@@ -1420,6 +1427,19 @@ pub(crate) fn generate_group_decoder(
         quote::quote! { self.offset },
     ));
 
+    // Entry field accessor names. Group entries do not rename against the
+    // static reserved list, so the empty slice matches how their fixed
+    // accessors are emitted above.
+    let taken_entry_accessors = owner_accessor_names(
+        &g.fields,
+        conversions,
+        &[],
+        g.groups
+            .iter()
+            .map(|ng| ng.name.as_str())
+            .chain(g.var_data.iter().map(|v| v.name.as_str())),
+    );
+
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;
     for ng in &g.groups {
@@ -1479,6 +1499,22 @@ pub(crate) fn generate_group_decoder(
                 };
             }
         };
+        let absent_len = super::tail_stages::absent_tail_length(
+            ng.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
+        if let Some(count_ident) =
+            tail_accessor_ident(&ng_snake_ident.to_string(), "count", &taken_entry_accessors)
+        {
+            entry_body.extend(quote::quote! {
+                /// Wire-declared entry count without advancing this decoder.
+                #[inline]
+                pub fn #count_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_len
+                    Ok(self.#ng_snake_ident()?.remaining_entries())
+                }
+            });
+        }
         entry_body.extend(quote::quote! {
             #[inline]
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
@@ -1494,6 +1530,23 @@ pub(crate) fn generate_group_decoder(
 
     let mut nvd_idx = g.groups.len();
     for vd in &g.var_data {
+        let accessor = quote::format_ident!("{}", to_snake_case(&vd.name));
+        let absent_len = super::tail_stages::absent_tail_length(
+            vd.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
+        if let Some(len_ident) =
+            tail_accessor_ident(&to_snake_case(&vd.name), "len", &taken_entry_accessors)
+        {
+            entry_body.extend(quote::quote! {
+                /// Byte length without advancing this decoder.
+                #[inline]
+                pub fn #len_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_len
+                    Ok(self.#accessor()?.len())
+                }
+            });
+        }
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let type_pascal_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());

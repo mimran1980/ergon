@@ -20,7 +20,8 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, field_has_conversion_free, find_domain_type, resolve_field_ident,
+    DECODER_RESERVED, field_has_conversion_free, find_domain_type, owner_accessor_names,
+    resolve_field_ident, tail_accessor_ident,
 };
 use super::converter_impls::is_optional_domain_field;
 use super::doc_attr_tokens;
@@ -69,7 +70,7 @@ pub(crate) fn generate_memoized_decoder(
             /// nothing: there is no second access to amortise against, and
             /// reaching a late tail publishes every boundary it passes. If you
             /// are decoding the whole message in wire order, the staged
-            /// `into_*(|entry|)` / `skip_*` chain carries the cursor without a
+            /// `into_*` / `skip_*` chain carries the cursor without a
             /// cache and is faster still.
             ///
             /// The cache covers this message's own groups and var-data. Group
@@ -148,6 +149,19 @@ pub(crate) fn generate_memoized_decoder(
         total_tail, &core,
     ));
 
+    // The memoized wrapper forwards fixed fields under the same names the base
+    // decoder gives them, so it inherits the same taken-accessor set.
+    let taken_accessor_names = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
+    let inner_acting_version = quote::quote! { self.inner.acting_version };
+
     // Group getters: identical names, cached tail starts.
     for (gi, g) in msg.groups.iter().enumerate() {
         let scoped = &group_unique_names[gi];
@@ -158,6 +172,18 @@ pub(crate) fn generate_memoized_decoder(
         let version_check = version_guard(g.since_version, &g_snake, span);
         if let Some(ref desc) = g.description {
             impl_body.extend(doc_attr_tokens(desc));
+        }
+        let absent_count =
+            super::tail_stages::absent_tail_length(g.since_version, &inner_acting_version);
+        if let Some(count_ident) = tail_accessor_ident(&g_snake, "count", &taken_accessor_names) {
+            impl_body.extend(quote::quote! {
+                /// Wire-declared entry count without advancing this decoder.
+                #[inline]
+                pub fn #count_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_count
+                    Ok(self.#g_snake_ident()?.remaining_entries())
+                }
+            });
         }
         impl_body.extend(quote::quote! {
             #[must_use = "discarding this value is almost always a mistake"]
@@ -191,6 +217,18 @@ pub(crate) fn generate_memoized_decoder(
         let version_check = version_guard(vd.since_version, &vd_snake, span);
         if let Some(ref desc) = vd.description {
             impl_body.extend(doc_attr_tokens(desc));
+        }
+        let absent_len =
+            super::tail_stages::absent_tail_length(vd.since_version, &inner_acting_version);
+        if let Some(len_ident) = tail_accessor_ident(&vd_snake, "len", &taken_accessor_names) {
+            impl_body.extend(quote::quote! {
+                /// Byte length without advancing this decoder.
+                #[inline]
+                pub fn #len_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_len
+                    Ok(self.#vd_ident()?.len())
+                }
+            });
         }
         impl_body.extend(quote::quote! {
             #[inline]

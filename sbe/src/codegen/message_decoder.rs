@@ -14,7 +14,8 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, resolve_field_ident,
+    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names,
+    resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
@@ -1150,6 +1151,18 @@ pub(crate) fn generate_message_decoder(
         quote::quote! { self.offset },
     ));
 
+    // Fixed-field accessor names, so a tail-derived `<group>_count` /
+    // `<field>_len` never defines a method the fields already define.
+    let taken_accessor_names = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
+
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
         let scoped = &group_unique_names[gi];
@@ -1178,6 +1191,24 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {}
         };
+        let absent_len = super::tail_stages::absent_tail_length(
+            g.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
+        // Omitted when a fixed field already defines this name — see
+        // `tail_accessor_ident`.
+        if let Some(count_ident) =
+            tail_accessor_ident(&g_snake_ident.to_string(), "count", &taken_accessor_names)
+        {
+            impl_body.extend(quote::quote! {
+                /// Wire-declared entry count without advancing this decoder.
+                #[inline]
+                pub fn #count_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_len
+                    Ok(self.#g_snake_ident()?.remaining_entries())
+                }
+            });
+        }
         impl_body.extend(quote::quote! {
             #mu
             #[inline]
@@ -1192,6 +1223,23 @@ pub(crate) fn generate_message_decoder(
 
     let mut vd_idx = msg.groups.len();
     for vd in &msg.var_data {
+        let accessor = quote::format_ident!("{}", to_snake_case(&vd.name));
+        let absent_len = super::tail_stages::absent_tail_length(
+            vd.since_version,
+            &super::tail_stages::own_acting_version(),
+        );
+        if let Some(len_ident) =
+            tail_accessor_ident(&to_snake_case(&vd.name), "len", &taken_accessor_names)
+        {
+            impl_body.extend(quote::quote! {
+                /// Byte length without advancing this decoder.
+                #[inline]
+                pub fn #len_ident(&self) -> Result<usize, sbe_rt::DecodeError> {
+                    #absent_len
+                    Ok(self.#accessor()?.len())
+                }
+            });
+        }
         let (type_pascal, prefix_size, len_field, _) = get_vardata_info(elements, &vd.type_name);
         let vd_snake = to_snake_case(&vd.name);
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
@@ -1754,7 +1802,7 @@ pub(crate) fn generate_message_decoder(
     }
 
     // Consuming decoder tail stages:
-    //   NameDecoder --into_<g>()--> GroupDecoder --finish()--> NameDecoderAfter<G>
+    //   NameDecoder --into_<g>()--> GroupDecoderIter --finish()--> NameDecoderAfter<G>
     //   -> ... -> NameDecoderComplete. Random-access `&self` accessors remain.
     ts.extend(generate_decoder_consuming_stages(
         msg,
