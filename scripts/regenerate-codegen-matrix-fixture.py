@@ -152,6 +152,30 @@ def main():
     parts.append("        </group>\n")
     parts.append("    </sbe:message>\n")
 
+    # Both iterator shapes and var-data at every decoder-owner depth.
+    def iterator_tails(depth, indent):
+        lines = [f'{indent}<group name="items" id="{1000 + depth * 10}" dimensionType="groupSizeEncoding">',
+                 f'{indent}    <field name="value" id="{1001 + depth * 10}" type="uint32"/>',
+                 f'{indent}</group>',
+                 f'{indent}<group name="records" id="{1002 + depth * 10}" dimensionType="groupSizeEncoding">']
+        if depth < 2:
+            lines.extend(iterator_tails(depth + 1, indent + "    "))
+        else:
+            lines.append(f'{indent}    <data name="payload" id="1030" type="varStringEncoding"/>')
+        lines.extend([f'{indent}</group>',
+                      f'{indent}<group name="futureItems" id="{1100 + depth * 10}" dimensionType="groupSizeEncoding" sinceVersion="1">',
+                      f'{indent}    <field name="value" id="{1101 + depth * 10}" type="uint32"/>',
+                      f'{indent}</group>',
+                      f'{indent}<group name="futureRecords" id="{1102 + depth * 10}" dimensionType="groupSizeEncoding" sinceVersion="1">',
+                      f'{indent}    <data name="payload" id="{1103 + depth * 10}" type="varStringEncoding"/>',
+                      f'{indent}</group>',
+                      f'{indent}<data name="note" id="{1003 + depth * 10}" type="varStringEncoding"/>',
+                      f'{indent}<data name="extra" id="{1004 + depth * 10}" type="varStringEncoding" sinceVersion="1"/>'])
+        return lines
+
+    parts.append('    <sbe:message name="IteratorSurface" id="3">\n')
+    parts.append("\n".join(iterator_tails(0, "        ")) + "\n")
+    parts.append('    </sbe:message>\n')
     parts.append(FOOTER)
     return "".join(parts)
 

@@ -26,8 +26,9 @@ Each `just bench` invocation owns one unique result root under
 
 The gate reads only that root. It fails closed on missing, incomplete, stale, or
 mixed-run results, so a release can never pass on evidence from another run. Both
-profiles (LTO and no-LTO) are blocking, and the SBE ceiling is a literal `1.00`
-with no noise tolerance.
+profiles (LTO and no-LTO) are blocking. The SBE target is `1.00`; the current
+script permits `1.01` for `optional_enum_nullify` without LTO. Check actual
+ratios as well as the pass/fail result.
 
 Quote a result by naming its run id, commit, and host — or do not quote it.
 
@@ -41,17 +42,12 @@ lto = true
 codegen-units = 1
 ```
 
-Generated codecs are many small `#[inline]` methods spread across a generated
-module, and the decode path is dominated by wrapper construction and field
-address arithmetic that only fully collapses across codegen units. With LTO the
-generated code inlines into the caller and ergon's margin over sbe-tool is at
-its widest across every maintained scenario. Without it the margin narrows, and
-on the tightest scenario — `optional_enum_nullify`, a memory-bound two-byte-enum
-load with almost no work to hide — the two codecs land at parity.
-
-That is a profile recommendation, not a defect: ergon's own timing is stable
-across both profiles. Both profiles remain blocking gates precisely so this
-stays visible rather than being papered over by LTO.
+LTO gives the optimizer more scope across crate boundaries. Public generated
+hot-path methods also carry `#[inline]` so downstream crates can optimize calls
+without LTO. The effect depends on the schema, access pattern, compiler, and
+surrounding application; this profile does not by itself establish parity or
+a speed advantage. Measure both profiles. Both remain required by the
+maintained gate.
 
 ## What the numbers actually measure
 
@@ -91,9 +87,13 @@ exists, not at runtime.
 
 ### SBE codec gate — `just bench`
 
-Ratios are ergon / sbe-tool. Every maintained comparison has a strict **`1.00`
-ceiling with zero tolerance**. The gate fails on any ratio above 1.00,
-regardless of magnitude. A `1.01` timing allowance is not literal parity.
+Ratios are ergon / sbe-tool. The project target is **`1.00`**. The current
+script permits `1.01` for SBE `optional_enum_nullify` without LTO; other SBE
+cases use `1.00`. Cluster decode also has explicit `1.01` / `1.05` exceptions,
+listed in the [book's gate table](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
+These are existing allowances, not proof of literal parity. Inspect actual
+ratios and profile-specific ceilings before treating a passing gate as evidence
+that every case meets `1.00`.
 On Linux, `scripts/run-sbe-instruction-probes.sh` fails when any registered
 two-arm pair has ergon Callgrind Ir/op above sbe-tool. On hosts without
 Valgrind, llvm-objdump, or Linux the lane fail-closes (exit 3) and is not
@@ -145,13 +145,10 @@ methods carry explicit inline intent; ergon's group entry setters now carry
 the same intent (fixed after a prior defect where LTO-off ergon lost to
 sbe-tool for want of `#[inline]`).
 
-Ranking, `just bench-groups`: `bulk_add` is the fastest generated write path
-for both primitive and `Decimal`-composite entries, ahead of `add_struct` and
-the `add_closure` path, with sbe-tool consistently the slowest across both
-profiles. On the owned-DTO diagnostic (unequal work vs. sbe-tool — checked
-buffer entry plus schema min/max validation per field, so not presented as a
-direct ratio), `bulk_add_domain` substantially reduces latency versus the
-prior per-entry `add` path in both profiles.
+`just bench-groups` compares `bulk_add`, `add_struct`, and `add_closure`
+against sbe-tool for primitive and `Decimal`-composite entries in both
+profiles. Read the current results to establish their ranking. The owned-DTO
+diagnostic does additional validation and is not an equal-work sbe-tool ratio.
 
 This diagnostic is unprovenanced: unlike the gated `just bench` / `just
 bench-cluster` suites, `group_encode_bench` / `group_encode_decimal_bench` do
@@ -474,9 +471,10 @@ Capture immutable numbers in a release artifact when a particular release needs
 a benchmark record; refresh the **Latest run** table after material hot-path
 work.
 
-## Benchmark-only APIs
+## Unchecked constructors
 
-The `unsafe` unchecked constructor lane exists for explicit comparison
-work. Application code should use checked generated entry points for untrusted
-buffers and reserve trusted-buffer methods for data whose complete bounds have
-already been established.
+The `unsafe` unchecked constructor lane is a supported opt-in for callers
+that independently establish its safety requirements. Maintained benchmarks
+use it to match the unchecked reference's constructor work. Application code
+should use `try_*` constructors for untrusted input; changing the constructor
+failure contract does not eliminate dynamic-tail validation.

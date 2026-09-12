@@ -502,7 +502,8 @@ fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
     assert_eq!(eng.booster().horse_power(), p.horse_power);
 
     let mut fuel_i = 0usize;
-    let after = car
+    let mut perf_i = 0usize;
+    let after_p = car
         .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let expected = &p.fuel[fuel_i];
             assert_eq!(e.speed(), expected.speed);
@@ -512,27 +513,24 @@ fn assert_ergo_decodes_payload(frame: &[u8], p: &CarPayload) {
             fuel_i += 1;
             Ok(complete)
         })
-        .unwrap();
-    assert_eq!(fuel_i, p.fuel.len());
-
-    let mut perf_i = 0usize;
-    let after_p = after
+        .unwrap()
         .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let expected = &p.perf[perf_i];
             assert_eq!(e.octane_rating(), expected.octane);
             let mut acc_i = 0usize;
-            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
+            let mut acc = e.into_acceleration()?;
+            for a in &mut acc {
                 let exp = &expected.accel[acc_i];
                 assert_eq!(a.mph(), exp.mph);
                 assert_eq!(a.seconds().to_bits(), exp.seconds.to_bits());
                 acc_i += 1;
-                Ok(())
-            })?;
+            }
             assert_eq!(acc_i, expected.accel.len());
             perf_i += 1;
-            Ok(complete)
+            acc.finish()
         })
         .unwrap();
+    assert_eq!(fuel_i, p.fuel.len());
     assert_eq!(perf_i, p.perf.len());
     let (mfr, a1) = after_p.into_manufacturer().unwrap();
     assert_eq!(mfr, p.manufacturer);

@@ -71,11 +71,42 @@ Do **not** default to `vec![0u8; 4096]` or `Vec::with_capacity(MAX)` then
 truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
 [Exact sizing](../feature-tour/exact-sizing.md).
 
+## Optional fields: `nullify_optional_fields()` → `apply_nulls()`
+
+Neither generator nullifies on wrap, so in sbe-tool an optional field you
+never set keeps whatever was already in the buffer unless you remember to
+call `nullify_optional_fields()`. The ergon equivalent is `apply_nulls()`,
+but the port is usually to **delete the call rather than rename it**:
+
+| sbe-tool | ergo-sbe |
+|----------|----------|
+| `enc.nullify_optional_fields()` on the message, then set fields | `.fixed(&MsgFixedFields { price: None, … })` — `None` writes the schema null image |
+| `nullify_optional_fields()` on a group entry encoder | nothing to call — every `add()` nulls the entry's optional scalars |
+| Forgetting the call leaks stale bytes | `fixed()` is the only route to tails and to complete byte views, so the ordinary path cannot leak |
+
+Optional fields are `Option<T>` in the generated `*FixedFields` struct, and
+`fixed()` writes the schema null wire image for every `None` — including
+fixed arrays and nested optional composite members.
+
+`apply_nulls()` is still generated (message encoders with at least one
+optional field, on the unfixed stage after `wrap*`) for the case where you
+write individual optionals through `raw_fixed()` and have no `FixedFields`
+value describing which ones are unset.
+
+**One asymmetry to carry across:** group-entry auto-nulling covers optional
+fields that have a declared `nullValue` and a width of 1-8 bytes. An optional
+**array or composite** inside a group entry is not nulled, where the
+message-level path does handle those shapes. If your schema has one, set it
+explicitly.
+
+See [Optional fields and `apply_nulls`](encode-decode.md#optional-fields-and-apply_nulls)
+and [Why NullVal instead of Option](../design-notes/nullval.md).
+
 ## Decode entry
 
-Both ecosystems typically wrap decoders at the **body** for direct field
-access after the header is known. ergon’s entry points take **message start**
-(not sbe-tool’s body offset):
+ergo-sbe decoder `wrap` and `try_wrap` take the **message start**, including
+the header, while sbe-tool's `wrap` takes the body offset. Use `try_decode`
+when the header metadata is not already available:
 
 | Need | ergo-sbe |
 |------|----------|
@@ -90,15 +121,16 @@ See [Trust Boundary](../core-concepts/trust-boundary.md).
 sbe-tool gives you a single `&mut` decoder carrying a `limit` cursor. Every
 group and var-data accessor reads at `limit` and advances it, so the order you
 call methods in *is* the wire walk. ergon does not keep that as the default.
-Sequential decode is the encoder dual: `into_*(|entry|)` consumes the stage
-and returns the next one, so the compiler proves order and nothing is
-`&mut`. Random-access `try_decode` is the other job — any order, `Sync`.
+Sequential decode follows the encoder's wire order: `into_*` / `skip_*`
+consumes the stage, so the compiler constrains tail progression. A group whose entries carry
+their own tails takes a visit closure; a fixed-stride group hands back an
+iterator. Random-access `try_decode` is the other job — any order, `Sync`.
 
 **Start here when porting:**
 
 | Your sbe-tool code | Port to |
 |--------------------|---------|
-| Straight-line walk: group, group, var-data, done | staged `into_*(|entry|)` / `skip_*` — one chain, compile-time order |
+| Straight-line walk: group, group, var-data, done | staged `into_*` / `skip_*` — one traversal, compile-time tail order |
 | Re-wrapping the message a second time to read a field you passed | the base decoder, or `decoder.memoized()` if you re-read deep tails |
 | Reading two fixed fields and dropping the rest | the base decoder from `try_decode` — no cursor, `Sync`, nothing to consume |
 
@@ -112,9 +144,11 @@ let mut car = ff.parent()?;                            // hand it back
 let coords = car.manufacturer_decoder();               // (offset, len)
 let manufacturer = car.manufacturer_slice(coords);
 
-// ergo-sbe: same walk, order is a type, no `&mut`
+// ergo-sbe: consuming stages carry the next tail offset.
+// fuelFigures entries carry var-data, so the step is a visit closure and the
+// completion it returns is where the next entry starts — one pass, no rescan.
 let (manufacturer, car) = CarDecoder::try_decode(buf, 0)?
-    .into_fuel_figures(|e| { /* … */ Ok(complete) })?
+    .into_fuel_figures(|e| e.into_usage_description().map(|(_usage, done)| done))?
     .skip_performance_figures()?
     .into_manufacturer()?;
 ```
@@ -141,11 +175,12 @@ reading mixed-version streams.
 
 | sbe-tool habit | ergo-sbe |
 |----------------|----------|
-| `.parent()` ownership hop | Closures + consuming stage returns |
-| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or staged `into_*(|entry|)` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
+| `.parent()` ownership hop | Encode: nested closures. Decode: consuming stages — a visit closure for dynamic groups, an iterator for fixed-stride ones |
+| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or the staged `into_*` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
 | `_decoder()` returning `(offset, len)` for a second `_slice()` call | Var-data accessors return `&'a [u8]` / `&'a str` directly |
 | Generic `Encoder<State>` spelling | Named stage structs + `H: HeaderState` only for header mode ([type-state note](../design-notes/type-state.md)) |
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |
+| `nullify_optional_fields()` on group and composite encoders | Group entries null their optional scalars on `add()`; only the message encoder gets `apply_nulls()` ([above](#optional-fields-nullify_optional_fields--apply_nulls)) |
 | Always-on meta / Display noise | Opt-out size knobs: `with_display_debug(false)`, `with_meta_attributes(false)`, `with_dispatch(false)` |
 
 ## Trust boundary

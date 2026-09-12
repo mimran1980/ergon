@@ -2,9 +2,9 @@
 # Format: path:line rationale
 # CI fails if a fence is added, removed, or moved to a different line
 # without updating this file. Every entry must have a reason.
-book/src/cluster/chained-decoding.md:14 — deliberate; see page context
-book/src/cluster/chained-decoding.md:45 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
-book/src/cluster/chained-decoding.md:79 — deliberate; cluster codec types are crate-private, snippet cannot compile in the book harness
+book/src/cluster/chained-decoding.md:18 — deliberate; see page context
+book/src/cluster/chained-decoding.md:49 — deliberate; hidden cluster codec seam requires the cluster crate, which is outside the SBE book harness
+book/src/cluster/chained-decoding.md:87 — deliberate; hidden cluster codec seam requires the cluster crate, which is outside the SBE book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
 book/src/cluster/session-builder.md:52 — deliberate; see page context
 book/src/introduction.md:75 — deliberate; see page context
@@ -29,26 +29,26 @@ book/src/sbe/configuration/conversion-vs-domain.md:89 — deliberate; snippet re
 book/src/sbe/configuration/feature-integrations.md:41 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:50 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:67 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:100 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:115 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:122 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:132 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:145 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:161 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:178 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:224 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:103 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:118 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:125 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:135 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:148 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:164 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:181 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:227 — deliberate; see page context
 book/src/sbe/configuration/generation-config.md:42 — deliberate; names generated CarDecoder types that do not exist in the book harness
 book/src/sbe/configuration/hooks.md:21 — deliberate; see page context
 book/src/sbe/core-concepts/composite-layout.md:22 — deliberate; see page context
-book/src/sbe/core-concepts/wire-order-stages.md:45 — deliberate; see page context
+book/src/sbe/core-concepts/wire-order-stages.md:46 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:17 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:45 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:76 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:90 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:104 — deliberate; see page context
-book/src/sbe/design-notes/type-state.md:10 — deliberate; see page context
-book/src/sbe/design-notes/type-state.md:51 — deliberate; see page context
-book/src/sbe/feature-tour/decode-stages.md:192 — deliberate; names generated CarDecoder types that do not exist in the book harness
+book/src/sbe/design-notes/type-state.md:12 — deliberate; see page context
+book/src/sbe/design-notes/type-state.md:55 — deliberate; see page context
+book/src/sbe/feature-tour/decode-stages.md:187 — deliberate; names generated CarDecoder types that do not exist in the book harness
 book/src/sbe/feature-tour/generated-code.md:7 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:47 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:101 — deliberate; see page context
@@ -59,12 +59,11 @@ book/src/sbe/feature-tour/generated-code.md:177 — deliberate; see page context
 book/src/sbe/getting-started/encode-decode.md:54 — deliberate; see page context
 book/src/sbe/getting-started/error-diagnostics.md:85 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
 book/src/sbe/getting-started/from-sbe-tool.md:18 — deliberate; see page context
-book/src/sbe/getting-started/from-sbe-tool.md:105 — deliberate; side-by-side sbe-tool and ergo-sbe snippet, neither generator's types exist in the book harness
+book/src/sbe/getting-started/from-sbe-tool.md:137 — deliberate; side-by-side sbe-tool and ergo-sbe snippet, neither generator's types exist in the book harness
 book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
 book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
-book/src/sbe/getting-started/method-chaining.md:53 — deliberate; names generated L3BookDecoder types that do not exist in the book harness
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context

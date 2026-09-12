@@ -4,7 +4,7 @@
 
 use crate::ha_book::{ApplyOutcome, LeadershipAwareBook};
 use crate::market::{Level, WireDec};
-use crate::normalized_app::{AppMessageDecoder, L2BookDecoder, sbe_rt};
+use crate::normalized_app::{AppMessageDecoder, L2BookDecoder};
 
 /// Follower view of the HA book with apply counters.
 pub struct BookFollower {
@@ -100,26 +100,25 @@ impl BookFollower {
 
         let mut bids = Vec::new();
         let mut asks = Vec::new();
-        let (symbol, _) = book
-            .into_bids(|entry| -> Result<(), sbe_rt::DecodeError> {
-                let px = entry.price_wire();
-                let sz = entry.size_wire();
-                bids.push(Level {
-                    price: WireDec::new(px.mantissa(), px.exponent()),
-                    size: WireDec::new(sz.mantissa(), sz.exponent()),
-                });
-                Ok(())
-            })?
-            .into_asks(|entry| -> Result<(), sbe_rt::DecodeError> {
-                let px = entry.price_wire();
-                let sz = entry.size_wire();
-                asks.push(Level {
-                    price: WireDec::new(px.mantissa(), px.exponent()),
-                    size: WireDec::new(sz.mantissa(), sz.exponent()),
-                });
-                Ok(())
-            })?
-            .into_symbol_as_str()?;
+        let mut bid_iter = book.into_bids()?;
+        for entry in &mut bid_iter {
+            let px = entry.price_wire();
+            let sz = entry.size_wire();
+            bids.push(Level {
+                price: WireDec::new(px.mantissa(), px.exponent()),
+                size: WireDec::new(sz.mantissa(), sz.exponent()),
+            });
+        }
+        let mut ask_iter = bid_iter.into_asks()?;
+        for entry in &mut ask_iter {
+            let px = entry.price_wire();
+            let sz = entry.size_wire();
+            asks.push(Level {
+                price: WireDec::new(px.mantissa(), px.exponent()),
+                size: WireDec::new(sz.mantissa(), sz.exponent()),
+            });
+        }
+        let (symbol, _) = ask_iter.into_symbol_as_str()?;
 
         let outcome = if self.book.is_serving() {
             self.apply_increment(term, seq, bids, asks, exchange_ts)

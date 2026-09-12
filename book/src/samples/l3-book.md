@@ -142,7 +142,7 @@ pins the same property for generated decode under a counting allocator.
 | You are doing | Lane |
 |---------------|------|
 | Reading a couple of fields, or one tail | random access — smallest, `Sync` |
-| Decoding the whole book in wire order | staged `into_*(|entry|)` — one chain, compile-time order |
+| Decoding the whole book in wire order | staged `into_*` — one traversal, compile-time tail order |
 | Several helpers reading multiple tails, same thread | `.memoized()` |
 
 Full comparison, including how each differs from sbe-tool's single `limit`

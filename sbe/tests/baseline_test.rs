@@ -481,16 +481,18 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(b"Highway Cycle",  fuel_figures[2].2.as_slice(), "ff[2].usage");
 
         let mut perf = Vec::new();
-        let after_perf = after_fuel.into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let octane = e.octane_rating();
-            let mut accel = Vec::new();
-            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
-                accel.push((a.mph(), a.seconds()));
-                Ok(())
-            })?;
-            perf.push((octane, accel));
-            Ok(complete)
-        }).unwrap();
+        let after_perf = after_fuel
+            .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                let octane = e.octane_rating();
+                let mut accel = Vec::new();
+                let mut acc = e.into_acceleration()?;
+                for a in &mut acc {
+                    accel.push((a.mph(), a.seconds()));
+                }
+                perf.push((octane, accel));
+                acc.finish()
+            })
+            .unwrap();
         assert_eq!(2, perf.len(), "performanceFigures count");
 
         assert_eq!(95, perf[0].0, "pf[0].octaneRating");
@@ -648,16 +650,18 @@ fn encode_baseline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(b"Highway Cycle", ff2[2].2.as_slice());
 
         let mut pf2 = Vec::new();
-        let after_perf = after_fuel.into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
-            let octane = e.octane_rating();
-            let mut accel = Vec::new();
-            let complete = e.into_acceleration(|a| -> Result<(), sbe_rt::DecodeError> {
-                accel.push((a.mph(), a.seconds()));
-                Ok(())
-            })?;
-            pf2.push((octane, accel));
-            Ok(complete)
-        }).unwrap();
+        let after_perf = after_fuel
+            .into_performance_figures(|e| -> Result<_, sbe_rt::DecodeError> {
+                let octane = e.octane_rating();
+                let mut accel = Vec::new();
+                let mut acc = e.into_acceleration()?;
+                for a in &mut acc {
+                    accel.push((a.mph(), a.seconds()));
+                }
+                pf2.push((octane, accel));
+                acc.finish()
+            })
+            .unwrap();
         assert_eq!(2, pf2.len());
         assert_eq!(95, pf2[0].0);
         let a0 = &pf2[0].1;
@@ -1600,7 +1604,11 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
     );
     assert!(
         src.contains("#[inline]\n    pub fn into_fuel_figures"),
-        "fused into_fuel_figures(visit) missing #[inline]"
+        "into_fuel_figures missing #[inline]"
+    );
+    assert!(
+        src.contains("fn next(&mut self)"),
+        "group iterator Iterator::next missing"
     );
     assert!(
         src.contains("#[inline]\n    pub fn skip_fuel_figures"),
@@ -2209,10 +2217,11 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
 
         // V2 decoder sees V1 entries (blockLength=12 on wire, not compiled 16)
         let mut entries = Vec::new();
-        let after_entries = d.into_entries(|entry| -> Result<(), grpvers_v2::sbe_rt::DecodeError> {
+        let mut ents = d.into_entries().unwrap();
+        for entry in &mut ents {
             entries.push((entry.price(), entry.qty()));
-            Ok(())
-        }).unwrap();
+        }
+        let after_entries = ents.finish().unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Common fields (sinceVersion=0) — must decode
@@ -2268,10 +2277,11 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
 
         // V1 decoder sees V2 entries (wire blockLength=16, compiled blockLength=12)
         let mut entries = Vec::new();
-        let after_entries = d.into_entries(|entry| -> Result<(), grpvers_v1b::sbe_rt::DecodeError> {
+        let mut ents = d.into_entries().unwrap();
+        for entry in &mut ents {
             entries.push((entry.price(), entry.qty()));
-            Ok(())
-        }).unwrap();
+        }
+        let after_entries = ents.finish().unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
         // Known fields correct — V1 decoder reads V2 entries using wire blockLength=16

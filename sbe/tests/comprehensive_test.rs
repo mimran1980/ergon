@@ -1185,7 +1185,11 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
     );
     assert!(
         src.contains("fn into_fuel_figures"),
-        "missing fused into_fuel_figures(visit)"
+        "missing into_fuel_figures()"
+    );
+    assert!(
+        src.contains("Iterator for &mut"),
+        "missing Iterator for &mut group iter"
     );
     assert!(
         src.contains("fn skip_fuel_figures"),

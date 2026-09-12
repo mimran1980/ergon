@@ -1,18 +1,23 @@
 # Trust Boundary
 
 Every SBE buffer crossing a process boundary must be validated. ergo-sbe
-provides a **three-tier** constructor API, ordered from safest to fastest:
+provides a **three-tier** constructor API with different failure contracts:
 
 | Tier | Prefix | Behaviour on bad buffer | Use case |
 |------|--------|------------------------|----------|
 | **Checked** | `try_{wrap,decode,…}` | Returns `Result::Err` | Untrusted input, process boundaries |
-| **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** after the same extent proof | Known-good buffers, benchmarks |
+| **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** after the same extent proof | Known-good buffers |
 | **Unchecked** | `unsafe fn *_unchecked` | **UB** (raw pointer ops) | Proven-tight hot loops |
 
 **The trusted tier is safe Rust.** Bare constructors run the same header +
 fixed-body extent proof as `try_*`, then **panic** on failure. After that proof,
 field accessors/setters use unchecked loads/stores (justified by the
 constructor). Dynamic tails still check on consume.
+
+`try_decode` does not first traverse all dynamic tails. A staged walk validates
+them as it advances, so checked construction is compatible with a single-pass
+decoder. A separate `verify()` before that walk adds another structural pass.
+Checks for text encoding happen when text accessors are used.
 
 The `unsafe fn *_unchecked` variants skip the extent proof entirely — only for
 the case where panic machinery is measurable and the caller has proven the
