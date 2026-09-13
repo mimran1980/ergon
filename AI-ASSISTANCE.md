@@ -52,130 +52,74 @@ whether you continue evaluating the crate:
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
 | What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through September 2026 is **25 billion tokens** (high-water mark from `ccusage` across Claude Code + Codex + Grok; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
-| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$1,871**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
+| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$6,177**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
 ## Cumulative token usage (since 2026-06-28)
 
 Per-model high-water mark reconstructed from every `ccusage` snapshot committed
 to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19,
-2026-08-20, 2026-08-27, and 2026-09-07. Claude Code, Codex, and Grok Build CLI.
+2026-08-20, 2026-08-27, 2026-09-07, and 2026-09-13. Claude Code, Codex, and
+Grok Build CLI.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
-| claude-haiku-4-5-20251001 | 396 | 12,189 | 126,036 | 2,222,868 | — | 2,361,489 | $0.44 |
+| claude-haiku-4-5-20251001 | 894 | 30,088 | 145,326 | 10,319,303 | — | 10,495,611 | $1.47 |
 | claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 8,082,179 | 3,618,309 | 27,183,449 | 3,254,368,681 | — | 3,293,252,618 | $2,012.98 |
+| claude-opus-5 | 9,972,576 | 4,049,662 | 30,218,727 | 3,471,142,409 | — | 3,515,383,374 | $2,171.95 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 32,837 | 1,860,858 | 17,168,973 | 1,884,126,409 | — | 1,903,189,077 | $463.83 |
-| deepseek-v4-flash | 52,791,367 | 15,125,986 | 0 | 2,734,161,536 | — | 2,802,078,889 | $35.00 |
-| deepseek-v4-pro | 47,802,822 | 9,959,142 | 0 | 11,705,468,864 | — | 11,763,230,828 | $551.30 |
-| glm-4.7 | 6,949,701 | 760,380 | 0 | 268,436,096 | — | 276,146,177 | $35.37 |
-| glm-5.2 | 27,277,618 | 3,460,625 | 0 | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
-| gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
-| gpt-5.6-luna | 1,552,433 | 172,891 | 0 | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
-| gpt-5.6-sol | 54,416,465 | 4,892,696 | 0 | 1,437,418,112 | 2,493,867 | 1,499,221,140 | $950.21 |
-| gpt-5.6-terra | 484,995 | 29,907 | 0 | 6,463,744 | 14,882 | 6,993,528 | — |
-| gpt-6-astra | 206,344 | 9,050 | 0 | 3,843,584 | 913 | 4,059,891 | — |
-| grok-4.5-build | 10,030,758 | 881,349 | 0 | 177,071,360 | — | 187,983,467 | $114.67 |
-| grok-4.6-build | 32,201,234 | 2,050,075 | 0 | 543,995,008 | — | 578,246,317 | $219.36 |
-| **Total** | **244,175,977** | **44,807,863** | **60,602,236** | **24,939,395,611** | **2,639,325** | **25,291,621,012** | **$5,974.80** |
+| claude-sonnet-5 | 32,913 | 1,882,008 | 17,701,982 | 1,886,760,317 | — | 1,906,377,220 | $466.50 |
+| deepseek-v4-flash | 52,791,367 | 15,125,986 | — | 2,734,161,536 | — | 2,802,078,889 | $35.00 |
+| deepseek-v4-pro | 47,802,822 | 9,959,142 | — | 11,705,468,864 | — | 11,763,230,828 | $551.30 |
+| glm-4.7 | 6,949,701 | 760,380 | — | 268,436,096 | — | 276,146,177 | $35.37 |
+| glm-5.2 | 27,277,618 | 3,460,625 | — | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
+| gpt-5.5 | 1,781,759 | 117,119 | — | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
+| gpt-5.6-luna | 1,552,433 | 172,891 | — | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
+| gpt-5.6-sol | 54,416,465 | 4,892,696 | — | 1,437,418,112 | 2,493,867 | 1,499,221,140 | $950.21 |
+| gpt-5.6-terra | 484,995 | 29,907 | — | 6,463,744 | 14,882 | 6,993,528 | $3.69 |
+| gpt-6-astra | 949,793 | 98,092 | — | 23,729,792 | 39,784 | 24,777,677 | $35.87 |
+| grok-4.5-build | 10,030,758 | 881,349 | — | 177,071,360 | — | 187,983,467 | $114.67 |
+| grok-4.6-build | 32,201,234 | 2,050,075 | — | 543,995,008 | — | 578,246,317 | $219.36 |
+| **Total** | **246,810,397** | **45,367,307** | **64,189,813** | **25,186,785,890** | **2,678,196** | **25,545,791,819** | **$6,177.03** |
 
 **Notes:**
 
-- The 2026-09-07 run raised three existing models and added three. `claude-opus-5`
-  and `claude-sonnet-5` set new maxima on all five of their columns plus cost;
-  `gpt-5.6-sol` rose on input, output, cache read, reasoning, and total (cost
-  stayed at the committed $950.21). New Codex model `gpt-6-astra` (206K in /
-  9.1K out / 3.84M cache read / 913 reasoning) has no per-model cost, same as
-  `gpt-5.6-terra`. Grok Build CLI is now extractable via `ccusage grok`:
-  `grok-4.5-build` (188M) and `grok-4.6-build` (578M) enter the table for the
-  first time. Reconstructed total moves 21.33B → **25.29B** (+3.96B), so the
-  monotonicity check holds. Git recovered the same retained rows as before
-  (`claude-haiku-4-5-20251001`, `claude-fable-5`, DeepSeek/GLM token columns,
-  `gpt-5.6-luna`); this snapshot under-reported those, as usual.
-- Codex's 2026-09-07 snapshot totalled $1,169.11 against a committed per-model
-  cost sum of $1,007.91. `ccusage` still reports `costUSD` per day, not per
-  model, so the $161 gap is not apportioned onto `gpt-5.6-sol` or `gpt-6-astra`.
-- `observer` was not installed on this machine, so Antigravity/Gemini
-  contributed nothing — fourth run in a row (2026-08-19, 2026-08-20,
-  2026-08-27, 2026-09-07).
-- The 2026-08-27 run raised eight columns and added one model. `claude-opus-5`
-  set new maxima on all five of its columns and `claude-sonnet-5` on four
-  (input stayed at the older 30,556); `gpt-5.6-sol` rose on all four of its.
-  `deepseek-v4-flash` and `deepseek-v4-pro` rose on **cost only** while every
-  token column fell — the same retention pruning as before, re-priced. New
-  model `gpt-5.6-terra` (485K in / 29.9K out / 6.46M cache read / 14.9K
-  reasoning) appears for the first time. Reconstructed total moves
-  20.48B → **21.33B** (+851M), so the monotonicity check holds.
-- `gpt-5.6-terra` carries no cost figure: `ccusage codex --breakdown` reports
-  `costUSD` per day only, not per model, so a per-model cost for a
-  newly-appearing Codex model cannot be derived without apportioning. The
-  other Codex rows keep their previously committed per-model costs as
-  high-water marks; today's Codex total ($804.68) is below their sum, so none
-  of them moved.
-- `observer` was not installed on this machine, so Antigravity/Gemini
-  contributed nothing to this snapshot — third run in a row (2026-08-19,
-  2026-08-20, 2026-08-27). Any Antigravity rows in the table survive purely
-  from git history.
-
-- **Why a high-water mark, not the latest snapshot.** `ccusage` keeps no ledger:
-  it recomputes totals by reading local session transcripts. Claude Code deleted
-  transcripts older than `cleanupPeriodDays` (default 30 at the time), so a
-  `--since 2026-06-28` query lost its earliest days as time passed. Re-running it
-  on 2026-08-13 reported 15.03B tokens against 18.13B on 2026-08-07 and 17.04B on
-  2026-08-03 — usage did not fall; visibility did. Because the tool can only ever
-  under-report, the per-model maximum across all committed snapshots is the best
-  available lower bound. Git history is the real ledger here: it preserves
-  **4.54B tokens** that `ccusage` could no longer see as of 2026-08-15 — that run
-  reported 15.46B (14.31B Claude + 1.15B Codex) against a reconstructed 20.01B.
-- The 2026-08-20 run reported ~15.09B Claude Code tokens and ~1.28B Codex
-  tokens against this reconstructed **20.48B** total — still retention, not a
-  real decrease. No per-model column exceeded the existing high-water mark, so
-  the table is unchanged. `observer` was not installed on this machine, same as
-  2026-08-19.
-- The 2026-08-19 run reinforced the same pattern on a different model:
-  `gpt-5.6-luna` fell from a reconstructed 48.7M tokens to 236K in this one
-  snapshot — a >99% apparent drop from retention pruning, not reduced usage.
-  Its transcripts are gone from this machine; the high-water figure is the only
-  surviving record and is kept unchanged in the merged row above. This also
-  falsifies the earlier note that "Codex keeps its own session logs under a
-  different policy" and only Claude-Code-hosted models lose history — Codex
-  transcripts expire too, just on their own schedule per model/session.
-- Two models exist in only one snapshot, and would be lost by any single run:
-  `claude-haiku-4-5-20251001` (2.36M tokens, 2026-08-03 only — its transcripts
-  have since been deleted) and `gpt-5.6-luna` (48.7M high-water, per above).
-- Corroborating evidence for the retention theory: `gpt-5.5` is byte-identical in
-  every snapshot including 2026-08-19, and `gpt-5.6-sol` grows monotonically
-  (837M → 1,009M → 1,074M → 1,131M → 1,259M).
-- Retention has since been raised to `cleanupPeriodDays: 90`, so future snapshots
-  should degrade more slowly — but the fix is not retroactive, and evidently
-  does not (or did not yet) apply uniformly across Codex model sessions.
-- Columns are maximised independently, so a row may combine values from different
-  snapshots. Every column is monotonic in reality, so this stays a lower bound.
-- Extraction is scoped to this section. The file carries a second per-model table
-  further down (`## Observed usage and actual spend`); a merge that reads the
-  whole file last-wins silently replaces the high-water values here and produces
-  a *smaller* cumulative total. If the grand total ever falls below the previously
-  committed one, the merge is wrong — investigate, do not publish.
-- Grok Build CLI is included from the 2026-09-07 snapshot onward (`ccusage grok`).
-  Earlier snapshots could not extract it; those Grok tokens are lost to history
-  and are not in this high-water mark.
-- Antigravity / Gemini CLI usage is not included: the `observer` tool that
-  reports it was not installed on the machine that ran the 2026-08-19 snapshot
-  (nor any prior one — no Antigravity data has ever been captured in this table).
-- All costs are at enterprise/pay-as-you-go API rates observed by ccusage.
-  Subscription fees (Claude $20/mo, OpenAI $20/mo, Grok $30/mo) are not included.
-- "Reasoning Output" applies to GPT models only (Codex agent); ccusage reports
-  reasoning tokens separately from visible output for these models.
-- DeepSeek models show $0 cache create because DeepSeek's API does not charge
-  separately for cache writes — they use a single cache-hit/miss model.
-- Codex's per-model cost is not directly reported by `ccusage --json`; days with
-  a single active model attribute their whole day-cost to it exactly, and
-  multi-model days split the day's `costUSD` proportionally by each model's
-  token share. `gpt-5.5`'s cost stayed exact (single-model days only); the
-  `gpt-5.6-sol` update above uses this proportional method.
+- This is a **high-water mark**, not a single run's output. `ccusage` keeps no
+  ledger: it recomputes totals by re-reading local session transcripts, and
+  Claude Code deletes transcripts older than `cleanupPeriodDays`. A
+  `--since 20260628` query therefore *loses* its earliest days as time passes,
+  so a later snapshot can report **fewer** tokens than an earlier one. The
+  figures above are the per-model, per-column maximum across all nine
+  snapshots; since the tool can only under-report, that maximum is the best
+  available lower bound.
+- The 2026-09-13 run alone reported **20,418,341,894** tokens. Merging the
+  eight snapshots recovered from this file's git history adds
+  **5,127,449,925** tokens the current run can no longer see — roughly a fifth
+  of the total, and the reason this table is never overwritten with a fresh
+  run's numbers.
+- `claude-opus-5` set new maxima on this run (3.29B → 3.52B total), as did
+  `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `gpt-6-astra` and
+  `gpt-5.6-terra`. Every other model's maximum is held by an earlier snapshot;
+  `claude-fable-5` retains a total roughly ten times what the current run can
+  still see.
+- `grok-4.5-build` and `grok-4.6-build` survive only in earlier snapshots.
+  Neither `ccusage` nor SuperBased currently extracts token data from Grok CLI
+  session logs, so these rows cannot be refreshed and are carried forward.
+- No Antigravity/Gemini figures are included: the `observer` CLI that reported
+  them is not installed on this host, so that source could not be sampled this
+  cycle. Its absence understates the total rather than inflating it.
+- Hermes and OpenCode are excluded — automation, not development work on this
+  project.
+- Codex reports cost per day rather than per model. On the three days that used
+  two models, the day's cost is split between them in proportion to their token
+  share; token counts themselves are exact per-model figures from the tool.
+- All costs are at enterprise/pay-as-you-go API rates observed by each tool.
+  Subscription fees (Claude, OpenAI, Grok) are not included.
+- Sanity checks: the per-model column sums for the 2026-09-13 run reconcile
+  exactly against each tool's own reported totals (18,869,111,099 Claude Code +
+  1,549,230,795 Codex = 20,418,341,894), and the grand total is monotonic
+  against the previously committed 25,291,621,012.
 
 ## What-if: all tokens through a single provider
 
@@ -206,17 +150,24 @@ hardest sessions at a level comparable to Opus.
 | **OpenAI (>272K)** | GPT-5.5 — $238 | GPT-5.5 — $4,590 | GPT-5.6 Sol — $7,060 | **$11,888** | Long-context: 2× input, 1.5× output — the rate you'd actually pay |
 | **Grok (<200K)** | Grok 4.5 — $99 | Grok 4.5 — $1,978 | Grok 4.5 — $3,528 | **$5,605** | Short-context rates — unrealistic for this workload |
 | **Grok (≥200K)** | Grok 4.5 — $198 | Grok 4.5 — $3,956 | Grok 4.5 — $7,055 | **$11,209** | Rates double at ≥200K; 500K max context |
-| **Actual enterprise blend** | — | — | — | **$1,871** | What ccusage records at enterprise/PAYG rates across all 11 models — NOT what I paid (~$261 out-of-pocket) |
+| **Actual enterprise blend** | — | — | — | **$6,177** | Per-model high-water mark across all 17 models at enterprise/PAYG rates — NOT what I paid (~$261 out-of-pocket) |
 
 The takeaway: at short-context rates, Grok ($5,605) undercuts Anthropic ($7,884
 promo) — the user's intuition is correct. But those rates are fictional for this
 workload: every session exceeded 200K context, so the real Grok bill would be
 $11,209. Anthropic's key advantage is no long-context multiplier — Sonnet 5 at
 $8,655 (standard) is cheaper than both Grok ≥200K ($11,209) and OpenAI >272K
-($11,888) for this kind of sustained agentic work. The actual $1,871 blend is
-cheaper than any single-provider scenario except DeepSeek-only ($121) because it
-used cheap DeepSeek cache reads for the bulk of tokens while spending on
-expensive models only for high-value sessions.
+($11,888) for this kind of sustained agentic work. The actual $6,177 blend is
+cheaper than every single-provider scenario except DeepSeek-only ($121) and
+GLM-only ($4,730), because it used cheap DeepSeek cache reads for the bulk of
+tokens while spending on expensive models only for high-value sessions.
+
+> **Scope note (2026-09-13):** the blend figure and model count above track the
+> cumulative table, which is a per-model high-water mark. The **tier token
+> splits** (276M / 5.7B / 11.1B) and every per-provider extrapolation below them
+> were computed against an earlier, smaller snapshot and have **not** been
+> recomputed here. Treat the provider columns as directionally valid and the
+> absolute totals as understated.
 
 > **⚠️ Caveats on these estimates:**
 >

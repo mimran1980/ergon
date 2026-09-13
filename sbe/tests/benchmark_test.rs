@@ -10,6 +10,16 @@
 //! 2. Run a best-case encode/decode warmup loop + timed loop
 //! 3. Assert that even in debug mode the round-trip completes promptly
 //!
+//! **Known trap — one unreproduced failure (2026-09-12).** This binary failed
+//! once during a full `just test` run and has passed every attempt since,
+//! including three full green suites and a deliberate re-run under concurrent
+//! `cargo test` load. The timing assertions cannot plausibly be the cause: they
+//! allow 30 seconds for 50 debug-mode iterations. The likelier candidate is
+//! `compile_and_run`, which spawns a *nested* cargo build — contention is real
+//! (74s under parallel load versus ~13s isolated) but did not reproduce a
+//! failure. Recorded as unexplained rather than fixed. If it recurs, capture
+//! the nested cargo's stderr before assuming it is the assertions.
+//!
 //! Real criterion benchmarks should be added once the codegen stabilises
 //! and `criterion` is added to dev-dependencies.  For now this smoke test
 //! ensures the encode/decode paths are functional and not pathologically
