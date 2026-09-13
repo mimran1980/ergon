@@ -350,21 +350,36 @@ const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
     "cluster_decode_session_message_header",
     // also carries a no-LTO-only override; see PROFILE_SCOPED_OVERRIDE_MAX
     "cluster_decode_session_event",
+    // no-LTO profile only; the pairs table still declares 1.00, so
+    // `no_maintained_ceiling_exceeds_one` sees 1.00 for this label and
+    // `profile_scoped_ceiling_overrides_are_allowlisted_and_bounded` audits
+    // the override itself.
+    "extended_optional_enum_nullify",
 ];
 
 /// Documented maximum for each profile-scoped override, per label. Each entry
 /// records a measured tie, so the bound is per-label rather than global — one
 /// allowance must never widen the bound the others are held to.
 const PROFILE_SCOPED_OVERRIDE_MAX: &[(&str, f64)] = &[
+    // Memory-bound enum/composite load; observed 1.0011-1.0062.
+    //
+    // 2026-09-13: an attempt to tighten this to a literal 1.00 was made and
+    // reverted. The scenario measures ~0.77 no-LTO, so the allowance looks like
+    // dead weight — but the *sbe-tool* arm is not stable across build sessions.
+    // With byte-identical benchmark source it measured 1002.48 ns during the
+    // 0.1.27 release and 776.88 ns twice three days later, a 22% swing, while
+    // ergon's arm held 777-784 ns throughout. At ~0.76 ns/op this pair is
+    // decided by code placement, so a tightening cannot be validated without a
+    // quiet machine and a characterised reference arm. Do not retry it from a
+    // single green run.
+    ("extended_optional_enum_nullify", 1.01),
     // A genuine tie: both arms read the same five scalars plus `detail_slice`,
-    // already batched 10k, so there is no unread member to amplify with and
-    // nothing to reshape. Five isolated LTO runs on an idle machine measured
-    // 1.0038 / 0.9997 / 0.9994 / 0.9994 / 0.9988 — mean 1.0002, 0.5% spread, so
-    // the 1.01 LTO ceiling carries ~4x the headroom it needs. A failure here
-    // means the machine was loaded, not that the ceiling is wrong: a mid-release
-    // run of this same pair measured 1.0104 while other work was in flight.
-    // Re-run on a quiet machine before believing it. no-LTO keeps the wider
-    // 1.05 (observed up to 1.0444) and has not been re-characterised.
+    // already batched 10k, so there is no unread member to amplify with. Five
+    // isolated runs on an idle machine measured 1.0038 / 0.9997 / 0.9994 /
+    // 0.9994 / 0.9988 — mean 1.0002, 0.5% spread. A failure here usually means
+    // the machine was loaded: a mid-release run of this same pair measured
+    // 1.0104 while other work was in flight. Re-run on a quiet machine before
+    // believing it.
     ("cluster_decode_session_event", 1.05),
 ];
 
@@ -473,31 +488,27 @@ fn tree_with_ratio(
 
 const NULLIFY: &str = "parity_extended_optional_enum_nullify";
 
-/// `extended_optional_enum_nullify` no longer has a no-LTO allowance: it is a
-/// literal 1.00 in both profiles, like every other maintained pair.
-///
-/// The allowance existed because the scenario decoded two 1-byte enums from a
-/// static fixture and the codecs tied without cross-unit inlining. That pair was
-/// never gateable — both compile the same two-byte loads, so the true ratio was
-/// ~1.00 and the measured one was decided by code placement. The scenario now
-/// also reads the optional composite's counter, real equal work on both arms,
-/// and measures 0.7711 no-LTO / 0.7760 LTO.
-///
-/// This test is the inverse of the one it replaces: a ratio that the old
-/// allowance admitted must now fail.
+/// `extended_optional_enum_nullify` carries a documented **no-LTO only**
+/// allowance dating from when the scenario decoded only two 1-byte enums from
+/// a static fixture and the two codecs landed at parity without cross-unit
+/// inlining. The scenario now also reads the optional composite's counter and
+/// measures ~0.78, so the allowance is no longer exercised and could be
+/// tightened to a literal 1.00 in its own change. It is retained here because
+/// it still bounds the case safely. See the rationale block in
+/// `scripts/check-bench-gate.sh`.
 #[test]
-fn nullify_barely_above_one_now_fails_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_within_the_no_lto_allowance_passes() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.005)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
-        !output.status.success(),
-        "nullify lost its no-LTO allowance; 1.005 must fail the literal 1.00:\n{}",
+        output.status.success(),
+        "nullify at 1.005 is inside the documented 1.01 no-LTO allowance:\n{}",
         describe(&output)
     );
     Ok(())
 }
 
-/// Still fails well above the ceiling — unchanged by the tightening.
+/// The allowance is bounded — it admits a tie, not a regression.
 #[test]
 fn nullify_beyond_the_no_lto_allowance_fails() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.02)?;
