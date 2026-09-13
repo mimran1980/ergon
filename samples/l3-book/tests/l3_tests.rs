@@ -1173,6 +1173,86 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 }
 // ANCHOR_END: decode_memoized
 
+// ANCHOR: decode_ordered
+/// Lane 4 — ordered (`decoder.ordered()`). One callback per tail, in wire
+/// order, with the *same spelling* at every tail, plus an `EntryInfo` giving
+/// each entry's position.
+///
+/// Compare with `decode_staged`: there, `bids` takes a visit closure and
+/// `orders` is an iterator, because their shapes genuinely differ. Here every
+/// message-level tail — fixed block, both groups, and the var-data — reads the
+/// same way. That uniformity is why this lane exists: code that walks whole
+/// messages writes one form instead of branching on each tail's shape.
+///
+/// `EntryInfo::count` is the wire-declared `numInGroup`, read from the group's
+/// dimension header before the walk starts, so the `Vec` is sized once rather
+/// than grown. It costs no scan. `bids` and `asks` still need separate bodies
+/// because their entry decoders are distinct types — the lane unifies how a
+/// tail is *reached*, not what its entries are.
+fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
+    let mut timestamp = None;
+    let mut sequence = 0u64;
+    let mut is_active = false;
+    let mut bids: Vec<OwnedLevel> = Vec::new();
+    let mut asks: Vec<OwnedLevel> = Vec::new();
+    let mut symbol: Option<&str> = None;
+
+    let _complete = L3BookDecoder::try_decode(wire, 0)?
+        .ordered()
+        .fixed(|d| -> Result<(), Box<dyn std::error::Error>> {
+            timestamp = Some(d.try_exchange_timestamp()?);
+            sequence = d.sequence();
+            is_active = d.try_is_active()?;
+            Ok(())
+        })?
+        .bids(|level, info| -> Result<_, Box<dyn std::error::Error>> {
+            if info.is_first() {
+                bids.reserve_exact(info.count);
+            }
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            // `orders` entries are fixed-stride, so the nested walk is still an
+            // iterator: this lane is a message-level façade, not a rewrite of
+            // entry decoding.
+            let mut orders = Vec::new();
+            let mut order_iter = level.into_orders()?;
+            for order in &mut order_iter {
+                orders.push((order.order_id(), order.try_quantity()?));
+            }
+            bids.push((price, size, orders));
+            Ok(order_iter.finish()?)
+        })?
+        .asks(|level, info| -> Result<_, Box<dyn std::error::Error>> {
+            if info.is_first() {
+                asks.reserve_exact(info.count);
+            }
+            let price = level.try_price()?;
+            let size = level.try_size()?;
+            let mut orders = Vec::new();
+            let mut order_iter = level.into_orders()?;
+            for order in &mut order_iter {
+                orders.push((order.order_id(), order.try_quantity()?));
+            }
+            asks.push((price, size, orders));
+            Ok(order_iter.finish()?)
+        })?
+        .symbol_as_str(|s| -> Result<(), Box<dyn std::error::Error>> {
+            symbol = Some(s);
+            Ok(())
+        })?
+        .done();
+
+    Ok(Snapshot {
+        timestamp: timestamp.ok_or("fixed callback must run")?,
+        sequence,
+        is_active,
+        bids,
+        asks,
+        symbol: symbol.ok_or("symbol callback must run")?,
+    })
+}
+// ANCHOR_END: decode_ordered
+
 // ANCHOR: decode_hot_path
 /// The shape you actually want on a hot path: no `Vec`, no `String`, no copy.
 ///
@@ -1248,17 +1328,20 @@ fn remaining_lanes_decode_the_same_nested_book() -> Result<(), Box<dyn std::erro
     let random = decode_random_access(&wire)?;
     let staged = decode_staged(&wire)?;
     let memoized = decode_memoized(&wire)?;
+    let ordered = decode_ordered(&wire)?;
 
     // Against the encoder's inputs first — otherwise identical wrong
     // answers would agree with each other and pass.
     assert_eq!(random, expected, "random access");
     assert_eq!(staged, expected, "staged");
     assert_eq!(memoized, expected, "memoized");
+    assert_eq!(ordered, expected, "ordered");
 
     // Then lane against lane, which is what pins them together as the
     // generator changes.
     assert_eq!(random, staged);
     assert_eq!(staged, memoized);
+    assert_eq!(memoized, ordered);
 
     // The fixture is genuinely ragged and genuinely nested, so the equality
     // above is not vacuous.

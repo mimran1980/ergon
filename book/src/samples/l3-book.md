@@ -122,9 +122,30 @@ ask order to return to `symbol`; this lane reuses the boundary it already
 found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
+### Ordered — one spelling for every tail
+
+```rust,ignore
+{{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
+```
+
+Compare it with the staged lane above: there `bids` takes a visit closure and
+`orders` is an iterator, because those two shapes genuinely differ. Here every
+message-level tail — fixed block, both groups, then the var-data — reads the
+same way, and each entry callback also receives an `EntryInfo` carrying
+`index`, the wire-declared `count`, and the acting `block_length`. Both come
+from the group's dimension header, so `reserve_exact(info.count)` costs no
+scan.
+
+It is a façade over the staged stages, so it keeps their single traversal and
+compile-time tail order; `done()` hands back the staged complete stage. The
+cost is one extra dimension-header read per *dynamic* group per message —
+never per entry — because a visit closure exposes no handle to ask for the
+count. Fixed-stride groups pay nothing, since the iterator already knows its
+count and stride.
+
 ### On a hot path, collect nothing
 
-The three functions above build owned `Vec`s because a test has to materialise
+The four functions above build owned `Vec`s because a test has to materialise
 something to compare. Real consumption does not: the decoders are flyweights
 over the wire buffer, `&str` and `&[u8]` borrow from it, and a full nested walk
 needs no allocation at all.
@@ -144,6 +165,7 @@ pins the same property for generated decode under a counting allocator.
 | Reading a couple of fields, or one tail | random access — smallest, `Sync` |
 | Decoding the whole book in wire order | staged `into_*` — one traversal, compile-time tail order |
 | Several helpers reading multiple tails, same thread | `.memoized()` |
+| Walking whole messages with uniform code, or needing entry position | `.ordered()` — one callback per tail, `EntryInfo` per entry |
 
 Full comparison, including how each differs from sbe-tool's single `limit`
 cursor: [Decoder lanes](../sbe/feature-tour/decode-stages.md).

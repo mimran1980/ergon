@@ -19,7 +19,8 @@ book/src/samples/l3-book.md:90 — deliberate; {{#include}} of the l3-book sampl
 book/src/samples/l3-book.md:96 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:106 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:115 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/samples/l3-book.md:132 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:127 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:153 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context

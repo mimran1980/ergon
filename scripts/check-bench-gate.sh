@@ -183,23 +183,18 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
     #   1.0011 (b20260830T140348Z) · 1.0034 (b20260830T160656Z)
     #   1.0062 (b20260831T061505Z)
     # ergon's own time is stable across profiles (773-776 ns); what moves is
-    # sbe-tool, which is ~24% faster without LTO. This is a tie, not an ergon
-    # loss — LTO measures 0.7593 — so a 1.01 no-LTO allowance admits it while
-    # still catching any real regression above 1%. LTO stays literal 1.00.
-    # See tests/bench_gate_test.rs for the matching explicit allowlist.
-    #
-    # 2026-09-12: the scenario now also reads the optional composite's counter.
-    # The enum-only form was not gateable — both codecs emit the same two-byte
-    # loads, so the true ratio was ~1.00 and the measured one was decided by
-    # code placement (a 2.6% change in unrelated generated code moved ergon's
-    # arm 37% with the decoder source byte-identical). With the composite read
-    # the ratio is ~0.78 in both profiles, so this allowance is no longer
-    # exercised and is a candidate for tightening to a literal 1.00.
+    # 2026-09-13: `extended_optional_enum_nullify` no longer carries a no-LTO
+    # allowance. It had one because the scenario decoded two 1-byte enums from a
+    # static fixture and the codecs tied without cross-unit inlining. That pair
+    # was never gateable: both compile the same two-byte loads, so the true ratio
+    # was ~1.00 and the measured one was decided by code placement — a 2.6%
+    # change in unrelated generated code moved ergon's arm 37% with the decoder
+    # source byte-identical. The scenario now also reads the optional composite's
+    # counter, which is real equal work on both arms, and measures 0.7711 no-LTO
+    # / 0.7760 LTO. With ~22% of headroom the allowance was dead weight, so both
+    # profiles are back to a literal 1.00.
     for pair in "${pairs[@]}"; do
         IFS='|' read -r label group ergo_fn ref_fn ceiling <<< "$pair"
-        if [ "$profile" = "no-lto" ] && [ "$label" = "extended_optional_enum_nullify" ]; then
-            ceiling="1.01"
-        fi
         # Criterion converts '/' to '_' in directory names
         dir_group="${group//\//_}"
         ergo_key="parity_${dir_group}/${ergo_fn}"
