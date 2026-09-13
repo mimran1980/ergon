@@ -1184,6 +1184,12 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 /// same way. That uniformity is why this lane exists: code that walks whole
 /// messages writes one form instead of branching on each tail's shape.
 ///
+/// It is one level deep, and deliberately so. `level.into_orders()` below is
+/// still the staged spelling, because `ordered()` lives on the message
+/// decoder. `orders` is fixed-stride, so its iterator is strictly more capable
+/// than a callback — `ExactSizeIterator`, and you can `break` and still reach
+/// the next tail by arithmetic.
+///
 /// `EntryInfo::count` is the wire-declared `numInGroup`, read from the group's
 /// dimension header before the walk starts, so the `Vec` is sized once rather
 /// than grown. It costs no scan. `bids` and `asks` still need separate bodies

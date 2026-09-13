@@ -381,7 +381,9 @@ entries contain dynamic tails.
 The staged lane spells a group two ways because the two shapes genuinely
 differ. That is the right default, but code that walks whole messages and
 would rather write the same thing at every tail can take the **ordered lane**:
-one callback per tail, uniform spelling, and an `EntryInfo` for each entry.
+one callback per tail, uniform spelling across the message's own tails,
+and an `EntryInfo` for each entry. `ordered()` is generated on the message
+decoder, so nested groups inside an entry keep the staged spelling.
 
 It owns no cursor of its own. `ordered()` wraps the base decoder, and every
 method delegates to the staged stage underneath — so the single entry

@@ -122,7 +122,7 @@ ask order to return to `symbol`; this lane reuses the boundary it already
 found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
-### Ordered — one spelling for every tail
+### Ordered — one spelling for every *message-level* tail
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
@@ -135,6 +135,14 @@ same way, and each entry callback also receives an `EntryInfo` carrying
 `index`, the wire-declared `count`, and the acting `block_length`. Both come
 from the group's dimension header, so `reserve_exact(info.count)` costs no
 scan.
+
+**The uniformity is one level deep.** Note `level.into_orders()` inside the
+callback: `ordered()` exists on the message decoder, so once you are inside an
+entry you are back to the staged spelling. That is deliberate rather than
+unfinished — `orders` is fixed-stride, and its iterator is strictly more
+capable than a callback would be (`ExactSizeIterator`, and you can `break` and
+still reach the next tail by arithmetic). Forcing it into callback form to look
+uniform would trade real capability for cosmetic consistency.
 
 It is a façade over the staged stages, so it keeps their single traversal and
 compile-time tail order; `done()` hands back the staged complete stage. The

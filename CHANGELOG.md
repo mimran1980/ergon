@@ -6,7 +6,8 @@
 
 ### Added
 - **Ordered decode lane — `decoder.ordered()`.** One callback per tail, in
-  wire order, with the same spelling at every tail: `fixed(|&Decoder|)`, then
+  wire order, with the same spelling at every *message-level* tail (nested
+  groups inside an entry keep the staged spelling): `fixed(|&Decoder|)`, then
   `group(|entry, EntryInfo|)` for each group, then `field(|&[u8]|)` (or
   `field_as_str(|&str|)` where the schema declares a text encoding). `done()`
   returns the staged complete stage, so extent and full-frame helpers stay
