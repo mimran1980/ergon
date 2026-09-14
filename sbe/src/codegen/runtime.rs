@@ -11,8 +11,12 @@ use std::fmt::Write;
 /// The progressive tail-boundary cache runtime, used by every generated
 /// `{Name}MemoizedDecoder`. Emitted unconditionally: `Decoder::memoized()` is
 /// always available on a tail-bearing message, so the type is always reachable.
-fn tail_boundary_cache_tokens(with_entry_info: bool) -> proc_macro2::TokenStream {
+fn tail_boundary_cache_tokens(
+    with_entry_info: bool,
+    with_ordered: bool,
+) -> proc_macro2::TokenStream {
     let entry_info = entry_info_tokens(with_entry_info);
+    let ordered = ordered_wrapper_tokens(with_ordered);
     quote::quote! {
             /// Progressive cache of dynamic-tail *end* offsets.
             ///
@@ -36,6 +40,7 @@ fn tail_boundary_cache_tokens(with_entry_info: bool) -> proc_macro2::TokenStream
             }
 
             #entry_info
+            #ordered
 
             /// Debug-only counters for the memoized random-access prototype.
             #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -144,9 +149,11 @@ fn entry_info_tokens(enabled: bool) -> proc_macro2::TokenStream {
         /// ordered-lane entry callback.
         ///
         /// `count` is the wire-declared `numInGroup` and `block_length`
-        /// the group's acting block length, so both are known before the
-        /// walk starts. A group's total *byte* length is not: for entries
-        /// carrying their own tails it is only settled by traversing them.
+        /// the group's acting block length. Both come from the attached
+        /// group decoder that the staged walk already opened — the ordered
+        /// lane does not re-parse the dimension header. A group's total
+        /// *byte* length is not: for entries carrying their own tails it
+        /// is only settled by traversing them.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct EntryInfo {
             /// Zero-based position of this entry within the group.
@@ -179,8 +186,35 @@ fn entry_info_tokens(enabled: bool) -> proc_macro2::TokenStream {
     }
 }
 
-pub(crate) fn generate_sbe_rt_src(with_entry_info: bool) -> String {
-    let tail_boundary_cache = tail_boundary_cache_tokens(with_entry_info);
+fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
+    if !enabled {
+        return proc_macro2::TokenStream::new();
+    }
+    quote::quote! {
+        /// Sequential decode façade: one callback per tail, in wire order.
+        ///
+        /// Produced by a decoder's `ordered()`. Each method consumes this
+        /// wrapper and returns the next, so tail order is a type. The inner
+        /// staged stage holds the cursor; this type adds no second one.
+        #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+        pub struct Ordered<S> {
+            pub(crate) inner: S,
+        }
+
+        /// Message decoder after the ordered `fixed` callback, before the first tail.
+        ///
+        /// Distinct from the base decoder so `fixed` cannot collide with a
+        /// first tail of the same name, and so the callback receives a
+        /// fixed-fields-only view rather than the full decoder.
+        #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+        pub struct OrderedFixed<S> {
+            pub(crate) inner: S,
+        }
+    }
+}
+
+pub(crate) fn generate_sbe_rt_src(with_entry_info: bool, with_ordered: bool) -> String {
+    let tail_boundary_cache = tail_boundary_cache_tokens(with_entry_info, with_ordered);
     let module = quote::quote! {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]

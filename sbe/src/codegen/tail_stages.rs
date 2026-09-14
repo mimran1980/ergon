@@ -7,10 +7,12 @@
 
 use crate::ir::ByteOrder;
 use crate::structured_ir::{
-    MessageGroup, MessageStructure, OwnerTailGroup, OwnerTailVarData, SchemaElements,
-    decoder_stage_after_ident, get_vardata_info, rust_type,
+    decoder_stage_after_ident, get_vardata_info, rust_type, MessageGroup, MessageStructure,
+    OwnerTailGroup, OwnerTailVarData, SchemaElements,
 };
 
+use super::conversion_helpers::{owner_accessor_names, DECODER_RESERVED};
+use super::ordered_lane::{generate_ordered_lane, OrderedFixedFields};
 use super::runtime::{to_pascal_case, to_snake_case};
 
 /// Absent tails occupy no bytes and contain no entries at older wire versions.
@@ -507,6 +509,8 @@ pub(crate) fn generate_owner_consuming_stages(
         };
         let next_stage = stage_after_ident(i);
         let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
+        let into_with_info =
+            syn::Ident::new(&format!("into_{}_with_info", tg.accessor_snake), span);
         let skip_ident = syn::Ident::new(&format!("skip_{}", tg.accessor_snake), span);
         let g_decoder_ident = syn::Ident::new(&tg.group_decoder_ident, span);
         let entry_decoder_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
@@ -574,23 +578,6 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
             }
         });
-        // Dimension read for the ordered lane's *dynamic* branch, which has no
-        // iterator to ask: `(count, block_length)` without advancing. Always
-        // emitted — unlike the public `<group>_count()`, this one cannot be
-        // suppressed by a name collision, because the `__sbe_` prefix is not
-        // reachable from any schema element name.
-        let dim_helper = quote::format_ident!("__sbe_{}_dim", tg.accessor_snake);
-        let stage_dim = quote::quote! {
-            #[doc(hidden)]
-            #[inline]
-            pub(crate) fn #dim_helper(&self) -> Result<(usize, usize), sbe_rt::DecodeError> {
-                let group_start = #se;
-                // SAFETY: same proof as `into_*` / `skip_*` on this stage.
-                let inner = unsafe { #versioned_wrap };
-                Ok((inner.remaining_entries(), inner.acting_block_length))
-            }
-        };
-
         if tg.entries_have_tails {
             let entry_complete_ident =
                 syn::Ident::new(&format!("{entry_decoder_ident}Complete"), span);
@@ -612,11 +599,16 @@ pub(crate) fn generate_owner_consuming_stages(
                     fn walk<E, F>(mut self, mut visit: F) -> Result<#next_stage<'a>, E>
                     where
                         E: From<sbe_rt::DecodeError>,
-                        F: FnMut(#entry_decoder_ident<'a>) -> Result<#entry_complete_ident<'a>, E>,
+                        F: FnMut(
+                            #entry_decoder_ident<'a>,
+                            sbe_rt::EntryInfo,
+                        ) -> Result<#entry_complete_ident<'a>, E>,
                     {
                         if let Some(error) = self.poisoned {
                             return Err(E::from(error));
                         }
+                        let count = self.total;
+                        let block_length = self.acting_block_length;
                         while self.count > 0 {
                             let available = self.buf.len().saturating_sub(self.offset);
                             if self.min_entry_extent > available {
@@ -637,7 +629,12 @@ pub(crate) fn generate_owner_consuming_stages(
                                     self.acting_version,
                                 )
                             };
-                            let complete = visit(entry)?;
+                            let info = sbe_rt::EntryInfo {
+                                index: count - self.count,
+                                count,
+                                block_length,
+                            };
+                            let complete = visit(entry, info)?;
                             if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
                                 || complete.buf.len() != self.buf.len()
                                 || complete.offset != self.offset
@@ -666,10 +663,25 @@ pub(crate) fn generate_owner_consuming_stages(
                     /// stage and returns no continuation; there is nothing to
                     /// retry from a consuming lane.
                     #[inline]
-                    pub fn #into_ident<E, F>(self, visit: F) -> Result<#next_stage<'a>, E>
+                    pub fn #into_ident<E, F>(self, mut visit: F) -> Result<#next_stage<'a>, E>
                     where
                         E: From<sbe_rt::DecodeError>,
                         F: FnMut(#entry_decoder_ident<'a>) -> Result<#entry_complete_ident<'a>, E>,
+                    {
+                        self.#into_with_info(|entry, _info| visit(entry))
+                    }
+                    // Ordered-lane sibling: the attached decoder already
+                    // holds `total`, remaining `count`, and acting block
+                    // length from the one wrap `into_*` would do, so
+                    // `EntryInfo` costs no second dimension-header read.
+                    #[inline]
+                    fn #into_with_info<E, F>(self, visit: F) -> Result<#next_stage<'a>, E>
+                    where
+                        E: From<sbe_rt::DecodeError>,
+                        F: FnMut(
+                            #entry_decoder_ident<'a>,
+                            sbe_rt::EntryInfo,
+                        ) -> Result<#entry_complete_ident<'a>, E>,
                     {
                         let group_start = #se;
                         #absent_stage_guard
@@ -825,7 +837,6 @@ pub(crate) fn generate_owner_consuming_stages(
             }
             impl<'a> #current_stage<'a> {
                 #stage_count
-                #stage_dim
                 /// Consume this stage, advance past the next group without
                 /// visiting any entry, and return the following stage.
                 #[inline]
@@ -989,6 +1000,10 @@ pub(crate) fn generate_decoder_consuming_stages(
     _multi_message: bool,
     group_unique_names: &[String],
     enable_dispatch: bool,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let stage_prefix = format!("{name}Decoder");
@@ -1039,15 +1054,32 @@ pub(crate) fn generate_decoder_consuming_stages(
     );
     // Message level only: entries reach their nested tails through the staged
     // entry stages, which already give one callback per tail.
+    // Same taken set as the message decoder: peeks for `<group>_count` /
+    // `<field>_len` must yield when a field already owns that name, and a
+    // field named `ordered` is already `ordered_field` via DECODER_RESERVED.
+    let taken = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
     ts.extend(generate_ordered_lane(
         &initial_ident,
         &stage_prefix,
         &groups,
         &vardata,
         true,
-        // Message decoders rename fields against `DECODER_RESERVED`, which
-        // contains `ordered`, so the name is already protected here.
-        &[],
+        &taken,
+        Some(OrderedFixedFields {
+            fields: &msg.fields,
+            conversions,
+            domain_types,
+            null_as_option,
+            all_enums_as_option,
+        }),
     ));
     ts
 }
@@ -1061,6 +1093,7 @@ pub(crate) fn generate_entry_consuming_stages(
     name: &str,
     byte_order: ByteOrder,
     enable_dispatch: bool,
+    conversions: &[crate::ConversionSelector],
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let entry_prefix = format!("{name}EntryDecoder");
@@ -1122,7 +1155,7 @@ pub(crate) fn generate_entry_consuming_stages(
     // own accessor names so the lane yields to it rather than colliding.
     let taken = crate::codegen::conversion_helpers::owner_accessor_names(
         &g.fields,
-        &[],
+        conversions,
         &[],
         g.groups
             .iter()
@@ -1136,255 +1169,7 @@ pub(crate) fn generate_entry_consuming_stages(
         &vardata,
         false,
         &taken,
+        None,
     ));
-    ts
-}
-
-/// Ordered lane: one callback per tail, in wire order, over the staged stages.
-///
-/// The staged lane spells a group two ways because the shapes genuinely differ.
-/// The ordered lane offers one spelling for callers who want the whole message
-/// in order and would rather write the same thing at every tail: every group
-/// takes `FnMut(Entry, EntryInfo)`, every var-data takes `FnOnce(&[u8])`. It
-/// owns no cursor of its own — each method delegates to the staged stage it
-/// wraps, so the one-pass property and the compile-time ordering come from
-/// there rather than being re-implemented.
-///
-/// Entries that carry their own tails still return their completion stage from
-/// the callback: that completion *is* where the next entry starts, and giving
-/// it up would mean pre-scanning every entry.
-pub(crate) fn generate_ordered_lane(
-    initial_ident: &syn::Ident,
-    stage_prefix: &str,
-    groups: &[OwnerTailGroup],
-    vardata: &[OwnerTailVarData],
-    // True at message level, false for a group entry. Only changes doc wording
-    // and the `done()` return description — the stage graph is identical.
-    is_message: bool,
-    // Accessor names this owner already emits. Group entries do **not** rename
-    // against `DECODER_RESERVED`, so an entry field named `ordered` owns that
-    // name already; generating the lane there would be a duplicate-method
-    // error. The existing accessor wins and the lane is simply not generated,
-    // matching how `<group>_count` / `<field>_len` yield to a colliding
-    // sibling.
-    taken_accessors: &[String],
-) -> proc_macro2::TokenStream {
-    let total_tail = groups.len() + vardata.len();
-    if total_tail == 0 {
-        return proc_macro2::TokenStream::new();
-    }
-    if taken_accessors.iter().any(|n| n == "ordered") {
-        return proc_macro2::TokenStream::new();
-    }
-    let span = proc_macro2::Span::call_site();
-    let field_pascals: Vec<String> = groups
-        .iter()
-        .map(|g| g.field_pascal.clone())
-        .chain(vardata.iter().map(|v| v.field_pascal.clone()))
-        .collect();
-
-    let staged_stage =
-        |i: usize| decoder_stage_after_ident(stage_prefix, &field_pascals[i], i, total_tail, span);
-    let ordered_ident = syn::Ident::new(&format!("{stage_prefix}Ordered"), span);
-    let ordered_stage =
-        |i: usize| syn::Ident::new(&format!("{stage_prefix}Ordered{}", field_pascals[i]), span);
-
-    let mut ts = proc_macro2::TokenStream::new();
-
-    // One paragraph, one string, no embedded newlines: `cargo fmt` turns a
-    // trailing-backslash continuation into literal indentation, and an indented
-    // line is a Markdown code block that rustdoc then tries to run as a doctest.
-    let ordered_doc = if is_message {
-        "Walk the whole message in wire order with one callback per tail."
-    } else {
-        "Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal."
-    };
-    // Stage 0 wraps the base decoder; every later stage wraps its staged peer.
-    ts.extend(quote::quote! {
-        /// Ordered decode lane — one callback per tail, in wire order.
-        ///
-        /// Reached with [`Self::inner`]'s `ordered()`. Each method consumes
-        /// this stage and returns the next, so the compiler enforces tail
-        /// order exactly as the staged lane does.
-        #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-        pub struct #ordered_ident<'a> {
-            inner: #initial_ident<'a>,
-        }
-        impl<'a> #initial_ident<'a> {
-            #[doc = #ordered_doc]
-            ///
-            /// A façade over the staged `into_*` / `skip_*` stages: same single
-            /// traversal, same compile-time ordering, one uniform spelling.
-            #[inline]
-            pub fn ordered(self) -> #ordered_ident<'a> {
-                #ordered_ident { inner: self }
-            }
-        }
-        impl<'a> #ordered_ident<'a> {
-            /// Read the fixed block before any tail. Does not advance.
-            #[inline]
-            pub fn fixed<E, F>(self, f: F) -> Result<Self, E>
-            where
-                E: From<sbe_rt::DecodeError>,
-                F: FnOnce(&#initial_ident<'a>) -> Result<(), E>,
-            {
-                f(&self.inner)?;
-                Ok(self)
-            }
-        }
-    });
-    for i in 0..total_tail {
-        let stage = ordered_stage(i);
-        let staged = staged_stage(i);
-        ts.extend(quote::quote! {
-            /// Ordered decode stage — the tail named by this type has been read.
-            #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-            pub struct #stage<'a> {
-                inner: #staged<'a>,
-            }
-        });
-    }
-    // Terminal stage hands the staged complete back, so extent helpers and
-    // full-frame byte views stay reachable without a second set of methods.
-    let last = ordered_stage(total_tail - 1);
-    let last_staged = staged_stage(total_tail - 1);
-    ts.extend(quote::quote! {
-        impl<'a> #last<'a> {
-            /// The completed staged decoder, for extent and byte-range helpers.
-            #[inline]
-            pub fn done(self) -> #last_staged<'a> { self.inner }
-        }
-    });
-
-    for (i, tg) in groups.iter().enumerate() {
-        let current: syn::Ident = if i == 0 {
-            ordered_ident.clone()
-        } else {
-            ordered_stage(i - 1)
-        };
-        let next = ordered_stage(i);
-        let method = syn::Ident::new(&tg.accessor_snake, span);
-        let into_ident = syn::Ident::new(&format!("into_{}", tg.accessor_snake), span);
-        let entry_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
-        let dim_helper = quote::format_ident!("__sbe_{}_dim", tg.accessor_snake);
-        let doc = format!(
-            " Visit every `{}` entry in wire order, then advance to the next tail.\n\n\
-             The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying\n\
-             its index, the wire-declared count, and the acting block length.\n\
-             Empty groups invoke it zero times.",
-            tg.accessor_snake
-        );
-        let body = if tg.entries_have_tails {
-            let complete_ident =
-                syn::Ident::new(&format!("{}Complete", tg.entry_decoder_ident), span);
-            quote::quote! {
-                #[doc = #doc]
-                ///
-                /// These entries carry tails of their own, so the callback
-                /// returns the entry's completion — that is where the next
-                /// entry starts, so nothing is scanned twice.
-                #[inline]
-                pub fn #method<E, F>(self, mut f: F) -> Result<#next<'a>, E>
-                where
-                    E: From<sbe_rt::DecodeError>,
-                    F: FnMut(#entry_ident<'a>, sbe_rt::EntryInfo) -> Result<#complete_ident<'a>, E>,
-                {
-                    let (count, block_length) = self.inner.#dim_helper()?;
-                    let mut index = 0usize;
-                    let inner = self.inner.#into_ident(|entry| {
-                        let info = sbe_rt::EntryInfo { index, count, block_length };
-                        index += 1;
-                        f(entry, info)
-                    })?;
-                    Ok(#next { inner })
-                }
-            }
-        } else {
-            quote::quote! {
-                #[doc = #doc]
-                ///
-                /// These entries have a fixed stride, so the callback returns
-                /// `()` — there is no tail to complete.
-                #[inline]
-                pub fn #method<E, F>(self, mut f: F) -> Result<#next<'a>, E>
-                where
-                    E: From<sbe_rt::DecodeError>,
-                    F: FnMut(#entry_ident<'a>, sbe_rt::EntryInfo) -> Result<(), E>,
-                {
-                    // No pre-read: the iterator itself carries the count and
-                    // the stride, so this adds nothing to the staged walk.
-                    let mut iter = self.inner.#into_ident()?;
-                    let count = iter.remaining_entries();
-                    let block_length = iter.entry_block_length();
-                    let mut index = 0usize;
-                    for entry in &mut iter {
-                        f(entry, sbe_rt::EntryInfo { index, count, block_length })?;
-                        index += 1;
-                    }
-                    let inner = iter.finish()?;
-                    Ok(#next { inner })
-                }
-            }
-        };
-        ts.extend(quote::quote! { impl<'a> #current<'a> { #body } });
-    }
-
-    for (vi, vd) in vardata.iter().enumerate() {
-        let i = groups.len() + vi;
-        let current: syn::Ident = if i == 0 {
-            ordered_ident.clone()
-        } else {
-            ordered_stage(i - 1)
-        };
-        let next = ordered_stage(i);
-        let method = syn::Ident::new(&vd.accessor_snake, span);
-        let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
-        let doc = format!(
-            " Read `{}` as bytes, then advance to the next tail.",
-            vd.accessor_snake
-        );
-        ts.extend(quote::quote! {
-            impl<'a> #current<'a> {
-                #[doc = #doc]
-                #[inline]
-                pub fn #method<E, F>(self, f: F) -> Result<#next<'a>, E>
-                where
-                    E: From<sbe_rt::DecodeError>,
-                    F: FnOnce(&'a [u8]) -> Result<(), E>,
-                {
-                    let (bytes, inner) = self.inner.#into_ident()?;
-                    f(bytes)?;
-                    Ok(#next { inner })
-                }
-            }
-        });
-        // Strict text callback, only where the schema declares an encoding.
-        if super::runtime::text_encoding_kind(vd.character_encoding.as_deref()).is_some() {
-            let str_method = syn::Ident::new(&format!("{}_as_str", vd.accessor_snake), span);
-            let into_str = syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
-            let str_doc = format!(
-                " Read `{}` as `&str`, then advance to the next tail.\n\n\
-                 Validation covers this field only — there is no whole-message\n\
-                 text pass. Invalid text is an error, never a sentinel.",
-                vd.accessor_snake
-            );
-            ts.extend(quote::quote! {
-                impl<'a> #current<'a> {
-                    #[doc = #str_doc]
-                    #[inline]
-                    pub fn #str_method<E, F>(self, f: F) -> Result<#next<'a>, E>
-                    where
-                        E: From<sbe_rt::DecodeError>,
-                        F: FnOnce(&'a str) -> Result<(), E>,
-                    {
-                        let (text, inner) = self.inner.#into_str()?;
-                        f(text)?;
-                        Ok(#next { inner })
-                    }
-                }
-            });
-        }
-    }
-
     ts
 }

@@ -1211,13 +1211,13 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
 
     let _complete = L3BookDecoder::try_decode(wire, 0)?
         .ordered()
-        .fixed(|d| -> Result<(), Box<dyn std::error::Error>> {
+        .try_fixed(|d| -> Result<(), Box<dyn std::error::Error>> {
             timestamp = Some(d.try_exchange_timestamp()?);
             sequence = d.sequence();
             is_active = d.try_is_active()?;
             Ok(())
         })?
-        .bids(|level, info| -> Result<_, Box<dyn std::error::Error>> {
+        .try_bids(|level, info| -> Result<_, Box<dyn std::error::Error>> {
             if info.is_first() {
                 bids.reserve_exact(info.count);
             }
@@ -1230,7 +1230,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             let mut orders = Vec::new();
             let done = level
                 .ordered()
-                .orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+                .try_orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
                     orders.push((order.order_id(), order.try_quantity()?));
                     Ok(())
                 })?
@@ -1238,7 +1238,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             bids.push((price, size, orders));
             Ok(done)
         })?
-        .asks(|level, info| -> Result<_, Box<dyn std::error::Error>> {
+        .try_asks(|level, info| -> Result<_, Box<dyn std::error::Error>> {
             if info.is_first() {
                 asks.reserve_exact(info.count);
             }
@@ -1247,7 +1247,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             let mut orders = Vec::new();
             let done = level
                 .ordered()
-                .orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+                .try_orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
                     orders.push((order.order_id(), order.try_quantity()?));
                     Ok(())
                 })?
@@ -1255,7 +1255,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             asks.push((price, size, orders));
             Ok(done)
         })?
-        .symbol_as_str(|s| -> Result<(), Box<dyn std::error::Error>> {
+        .try_symbol_as_str(|s| -> Result<(), Box<dyn std::error::Error>> {
             symbol = Some(s);
             Ok(())
         })?

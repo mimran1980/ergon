@@ -14,8 +14,8 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names,
-    resolve_field_ident, tail_accessor_ident,
+    enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names, resolve_field_ident,
+    tail_accessor_ident, DECODER_RESERVED,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
@@ -1813,6 +1813,10 @@ pub(crate) fn generate_message_decoder(
         multi_message,
         &group_unique_names,
         enable_dispatch,
+        conversions,
+        domain_types,
+        null_as_option,
+        all_enums_as_option,
     ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)

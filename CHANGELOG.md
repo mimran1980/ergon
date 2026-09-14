@@ -16,14 +16,28 @@
   you can `break` out of, still reaching the next tail by arithmetic. The lane
   adds a spelling rather than replacing one.
 
+### Changed
+- The ordered lane is `sbe_rt::Ordered<S>` wrapping each staged stage, instead
+  of a parallel `*DecoderOrdered*` type per tail. Message-level `fixed` takes a
+  `{Name}DecoderFixedView` (fixed fields only) and consumes into
+  `Ordered<OrderedFixed<Decoder>>`. Entry-level wrappers no longer emit `fixed`:
+  the parent callback already holds the entry. Unprefixed group/var-data methods
+  return `DecodeError` so closures infer; `try_*` keeps a custom `E`.
+- `EntryInfo` for dynamic groups is filled from the attached group decoder the
+  staged walk already opened. The discarded `__sbe_*_dim` wrap is gone.
+
 ### Fixed
 - A group entry with a field literally named `ordered` no longer collides with
   the new entry-level lane. Group entries are not renamed against the static
   reserved list, unlike message and memoized decoders, so such a field already
   owns `ordered()`; the lane yields and is simply not generated for that entry,
   matching how `<group>_count` / `<field>_len` yield to a colliding sibling.
-  Covered by `ordered_lane_test::entry_field_named_ordered_keeps_its_accessor`,
-  and verified by removing the guard and watching it fail.
+  A converted field named `ordered` (`ordered_wire` / `ordered_as`) no longer
+  suppresses the lane. Covered by `ordered_lane_test`.
+- A first tail named `fixed` no longer emits duplicate `fixed()` methods: the
+  message-level callback yields, and the group/var-data visit keeps the name.
+  Last tail named `done` is a different type from `done()` on the complete
+  stage. Covered by `ordered_lane_test`.
 
 ## [0.1.27] — 2026-09-12
 

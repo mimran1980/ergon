@@ -37,10 +37,11 @@ about — which is what the rest of this page is about.
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
 | Staged | `into_*` / `skip_*` | Compile time | One forward traversal when entry tails also use stages | yes |
-| Ordered | `decoder.ordered()` | Compile time | Delegates to the staged stages; adds one dimension read per dynamic group | yes |
+| Ordered | `decoder.ordered()` | Compile time | Delegates to the staged stages | yes |
 
 Fixed fields stay random-access in all three. The ordered lane also offers
-a `fixed` callback before the tails. Groups and variable-data are consumed in
+a `fixed` callback before the tails; that callback receives a
+fixed-fields-only view, not the full decoder. Groups and variable-data are consumed in
 schema order on both sequential lanes. `.memoized()` is generated for repeated
 out-of-order tail reads; it caches boundaries instead of advancing stages.
 
@@ -387,23 +388,22 @@ that carry tails of their own. An entry whose existing accessor is named
 methods instead. An entry-level `done()` returns the completion its parent's
 callback owes, so the entry lane composes with the parent's single traversal.
 
-`ordered()` wraps the base decoder, and every method delegates to the staged
-stage underneath. The cursor lives in that wrapped stage; there is no second
-cursor to synchronize. The single entry
+`ordered()` wraps the base decoder as `sbe_rt::Ordered<S>`, and every method
+delegates to the staged stage underneath. The cursor lives in that wrapped
+stage; there is no second cursor to synchronize. The single entry
 traversal and the compile-time tail ordering come from the staged lane rather
 than being re-implemented. `done()` hands the staged complete stage back,
-keeping message extent and full-frame byte views reachable. An entry's
+keeping message extent and full-frame byte views reachable; those helpers are
+also forwarded onto the last ordered stage. An entry's
 completion instead describes that entry's extent within the wire buffer.
 
 **Traversal cost.** Fixed-stride groups supply `EntryInfo` from the iterator's
-existing count and stride. For a group whose entries carry tails, the ordered
-wrapper reads and validates the dimension header to obtain `count` and
-`block_length`, then the staged traversal opens that same group. This is an
-extra header operation in the generated source, without a pre-scan of entries.
-A nested dynamic group pays it each time that group is entered, including once
-per containing entry. Dimension-header size follows the schema, not a fixed
-four-byte assumption. Inlining may eliminate repeated work; use both benchmark
-profiles to establish the resulting cost rather than assuming a speed ranking.
+existing count and stride. For a group whose entries carry tails, `EntryInfo`
+is filled from the attached group decoder the staged walk already opened
+(`total`, remaining count, acting block length). There is no second
+dimension-header wrap. Empty and version-absent groups invoke the callback
+zero times; the non-advancing `<group>_count()` on the ordered stage still
+reports the declared count.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_ordered_lane}}
@@ -413,8 +413,8 @@ profiles to establish the resulting cost rather than assuming a speed ranking.
 
 | Tail | Callback |
 |------|----------|
-| Fixed block | `fixed(\|&Decoder\|)` — does not advance |
-| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion |
+| Fixed block | `fixed(\|&{Name}DecoderFixedView\|)` — consumes into a following stage; custom error types use `try_fixed` |
+| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion; `try_group` for a custom `E` |
 | Group, fixed-stride entries | `group(\|entry, EntryInfo\|)` → returns `()` |
 | Var-data | `field(\|&[u8]\|)`, and `field_as_str(\|&str\|)` where the schema declares a text encoding |
 
@@ -425,10 +425,15 @@ block length come from the dimension header; the index advances with the walk.
 A group's total **byte** length is absent: for entries carrying their own tails
 it is only settled by traversing them.
 
-`fixed` is optional and repeatable before the first tail. Its callback receives
-the full base decoder, so it also exposes random-access tail getters. Restrict
-it to fixed fields when a single traversal matters. The compiler orders the
-consuming tail transitions; it does not prevent extra reads inside callbacks.
+Message-level `fixed` is optional: skip it and call the first tail directly, or
+call it and receive a following stage that no longer offers the view. The
+callback's type has only fixed-field getters, acting version, and acting block
+length — not group or var-data accessors — so it cannot start a second walk.
+A first tail named `fixed` suppresses the callback; read those fields before
+`ordered()`. Entry-level ordered wrappers have no `fixed`: the parent callback
+already holds the entry. The compiler orders the consuming tail transitions;
+it does not prevent extra reads inside group callbacks that still hold a
+full entry decoder.
 
 Ordered bytes and text callbacks receive `&'a [u8]` and `&'a str` borrowing the
 original buffer, so those references can be retained after the callback returns.

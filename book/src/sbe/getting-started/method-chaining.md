@@ -50,9 +50,11 @@ the chain, start with `decoder.ordered()`:
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_ordered_lane}}
 ```
 
-The fixed callback comes before tails; each group callback receives the entry
-and its `EntryInfo`, and var-data callbacks receive bytes or strictly validated
-text. These callbacks borrow the original wire buffer, so bytes and text may
+The fixed callback comes before tails and receives a fixed-fields-only view;
+each group callback receives the entry and its `EntryInfo`, and var-data
+callbacks receive bytes or strictly validated text. Unprefixed methods return
+`DecodeError` so the closures infer; `try_*` takes a custom `E`. These
+callbacks borrow the original wire buffer, so bytes and text may
 be retained as the chain advances. `done()` returns the completed staged
 decoder. Entries with nested tails can use their own `ordered()` chain and
 return its completion to the parent callback. The

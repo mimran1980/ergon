@@ -347,31 +347,31 @@ pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Erro
 
     let done = CarDecoder::try_decode(wire, 0)?
         .ordered()
-        .fixed(|car| -> Result<(), sbe_rt::DecodeError> {
+        .fixed(|car| {
             assert_eq!(car.serial_number(), 1234);
             Ok(())
         })?
-        .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+        .fuel_figures(|entry, info| {
             // `info` carries the position the wire declares.
             assert_eq!(info.count, 2);
             assert_eq!(info.is_last(), info.index == 1);
             speeds.push(entry.speed());
             entry.into_usage_description().map(|(_usage, done)| done)
         })?
-        .performance_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
+        .performance_figures(|entry, _info| {
             octanes.push(entry.octane_rating());
             // Nested tails still use the staged entry stages.
             entry.into_acceleration()?.finish()
         })?
-        .manufacturer_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+        .manufacturer_as_str(|s| {
             text.push(s.to_owned());
             Ok(())
         })?
-        .model_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+        .model_as_str(|s| {
             text.push(s.to_owned());
             Ok(())
         })?
-        .activation_code_as_str(|s| -> Result<(), sbe_rt::DecodeError> {
+        .activation_code_as_str(|s| {
             text.push(s.to_owned());
             Ok(())
         })?

@@ -133,8 +133,10 @@ Compare it with the staged lane above: there `bids` takes a visit closure and
 message-level tail — fixed block, both groups, then the var-data — reads the
 same way, and each entry callback also receives an `EntryInfo` carrying
 `index`, the wire-declared `count`, and the acting `block_length`. Count and
-block length come from the dimension header; the index advances with the walk.
-Using `info.count` to reserve space needs no entry scan.
+block length come from the group decoder the staged walk already opened; the
+index advances with the walk. Using `info.count` to reserve space needs no
+entry scan. Empty groups never deliver `EntryInfo`; `<group>_count()` on the
+ordered stage still reports the declared count.
 
 **It recurses.** A `bids` level carries its own tail — the nested `orders`
 group — so the level decoder has an `ordered()` too, and the callback above
@@ -151,12 +153,12 @@ tail by arithmetic. Pick the iterator when you want to stop early and continue
 at the next tail, or the ordered lane when you want callbacks throughout.
 
 It is a façade over the staged stages, so it keeps their single traversal and
-compile-time tail order; `done()` hands back the staged complete stage. The
-generated wrapper opens each dynamic group once to obtain its dimensions and
-then opens it for traversal. Nested dynamic groups do this each time they are
-entered. Fixed-stride groups reuse the iterator's count and stride. Neither
-shape pre-scans entries; the optimizer and measured workload determine the
-callback wrapper's final cost.
+compile-time tail order; `done()` hands back the staged complete stage. Dynamic
+groups fill `EntryInfo` from that walk; fixed-stride groups reuse the
+iterator's count and stride. Neither shape pre-scans entries or re-opens the
+dimension header. The optimizer and measured workload determine the callback
+wrapper's final cost. Message-level `fixed` receives a fixed-fields-only view;
+custom error types use `try_fixed` / `try_bids` / `try_asks`.
 
 ### On a hot path, collect nothing
 
