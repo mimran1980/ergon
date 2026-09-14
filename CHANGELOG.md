@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+- **The ordered lane recurses.** `ordered()` is now generated on any decoder
+  that owns tails, not only the message decoder: a group entry carrying its own
+  groups or var-data has one too, so a walk keeps a single spelling all the way
+  down instead of switching to the staged API at the entry boundary. An
+  entry-level `done()` returns the `{Entry}Complete` its parent's visit closure
+  must hand back, so the entry lane composes with the parent's one-pass
+  traversal. Entries with no tails of their own have nothing to order and get
+  no lane.
+- The staged `into_*` iterator is unchanged and still generated beside it. For a
+  fixed-stride nested group it remains the better tool — an `ExactSizeIterator`
+  you can `break` out of, still reaching the next tail by arithmetic. The lane
+  adds a spelling rather than replacing one.
+
+### Fixed
+- A group entry with a field literally named `ordered` no longer collides with
+  the new entry-level lane. Group entries are not renamed against the static
+  reserved list, unlike message and memoized decoders, so such a field already
+  owns `ordered()`; the lane yields and is simply not generated for that entry,
+  matching how `<group>_count` / `<field>_len` yield to a colliding sibling.
+  Covered by `ordered_lane_test::entry_field_named_ordered_keeps_its_accessor`,
+  and verified by removing the guard and watching it fail.
+
 ## [0.1.27] — 2026-09-12
 
 ### Added

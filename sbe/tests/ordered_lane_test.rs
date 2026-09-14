@@ -336,3 +336,173 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
     );
     Ok(())
 }
+
+/// The ordered lane exists on **entry** decoders too, so a walk can stay in one
+/// spelling past the entry boundary instead of switching to the staged API.
+///
+/// Two nested shapes, both compiled here because they are separate generator
+/// branches: `fuelFigures` entries carry var-data, and `performanceFigures`
+/// entries carry a fixed-stride nested group whose callback returns `()`
+/// rather than a completion.
+///
+/// The load-bearing detail is `done()`: at entry level it returns
+/// `{Entry}Complete`, which is exactly what the parent's visit closure must
+/// hand back — so the entry-level lane composes with the parent's one-pass
+/// traversal instead of fighting it.
+#[test]
+fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "ordered_entry");
+    assert!(
+        src.contains("impl < 'a > FuelFiguresEntryDecoder < 'a >")
+            || src.contains("pub fn ordered(self) -> FuelFiguresEntryDecoderOrdered"),
+        "entry decoders must gain an ordered() lane"
+    );
+
+    let mut body = ENCODE.to_string();
+    body.push_str(
+        r#"
+        // Message-level ordered lane, with each entry walked by the *entry*
+        // ordered lane — one spelling all the way down.
+        let mut usages: Vec<Vec<u8>> = Vec::new();
+        let mut accels: Vec<(u16, usize, usize)> = Vec::new();
+        let complete = CarDecoder::try_decode(encoded, 0)?
+            .ordered()
+            .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+                assert_eq!(info.count, 2);
+                Ok(entry
+                    .ordered()
+                    .usage_description(|b| -> Result<(), sbe_rt::DecodeError> {
+                        usages.push(b.to_vec());
+                        Ok(())
+                    })?
+                    .done())
+            })?
+            .performance_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
+                assert_eq!(info.count, 1);
+                assert!(info.is_first() && info.is_last());
+                Ok(entry
+                    .ordered()
+                    .acceleration(|a, ainfo| -> Result<(), sbe_rt::DecodeError> {
+                        // Fixed-stride nested group: the callback returns (),
+                        // and EntryInfo is filled from the iterator itself.
+                        accels.push((a.mph(), ainfo.index, ainfo.count));
+                        Ok(())
+                    })?
+                    .done())
+            })?
+            .manufacturer(|m| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(m, b"Honda");
+                Ok(())
+            })?
+            .model(|m| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(m, b"Civic");
+                Ok(())
+            })?
+            .activation_code(|c| -> Result<(), sbe_rt::DecodeError> {
+                assert_eq!(c, b"abc");
+                Ok(())
+            })?
+            .done();
+
+        assert_eq!(usages, vec![b"aa".to_vec(), b"bbb".to_vec()]);
+        assert_eq!(accels, vec![(10u16, 0, 3), (20, 1, 3), (30, 2, 3)]);
+        assert_eq!(complete.encoded_length_with_header(), len);
+    "#,
+    );
+    compile_and_run("ordered_entry", &src, &body);
+    Ok(())
+}
+
+/// An entry field named `ordered` keeps its accessor, and the entry-level lane
+/// is not generated for that entry.
+///
+/// Group entries are **not** renamed against `DECODER_RESERVED`, unlike message
+/// and memoized decoders, so `ordered()` on such an entry is already a field
+/// getter. Emitting the lane there would be a duplicate method (E0592) — the
+/// same defect class that shipped twice this cycle. The existing accessor wins,
+/// exactly as `<group>_count` / `<field>_len` yield to a colliding sibling.
+#[test]
+fn entry_field_named_ordered_keeps_its_accessor() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="entryclash" id="902" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <sbe:message name="Msg" id="1">
+    <group name="rows" id="10" dimensionType="groupSizeEncoding">
+      <field name="ordered" id="11" type="uint32"/>
+      <data name="tag" id="12" type="varStringEncoding"/>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("entryclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+
+    assert!(
+        !src.contains("RowsEntryDecoderOrdered"),
+        "the entry lane must yield to a field already named `ordered`"
+    );
+    assert!(
+        src.contains("pub fn ordered(&self)"),
+        "the entry's own `ordered` field accessor must survive unchanged"
+    );
+    // The message-level lane is unaffected: `Msg` has no field named `ordered`.
+    assert!(
+        src.contains("pub fn ordered(self)"),
+        "message-level ordered() is independent of the entry collision"
+    );
+
+    // Compilation is the assertion: duplicate methods would be E0592 here.
+    compile_and_run(
+        "entryclash",
+        &src,
+        r#"
+        let len = MsgEncodedLength::new()
+            .rows(1)
+            .tag(2)?
+            .encoded_length_with_header();
+        let mut storage = vec![0u8; len];
+        let actual = MsgEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&MsgFixedFields {})
+            .rows(1, |g| {
+                g.add(|mut e| { e.ordered(7u32); e.tag(b"hi") })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+
+        let mut seen = Vec::new();
+        let _c = MsgDecoder::try_decode(&storage[..actual], 0)?
+            .into_rows(|e| -> Result<_, sbe_rt::DecodeError> {
+                assert_eq!(e.ordered(), 7u32);
+                let (tag, done) = e.into_tag()?;
+                seen.push(tag.to_vec());
+                Ok(done)
+            })?;
+        assert_eq!(seen, vec![b"hi".to_vec()]);
+    "#,
+    );
+    Ok(())
+}

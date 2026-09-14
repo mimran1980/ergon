@@ -1184,11 +1184,17 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 /// same way. That uniformity is why this lane exists: code that walks whole
 /// messages writes one form instead of branching on each tail's shape.
 ///
-/// It is one level deep, and deliberately so. `level.into_orders()` below is
-/// still the staged spelling, because `ordered()` lives on the message
-/// decoder. `orders` is fixed-stride, so its iterator is strictly more capable
-/// than a callback — `ExactSizeIterator`, and you can `break` and still reach
-/// the next tail by arithmetic.
+/// It goes all the way down. A `bids` level carries its own tail (the nested
+/// `orders` group), so it has an `ordered()` of its own, and the spelling does
+/// not change at the entry boundary. `done()` there returns the completion the
+/// parent closure owes, so the entry lane composes with the parent's one-pass
+/// traversal rather than fighting it.
+///
+/// The staged `level.into_orders()` iterator is still generated beside it and
+/// is still the better tool when you want to `break` early — `orders` is
+/// fixed-stride, so its iterator is an `ExactSizeIterator` and stopping short
+/// still reaches the next tail by arithmetic. The lane adds a spelling; it
+/// removes nothing.
 ///
 /// `EntryInfo::count` is the wire-declared `numInGroup`, read from the group's
 /// dimension header before the walk starts, so the `Vec` is sized once rather
@@ -1217,16 +1223,20 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             }
             let price = level.try_price()?;
             let size = level.try_size()?;
-            // `orders` entries are fixed-stride, so the nested walk is still an
-            // iterator: this lane is a message-level façade, not a rewrite of
-            // entry decoding.
+            // The *entry* ordered lane: a level carries its own tail, so it has
+            // an `ordered()` too. The spelling does not change at the entry
+            // boundary, and `done()` returns the completion this closure owes
+            // its parent.
             let mut orders = Vec::new();
-            let mut order_iter = level.into_orders()?;
-            for order in &mut order_iter {
-                orders.push((order.order_id(), order.try_quantity()?));
-            }
+            let done = level
+                .ordered()
+                .orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+                    orders.push((order.order_id(), order.try_quantity()?));
+                    Ok(())
+                })?
+                .done();
             bids.push((price, size, orders));
-            Ok(order_iter.finish()?)
+            Ok(done)
         })?
         .asks(|level, info| -> Result<_, Box<dyn std::error::Error>> {
             if info.is_first() {
@@ -1235,12 +1245,15 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             let price = level.try_price()?;
             let size = level.try_size()?;
             let mut orders = Vec::new();
-            let mut order_iter = level.into_orders()?;
-            for order in &mut order_iter {
-                orders.push((order.order_id(), order.try_quantity()?));
-            }
+            let done = level
+                .ordered()
+                .orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+                    orders.push((order.order_id(), order.try_quantity()?));
+                    Ok(())
+                })?
+                .done();
             asks.push((price, size, orders));
-            Ok(order_iter.finish()?)
+            Ok(done)
         })?
         .symbol_as_str(|s| -> Result<(), Box<dyn std::error::Error>> {
             symbol = Some(s);

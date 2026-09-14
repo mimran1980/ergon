@@ -4232,6 +4232,90 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+/// Ordered decode lane — one callback per tail, in wire order.
+///
+/// Reached with [`Self::inner`]'s `ordered()`. Each method consumes
+/// this stage and returns the next, so the compiler enforces tail
+/// order exactly as the staged lane does.
+#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+pub struct FuelFiguresEntryDecoderOrdered<'a> {
+    inner: FuelFiguresEntryDecoder<'a>,
+}
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    ///Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal.
+    ///
+    /// A façade over the staged `into_*` / `skip_*` stages: same single
+    /// traversal, same compile-time ordering, one uniform spelling.
+    #[inline]
+    pub fn ordered(self) -> FuelFiguresEntryDecoderOrdered<'a> {
+        FuelFiguresEntryDecoderOrdered {
+            inner: self,
+        }
+    }
+}
+impl<'a> FuelFiguresEntryDecoderOrdered<'a> {
+    /// Read the fixed block before any tail. Does not advance.
+    #[inline]
+    pub fn fixed<E, F>(self, f: F) -> Result<Self, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&FuelFiguresEntryDecoder<'a>) -> Result<(), E>,
+    {
+        f(&self.inner)?;
+        Ok(self)
+    }
+}
+/// Ordered decode stage — the tail named by this type has been read.
+#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+pub struct FuelFiguresEntryDecoderOrderedUsageDescription<'a> {
+    inner: FuelFiguresEntryDecoderComplete<'a>,
+}
+impl<'a> FuelFiguresEntryDecoderOrderedUsageDescription<'a> {
+    /// The completed staged decoder, for extent and byte-range helpers.
+    #[inline]
+    pub fn done(self) -> FuelFiguresEntryDecoderComplete<'a> {
+        self.inner
+    }
+}
+impl<'a> FuelFiguresEntryDecoderOrdered<'a> {
+    /// Read `usage_description` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn usage_description<E, F>(
+        self,
+        f: F,
+    ) -> Result<FuelFiguresEntryDecoderOrderedUsageDescription<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&'a [u8]) -> Result<(), E>,
+    {
+        let (bytes, inner) = self.inner.into_usage_description()?;
+        f(bytes)?;
+        Ok(FuelFiguresEntryDecoderOrderedUsageDescription {
+            inner,
+        })
+    }
+}
+impl<'a> FuelFiguresEntryDecoderOrdered<'a> {
+    /** Read `usage_description` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn usage_description_as_str<E, F>(
+        self,
+        f: F,
+    ) -> Result<FuelFiguresEntryDecoderOrderedUsageDescription<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&'a str) -> Result<(), E>,
+    {
+        let (text, inner) = self.inner.into_usage_description_as_str()?;
+        f(text)?;
+        Ok(FuelFiguresEntryDecoderOrderedUsageDescription {
+            inner,
+        })
+    }
+}
 #[doc = concat!(
     "Group `", stringify!(PerformanceFiguresDecoder),
     "` decoder — iterate entries in wire order."
@@ -5664,6 +5748,93 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+/// Ordered decode lane — one callback per tail, in wire order.
+///
+/// Reached with [`Self::inner`]'s `ordered()`. Each method consumes
+/// this stage and returns the next, so the compiler enforces tail
+/// order exactly as the staged lane does.
+#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+pub struct PerformanceFiguresEntryDecoderOrdered<'a> {
+    inner: PerformanceFiguresEntryDecoder<'a>,
+}
+impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    ///Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal.
+    ///
+    /// A façade over the staged `into_*` / `skip_*` stages: same single
+    /// traversal, same compile-time ordering, one uniform spelling.
+    #[inline]
+    pub fn ordered(self) -> PerformanceFiguresEntryDecoderOrdered<'a> {
+        PerformanceFiguresEntryDecoderOrdered {
+            inner: self,
+        }
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoderOrdered<'a> {
+    /// Read the fixed block before any tail. Does not advance.
+    #[inline]
+    pub fn fixed<E, F>(self, f: F) -> Result<Self, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&PerformanceFiguresEntryDecoder<'a>) -> Result<(), E>,
+    {
+        f(&self.inner)?;
+        Ok(self)
+    }
+}
+/// Ordered decode stage — the tail named by this type has been read.
+#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+pub struct PerformanceFiguresEntryDecoderOrderedAcceleration<'a> {
+    inner: PerformanceFiguresEntryDecoderComplete<'a>,
+}
+impl<'a> PerformanceFiguresEntryDecoderOrderedAcceleration<'a> {
+    /// The completed staged decoder, for extent and byte-range helpers.
+    #[inline]
+    pub fn done(self) -> PerformanceFiguresEntryDecoderComplete<'a> {
+        self.inner
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoderOrdered<'a> {
+    /** Visit every `acceleration` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    ///
+    /// These entries have a fixed stride, so the callback returns
+    /// `()` — there is no tail to complete.
+    #[inline]
+    pub fn acceleration<E, F>(
+        self,
+        mut f: F,
+    ) -> Result<PerformanceFiguresEntryDecoderOrderedAcceleration<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            PerformanceFiguresAccelerationEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
+        ) -> Result<(), E>,
+    {
+        let mut iter = self.inner.into_acceleration()?;
+        let count = iter.remaining_entries();
+        let block_length = iter.entry_block_length();
+        let mut index = 0usize;
+        for entry in &mut iter {
+            f(
+                entry,
+                sbe_rt::EntryInfo {
+                    index,
+                    count,
+                    block_length,
+                },
+            )?;
+            index += 1;
+        }
+        let inner = iter.finish()?;
+        Ok(PerformanceFiguresEntryDecoderOrderedAcceleration {
+            inner,
+        })
+    }
+}
 /// Consuming decoder stage — drop without `into_*` / `skip_*`
 /// skips remaining wire tails.
 #[must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"]
@@ -6660,7 +6831,7 @@ pub struct CarDecoderOrdered<'a> {
     inner: CarDecoder<'a>,
 }
 impl<'a> CarDecoder<'a> {
-    /// Walk the whole message in wire order with one callback per tail.
+    ///Walk the whole message in wire order with one callback per tail.
     ///
     /// A façade over the staged `into_*` / `skip_*` stages: same single
     /// traversal, same compile-time ordering, one uniform spelling.

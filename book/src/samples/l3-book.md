@@ -122,7 +122,7 @@ ask order to return to `symbol`; this lane reuses the boundary it already
 found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
-### Ordered — one spelling for every *message-level* tail
+### Ordered — one spelling, all the way down
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
@@ -132,24 +132,31 @@ Compare it with the staged lane above: there `bids` takes a visit closure and
 `orders` is an iterator, because those two shapes genuinely differ. Here every
 message-level tail — fixed block, both groups, then the var-data — reads the
 same way, and each entry callback also receives an `EntryInfo` carrying
-`index`, the wire-declared `count`, and the acting `block_length`. Both come
-from the group's dimension header, so `reserve_exact(info.count)` costs no
-scan.
+`index`, the wire-declared `count`, and the acting `block_length`. Count and
+block length come from the dimension header; the index advances with the walk.
+Using `info.count` to reserve space needs no entry scan.
 
-**The uniformity is one level deep.** Note `level.into_orders()` inside the
-callback: `ordered()` exists on the message decoder, so once you are inside an
-entry you are back to the staged spelling. That is deliberate rather than
-unfinished — `orders` is fixed-stride, and its iterator is strictly more
-capable than a callback would be (`ExactSizeIterator`, and you can `break` and
-still reach the next tail by arithmetic). Forcing it into callback form to look
-uniform would trade real capability for cosmetic consistency.
+**It recurses.** A `bids` level carries its own tail — the nested `orders`
+group — so the level decoder has an `ordered()` too, and the callback above
+uses it. The spelling does not change at the entry boundary, and `done()` there
+returns exactly the completion the parent closure owes, so the entry lane
+composes with the parent's single traversal instead of breaking it. An entry
+with no tails of its own (a fixed-stride entry) has nothing to order and gets
+no lane. An entry whose existing getter is named `ordered` also keeps its
+getter and uses the staged spelling for its tails.
+
+The staged spelling is still generated beside it: `level.into_orders()` hands
+back a real `ExactSizeIterator` you can `break` out of and still reach the next
+tail by arithmetic. Pick the iterator when you want to stop early and continue
+at the next tail, or the ordered lane when you want callbacks throughout.
 
 It is a façade over the staged stages, so it keeps their single traversal and
 compile-time tail order; `done()` hands back the staged complete stage. The
-cost is one extra dimension-header read per *dynamic* group per message —
-never per entry — because a visit closure exposes no handle to ask for the
-count. Fixed-stride groups pay nothing, since the iterator already knows its
-count and stride.
+generated wrapper opens each dynamic group once to obtain its dimensions and
+then opens it for traversal. Nested dynamic groups do this each time they are
+entered. Fixed-stride groups reuse the iterator's count and stride. Neither
+shape pre-scans entries; the optimizer and measured workload determine the
+callback wrapper's final cost.
 
 ### On a hot path, collect nothing
 

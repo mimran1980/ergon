@@ -20,7 +20,7 @@ book/src/samples/l3-book.md:96 — deliberate; {{#include}} of the l3-book sampl
 book/src/samples/l3-book.md:106 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:115 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:127 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/samples/l3-book.md:161 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
+book/src/samples/l3-book.md:168 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context
@@ -49,7 +49,7 @@ book/src/sbe/design-notes/nullval.md:90 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:104 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:12 — deliberate; see page context
 book/src/sbe/design-notes/type-state.md:55 — deliberate; see page context
-book/src/sbe/feature-tour/decode-stages.md:187 — deliberate; names generated CarDecoder types that do not exist in the book harness
+book/src/sbe/feature-tour/decode-stages.md:186 — deliberate; illustrates application-supplied read_header/read_groups/read_final_tail helpers and input bytes, not a standalone program
 book/src/sbe/feature-tour/generated-code.md:7 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:47 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:101 — deliberate; see page context

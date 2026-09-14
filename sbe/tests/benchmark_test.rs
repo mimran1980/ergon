@@ -10,15 +10,30 @@
 //! 2. Run a best-case encode/decode warmup loop + timed loop
 //! 3. Assert that even in debug mode the round-trip completes promptly
 //!
-//! **Known trap — one unreproduced failure (2026-09-12).** This binary failed
-//! once during a full `just test` run and has passed every attempt since,
-//! including three full green suites and a deliberate re-run under concurrent
-//! `cargo test` load. The timing assertions cannot plausibly be the cause: they
-//! allow 30 seconds for 50 debug-mode iterations. The likelier candidate is
-//! `compile_and_run`, which spawns a *nested* cargo build — contention is real
-//! (74s under parallel load versus ~13s isolated) but did not reproduce a
-//! failure. Recorded as unexplained rather than fixed. If it recurs, capture
-//! the nested cargo's stderr before assuming it is the assertions.
+//! **Known trap — the nested build's scratch directory can vanish mid-run.**
+//! `compile_and_run` spawns a *nested* cargo build under the system temp dir
+//! (`/var/folders/.../T/ergo_test_<name>/target_ci` on macOS). That tree is not
+//! owned by cargo's usual locking, and it can be reclaimed or truncated while a
+//! build is in flight. Observed 2026-09-14 across a whole `just test` run:
+//!
+//! ```text
+//! error: extern location for miette does not exist: .../target_ci/.../libmiette-*.rmeta
+//! error: Unable to proceed. Could not locate working directory.
+//! error: failed to write .../target_ci/debug/.fingerprint/...
+//! error: linking with `cc` failed: exit status: 1
+//! ```
+//!
+//! Every affected test failed inside `compile_and_run`, never on an assertion.
+//! A single earlier instance (2026-09-12) hit this binary alone and was recorded
+//! as unexplained; this is that mechanism. It cleared after freeing build
+//! artifacts, and the same suite then passed 126/126.
+//!
+//! The timing assertions here are *not* a plausible cause of a failure: they
+//! allow 30 seconds for 50 debug-mode iterations, and the binary survives
+//! deliberate concurrent-cargo load (74s versus ~13s isolated, still passing).
+//! So if this binary fails, read the nested cargo's stderr first — an I/O or
+//! missing-file error means the scratch tree went away, not that the codec got
+//! slow. Free disk space and re-run before investigating the code.
 //!
 //! Real criterion benchmarks should be added once the codegen stabilises
 //! and `criterion` is added to dev-dependencies.  For now this smoke test

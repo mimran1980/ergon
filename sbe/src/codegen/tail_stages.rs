@@ -1044,6 +1044,10 @@ pub(crate) fn generate_decoder_consuming_stages(
         &stage_prefix,
         &groups,
         &vardata,
+        true,
+        // Message decoders rename fields against `DECODER_RESERVED`, which
+        // contains `ordered`, so the name is already protected here.
+        &[],
     ));
     ts
 }
@@ -1097,8 +1101,8 @@ pub(crate) fn generate_entry_consuming_stages(
             }
         })
         .collect();
-    generate_owner_consuming_stages(
-        initial_ident,
+    let mut ts = generate_owner_consuming_stages(
+        initial_ident.clone(),
         &entry_prefix,
         0,
         byte_order,
@@ -1106,7 +1110,34 @@ pub(crate) fn generate_entry_consuming_stages(
         &vardata,
         enable_dispatch,
         false,
-    )
+    );
+    // Entries with nested tails get the ordered lane too, so a walk stays in
+    // one spelling all the way down instead of switching at the entry
+    // boundary. It sits *beside* the staged `into_*` / `skip_*` methods; a
+    // fixed-stride nested group keeps its iterator, which is strictly more
+    // capable than a callback (`ExactSizeIterator`, early `break`).
+    //
+    // Entry fields are not renamed against `DECODER_RESERVED`, so an entry
+    // field literally named `ordered` already owns the name. Pass the entry's
+    // own accessor names so the lane yields to it rather than colliding.
+    let taken = crate::codegen::conversion_helpers::owner_accessor_names(
+        &g.fields,
+        &[],
+        &[],
+        g.groups
+            .iter()
+            .map(|ng| ng.name.as_str())
+            .chain(g.var_data.iter().map(|v| v.name.as_str())),
+    );
+    ts.extend(generate_ordered_lane(
+        &initial_ident,
+        &entry_prefix,
+        &groups,
+        &vardata,
+        false,
+        &taken,
+    ));
+    ts
 }
 
 /// Ordered lane: one callback per tail, in wire order, over the staged stages.
@@ -1127,9 +1158,22 @@ pub(crate) fn generate_ordered_lane(
     stage_prefix: &str,
     groups: &[OwnerTailGroup],
     vardata: &[OwnerTailVarData],
+    // True at message level, false for a group entry. Only changes doc wording
+    // and the `done()` return description — the stage graph is identical.
+    is_message: bool,
+    // Accessor names this owner already emits. Group entries do **not** rename
+    // against `DECODER_RESERVED`, so an entry field named `ordered` owns that
+    // name already; generating the lane there would be a duplicate-method
+    // error. The existing accessor wins and the lane is simply not generated,
+    // matching how `<group>_count` / `<field>_len` yield to a colliding
+    // sibling.
+    taken_accessors: &[String],
 ) -> proc_macro2::TokenStream {
     let total_tail = groups.len() + vardata.len();
     if total_tail == 0 {
+        return proc_macro2::TokenStream::new();
+    }
+    if taken_accessors.iter().any(|n| n == "ordered") {
         return proc_macro2::TokenStream::new();
     }
     let span = proc_macro2::Span::call_site();
@@ -1147,6 +1191,14 @@ pub(crate) fn generate_ordered_lane(
 
     let mut ts = proc_macro2::TokenStream::new();
 
+    // One paragraph, one string, no embedded newlines: `cargo fmt` turns a
+    // trailing-backslash continuation into literal indentation, and an indented
+    // line is a Markdown code block that rustdoc then tries to run as a doctest.
+    let ordered_doc = if is_message {
+        "Walk the whole message in wire order with one callback per tail."
+    } else {
+        "Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal."
+    };
     // Stage 0 wraps the base decoder; every later stage wraps its staged peer.
     ts.extend(quote::quote! {
         /// Ordered decode lane — one callback per tail, in wire order.
@@ -1159,7 +1211,7 @@ pub(crate) fn generate_ordered_lane(
             inner: #initial_ident<'a>,
         }
         impl<'a> #initial_ident<'a> {
-            /// Walk the whole message in wire order with one callback per tail.
+            #[doc = #ordered_doc]
             ///
             /// A façade over the staged `into_*` / `skip_*` stages: same single
             /// traversal, same compile-time ordering, one uniform spelling.
