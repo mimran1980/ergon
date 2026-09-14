@@ -51,25 +51,25 @@ whether you continue evaluating the crate:
 | What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results—not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
-| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through September 2026 is **25 billion tokens** (high-water mark from `ccusage` across Claude Code + Codex + Grok; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
-| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$6,177**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
+| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). Cumulative usage through September 2026 is **26 billion tokens** (high-water mark from `ccusage` across Claude Code + Codex + Grok; see [cumulative token usage](#cumulative-token-usage-since-2026-06-28)). |
+| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). At work with enterprise API rates the same token volume would be **~$6,287**, and with my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing — so the real cost at work would be lower still. The [single-provider what-if comparison](#what-if-all-tokens-through-a-single-provider) shows what this workload costs under each company's comparable model at public API rates. |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
 ## Cumulative token usage (since 2026-06-28)
 
 Per-model high-water mark reconstructed from every `ccusage` snapshot committed
 to this file — 2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19,
-2026-08-20, 2026-08-27, 2026-09-07, and 2026-09-13. Claude Code, Codex, and
-Grok Build CLI.
+2026-08-20, 2026-08-27, 2026-09-07, 2026-09-13, and 2026-09-14. Claude Code,
+Codex, and Grok Build CLI.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
 | claude-haiku-4-5-20251001 | 894 | 30,088 | 145,326 | 10,319,303 | — | 10,495,611 | $1.47 |
 | claude-opus-4-8 | 161,581 | 507,379 | 3,870,922 | 93,963,551 | — | 98,503,433 | $86.65 |
-| claude-opus-5 | 9,972,576 | 4,049,662 | 30,218,727 | 3,471,142,409 | — | 3,515,383,374 | $2,171.95 |
+| claude-opus-5 | 10,410,448 | 4,165,147 | 31,104,000 | 3,525,946,517 | — | 3,571,626,112 | $2,213.29 |
 | claude-sonnet-4-6 | 3 | 654 | 22,730 | 14,116 | — | 37,503 | $0.15 |
-| claude-sonnet-5 | 32,913 | 1,882,008 | 17,701,982 | 1,886,760,317 | — | 1,906,377,220 | $466.50 |
+| claude-sonnet-5 | 33,259 | 1,963,182 | 18,022,479 | 1,912,145,069 | — | 1,932,163,989 | $473.67 |
 | deepseek-v4-flash | 52,791,367 | 15,125,986 | — | 2,734,161,536 | — | 2,802,078,889 | $35.00 |
 | deepseek-v4-pro | 47,802,822 | 9,959,142 | — | 11,705,468,864 | — | 11,763,230,828 | $551.30 |
 | glm-4.7 | 6,949,701 | 760,380 | — | 268,436,096 | — | 276,146,177 | $35.37 |
@@ -78,10 +78,10 @@ Grok Build CLI.
 | gpt-5.6-luna | 1,552,433 | 172,891 | — | 46,894,592 | 98,393 | 48,718,309 | $35.97 |
 | gpt-5.6-sol | 54,416,465 | 4,892,696 | — | 1,437,418,112 | 2,493,867 | 1,499,221,140 | $950.21 |
 | gpt-5.6-terra | 484,995 | 29,907 | — | 6,463,744 | 14,882 | 6,993,528 | $3.69 |
-| gpt-6-astra | 949,793 | 98,092 | — | 23,729,792 | 39,784 | 24,777,677 | $35.87 |
+| gpt-6-astra | 1,476,025 | 153,291 | — | 35,774,848 | 65,192 | 37,404,164 | $55.94 |
 | grok-4.5-build | 10,030,758 | 881,349 | — | 177,071,360 | — | 187,983,467 | $114.67 |
-| grok-4.6-build | 32,201,234 | 2,050,075 | — | 543,995,008 | — | 578,246,317 | $219.36 |
-| **Total** | **246,810,397** | **45,367,307** | **64,189,813** | **25,186,785,890** | **2,678,196** | **25,545,791,819** | **$6,177.03** |
+| grok-4.6-build | 40,082,011 | 2,648,838 | — | 748,189,952 | — | 790,920,801 | $260.76 |
+| **Total** | **255,655,624** | **46,217,928** | **65,395,583** | **25,483,214,750** | **2,703,604** | **25,853,122,297** | **$6,287.00** |
 
 **Notes:**
 
@@ -90,36 +90,37 @@ Grok Build CLI.
   Claude Code deletes transcripts older than `cleanupPeriodDays`. A
   `--since 20260628` query therefore *loses* its earliest days as time passes,
   so a later snapshot can report **fewer** tokens than an earlier one. The
-  figures above are the per-model, per-column maximum across all nine
+  figures above are the per-model, per-column maximum across all ten
   snapshots; since the tool can only under-report, that maximum is the best
   available lower bound.
-- The 2026-09-13 run alone reported **20,418,341,894** tokens. Merging the
-  eight snapshots recovered from this file's git history adds
-  **5,127,449,925** tokens the current run can no longer see — roughly a fifth
+- The 2026-09-14 run alone reported **21,452,166,522** tokens. Merging the
+  nine snapshots recovered from this file's git history adds
+  **4,400,955,775** tokens the current run can no longer see — about a sixth
   of the total, and the reason this table is never overwritten with a fresh
   run's numbers.
-- `claude-opus-5` set new maxima on this run (3.29B → 3.52B total), as did
-  `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `gpt-6-astra` and
-  `gpt-5.6-terra`. Every other model's maximum is held by an earlier snapshot;
-  `claude-fable-5` retains a total roughly ten times what the current run can
-  still see.
-- `grok-4.5-build` and `grok-4.6-build` survive only in earlier snapshots.
-  Neither `ccusage` nor SuperBased currently extracts token data from Grok CLI
-  session logs, so these rows cannot be refreshed and are carried forward.
+- `claude-opus-5` (3.52B → 3.57B), `claude-sonnet-5` (1.91B → 1.93B),
+  `gpt-6-astra` (24.8M → 37.4M) and `grok-4.6-build` (578M → 791M) set new
+  total maxima on this run. `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`
+  and `deepseek-v4-pro` raised only their cost column. Every other model's
+  maximum is held by an earlier snapshot.
+- Grok Build CLI rows come from `ccusage grok`, which extracts them from the
+  Grok CLI session logs. `grok-4.5-build`'s maximum is still held by an
+  earlier snapshot.
 - No Antigravity/Gemini figures are included: the `observer` CLI that reported
   them is not installed on this host, so that source could not be sampled this
   cycle. Its absence understates the total rather than inflating it.
 - Hermes and OpenCode are excluded — automation, not development work on this
   project.
-- Codex reports cost per day rather than per model. On the three days that used
-  two models, the day's cost is split between them in proportion to their token
-  share; token counts themselves are exact per-model figures from the tool.
+- Codex reports cost per day rather than per model. On days that used more
+  than one model, the day's cost is split between them in proportion to their
+  token share; token counts themselves are exact per-model figures from the
+  tool.
 - All costs are at enterprise/pay-as-you-go API rates observed by each tool.
   Subscription fees (Claude, OpenAI, Grok) are not included.
-- Sanity checks: the per-model column sums for the 2026-09-13 run reconcile
-  exactly against each tool's own reported totals (18,869,111,099 Claude Code +
-  1,549,230,795 Codex = 20,418,341,894), and the grand total is monotonic
-  against the previously committed 25,291,621,012.
+- Sanity checks: the per-model column sums for the 2026-09-14 run reconcile
+  exactly against each tool's own reported totals (18,951,140,606 Claude Code +
+  1,561,857,282 Codex + 939,168,634 Grok = 21,452,166,522), and the grand total
+  is monotonic against the previously committed 25,545,791,819.
 
 ## What-if: all tokens through a single provider
 
@@ -150,19 +151,19 @@ hardest sessions at a level comparable to Opus.
 | **OpenAI (>272K)** | GPT-5.5 — $238 | GPT-5.5 — $4,590 | GPT-5.6 Sol — $7,060 | **$11,888** | Long-context: 2× input, 1.5× output — the rate you'd actually pay |
 | **Grok (<200K)** | Grok 4.5 — $99 | Grok 4.5 — $1,978 | Grok 4.5 — $3,528 | **$5,605** | Short-context rates — unrealistic for this workload |
 | **Grok (≥200K)** | Grok 4.5 — $198 | Grok 4.5 — $3,956 | Grok 4.5 — $7,055 | **$11,209** | Rates double at ≥200K; 500K max context |
-| **Actual enterprise blend** | — | — | — | **$6,177** | Per-model high-water mark across all 17 models at enterprise/PAYG rates — NOT what I paid (~$261 out-of-pocket) |
+| **Actual enterprise blend** | — | — | — | **$6,287** | Per-model high-water mark across all 17 models at enterprise/PAYG rates — NOT what I paid (~$261 out-of-pocket) |
 
 The takeaway: at short-context rates, Grok ($5,605) undercuts Anthropic ($7,884
 promo) — the user's intuition is correct. But those rates are fictional for this
 workload: every session exceeded 200K context, so the real Grok bill would be
 $11,209. Anthropic's key advantage is no long-context multiplier — Sonnet 5 at
 $8,655 (standard) is cheaper than both Grok ≥200K ($11,209) and OpenAI >272K
-($11,888) for this kind of sustained agentic work. The actual $6,177 blend is
+($11,888) for this kind of sustained agentic work. The actual $6,287 blend is
 cheaper than every single-provider scenario except DeepSeek-only ($121) and
 GLM-only ($4,730), because it used cheap DeepSeek cache reads for the bulk of
 tokens while spending on expensive models only for high-value sessions.
 
-> **Scope note (2026-09-13):** the blend figure and model count above track the
+> **Scope note (2026-09-14):** the blend figure and model count above track the
 > cumulative table, which is a per-model high-water mark. The **tier token
 > splits** (276M / 5.7B / 11.1B) and every per-provider extrapolation below them
 > were computed against an earlier, smaller snapshot and have **not** been

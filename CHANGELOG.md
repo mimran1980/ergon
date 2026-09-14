@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.28] — 2026-09-15
+
 ### Added
 - **The ordered lane recurses.** `ordered()` is now generated on any decoder
   that owns tails, not only the message decoder: a group entry carrying its own
