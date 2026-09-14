@@ -1186,9 +1186,9 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 ///
 /// It goes all the way down. A `bids` level carries its own tail (the nested
 /// `orders` group), so it has an `ordered()` of its own, and the spelling does
-/// not change at the entry boundary. `done()` there returns the completion the
-/// parent closure owes, so the entry lane composes with the parent's one-pass
-/// traversal rather than fighting it.
+/// not change at the entry boundary. Returning that nested walk is the
+/// completion the parent owes — no `.done()` on the way out. The message
+/// chain ends on `encoded_length_with_header()`, like encode.
 ///
 /// The staged `level.into_orders()` iterator is still generated beside it and
 /// is still the better tool when you want to `break` early — `orders` is
@@ -1209,7 +1209,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
     let mut asks: Vec<OwnedLevel> = Vec::new();
     let mut symbol: Option<&str> = None;
 
-    let _complete = L3BookDecoder::try_decode(wire, 0)?
+    let len = L3BookDecoder::try_decode(wire, 0)?
         .ordered()
         .try_fixed(|d| -> Result<(), Box<dyn std::error::Error>> {
             timestamp = Some(d.try_exchange_timestamp()?);
@@ -1223,20 +1223,17 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             }
             let price = level.try_price()?;
             let size = level.try_size()?;
-            // The *entry* ordered lane: a level carries its own tail, so it has
-            // an `ordered()` too. The spelling does not change at the entry
-            // boundary, and `done()` returns the completion this closure owes
-            // its parent.
+            // Nested `ordered()` returns the completion the parent owes —
+            // no `.done()` on the way out.
             let mut orders = Vec::new();
-            let done = level
-                .ordered()
-                .try_orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+            let complete = level.ordered().try_orders(
+                |order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
                     orders.push((order.order_id(), order.try_quantity()?));
                     Ok(())
-                })?
-                .done();
+                },
+            )?;
             bids.push((price, size, orders));
-            Ok(done)
+            Ok(complete)
         })?
         .try_asks(|level, info| -> Result<_, Box<dyn std::error::Error>> {
             if info.is_first() {
@@ -1245,21 +1242,21 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             let price = level.try_price()?;
             let size = level.try_size()?;
             let mut orders = Vec::new();
-            let done = level
-                .ordered()
-                .try_orders(|order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
+            let complete = level.ordered().try_orders(
+                |order, _oinfo| -> Result<(), Box<dyn std::error::Error>> {
                     orders.push((order.order_id(), order.try_quantity()?));
                     Ok(())
-                })?
-                .done();
+                },
+            )?;
             asks.push((price, size, orders));
-            Ok(done)
+            Ok(complete)
         })?
         .try_symbol_as_str(|s| -> Result<(), Box<dyn std::error::Error>> {
             symbol = Some(s);
             Ok(())
         })?
-        .done();
+        .encoded_length_with_header();
+    debug_assert_eq!(len, wire.len());
 
     Ok(Snapshot {
         timestamp: timestamp.ok_or("fixed callback must run")?,

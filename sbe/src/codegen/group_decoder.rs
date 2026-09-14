@@ -6,8 +6,8 @@
 
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::{
-    get_dimension_info, get_vardata_info, is_bool_enum, rust_type, FieldType, MessageGroup,
-    SchemaElements,
+    FieldType, MessageGroup, SchemaElements, get_dimension_info, get_vardata_info, is_bool_enum,
+    rust_type,
 };
 
 use super::conversion_helpers::{

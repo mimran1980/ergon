@@ -55,9 +55,10 @@ each group callback receives the entry and its `EntryInfo`, and var-data
 callbacks receive bytes or strictly validated text. Unprefixed methods return
 `DecodeError` so the closures infer; `try_*` takes a custom `E`. These
 callbacks borrow the original wire buffer, so bytes and text may
-be retained as the chain advances. `done()` returns the completed staged
-decoder. Entries with nested tails can use their own `ordered()` chain and
-return its completion to the parent callback. The
+be retained as the chain advances. The message chain ends on
+`encoded_length_with_header()` / `as_bytes_with_header()`, like encode —
+`.done()` is only to unwrap the staged complete. A nested `ordered()` walk
+returns that completion to the parent callback directly. The
 [L3 sample](../../samples/l3-book.md#ordered--one-spelling-all-the-way-down)
 shows this recursive form.
 

@@ -385,17 +385,18 @@ one callback per tail, uniform spelling, and an `EntryInfo` for each entry.
 `ordered()` is generated on message decoders with tails and on group entries
 that carry tails of their own. An entry whose existing accessor is named
 `ordered` keeps that accessor and does not get this lane; use its staged
-methods instead. An entry-level `done()` returns the completion its parent's
-callback owes, so the entry lane composes with the parent's single traversal.
+methods instead. A nested `ordered()` walk returns the completion its parent's
+callback owes — `.done()` is only to unwrap the staged complete.
 
 `ordered()` wraps the base decoder as `sbe_rt::Ordered<S>`, and every method
 delegates to the staged stage underneath. The cursor lives in that wrapped
 stage; there is no second cursor to synchronize. The single entry
 traversal and the compile-time tail ordering come from the staged lane rather
-than being re-implemented. `done()` hands the staged complete stage back,
-keeping message extent and full-frame byte views reachable; those helpers are
-also forwarded onto the last ordered stage. An entry's
-completion instead describes that entry's extent within the wire buffer.
+than being re-implemented. The message chain ends on
+`encoded_length_with_header()` / `as_bytes_with_header()` on the last ordered
+stage, like encode. `.done()` still unwraps the staged complete when a caller
+wants that type. An entry's completion describes that entry's extent within
+the wire buffer.
 
 **Traversal cost.** Fixed-stride groups supply `EntryInfo` from the iterator's
 existing count and stride. For a group whose entries carry tails, `EntryInfo`
@@ -414,7 +415,7 @@ reports the declared count.
 | Tail | Callback |
 |------|----------|
 | Fixed block | `fixed(\|&{Name}DecoderFixedView\|)` — consumes into a following stage; custom error types use `try_fixed` |
-| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion; `try_group` for a custom `E` |
+| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion, or `Ordered<completion>` from a nested `ordered()` walk; `try_group` for a custom `E` |
 | Group, fixed-stride entries | `group(\|entry, EntryInfo\|)` → returns `()` |
 | Var-data | `field(\|&[u8]\|)`, and `field_as_str(\|&str\|)` where the schema declares a text encoding |
 
@@ -441,9 +442,10 @@ Text validation covers only the selected field. A callback error consumes the
 stage and returns no continuation, and earlier callback effects are not rolled
 back if a later field is malformed.
 
-Entries with tails still return their completion stage from the callback —
-that completion *is* where the next entry starts, and giving it up would mean
-measuring every entry before visiting it.
+Entries with tails still return their completion from the callback — that
+completion *is* where the next entry starts, and giving it up would mean
+measuring every entry before visiting it. The callback may return the staged
+complete or an `Ordered` of it from a nested `ordered()` walk.
 
 **Use it when** you always decode whole messages in order and want one shape
 at every tail. **Prefer the staged lane** when you skip tails, hold stages

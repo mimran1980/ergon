@@ -598,6 +598,28 @@ pub mod sbe_rt {
     pub struct OrderedFixed<S> {
         pub(crate) inner: S,
     }
+    /// Convert a nested `ordered()` walk, or a staged completion, into the
+    /// completion a parent visit callback owes.
+    ///
+    /// The identity impl covers `Ok(entry.into_tag()?.1)` and `done()`.
+    /// The [`Ordered`] impl covers `Ok(entry.ordered().tag(|_| Ok(()))?)`
+    /// without an extra `.done()`.
+    pub trait IntoEntryComplete<C> {
+        ///Generated method `into_entry_complete`.
+        fn into_entry_complete(self) -> C;
+    }
+    impl<C> IntoEntryComplete<C> for C {
+        #[inline]
+        fn into_entry_complete(self) -> C {
+            self
+        }
+    }
+    impl<C> IntoEntryComplete<C> for Ordered<C> {
+        #[inline]
+        fn into_entry_complete(self) -> C {
+            self.inner
+        }
+    }
     /// Debug-only counters for the memoized random-access prototype.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct DecodeCacheStats {
@@ -4364,7 +4386,7 @@ impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>> {
     pub const fn acting_block_length(&self) -> usize {
         self.inner.acting_block_length()
     }
-    ///The entry completion the parent's visit closure must hand back.
+    ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
     pub fn done(self) -> FuelFiguresEntryDecoderComplete<'a> {
         self.inner
@@ -5903,7 +5925,7 @@ impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>> {
     pub const fn acting_block_length(&self) -> usize {
         self.inner.acting_block_length()
     }
-    ///The entry completion the parent's visit closure must hand back.
+    ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
     pub fn done(self) -> PerformanceFiguresEntryDecoderComplete<'a> {
         self.inner
@@ -7042,9 +7064,11 @@ Empty groups invoke it zero times.*/
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
-    /// entry starts, so nothing is scanned twice.
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
     #[inline]
-    pub fn fuel_figures<F>(
+    pub fn fuel_figures<F, R>(
         self,
         f: F,
     ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, sbe_rt::DecodeError>
@@ -7052,7 +7076,8 @@ Empty groups invoke it zero times.*/
         F: FnMut(
             FuelFiguresEntryDecoder<'a>,
             sbe_rt::EntryInfo,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError>,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
     {
         self.try_fuel_figures(f)
     }
@@ -7062,18 +7087,20 @@ The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
 its index, the wire-declared count, and the acting block length.
 Empty groups invoke it zero times.*/
     #[inline]
-    pub fn try_fuel_figures<E, F>(
+    pub fn try_fuel_figures<E, F, R>(
         self,
-        f: F,
+        mut f: F,
     ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            FuelFiguresEntryDecoder<'a>,
-            sbe_rt::EntryInfo,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+        F: FnMut(FuelFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
     {
-        let inner = self.inner.into_fuel_figures_with_info(f)?;
+        let inner = self
+            .inner
+            .into_fuel_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
+            })?;
         Ok(sbe_rt::Ordered { inner })
     }
 }
@@ -7101,9 +7128,11 @@ Empty groups invoke it zero times.*/
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
-    /// entry starts, so nothing is scanned twice.
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
     #[inline]
-    pub fn fuel_figures<F>(
+    pub fn fuel_figures<F, R>(
         self,
         f: F,
     ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, sbe_rt::DecodeError>
@@ -7111,7 +7140,8 @@ Empty groups invoke it zero times.*/
         F: FnMut(
             FuelFiguresEntryDecoder<'a>,
             sbe_rt::EntryInfo,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError>,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
     {
         self.try_fuel_figures(f)
     }
@@ -7121,18 +7151,21 @@ The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
 its index, the wire-declared count, and the acting block length.
 Empty groups invoke it zero times.*/
     #[inline]
-    pub fn try_fuel_figures<E, F>(
+    pub fn try_fuel_figures<E, F, R>(
         self,
-        f: F,
+        mut f: F,
     ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            FuelFiguresEntryDecoder<'a>,
-            sbe_rt::EntryInfo,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+        F: FnMut(FuelFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
     {
-        let inner = self.inner.inner.into_fuel_figures_with_info(f)?;
+        let inner = self
+            .inner
+            .inner
+            .into_fuel_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
+            })?;
         Ok(sbe_rt::Ordered { inner })
     }
 }
@@ -7160,9 +7193,11 @@ Empty groups invoke it zero times.*/
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
-    /// entry starts, so nothing is scanned twice.
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
     #[inline]
-    pub fn performance_figures<F>(
+    pub fn performance_figures<F, R>(
         self,
         f: F,
     ) -> Result<
@@ -7173,7 +7208,8 @@ Empty groups invoke it zero times.*/
         F: FnMut(
             PerformanceFiguresEntryDecoder<'a>,
             sbe_rt::EntryInfo,
-        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError>,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<PerformanceFiguresEntryDecoderComplete<'a>>,
     {
         self.try_performance_figures(f)
     }
@@ -7183,18 +7219,20 @@ The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
 its index, the wire-declared count, and the acting block length.
 Empty groups invoke it zero times.*/
     #[inline]
-    pub fn try_performance_figures<E, F>(
+    pub fn try_performance_figures<E, F, R>(
         self,
-        f: F,
+        mut f: F,
     ) -> Result<sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
-        F: FnMut(
-            PerformanceFiguresEntryDecoder<'a>,
-            sbe_rt::EntryInfo,
-        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
+        F: FnMut(PerformanceFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<PerformanceFiguresEntryDecoderComplete<'a>>,
     {
-        let inner = self.inner.into_performance_figures_with_info(f)?;
+        let inner = self
+            .inner
+            .into_performance_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
+            })?;
         Ok(sbe_rt::Ordered { inner })
     }
 }
@@ -7428,7 +7466,7 @@ impl<'a> sbe_rt::Ordered<CarDecoderComplete<'a>> {
     pub const fn acting_block_length(&self) -> usize {
         self.inner.acting_block_length()
     }
-    ///The completed staged decoder, for extent and byte-range helpers.
+    ///The completed staged decoder. Prefer [`Self::encoded_length_with_header`] / [`Self::as_bytes_with_header`] on this type — the message chain ends like encode, without `.done()`.
     #[inline]
     pub fn done(self) -> CarDecoderComplete<'a> {
         self.inner

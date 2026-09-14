@@ -14,8 +14,8 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names, resolve_field_ident,
-    tail_accessor_ident, DECODER_RESERVED,
+    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names,
+    resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;

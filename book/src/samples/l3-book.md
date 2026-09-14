@@ -140,9 +140,9 @@ ordered stage still reports the declared count.
 
 **It recurses.** A `bids` level carries its own tail — the nested `orders`
 group — so the level decoder has an `ordered()` too, and the callback above
-uses it. The spelling does not change at the entry boundary, and `done()` there
-returns exactly the completion the parent closure owes, so the entry lane
-composes with the parent's single traversal instead of breaking it. An entry
+uses it. The spelling does not change at the entry boundary, and returning
+that nested walk is the completion the parent closure owes — no `.done()` on
+the way out. An entry
 with no tails of its own (a fixed-stride entry) has nothing to order and gets
 no lane. An entry whose existing getter is named `ordered` also keeps its
 getter and uses the staged spelling for its tails.
@@ -153,7 +153,8 @@ tail by arithmetic. Pick the iterator when you want to stop early and continue
 at the next tail, or the ordered lane when you want callbacks throughout.
 
 It is a façade over the staged stages, so it keeps their single traversal and
-compile-time tail order; `done()` hands back the staged complete stage. Dynamic
+compile-time tail order. The message chain ends on `encoded_length_with_header()`,
+like encode. Dynamic
 groups fill `EntryInfo` from that walk; fixed-stride groups reuse the
 iterator's count and stride. Neither shape pre-scans entries or re-opens the
 dimension header. The optimizer and measured workload determine the callback

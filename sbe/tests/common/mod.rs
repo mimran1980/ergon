@@ -40,6 +40,20 @@ pub fn scratch_cargo() -> Command {
     cmd
 }
 
+/// Scratch directory for one throwaway `compile_and_run*` crate.
+///
+/// `std::env::temp_dir()` is shared OS-wide, not per-process, and every
+/// `compile_and_run*` helper starts by `remove_dir_all`-ing its directory
+/// before recreating it. Two `cargo test` invocations racing on the same
+/// `prefix`/`name` pair — a local run overlapping CI, or `just test` and
+/// `just bench` both exercising this suite — can delete the *other* process's
+/// in-flight directory mid-build. Folding in this process's id makes the path
+/// private to the process that owns it, so concurrent suite runs never
+/// collide regardless of what name a test happens to reuse.
+fn scratch_dir(prefix: &str, name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("{prefix}_{name}_{}", std::process::id()))
+}
+
 use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
 
 pub struct Paths;
@@ -202,6 +216,37 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
     }
 }
 
+/// Whether any `impl` block whose `Self` type's last path segment is
+/// `type_name` (e.g. `"CarEncoder"`, ignoring generics) defines a method
+/// named `method`.
+///
+/// A plain `src.contains(method)` check cannot tell a method on the type
+/// under test from a same-named method the generator emits on an unrelated
+/// type — e.g. the ordered decode lane's `try_fixed` and the encoder's
+/// (absent) fixed-phase bypass share a name but are different invariants.
+/// Parsing scopes the check to the type that actually owns the invariant.
+pub fn impl_for_type_defines_method(src: &str, type_name: &str, method: &str) -> bool {
+    let file = syn::parse_file(src).expect("generated code is not valid Rust");
+    file.items.iter().any(|item| {
+        let syn::Item::Impl(imp) = item else {
+            return false;
+        };
+        let syn::Type::Path(ty) = imp.self_ty.as_ref() else {
+            return false;
+        };
+        let Some(seg) = ty.path.segments.last() else {
+            return false;
+        };
+        if seg.ident != type_name {
+            return false;
+        }
+        imp.items.iter().any(|item| match item {
+            syn::ImplItem::Fn(f) => f.sig.ident == method,
+            _ => false,
+        })
+    })
+}
+
 /// Apply surgical patches for known codegen bugs.
 pub fn patch_source(src: &str) -> String {
     // no patches needed currently; if a new codegen bug requires patching, add the patch here and record the bug; delete this function if it stays empty two releases
@@ -241,7 +286,7 @@ pub fn compile_fails_with_diagnostics(
         !expected_diagnostics.is_empty(),
         "compile-fail test {module_name} must name its intended diagnostic"
     );
-    let dir = std::env::temp_dir().join(format!("ergo_test_cf_{module_name}"));
+    let dir = scratch_dir("ergo_test_cf", module_name);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -314,7 +359,7 @@ fn _compile_and_run(
     features: &[&str],
     deps: &str,
 ) -> String {
-    let dir = std::env::temp_dir().join(format!("ergo_test_{module_name}"));
+    let dir = scratch_dir("ergo_test", module_name);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -438,7 +483,7 @@ pub fn dual_encode_run_modules(
     let tool_path_toml = tool_path_str.replace('\\', "/");
     let package = format!("parity_{tool_key}");
 
-    let dir = std::env::temp_dir().join(format!("ergo_dual_{test_name}"));
+    let dir = scratch_dir("ergo_dual", test_name);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -608,7 +653,7 @@ pub fn compile_and_run_modules(test_name: &str, modules: &[(&str, &str)], code: 
         !modules.is_empty(),
         "compile_and_run_modules({test_name}) requires at least one module"
     );
-    let dir = std::env::temp_dir().join(format!("ergo_test_{test_name}"));
+    let dir = scratch_dir("ergo_test", test_name);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");

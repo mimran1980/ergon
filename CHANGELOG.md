@@ -6,17 +6,19 @@
 - **The ordered lane recurses.** `ordered()` is now generated on any decoder
   that owns tails, not only the message decoder: a group entry carrying its own
   groups or var-data has one too, so a walk keeps a single spelling all the way
-  down instead of switching to the staged API at the entry boundary. An
-  entry-level `done()` returns the `{Entry}Complete` its parent's visit closure
-  must hand back, so the entry lane composes with the parent's one-pass
-  traversal. Entries with no tails of their own have nothing to order and get
-  no lane.
+  down instead of switching to the staged API at the entry boundary. A nested
+  `ordered()` walk is the completion the parent visit owes. Entries with no
+  tails of their own have nothing to order and get no lane.
 - The staged `into_*` iterator is unchanged and still generated beside it. For a
   fixed-stride nested group it remains the better tool — an `ExactSizeIterator`
   you can `break` out of, still reaching the next tail by arithmetic. The lane
   adds a spelling rather than replacing one.
 
 ### Changed
+- Nested `ordered()` walks return the parent visit's completion directly
+  (`sbe_rt::IntoEntryComplete`); `.done()` is only to unwrap the staged
+  complete. The message chain ends on `encoded_length_with_header()` /
+  `as_bytes_with_header()`, like encode.
 - The ordered lane is `sbe_rt::Ordered<S>` wrapping each staged stage, instead
   of a parallel `*DecoderOrdered*` type per tail. Message-level `fixed` takes a
   `{Name}DecoderFixedView` (fixed fields only) and consumes into
@@ -38,6 +40,12 @@
   message-level callback yields, and the group/var-data visit keeps the name.
   Last tail named `done` is a different type from `done()` on the complete
   stage. Covered by `ordered_lane_test`.
+- The entry-level lane's `group(&mut self, F)` / `try_group` no longer declared
+  a default on their `R` type parameter. Function generic parameter defaults
+  are not valid Rust (`invalid_type_param_default`, deny-by-default); every
+  group whose entries carry their own tails failed to compile. `R` is always
+  inferred from the callback's return expression, so the default was dropped
+  rather than replaced.
 
 ## [0.1.27] — 2026-09-12
 

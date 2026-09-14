@@ -7,12 +7,12 @@
 
 use crate::ir::ByteOrder;
 use crate::structured_ir::{
-    decoder_stage_after_ident, get_vardata_info, rust_type, MessageGroup, MessageStructure,
-    OwnerTailGroup, OwnerTailVarData, SchemaElements,
+    MessageGroup, MessageStructure, OwnerTailGroup, OwnerTailVarData, SchemaElements,
+    decoder_stage_after_ident, get_vardata_info, rust_type,
 };
 
-use super::conversion_helpers::{owner_accessor_names, DECODER_RESERVED};
-use super::ordered_lane::{generate_ordered_lane, OrderedFixedFields};
+use super::conversion_helpers::{DECODER_RESERVED, owner_accessor_names};
+use super::ordered_lane::{OrderedFixedFields, generate_ordered_lane};
 use super::runtime::{to_pascal_case, to_snake_case};
 
 /// Absent tails occupy no bytes and contain no entries at older wire versions.

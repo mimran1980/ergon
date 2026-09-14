@@ -345,7 +345,7 @@ pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Erro
     let mut octanes = Vec::new();
     let mut text = Vec::new();
 
-    let done = CarDecoder::try_decode(wire, 0)?
+    let len = CarDecoder::try_decode(wire, 0)?
         .ordered()
         .fixed(|car| {
             assert_eq!(car.serial_number(), 1234);
@@ -356,12 +356,14 @@ pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Erro
             assert_eq!(info.count, 2);
             assert_eq!(info.is_last(), info.index == 1);
             speeds.push(entry.speed());
-            entry.into_usage_description().map(|(_usage, done)| done)
+            Ok(entry.ordered().usage_description(|_| Ok(()))?)
         })?
         .performance_figures(|entry, _info| {
             octanes.push(entry.octane_rating());
-            // Nested tails still use the staged entry stages.
-            entry.into_acceleration()?.finish()
+            Ok(entry.ordered().acceleration(|a, _| {
+                let _ = (a.mph(), a.seconds());
+                Ok(())
+            })?)
         })?
         .manufacturer_as_str(|s| {
             text.push(s.to_owned());
@@ -375,13 +377,12 @@ pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Erro
             text.push(s.to_owned());
             Ok(())
         })?
-        .done();
+        .encoded_length_with_header();
 
     assert_eq!(speeds, vec![30, 60]);
     assert_eq!(octanes, vec![95]);
     assert_eq!(text, vec!["Honda", "Civic VTi", "abcdef"]);
-    // `done()` hands back the staged complete stage, so extents still work.
-    assert_eq!(done.encoded_length_with_header(), wire.len());
+    assert_eq!(len, wire.len());
     Ok(())
 }
 // ANCHOR_END: demo_car_ordered_lane

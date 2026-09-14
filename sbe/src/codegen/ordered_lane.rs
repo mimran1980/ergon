@@ -203,9 +203,9 @@ pub(crate) fn generate_ordered_lane(
     let last = staged_stage(total_tail - 1);
     let last_ty = quote::quote! { sbe_rt::Ordered<#last<'a>> };
     let done_doc = if is_message {
-        "The completed staged decoder, for extent and byte-range helpers."
+        "The completed staged decoder. Prefer [`Self::encoded_length_with_header`] / [`Self::as_bytes_with_header`] on this type — the message chain ends like encode, without `.done()`."
     } else {
-        "The entry completion the parent's visit closure must hand back."
+        "The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete."
     };
     let extent = is_message.then(|| {
         quote::quote! {
@@ -369,28 +369,34 @@ fn emit_group_methods(
             ///
             /// These entries carry tails of their own, so the callback
             /// returns the entry's completion — that is where the next
-            /// entry starts, so nothing is scanned twice.
+            /// entry starts, so nothing is scanned twice. A nested
+            /// `ordered()` walk may return `Ordered<completion>` directly;
+            /// `.done()` is only needed to hand the staged complete out.
             #[inline]
-            pub fn #method<F>(self, f: F) -> Result<#next_ty, sbe_rt::DecodeError>
+            pub fn #method<F, R>(self, f: F) -> Result<#next_ty, sbe_rt::DecodeError>
             where
                 F: FnMut(
                     #entry_ident<'a>,
                     sbe_rt::EntryInfo,
-                ) -> Result<#complete_ident<'a>, sbe_rt::DecodeError>,
+                ) -> Result<R, sbe_rt::DecodeError>,
+                R: sbe_rt::IntoEntryComplete<#complete_ident<'a>>,
             {
                 self.#try_method(f)
             }
             #[doc = #doc]
             #[inline]
-            pub fn #try_method<E, F>(self, f: F) -> Result<#next_ty, E>
+            pub fn #try_method<E, F, R>(self, mut f: F) -> Result<#next_ty, E>
             where
                 E: From<sbe_rt::DecodeError>,
                 F: FnMut(
                     #entry_ident<'a>,
                     sbe_rt::EntryInfo,
-                ) -> Result<#complete_ident<'a>, E>,
+                ) -> Result<R, E>,
+                R: sbe_rt::IntoEntryComplete<#complete_ident<'a>>,
             {
-                let inner = #inner_access.#into_with_info(f)?;
+                let inner = #inner_access.#into_with_info(|entry, info| {
+                    f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
+                })?;
                 Ok(sbe_rt::Ordered { inner })
             }
         }

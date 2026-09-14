@@ -624,7 +624,7 @@ Ordered::fn done (self) -> PerformanceFiguresEntryDecoderComplete < 'a >
 Ordered::fn encoded_length (& self) -> usize
 Ordered::fn encoded_length_with_header (& self) -> usize
 Ordered::fn fixed < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < sbe_rt :: OrderedFixed < CarDecoder < 'a > > > , sbe_rt :: DecodeError , > where F : FnOnce (& CarDecoderFixedView < '_ , 'a >) -> Result < () , sbe_rt :: DecodeError > ,
-Ordered::fn fuel_figures < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterFuelFigures < 'a > > , sbe_rt :: DecodeError > where F : FnMut (FuelFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < FuelFiguresEntryDecoderComplete < 'a > , sbe_rt :: DecodeError > ,
+Ordered::fn fuel_figures < F , R > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterFuelFigures < 'a > > , sbe_rt :: DecodeError > where F : FnMut (FuelFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < R , sbe_rt :: DecodeError > , R : sbe_rt :: IntoEntryComplete < FuelFiguresEntryDecoderComplete < 'a > > ,
 Ordered::fn fuel_figures_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 Ordered::fn manufacturer < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterManufacturer < 'a > > , sbe_rt :: DecodeError > where F : FnOnce (& 'a [u8]) -> Result < () , sbe_rt :: DecodeError > ,
 Ordered::fn manufacturer_as_str < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterManufacturer < 'a > > , sbe_rt :: DecodeError > where F : FnOnce (& 'a str) -> Result < () , sbe_rt :: DecodeError > ,
@@ -632,19 +632,19 @@ Ordered::fn manufacturer_len (& self) -> Result < usize , sbe_rt :: DecodeError 
 Ordered::fn model < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterModel < 'a > > , sbe_rt :: DecodeError > where F : FnOnce (& 'a [u8]) -> Result < () , sbe_rt :: DecodeError > ,
 Ordered::fn model_as_str < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterModel < 'a > > , sbe_rt :: DecodeError > where F : FnOnce (& 'a str) -> Result < () , sbe_rt :: DecodeError > ,
 Ordered::fn model_len (& self) -> Result < usize , sbe_rt :: DecodeError >
-Ordered::fn performance_figures < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterPerformanceFigures < 'a > > , sbe_rt :: DecodeError , > where F : FnMut (PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , sbe_rt :: DecodeError > ,
+Ordered::fn performance_figures < F , R > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterPerformanceFigures < 'a > > , sbe_rt :: DecodeError , > where F : FnMut (PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < R , sbe_rt :: DecodeError > , R : sbe_rt :: IntoEntryComplete < PerformanceFiguresEntryDecoderComplete < 'a > > ,
 Ordered::fn performance_figures_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 Ordered::fn remaining (& self) -> & 'a [u8]
 Ordered::fn try_acceleration < E , F > (self , mut f : F ,) -> Result < sbe_rt :: Ordered < PerformanceFiguresEntryDecoderComplete < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (PerformanceFiguresAccelerationEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < () , E > ,
 Ordered::fn try_activation_code < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderComplete < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
 Ordered::fn try_activation_code_as_str < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderComplete < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
 Ordered::fn try_fixed < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < sbe_rt :: OrderedFixed < CarDecoder < 'a > > > , E > where F : FnOnce (& CarDecoderFixedView < '_ , 'a >) -> Result < () , E > ,
-Ordered::fn try_fuel_figures < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterFuelFigures < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (FuelFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < FuelFiguresEntryDecoderComplete < 'a > , E > ,
+Ordered::fn try_fuel_figures < E , F , R > (self , mut f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterFuelFigures < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (FuelFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo) -> Result < R , E > , R : sbe_rt :: IntoEntryComplete < FuelFiguresEntryDecoderComplete < 'a > > ,
 Ordered::fn try_manufacturer < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterManufacturer < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
 Ordered::fn try_manufacturer_as_str < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterManufacturer < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
 Ordered::fn try_model < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterModel < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
 Ordered::fn try_model_as_str < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterModel < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
-Ordered::fn try_performance_figures < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterPerformanceFigures < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , E > ,
+Ordered::fn try_performance_figures < E , F , R > (self , mut f : F ,) -> Result < sbe_rt :: Ordered < CarDecoderAfterPerformanceFigures < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (PerformanceFiguresEntryDecoder < 'a > , sbe_rt :: EntryInfo) -> Result < R , E > , R : sbe_rt :: IntoEntryComplete < PerformanceFiguresEntryDecoderComplete < 'a > > ,
 Ordered::fn try_usage_description < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < FuelFiguresEntryDecoderComplete < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a [u8]) -> Result < () , E > ,
 Ordered::fn try_usage_description_as_str < E , F > (self , f : F ,) -> Result < sbe_rt :: Ordered < FuelFiguresEntryDecoderComplete < 'a > > , E > where E : From < sbe_rt :: DecodeError > , F : FnOnce (& 'a str) -> Result < () , E > ,
 Ordered::fn usage_description < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < FuelFiguresEntryDecoderComplete < 'a > > , sbe_rt :: DecodeError , > where F : FnOnce (& 'a [u8]) -> Result < () , sbe_rt :: DecodeError > ,
@@ -811,6 +811,8 @@ sbe_rt::struct TailBoundaryCache< const N : usize > {  }
 sbe_rt::trait FieldsState: private :: Sealed
 sbe_rt::trait GroupContext: private :: Sealed
 sbe_rt::trait HeaderState: private :: Sealed
+sbe_rt::trait IntoEntryComplete::fn into_entry_complete (self) -> C
+sbe_rt::trait IntoEntryComplete< C >
 sbe_rt::trait IntoGroupResult
 sbe_rt::trait IntoGroupResult::fn into_group_result (self) -> GroupResult
 sbe_rt::trait SbeMessage: super :: __sbe_message_sealed :: Sealed

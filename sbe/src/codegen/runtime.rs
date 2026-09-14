@@ -210,6 +210,30 @@ fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
         pub struct OrderedFixed<S> {
             pub(crate) inner: S,
         }
+
+        /// Convert a nested `ordered()` walk, or a staged completion, into the
+        /// completion a parent visit callback owes.
+        ///
+        /// The identity impl covers `Ok(entry.into_tag()?.1)` and `done()`.
+        /// The [`Ordered`] impl covers `Ok(entry.ordered().tag(|_| Ok(()))?)`
+        /// without an extra `.done()`.
+        pub trait IntoEntryComplete<C> {
+            fn into_entry_complete(self) -> C;
+        }
+
+        impl<C> IntoEntryComplete<C> for C {
+            #[inline]
+            fn into_entry_complete(self) -> C {
+                self
+            }
+        }
+
+        impl<C> IntoEntryComplete<C> for Ordered<C> {
+            #[inline]
+            fn into_entry_complete(self) -> C {
+                self.inner
+            }
+        }
     }
 }
 

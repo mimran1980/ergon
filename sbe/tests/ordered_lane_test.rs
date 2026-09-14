@@ -68,50 +68,48 @@ fn ordered_lane_walks_every_tail_with_entry_info() -> Result<(), Box<dyn std::er
         let mut fuel = Vec::new();
         let mut accel = Vec::new();
         let mut text = Vec::new();
-        let done = CarDecoder::try_decode(encoded, 0)?
+        let complete = CarDecoder::try_decode(encoded, 0)?
             .ordered()
-            .fixed(|car| -> Result<(), sbe_rt::DecodeError> {{
+            .fixed(|car| {{
                 assert_eq!(car.serial_number(), 7);
                 assert_eq!(car.model_year(), 2020);
                 Ok(())
             }})?
-            .fuel_figures(|e, info| -> Result<_, sbe_rt::DecodeError> {{
+            .fuel_figures(|e, info| {{
                 assert_eq!(info.count, 2);
                 assert_eq!(info.block_length, 6);
                 assert_eq!(info.is_first(), info.index == 0);
                 assert_eq!(info.is_last(), info.index == 1);
                 assert_eq!(info.remaining(), 1 - info.index);
                 fuel.push((info.index, e.speed()));
-                e.into_usage_description().map(|(_u, done)| done)
+                Ok(e.ordered().usage_description(|_| Ok(()))?)
             }})?
-            .performance_figures(|e, info| -> Result<_, sbe_rt::DecodeError> {{
+            .performance_figures(|e, info| {{
                 assert_eq!((info.index, info.count), (0, 1));
                 assert_eq!(e.octane_rating(), 95);
-                // Nested tails still use the staged entry stages.
-                let mut a = e.into_acceleration()?;
-                for x in &mut a {{ accel.push(x.mph()); }}
-                a.finish()
+                Ok(e.ordered().acceleration(|x, _| {{
+                    accel.push(x.mph());
+                    Ok(())
+                }})?)
             }})?
-            .manufacturer_as_str(|s| -> Result<(), sbe_rt::DecodeError> {{
+            .manufacturer_as_str(|s| {{
                 text.push(s.to_owned());
                 Ok(())
             }})?
-            .model(|b| -> Result<(), sbe_rt::DecodeError> {{
+            .model(|b| {{
                 text.push(String::from_utf8(b.to_vec()).unwrap());
                 Ok(())
             }})?
-            .activation_code(|b| -> Result<(), sbe_rt::DecodeError> {{
+            .activation_code(|b| {{
                 text.push(String::from_utf8(b.to_vec()).unwrap());
                 Ok(())
-            }})?
-            .done();
+            }})?;
 
         assert_eq!(fuel, vec![(0usize, 30u16), (1, 60)]);
         assert_eq!(accel, vec![10u16, 20, 30]);
         assert_eq!(text, vec!["Honda".to_string(), "Civic".into(), "abc".into()]);
-        // The terminal staged stage is handed back intact.
-        assert_eq!(done.encoded_length_with_header(), encoded.len());
-        assert_eq!(done.as_bytes_with_header(), encoded);
+        assert_eq!(complete.encoded_length_with_header(), encoded.len());
+        assert_eq!(complete.as_bytes_with_header(), encoded);
     "#
         ),
     );
@@ -349,10 +347,9 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
 /// entries carry a fixed-stride nested group whose callback returns `()`
 /// rather than a completion.
 ///
-/// The load-bearing detail is `done()`: at entry level it returns
-/// `{Entry}Complete`, which is exactly what the parent's visit closure must
-/// hand back — so the entry-level lane composes with the parent's one-pass
-/// traversal instead of fighting it.
+/// A nested `ordered()` walk returns `Ordered<{Entry}Complete>`, which the
+/// parent visit accepts through `IntoEntryComplete` — no `.done()` on the
+/// way out. The message chain ends on the extent helper, like encode.
 #[test]
 fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "ordered_entry");
@@ -372,26 +369,20 @@ fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Err
             .ordered()
             .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
                 assert_eq!(info.count, 2);
-                Ok(entry
-                    .ordered()
-                    .usage_description(|b| -> Result<(), sbe_rt::DecodeError> {
-                        usages.push(b.to_vec());
-                        Ok(())
-                    })?
-                    .done())
+                Ok(entry.ordered().usage_description(|b| {
+                    usages.push(b.to_vec());
+                    Ok(())
+                })?)
             })?
             .performance_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
                 assert_eq!(info.count, 1);
                 assert!(info.is_first() && info.is_last());
-                Ok(entry
-                    .ordered()
-                    .acceleration(|a, ainfo| -> Result<(), sbe_rt::DecodeError> {
-                        // Fixed-stride nested group: the callback returns (),
-                        // and EntryInfo is filled from the iterator itself.
-                        accels.push((a.mph(), ainfo.index, ainfo.count));
-                        Ok(())
-                    })?
-                    .done())
+                Ok(entry.ordered().acceleration(|a, ainfo| {
+                    // Fixed-stride nested group: the callback returns (),
+                    // and EntryInfo is filled from the iterator itself.
+                    accels.push((a.mph(), ainfo.index, ainfo.count));
+                    Ok(())
+                })?)
             })?
             .manufacturer(|m| -> Result<(), sbe_rt::DecodeError> {
                 assert_eq!(m, b"Honda");
@@ -404,8 +395,7 @@ fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Err
             .activation_code(|c| -> Result<(), sbe_rt::DecodeError> {
                 assert_eq!(c, b"abc");
                 Ok(())
-            })?
-            .done();
+            })?;
 
         assert_eq!(usages, vec![b"aa".to_vec(), b"bbb".to_vec()]);
         assert_eq!(accels, vec![(10u16, 0, 3), (20, 1, 3), (30, 2, 3)]);
@@ -632,8 +622,7 @@ fn last_tail_named_done_compiles() -> Result<(), Box<dyn std::error::Error>> {
         let complete = MsgDecoder::try_decode(&storage[..actual], 0)?
             .ordered()
             .fixed(|d| { assert_eq!(d.seq(), 1); Ok(()) })?
-            .done(|b| { assert_eq!(b, b"ok"); Ok(()) })?
-            .done();
+            .done(|b| { assert_eq!(b, b"ok"); Ok(()) })?;
         assert_eq!(complete.encoded_length_with_header(), actual);
     "#,
     );
@@ -694,14 +683,14 @@ fn converted_entry_field_named_ordered_keeps_the_lane() -> Result<(), Box<dyn st
             .encoded_length_with_header();
         assert_eq!(len, actual);
         let mut seen = Vec::new();
-        let _c = MsgDecoder::try_decode(&storage[..actual], 0)?
+        let complete = MsgDecoder::try_decode(&storage[..actual], 0)?
             .ordered()
             .rows(|e, info| {
                 assert_eq!(info.count, 1);
                 assert_eq!(e.ordered_wire(), 7u32);
-                Ok(e.ordered().tag(|b| { seen.push(b.to_vec()); Ok(()) })?.done())
-            })?
-            .done();
+                Ok(e.ordered().tag(|b| { seen.push(b.to_vec()); Ok(()) })?)
+            })?;
+        assert_eq!(complete.encoded_length_with_header(), actual);
         assert_eq!(seen, vec![b"hi".to_vec()]);
     "#,
     );
@@ -749,16 +738,14 @@ fn ordered_lane_version_absent_tails() -> Result<(), Box<dyn std::error::Error>>
                 speeds.push(e.speed());
                 Ok(e.ordered()
                     .extras(|_, _| Ok(()))?
-                    .label(|b| { assert_eq!(b, b"urb"); Ok(()) })?
-                    .done())
+                    .label(|b| { assert_eq!(b, b"urb"); Ok(()) })?)
             })?
             .extra_figures(|_, _| {
                 extra_calls += 1;
                 Ok(())
             })?
             .note(|b| { assert_eq!(b, b"hi"); Ok(()) })?
-            .extra_note(|b| { assert!(b.is_empty()); Ok(()) })?
-            .done();
+            .extra_note(|b| { assert!(b.is_empty()); Ok(()) })?;
         assert_eq!(speeds, vec![30u16]);
         assert_eq!(extra_calls, 0);
         assert_eq!(complete.encoded_length_with_header(), encoded.len());
@@ -831,10 +818,9 @@ fn ordered_lane_three_level_dynamic() -> Result<(), Box<dyn std::error::Error>> 
                 assert_eq!((linfo.index, linfo.count, level.px()), (0, 1, 5u64));
                 Ok(level.ordered().orders(|order, oinfo| {
                     assert_eq!((oinfo.index, oinfo.count, order.id()), (0, 1, 9u64));
-                    Ok(order.ordered().tag(|b| { tags.push(b.to_vec()); Ok(()) })?.done())
-                })?.done())
-            })?
-            .done();
+                    Ok(order.ordered().tag(|b| { tags.push(b.to_vec()); Ok(()) })?)
+                })?)
+            })?;
         assert_eq!(tags, vec![b"ab".to_vec()]);
         assert_eq!(complete.encoded_length_with_header(), actual);
     "#,
@@ -869,8 +855,16 @@ fn ordered_lane_empty_group_count_is_peekable() -> Result<(), Box<dyn std::error
         let ord = CarDecoder::try_decode(encoded, 0)?.ordered();
         assert_eq!(ord.fuel_figures_count()?, 0);
         let done = ord
-            .fuel_figures(|_, _| -> Result<_, sbe_rt::DecodeError> { panic!("empty") })?
-            .performance_figures(|_, _| -> Result<_, sbe_rt::DecodeError> { panic!("empty") })?
+            .fuel_figures(|e, _| {
+                panic!("empty");
+                #[allow(unreachable_code)]
+                Ok(e.ordered().usage_description(|_| Ok(()))?)
+            })?
+            .performance_figures(|e, _| {
+                panic!("empty");
+                #[allow(unreachable_code)]
+                Ok(e.ordered().acceleration(|_, _| Ok(()))?)
+            })?
             .manufacturer(|_| Ok(()))?
             .model(|_| Ok(()))?
             .activation_code(|_| Ok(()))?
@@ -897,6 +891,83 @@ fn cf_ordered_fixed_view_has_no_tail_getters() -> Result<(), Box<dyn std::error:
         });
     "#,
         &["no method named `fuel_figures`"],
+    );
+    Ok(())
+}
+
+/// An entry whose first (and only) tail is a var-data field literally named
+/// `fixed` must still compile: nothing synthesizes a competing `fixed()` on
+/// the entry-level ordered lane, so the field's own accessor is the only
+/// `fixed()` emitted.
+#[test]
+fn entry_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="entryfixedclash" id="903" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <sbe:message name="Msg" id="1">
+    <group name="rows" id="10" dimensionType="groupSizeEncoding">
+      <field name="tag" id="11" type="uint32"/>
+      <data name="fixed" id="12" type="varStringEncoding"/>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("entryfixedclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+
+    // Compilation is the assertion: a synthesized entry-level `fixed()`
+    // colliding with the field's own accessor would be E0592 here.
+    compile_and_run(
+        "entryfixedclash",
+        &src,
+        r#"
+        let len = MsgEncodedLength::new()
+            .rows(1)
+            .fixed(3)?
+            .encoded_length_with_header();
+        let mut storage = vec![0u8; len];
+        let actual = MsgEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+            .fixed(&MsgFixedFields {})
+            .rows(1, |g| {
+                g.add(|mut e| { e.tag(7u32); e.fixed(b"abc") })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+
+        let mut seen = Vec::new();
+        let _c = MsgDecoder::try_decode(&storage[..actual], 0)?
+            .into_rows(|e| -> Result<_, sbe_rt::DecodeError> {
+                assert_eq!(e.tag(), 7u32);
+                let (fixed, done) = e.into_fixed()?;
+                seen.push(fixed.to_vec());
+                Ok(done)
+            })?;
+        assert_eq!(seen, vec![b"abc".to_vec()]);
+    "#,
     );
     Ok(())
 }
