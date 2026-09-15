@@ -501,3 +501,48 @@ fn group_with_data_timed_arms_both_read_entry_fields_and_var_data()
     }
     Ok(())
 }
+
+#[test]
+fn optional_enum_nullify_arms_make_the_same_values_opaque() -> Result<(), Box<dyn std::error::Error>>
+{
+    // Both codecs compile this scenario to the same three member loads, so the
+    // pair is a near-tie decided by what the harness adds around them. Ergon's
+    // arm once black-boxed its message offset while sbe-tool's passed a literal
+    // body offset: ergon alone paid a per-iteration stack store/reload, and
+    // code placement then decided the LTO verdict (a crate version bump with no
+    // code change moved the ratio from 0.77 to 1.01). Every value one arm makes
+    // opaque, the other must too.
+    let source = get_source(PERF_PARITY_EXTENDED, "bench_optional_enum_nullify")?;
+    let ergo = strip_line_comments(
+        timed_arm_body(source, "ergo-sbe").ok_or("missing ergo optional-enum-nullify arm")?,
+    );
+    let tool = strip_line_comments(
+        timed_arm_body(source, "sbe-tool").ok_or("missing sbe-tool optional-enum-nullify arm")?,
+    );
+
+    for (label, arm) in [("Ergo", &ergo), ("sbe-tool", &tool)] {
+        assert_eq!(
+            arm.matches("black_box(encoded)").count(),
+            1,
+            "{label} optional-enum-nullify arm must make the encoded buffer opaque once per message"
+        );
+        for member in [
+            ".optional_enum()",
+            ".required_enum_from_optional_type()",
+            ".optional_counter()",
+        ] {
+            assert_eq!(
+                arm.matches(member).count(),
+                1,
+                "{label} optional-enum-nullify arm must read {member} exactly once per message"
+            );
+        }
+    }
+    assert_eq!(
+        ergo.matches("black_box(").count(),
+        tool.matches("black_box(").count(),
+        "optional-enum-nullify arms must make the same values opaque: a black_box on one \
+         arm's offset or header field is harness work the other arm never pays"
+    );
+    Ok(())
+}

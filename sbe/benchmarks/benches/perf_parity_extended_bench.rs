@@ -34,22 +34,25 @@ const AMP: usize = 1024;
 // Both arms decode the same three members: two enums and the optional
 // composite's counter.
 //
-// The two enum loads alone were not gateable. They are a pair of two-byte
-// loads that both codecs compile to the same shape, so the true ratio is
-// ~1.00 and the measured one was decided by code placement, not codec work:
-// at ~0.74 ns/op a 2.6% change in unrelated generated code in this crate
-// moved ergon's arm by 37% (550 -> 755 ns) with the decoder's generated
-// source byte-identical. A zero-tolerance 1.00 ceiling over that is a coin
-// flip. Reading the composite adds real, equal logical work to both arms and
-// puts the ratio near 0.78 with ~22% of margin, so placement drift (~1.5%)
-// can no longer flip the verdict.
+// Under LTO both codecs compile this to the same three member loads; sbe-tool
+// additionally pays three well-predicted length checks, and its composite
+// flyweight (`optional_composite_decoder`) costs nothing once inlined. The
+// scenario is a near-tie whose wall-clock ratio is decided by code placement:
+// bumping the crate version from 0.1.27 to 0.1.28, with no code change,
+// moved sbe-tool's arm from ~1008 ns to ~777 ns and the LTO ratio from 0.77
+// to 1.01, while the timed loops stayed instruction-for-instruction identical
+// between the green and red builds. The ~0.78 "margin" once credited to the
+// flyweight was placement, not API work.
 //
-// The margin is a genuine API difference, not a thumb on the scale: ergon
-// reads the composite member through a direct accessor, while sbe-tool must
-// construct a composite flyweight (`optional_composite_decoder`) to reach it.
-// Instruction-probe Ir/op (`just bench-instructions`) is a Linux-only
-// mechanism check, not a substitute for this ceiling. Re-run `just bench` on
-// an idle machine if wall-clock flips.
+// That makes harness symmetry load-bearing. Both arms make the encoded buffer
+// opaque once per message and pass a literal offset (ergon's message offset
+// 0, sbe-tool's body offset 8), as the `perf_probe` mechanism probes do.
+// Ergon's arm once black-boxed its offset too, paying a per-iteration stack
+// store/reload sbe-tool never did; `fairness_policy_test` rejects any value
+// made opaque in one arm only. Instruction-probe Ir/op
+// (`just bench-instructions`) is a Linux-only mechanism check, not a
+// substitute for this ceiling. Re-run `just bench` on an idle machine if
+// wall-clock flips.
 fn bench_optional_enum_nullify(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity_extended/optional_enum_nullify");
     group.throughput(Throughput::Elements(AMP as u64));
@@ -95,7 +98,7 @@ fn bench_optional_enum_nullify(c: &mut Criterion) {
                 let dec = unsafe {
                     OptionalEnumNullifyDecoder::wrap_unchecked(
                         black_box(encoded),
-                        black_box(0),
+                        0,
                         oe_bl,
                         oe_version,
                     )

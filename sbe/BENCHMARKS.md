@@ -73,6 +73,13 @@ diagnostic arms (`ergo-sbe_wrap_checked`, `ergo-sbe_try_from`,
 price the safety ergon offers, not to be compared against an unchecked
 reference.
 
+The maintained Car `ergo-sbe_ordered` arm uses ordered callbacks at message
+level and staged methods inside entries. It also observes entry indices that
+the other arms do not observe. Its result therefore does not isolate the cost
+of the recursive ordered API or establish an equal-work ranking between lanes.
+For that comparison, use recursive callbacks and match every observation across
+the arms, including any metadata used by the application.
+
 The benchmark gate exists to prove that ergo-sbe is **not slower than**
 sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
 parity. When ergo-sbe occasionally shows a lower ratio, that is a data point to
@@ -100,10 +107,10 @@ Valgrind, llvm-objdump, or Linux the lane fail-closes (exit 3) and is not
 a silent pass. The lane is `just bench-instructions`, not CI; `just bench`
 still gates wall-clock only.
 
-The executable policy is in `scripts/check-bench-gate.sh`:
-- SBE: zero tolerance (`1.00`)
-- Cluster: the same literal `1.00` ceiling; `just bench-cluster` passes
-  `--run-id` so stale Criterion trees cannot pass
+The executable policy is in `scripts/check-bench-gate.sh`: zero tolerance
+beyond each comparison's profile-specific ceiling, including the exceptions
+above. `just bench` and `just bench-cluster` pass `--run-id` so stale Criterion
+trees cannot pass.
 
 Do not copy point estimates into this file — a benchmark number is only
 evidence for the tree that produced it. The result of record is the artifact

@@ -543,9 +543,11 @@ pub mod sbe_rt {
     /// ordered-lane entry callback.
     ///
     /// `count` is the wire-declared `numInGroup` and `block_length`
-    /// the group's acting block length, so both are known before the
-    /// walk starts. A group's total *byte* length is not: for entries
-    /// carrying their own tails it is only settled by traversing them.
+    /// the group's acting block length. Both come from the attached
+    /// group decoder that the staged walk already opened — the ordered
+    /// lane does not re-parse the dimension header. A group's total
+    /// *byte* length is not: for entries carrying their own tails it
+    /// is only settled by traversing them.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct EntryInfo {
         /// Zero-based position of this entry within the group.
@@ -576,6 +578,46 @@ pub mod sbe_rt {
         #[must_use]
         pub const fn remaining(&self) -> usize {
             self.count.saturating_sub(self.index + 1)
+        }
+    }
+    /// Sequential decode façade: one callback per tail, in wire order.
+    ///
+    /// Produced by a decoder's `ordered()`. Each method consumes this
+    /// wrapper and returns the next, so tail order is a type. The inner
+    /// staged stage holds the cursor; this type adds no second one.
+    #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+    pub struct Ordered<S> {
+        pub(crate) inner: S,
+    }
+    /// Message decoder after the ordered `fixed` callback, before the first tail.
+    ///
+    /// Distinct from the base decoder so `fixed` cannot collide with a
+    /// first tail of the same name, and so the callback receives a
+    /// fixed-fields-only view rather than the full decoder.
+    #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
+    pub struct OrderedFixed<S> {
+        pub(crate) inner: S,
+    }
+    /// Convert a nested `ordered()` walk, or a staged completion, into the
+    /// completion a parent visit callback owes.
+    ///
+    /// The identity impl covers `Ok(entry.into_tag()?.1)` and `done()`.
+    /// The [`Ordered`] impl covers `Ok(entry.ordered().tag(|_| Ok(()))?)`
+    /// without an extra `.done()`.
+    pub trait IntoEntryComplete<C> {
+        ///Generated method `into_entry_complete`.
+        fn into_entry_complete(self) -> C;
+    }
+    impl<C> IntoEntryComplete<C> for C {
+        #[inline]
+        fn into_entry_complete(self) -> C {
+            self
+        }
+    }
+    impl<C> IntoEntryComplete<C> for Ordered<C> {
+        #[inline]
+        fn into_entry_complete(self) -> C {
+            self.inner
         }
     }
     /// Debug-only counters for the memoized random-access prototype.
@@ -3768,6 +3810,18 @@ pub struct FuelFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
+    /// Schema version from the parent message header (or wrap args).
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    /// Acting block length of this entry's fixed block.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
     ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator has proven extents.
@@ -4232,6 +4286,112 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
+impl<'a> FuelFiguresEntryDecoder<'a> {
+    ///Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal.
+    ///
+    /// A façade over the staged `into_*` / `skip_*` stages: same single
+    /// traversal, same compile-time ordering, one uniform spelling.
+    #[inline]
+    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+        sbe_rt::Ordered { inner: self }
+    }
+}
+impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoder<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Byte length without advancing this ordered stage.
+    #[inline]
+    pub fn usage_description_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.usage_description_len()
+    }
+    /// Read `usage_description` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn usage_description<F>(
+        self,
+        f: F,
+    ) -> Result<
+        sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>>,
+        sbe_rt::DecodeError,
+    >
+    where
+        F: FnOnce(&'a [u8]) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_usage_description(f)
+    }
+    /// Read `usage_description` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn try_usage_description<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&'a [u8]) -> Result<(), E>,
+    {
+        let (bytes, inner) = self.inner.into_usage_description()?;
+        f(bytes)?;
+        Ok(sbe_rt::Ordered { inner })
+    }
+    /** Read `usage_description` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn usage_description_as_str<F>(
+        self,
+        f: F,
+    ) -> Result<
+        sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>>,
+        sbe_rt::DecodeError,
+    >
+    where
+        F: FnOnce(&'a str) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_usage_description_as_str(f)
+    }
+    /** Read `usage_description` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn try_usage_description_as_str<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnOnce(&'a str) -> Result<(), E>,
+    {
+        let (text, inner) = self.inner.into_usage_description_as_str()?;
+        f(text)?;
+        Ok(sbe_rt::Ordered { inner })
+    }
+}
+impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
+    #[inline]
+    pub fn done(self) -> FuelFiguresEntryDecoderComplete<'a> {
+        self.inner
+    }
+}
 #[doc = concat!(
     "Group `", stringify!(PerformanceFiguresDecoder),
     "` decoder — iterate entries in wire order."
@@ -4682,6 +4842,18 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    /// Schema version from the parent message header (or wrap args).
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    /// Acting block length of this entry's fixed block.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
     ///`ENTRY_BLOCK_LENGTH` = 1.
     pub const ENTRY_BLOCK_LENGTH: usize = 1;
     /// Private entry wrap after the group iterator has proven extents.
@@ -5313,6 +5485,18 @@ pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
+    /// Schema version from the parent message header (or wrap args).
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.acting_version
+    }
+    /// Acting block length of this entry's fixed block.
+    #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.acting_block_length
+    }
     ///`ENTRY_BLOCK_LENGTH` = 6.
     pub const ENTRY_BLOCK_LENGTH: usize = 6;
     /// Private entry wrap after the group iterator (or equivalent)
@@ -5587,26 +5771,6 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
     }
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
-    #[doc(hidden)]
-    #[inline]
-    pub(crate) fn __sbe_acceleration_dim(
-        &self,
-    ) -> Result<(usize, usize), sbe_rt::DecodeError> {
-        let group_start = self.offset + self.acting_block_length;
-        let inner = unsafe {
-            <PerformanceFiguresAccelerationDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )?
-        };
-        Ok((inner.remaining_entries(), inner.acting_block_length))
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -5662,6 +5826,109 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     #[inline]
     pub fn remaining(&self) -> &'a [u8] {
         &self.buf[self.tail_start..]
+    }
+}
+impl<'a> PerformanceFiguresEntryDecoder<'a> {
+    ///Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal.
+    ///
+    /// A façade over the staged `into_*` / `skip_*` stages: same single
+    /// traversal, same compile-time ordering, one uniform spelling.
+    #[inline]
+    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+        sbe_rt::Ordered { inner: self }
+    }
+}
+impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoder<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Wire-declared entry count without advancing this ordered stage.
+    #[inline]
+    pub fn acceleration_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.acceleration_count()
+    }
+    /** Visit every `acceleration` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    ///
+    /// These entries have a fixed stride, so the callback returns
+    /// `()` — there is no tail to complete.
+    #[inline]
+    pub fn acceleration<F>(
+        self,
+        f: F,
+    ) -> Result<
+        sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>>,
+        sbe_rt::DecodeError,
+    >
+    where
+        F: FnMut(
+            PerformanceFiguresAccelerationEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
+        ) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_acceleration(f)
+    }
+    /** Visit every `acceleration` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    #[inline]
+    pub fn try_acceleration<E, F>(
+        self,
+        mut f: F,
+    ) -> Result<sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            PerformanceFiguresAccelerationEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
+        ) -> Result<(), E>,
+    {
+        let mut iter = self.inner.into_acceleration()?;
+        let count = iter.remaining_entries();
+        let block_length = iter.entry_block_length();
+        let mut index = 0usize;
+        for entry in &mut iter {
+            f(
+                entry,
+                sbe_rt::EntryInfo {
+                    index,
+                    count,
+                    block_length,
+                },
+            )?;
+            index += 1;
+        }
+        let inner = iter.finish()?;
+        Ok(sbe_rt::Ordered { inner })
+    }
+}
+impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
+    #[inline]
+    pub fn done(self) -> PerformanceFiguresEntryDecoderComplete<'a> {
+        self.inner
     }
 }
 /// Consuming decoder stage — drop without `into_*` / `skip_*`
@@ -6278,11 +6545,14 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         E: From<sbe_rt::DecodeError>,
         F: FnMut(
             FuelFiguresEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
         ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
     {
         if let Some(error) = self.poisoned {
             return Err(E::from(error));
         }
+        let count = self.total;
+        let block_length = self.acting_block_length;
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
             if self.min_entry_extent > available {
@@ -6302,7 +6572,12 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
                     self.acting_version,
                 )
             };
-            let complete = visit(entry)?;
+            let info = sbe_rt::EntryInfo {
+                index: count - self.count,
+                count,
+                block_length,
+            };
+            let complete = visit(entry, info)?;
             if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
                 || complete.buf.len() != self.buf.len() || complete.offset != self.offset
                 || complete.acting_version != self.acting_version
@@ -6332,12 +6607,26 @@ impl<'a> CarDecoder<'a> {
     #[inline]
     pub fn into_fuel_figures<E, F>(
         self,
+        mut visit: F,
+    ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            FuelFiguresEntryDecoder<'a>,
+        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+    {
+        self.into_fuel_figures_with_info(|entry, _info| visit(entry))
+    }
+    #[inline]
+    fn into_fuel_figures_with_info<E, F>(
+        self,
         visit: F,
     ) -> Result<CarDecoderAfterFuelFigures<'a>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnMut(
             FuelFiguresEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
         ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
     {
         let group_start = self.byte_offset() + self.acting_block_length;
@@ -6388,26 +6677,6 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
     }
 }
 impl<'a> CarDecoder<'a> {
-    #[doc(hidden)]
-    #[inline]
-    pub(crate) fn __sbe_fuel_figures_dim(
-        &self,
-    ) -> Result<(usize, usize), sbe_rt::DecodeError> {
-        let group_start = self.byte_offset() + self.acting_block_length;
-        let inner = unsafe {
-            <FuelFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.byte_offset(),
-                self.acting_block_length,
-            )?
-        };
-        Ok((inner.remaining_entries(), inner.acting_block_length))
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -6440,11 +6709,14 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         E: From<sbe_rt::DecodeError>,
         F: FnMut(
             PerformanceFiguresEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
         ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
     {
         if let Some(error) = self.poisoned {
             return Err(E::from(error));
         }
+        let count = self.total;
+        let block_length = self.acting_block_length;
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
             if self.min_entry_extent > available {
@@ -6464,7 +6736,12 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
                     self.acting_version,
                 )
             };
-            let complete = visit(entry)?;
+            let info = sbe_rt::EntryInfo {
+                index: count - self.count,
+                count,
+                block_length,
+            };
+            let complete = visit(entry, info)?;
             if !core::ptr::eq(complete.buf.as_ptr(), self.buf.as_ptr())
                 || complete.buf.len() != self.buf.len() || complete.offset != self.offset
                 || complete.acting_version != self.acting_version
@@ -6494,12 +6771,26 @@ impl<'a> CarDecoderAfterFuelFigures<'a> {
     #[inline]
     pub fn into_performance_figures<E, F>(
         self,
+        mut visit: F,
+    ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(
+            PerformanceFiguresEntryDecoder<'a>,
+        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
+    {
+        self.into_performance_figures_with_info(|entry, _info| visit(entry))
+    }
+    #[inline]
+    fn into_performance_figures_with_info<E, F>(
+        self,
         visit: F,
     ) -> Result<CarDecoderAfterPerformanceFigures<'a>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnMut(
             PerformanceFiguresEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
         ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
     {
         let group_start = self.tail_start;
@@ -6573,26 +6864,6 @@ impl<'a> CarDecoderAfterFuelFigures<'a> {
         };
         Ok(inner.remaining_entries())
     }
-    #[doc(hidden)]
-    #[inline]
-    pub(crate) fn __sbe_performance_figures_dim(
-        &self,
-    ) -> Result<(usize, usize), sbe_rt::DecodeError> {
-        let group_start = self.tail_start;
-        let inner = unsafe {
-            <PerformanceFiguresDecoder<
-                'a,
-                sbe_rt::Attached,
-            >>::wrap_with_parent(
-                self.buf,
-                group_start,
-                self.acting_version,
-                self.offset,
-                self.acting_block_length,
-            )?
-        };
-        Ok((inner.remaining_entries(), inner.acting_block_length))
-    }
     /// Consume this stage, advance past the next group without
     /// visiting any entry, and return the following stage.
     #[inline]
@@ -6650,70 +6921,141 @@ impl<'a> CarDecoderComplete<'a> {
         &self.buf[self.tail_start..]
     }
 }
-/// Ordered decode lane — one callback per tail, in wire order.
-///
-/// Reached with [`Self::inner`]'s `ordered()`. Each method consumes
-/// this stage and returns the next, so the compiler enforces tail
-/// order exactly as the staged lane does.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrdered<'a> {
-    inner: CarDecoder<'a>,
-}
 impl<'a> CarDecoder<'a> {
-    /// Walk the whole message in wire order with one callback per tail.
+    ///Walk the whole message in wire order with one callback per tail.
     ///
     /// A façade over the staged `into_*` / `skip_*` stages: same single
     /// traversal, same compile-time ordering, one uniform spelling.
     #[inline]
-    pub fn ordered(self) -> CarDecoderOrdered<'a> {
-        CarDecoderOrdered { inner: self }
+    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+        sbe_rt::Ordered { inner: self }
     }
 }
-impl<'a> CarDecoderOrdered<'a> {
-    /// Read the fixed block before any tail. Does not advance.
+/// Fixed-block view for the ordered lane's `fixed` callback.
+///
+/// Only fixed-field getters, acting version, and acting block
+/// length. Group and var-data accessors are not on this type, so
+/// the callback cannot start a second walk of the tails.
+/// `'v` is the callback's borrow of the decoder; `'a` is the
+/// buffer lifetime. They must be distinct so `fixed` can move
+/// the decoder into the following stage after the callback returns.
+pub struct CarDecoderFixedView<'v, 'a> {
+    inner: &'v CarDecoder<'a>,
+}
+impl<'v, 'a> CarDecoderFixedView<'v, 'a> {
+    /// Schema version from the message header (or wrap args).
     #[inline]
-    pub fn fixed<E, F>(self, f: F) -> Result<Self, E>
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    /// Acting block length from the wire header / wrap args.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    ///Generated method `serial_number`.
+    #[inline]
+    pub fn serial_number(&self) -> u64 {
+        self.inner.serial_number()
+    }
+    ///Generated method `model_year`.
+    #[inline]
+    pub fn model_year(&self) -> u16 {
+        self.inner.model_year()
+    }
+    ///Generated method `available`.
+    #[inline]
+    pub fn available(&self) -> BooleanType {
+        self.inner.available()
+    }
+    ///Generated method `code`.
+    #[inline]
+    pub fn code(&self) -> Model {
+        self.inner.code()
+    }
+    ///Generated method `some_numbers`.
+    #[inline]
+    pub fn some_numbers(&self) -> [u32; 4] {
+        self.inner.some_numbers()
+    }
+    ///Generated method `vehicle_code`.
+    #[inline]
+    pub fn vehicle_code(&self) -> [u8; 6] {
+        self.inner.vehicle_code()
+    }
+    ///Generated method `extras`.
+    #[inline]
+    pub fn extras(&self) -> OptionalExtras {
+        self.inner.extras()
+    }
+    ///Generated method `discounted_model`.
+    #[inline]
+    pub fn discounted_model(&self) -> Model {
+        self.inner.discounted_model()
+    }
+    ///Generated method `engine`.
+    #[inline]
+    pub fn engine(&self) -> EngineDecoder<'_> {
+        self.inner.engine()
+    }
+    ///Generated method `engine_value`.
+    #[inline]
+    pub fn engine_value(&self) -> Engine {
+        self.inner.engine_value()
+    }
+}
+impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
+    /// Read the fixed block before any tail. Consumes this stage
+    /// so a first tail named `fixed` cannot collide with this method.
+    #[inline]
+    pub fn fixed<F>(
+        self,
+        f: F,
+    ) -> Result<
+        sbe_rt::Ordered<sbe_rt::OrderedFixed<CarDecoder<'a>>>,
+        sbe_rt::DecodeError,
+    >
     where
-        E: From<sbe_rt::DecodeError>,
-        F: FnOnce(&CarDecoder<'a>) -> Result<(), E>,
+        F: FnOnce(&CarDecoderFixedView<'_, 'a>) -> Result<(), sbe_rt::DecodeError>,
     {
-        f(&self.inner)?;
-        Ok(self)
+        self.try_fixed(f)
     }
-}
-/// Ordered decode stage — the tail named by this type has been read.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrderedFuelFigures<'a> {
-    inner: CarDecoderAfterFuelFigures<'a>,
-}
-/// Ordered decode stage — the tail named by this type has been read.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrderedPerformanceFigures<'a> {
-    inner: CarDecoderAfterPerformanceFigures<'a>,
-}
-/// Ordered decode stage — the tail named by this type has been read.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrderedManufacturer<'a> {
-    inner: CarDecoderAfterManufacturer<'a>,
-}
-/// Ordered decode stage — the tail named by this type has been read.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrderedModel<'a> {
-    inner: CarDecoderAfterModel<'a>,
-}
-/// Ordered decode stage — the tail named by this type has been read.
-#[must_use = "ordered stage must be advanced or remaining tails are skipped"]
-pub struct CarDecoderOrderedActivationCode<'a> {
-    inner: CarDecoderComplete<'a>,
-}
-impl<'a> CarDecoderOrderedActivationCode<'a> {
-    /// The completed staged decoder, for extent and byte-range helpers.
+    /// Read the fixed block before any tail, with a caller error type.
     #[inline]
-    pub fn done(self) -> CarDecoderComplete<'a> {
-        self.inner
+    pub fn try_fixed<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<sbe_rt::OrderedFixed<CarDecoder<'a>>>, E>
+    where
+        F: FnOnce(&CarDecoderFixedView<'_, 'a>) -> Result<(), E>,
+    {
+        let view = CarDecoderFixedView {
+            inner: &self.inner,
+        };
+        f(&view)?;
+        Ok(sbe_rt::Ordered {
+            inner: sbe_rt::OrderedFixed {
+                inner: self.inner,
+            },
+        })
     }
 }
-impl<'a> CarDecoderOrdered<'a> {
+impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Wire-declared entry count without advancing this ordered stage.
+    #[inline]
+    pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.fuel_figures_count()
+    }
     /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
 
 The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
@@ -6722,38 +7064,127 @@ Empty groups invoke it zero times.*/
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
-    /// entry starts, so nothing is scanned twice.
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
     #[inline]
-    pub fn fuel_figures<E, F>(
+    pub fn fuel_figures<F, R>(
         self,
-        mut f: F,
-    ) -> Result<CarDecoderOrderedFuelFigures<'a>, E>
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, sbe_rt::DecodeError>
     where
-        E: From<sbe_rt::DecodeError>,
         F: FnMut(
             FuelFiguresEntryDecoder<'a>,
             sbe_rt::EntryInfo,
-        ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
     {
-        let (count, block_length) = self.inner.__sbe_fuel_figures_dim()?;
-        let mut index = 0usize;
+        self.try_fuel_figures(f)
+    }
+    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    #[inline]
+    pub fn try_fuel_figures<E, F, R>(
+        self,
+        mut f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(FuelFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
+    {
         let inner = self
             .inner
-            .into_fuel_figures(|entry| {
-                let info = sbe_rt::EntryInfo {
-                    index,
-                    count,
-                    block_length,
-                };
-                index += 1;
-                f(entry, info)
+            .into_fuel_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
             })?;
-        Ok(CarDecoderOrderedFuelFigures {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
     }
 }
-impl<'a> CarDecoderOrderedFuelFigures<'a> {
+impl<'a> sbe_rt::Ordered<sbe_rt::OrderedFixed<CarDecoder<'a>>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.inner.acting_block_length()
+    }
+    /// Wire-declared entry count without advancing this ordered stage.
+    #[inline]
+    pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.inner.fuel_figures_count()
+    }
+    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    ///
+    /// These entries carry tails of their own, so the callback
+    /// returns the entry's completion — that is where the next
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
+    #[inline]
+    pub fn fuel_figures<F, R>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnMut(
+            FuelFiguresEntryDecoder<'a>,
+            sbe_rt::EntryInfo,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
+    {
+        self.try_fuel_figures(f)
+    }
+    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    #[inline]
+    pub fn try_fuel_figures<E, F, R>(
+        self,
+        mut f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(FuelFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<FuelFiguresEntryDecoderComplete<'a>>,
+    {
+        let inner = self
+            .inner
+            .inner
+            .into_fuel_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
+            })?;
+        Ok(sbe_rt::Ordered { inner })
+    }
+}
+impl<'a> sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Wire-declared entry count without advancing this ordered stage.
+    #[inline]
+    pub fn performance_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.performance_figures_count()
+    }
     /** Visit every `performance_figures` entry in wire order, then advance to the next tail.
 
 The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
@@ -6762,139 +7193,308 @@ Empty groups invoke it zero times.*/
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
-    /// entry starts, so nothing is scanned twice.
+    /// entry starts, so nothing is scanned twice. A nested
+    /// `ordered()` walk may return `Ordered<completion>` directly;
+    /// `.done()` is only needed to hand the staged complete out.
     #[inline]
-    pub fn performance_figures<E, F>(
+    pub fn performance_figures<F, R>(
         self,
-        mut f: F,
-    ) -> Result<CarDecoderOrderedPerformanceFigures<'a>, E>
+        f: F,
+    ) -> Result<
+        sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>>,
+        sbe_rt::DecodeError,
+    >
     where
-        E: From<sbe_rt::DecodeError>,
         F: FnMut(
             PerformanceFiguresEntryDecoder<'a>,
             sbe_rt::EntryInfo,
-        ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
+        ) -> Result<R, sbe_rt::DecodeError>,
+        R: sbe_rt::IntoEntryComplete<PerformanceFiguresEntryDecoderComplete<'a>>,
     {
-        let (count, block_length) = self.inner.__sbe_performance_figures_dim()?;
-        let mut index = 0usize;
+        self.try_performance_figures(f)
+    }
+    /** Visit every `performance_figures` entry in wire order, then advance to the next tail.
+
+The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
+its index, the wire-declared count, and the acting block length.
+Empty groups invoke it zero times.*/
+    #[inline]
+    pub fn try_performance_figures<E, F, R>(
+        self,
+        mut f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>>, E>
+    where
+        E: From<sbe_rt::DecodeError>,
+        F: FnMut(PerformanceFiguresEntryDecoder<'a>, sbe_rt::EntryInfo) -> Result<R, E>,
+        R: sbe_rt::IntoEntryComplete<PerformanceFiguresEntryDecoderComplete<'a>>,
+    {
         let inner = self
             .inner
-            .into_performance_figures(|entry| {
-                let info = sbe_rt::EntryInfo {
-                    index,
-                    count,
-                    block_length,
-                };
-                index += 1;
-                f(entry, info)
+            .into_performance_figures_with_info(|entry, info| {
+                f(entry, info).map(sbe_rt::IntoEntryComplete::into_entry_complete)
             })?;
-        Ok(CarDecoderOrderedPerformanceFigures {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
     }
 }
-impl<'a> CarDecoderOrderedPerformanceFigures<'a> {
+impl<'a> sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Byte length without advancing this ordered stage.
+    #[inline]
+    pub fn manufacturer_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.manufacturer_len()
+    }
     /// Read `manufacturer` as bytes, then advance to the next tail.
     #[inline]
-    pub fn manufacturer<E, F>(self, f: F) -> Result<CarDecoderOrderedManufacturer<'a>, E>
+    pub fn manufacturer<F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a [u8]) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_manufacturer(f)
+    }
+    /// Read `manufacturer` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn try_manufacturer<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a [u8]) -> Result<(), E>,
     {
         let (bytes, inner) = self.inner.into_manufacturer()?;
         f(bytes)?;
-        Ok(CarDecoderOrderedManufacturer {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
     }
-}
-impl<'a> CarDecoderOrderedPerformanceFigures<'a> {
     /** Read `manufacturer` as `&str`, then advance to the next tail.
 
 Validation covers this field only — there is no whole-message
 text pass. Invalid text is an error, never a sentinel.*/
     #[inline]
-    pub fn manufacturer_as_str<E, F>(
+    pub fn manufacturer_as_str<F>(
         self,
         f: F,
-    ) -> Result<CarDecoderOrderedManufacturer<'a>, E>
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a str) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_manufacturer_as_str(f)
+    }
+    /** Read `manufacturer` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn try_manufacturer_as_str<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a str) -> Result<(), E>,
     {
         let (text, inner) = self.inner.into_manufacturer_as_str()?;
         f(text)?;
-        Ok(CarDecoderOrderedManufacturer {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
     }
 }
-impl<'a> CarDecoderOrderedManufacturer<'a> {
+impl<'a> sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Byte length without advancing this ordered stage.
+    #[inline]
+    pub fn model_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.model_len()
+    }
     /// Read `model` as bytes, then advance to the next tail.
     #[inline]
-    pub fn model<E, F>(self, f: F) -> Result<CarDecoderOrderedModel<'a>, E>
+    pub fn model<F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterModel<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a [u8]) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_model(f)
+    }
+    /// Read `model` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn try_model<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterModel<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a [u8]) -> Result<(), E>,
     {
         let (bytes, inner) = self.inner.into_model()?;
         f(bytes)?;
-        Ok(CarDecoderOrderedModel { inner })
+        Ok(sbe_rt::Ordered { inner })
     }
-}
-impl<'a> CarDecoderOrderedManufacturer<'a> {
     /** Read `model` as `&str`, then advance to the next tail.
 
 Validation covers this field only — there is no whole-message
 text pass. Invalid text is an error, never a sentinel.*/
     #[inline]
-    pub fn model_as_str<E, F>(self, f: F) -> Result<CarDecoderOrderedModel<'a>, E>
+    pub fn model_as_str<F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterModel<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a str) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_model_as_str(f)
+    }
+    /** Read `model` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn try_model_as_str<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderAfterModel<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a str) -> Result<(), E>,
     {
         let (text, inner) = self.inner.into_model_as_str()?;
         f(text)?;
-        Ok(CarDecoderOrderedModel { inner })
+        Ok(sbe_rt::Ordered { inner })
     }
 }
-impl<'a> CarDecoderOrderedModel<'a> {
+impl<'a> sbe_rt::Ordered<CarDecoderAfterModel<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    /// Byte length without advancing this ordered stage.
+    #[inline]
+    pub fn activation_code_len(&self) -> Result<usize, sbe_rt::DecodeError> {
+        self.inner.activation_code_len()
+    }
     /// Read `activation_code` as bytes, then advance to the next tail.
     #[inline]
-    pub fn activation_code<E, F>(
+    pub fn activation_code<F>(
         self,
         f: F,
-    ) -> Result<CarDecoderOrderedActivationCode<'a>, E>
+    ) -> Result<sbe_rt::Ordered<CarDecoderComplete<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a [u8]) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_activation_code(f)
+    }
+    /// Read `activation_code` as bytes, then advance to the next tail.
+    #[inline]
+    pub fn try_activation_code<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderComplete<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a [u8]) -> Result<(), E>,
     {
         let (bytes, inner) = self.inner.into_activation_code()?;
         f(bytes)?;
-        Ok(CarDecoderOrderedActivationCode {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
     }
-}
-impl<'a> CarDecoderOrderedModel<'a> {
     /** Read `activation_code` as `&str`, then advance to the next tail.
 
 Validation covers this field only — there is no whole-message
 text pass. Invalid text is an error, never a sentinel.*/
     #[inline]
-    pub fn activation_code_as_str<E, F>(
+    pub fn activation_code_as_str<F>(
         self,
         f: F,
-    ) -> Result<CarDecoderOrderedActivationCode<'a>, E>
+    ) -> Result<sbe_rt::Ordered<CarDecoderComplete<'a>>, sbe_rt::DecodeError>
+    where
+        F: FnOnce(&'a str) -> Result<(), sbe_rt::DecodeError>,
+    {
+        self.try_activation_code_as_str(f)
+    }
+    /** Read `activation_code` as `&str`, then advance to the next tail.
+
+Validation covers this field only — there is no whole-message
+text pass. Invalid text is an error, never a sentinel.*/
+    #[inline]
+    pub fn try_activation_code_as_str<E, F>(
+        self,
+        f: F,
+    ) -> Result<sbe_rt::Ordered<CarDecoderComplete<'a>>, E>
     where
         E: From<sbe_rt::DecodeError>,
         F: FnOnce(&'a str) -> Result<(), E>,
     {
         let (text, inner) = self.inner.into_activation_code_as_str()?;
         f(text)?;
-        Ok(CarDecoderOrderedActivationCode {
-            inner,
-        })
+        Ok(sbe_rt::Ordered { inner })
+    }
+}
+impl<'a> sbe_rt::Ordered<CarDecoderComplete<'a>> {
+    ///Generated method `acting_version`.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version()
+    }
+    ///Generated method `acting_block_length`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length()
+    }
+    ///The completed staged decoder. Prefer [`Self::encoded_length_with_header`] / [`Self::as_bytes_with_header`] on this type — the message chain ends like encode, without `.done()`.
+    #[inline]
+    pub fn done(self) -> CarDecoderComplete<'a> {
+        self.inner
+    }
+    /// Body bytes (excluding the message header).
+    #[inline]
+    pub fn as_body_bytes(&self) -> &'a [u8] {
+        self.inner.as_body_bytes()
+    }
+    /// Complete SBE frame (header + body).
+    #[inline]
+    pub fn as_bytes_with_header(&self) -> &'a [u8] {
+        self.inner.as_bytes_with_header()
+    }
+    /// Body length (excluding header).
+    #[inline]
+    pub fn encoded_length(&self) -> usize {
+        self.inner.encoded_length()
+    }
+    /// Total message length including the schema-declared header.
+    #[inline]
+    pub fn encoded_length_with_header(&self) -> usize {
+        self.inner.encoded_length_with_header()
+    }
+    /// Bytes after this message.
+    #[inline]
+    pub fn remaining(&self) -> &'a [u8] {
+        self.inner.remaining()
     }
 }
 /// Owned domain object — application-layer counterpart to the flyweight decoder.

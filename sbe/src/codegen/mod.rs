@@ -74,7 +74,9 @@ pub(crate) mod group_encoder;
 pub(crate) use group_encoder::generate_group_encoder;
 pub(crate) mod group_decoder;
 pub(crate) use group_decoder::generate_group_decoder;
+pub(crate) mod ordered_lane;
 pub(crate) mod tail_stages;
+pub(crate) use ordered_lane::{OrderedFixedFields, generate_ordered_lane};
 pub(crate) use tail_stages::*;
 pub(crate) mod memoized_decoder;
 pub(crate) mod tail_cache;
@@ -1156,7 +1158,16 @@ impl Generator {
                     .tokens
                     .iter()
                     .any(|t| t.signal == crate::ir::Signal::BeginGroup);
-            src.push_str(&generate_sbe_rt_src(needs_entry_info));
+            // `Ordered` / `OrderedFixed` are only reachable through the
+            // ordered lane, which exists iff a message or entry has tails.
+            // Emitting them on a fixed-block schema perturbs code placement
+            // the same way an unused `EntryInfo` does.
+            let needs_ordered = self.config.shared_module.is_some()
+                || ir.tokens.iter().any(|t| {
+                    t.signal == crate::ir::Signal::BeginGroup
+                        || t.signal == crate::ir::Signal::BeginVarData
+                });
+            src.push_str(&generate_sbe_rt_src(needs_entry_info, needs_ordered));
             // A shared runtime is implemented against by sibling modules, so its
             // sealing module widens to `pub(super)`. A self-contained module
             // keeps it private, which is what makes `SbeMessage` unimplementable

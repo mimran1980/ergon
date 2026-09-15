@@ -122,9 +122,48 @@ ask order to return to `symbol`; this lane reuses the boundary it already
 found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
+### Ordered — one spelling, all the way down
+
+```rust,ignore
+{{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
+```
+
+Compare it with the staged lane above: there `bids` takes a visit closure and
+`orders` is an iterator, because those two shapes genuinely differ. Here every
+message-level tail — fixed block, both groups, then the var-data — reads the
+same way, and each entry callback also receives an `EntryInfo` carrying
+`index`, the wire-declared `count`, and the acting `block_length`. Count and
+block length come from the group decoder the staged walk already opened; the
+index advances with the walk. Using `info.count` to reserve space needs no
+entry scan. Empty groups never deliver `EntryInfo`; `<group>_count()` on the
+ordered stage still reports the declared count.
+
+**It recurses.** A `bids` level carries its own tail — the nested `orders`
+group — so the level decoder has an `ordered()` too, and the callback above
+uses it. The spelling does not change at the entry boundary, and returning
+that nested walk is the completion the parent closure owes — no `.done()` on
+the way out. An entry
+with no tails of its own (a fixed-stride entry) has nothing to order and gets
+no lane. An entry whose existing getter is named `ordered` also keeps its
+getter and uses the staged spelling for its tails.
+
+The staged spelling is still generated beside it: `level.into_orders()` hands
+back a real `ExactSizeIterator` you can `break` out of and still reach the next
+tail by arithmetic. Pick the iterator when you want to stop early and continue
+at the next tail, or the ordered lane when you want callbacks throughout.
+
+It is a façade over the staged stages, so it keeps their single traversal and
+compile-time tail order. The message chain ends on `encoded_length_with_header()`,
+like encode. Dynamic
+groups fill `EntryInfo` from that walk; fixed-stride groups reuse the
+iterator's count and stride. Neither shape pre-scans entries or re-opens the
+dimension header. The optimizer and measured workload determine the callback
+wrapper's final cost. Message-level `fixed` receives a fixed-fields-only view;
+custom error types use `try_fixed` / `try_bids` / `try_asks`.
+
 ### On a hot path, collect nothing
 
-The three functions above build owned `Vec`s because a test has to materialise
+The four functions above build owned `Vec`s because a test has to materialise
 something to compare. Real consumption does not: the decoders are flyweights
 over the wire buffer, `&str` and `&[u8]` borrow from it, and a full nested walk
 needs no allocation at all.
@@ -144,6 +183,7 @@ pins the same property for generated decode under a counting allocator.
 | Reading a couple of fields, or one tail | random access — smallest, `Sync` |
 | Decoding the whole book in wire order | staged `into_*` — one traversal, compile-time tail order |
 | Several helpers reading multiple tails, same thread | `.memoized()` |
+| Walking whole messages with uniform code, or needing entry position | `.ordered()` — one callback per tail, `EntryInfo` per entry |
 
 Full comparison, including how each differs from sbe-tool's single `limit`
 cursor: [Decoder lanes](../sbe/feature-tour/decode-stages.md).

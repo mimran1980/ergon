@@ -838,6 +838,20 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
+    entry_body.extend(quote::quote! {
+        /// Schema version from the parent message header (or wrap args).
+        #mu
+        #[inline]
+        pub const fn acting_version(&self) -> u16 {
+            self.acting_version
+        }
+        /// Acting block length of this entry's fixed block.
+        #mu
+        #[inline]
+        pub const fn acting_block_length(&self) -> usize {
+            self.acting_block_length
+        }
+    });
     // Entry decoders keep a one-shot extent cache in every lane: the group
     // iterator computes each entry's end to advance, and the last var-data
     // accessor reuses it instead of re-reading its length header. Dropping it
@@ -2009,6 +2023,7 @@ pub(crate) fn generate_group_decoder(
         &name,
         byte_order,
         enable_dispatch,
+        conversions,
     ));
 
     ts

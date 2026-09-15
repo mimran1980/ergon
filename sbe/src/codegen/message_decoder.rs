@@ -1813,6 +1813,10 @@ pub(crate) fn generate_message_decoder(
         multi_message,
         &group_unique_names,
         enable_dispatch,
+        conversions,
+        domain_types,
+        null_as_option,
+        all_enums_as_option,
     ));
 
     // 15. Close the main impl block (if is_fixed or not, the block is closed already)

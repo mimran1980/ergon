@@ -3633,8 +3633,11 @@ fn fixed_and_raw_fixed_replace_try_fixed() -> Result<(), Box<dyn std::error::Err
         "RawFixedWriter struct must be generated"
     );
     assert!(
-        !src.contains("try_fixed"),
-        "try_fixed must NOT be generated"
+        !common::impl_for_type_defines_method(&src, "CarEncoder", "try_fixed"),
+        "CarEncoder::try_fixed must NOT be generated (no fixed-phase bypass). \
+         The decoder's ordered lane legitimately defines its own `try_fixed` \
+         (the error-typed twin of `fixed()`, see ordered_lane_test); that is a \
+         different type and a different invariant from this one."
     );
     Ok(())
 }

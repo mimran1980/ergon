@@ -103,7 +103,7 @@ prefix marks the fallible decode, and `{field}_bool` is the *encoder* setter:
 
 ```rust,ignore
 // Standard getter — returns the enum variant (raw wire discriminant).
-pub fn available_wire(&self) -> BooleanType { … }
+pub fn available(&self) -> BooleanType { … }
 
 // Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
 pub fn try_available_bool(&self) -> Result<bool, DecodeError> { … }

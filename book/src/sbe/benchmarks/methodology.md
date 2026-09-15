@@ -27,6 +27,13 @@ callback's completion, so it need not scan that entry before visiting it.
 Calling `verify()` before decoding, or mixing random-access tail lookahead
 with a subsequent consuming walk, would add traversal work.
 
+The maintained Car `ergo-sbe_ordered` arm uses ordered callbacks at message
+level and staged methods inside entries. It also observes entry indices that
+the other arms do not observe. Its result therefore does not isolate the cost
+of the recursive ordered API or establish an equal-work ranking between lanes.
+For that comparison, use recursive callbacks and match every observation across
+the arms, including any metadata used by the application.
+
 The benchmark gate exists to prove that ergo-sbe is **not slower than**
 sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
 parity.
