@@ -37,12 +37,13 @@ about — which is what the rest of this page is about.
 |------|-------------|----------|-------------------|--------|
 | Random access | `try_decode` / `wrap` getters | Any order | Recalculates preceding offsets | yes |
 | Staged | `into_*` / `skip_*` | Compile time | One forward traversal when entry tails also use stages | yes |
-| Ordered | `decoder.ordered()` | Compile time | Delegates to the staged stages; adds one dimension read per dynamic group | yes |
+| Ordered | `decoder.ordered()` | Compile time | Delegates to the staged stages | yes |
 
-Fixed fields stay random-access in both. Groups and variable-data must be
-consumed in schema order on the staged lane. `.memoized()` is still
-generated for repeated out-of-order tail reads — it is not a third way to
-start a sequential walk.
+Fixed fields stay random-access in all three. The ordered lane also offers
+a `fixed` callback before the tails; that callback receives a
+fixed-fields-only view, not the full decoder. Groups and variable-data are consumed in
+schema order on both sequential lanes. `.memoized()` is generated for repeated
+out-of-order tail reads; it caches boundaries instead of advancing stages.
 
 ## Fixed-block messages have exactly one lane
 
@@ -50,9 +51,8 @@ A message with no repeating groups and no variable-data has no dynamic tail:
 every field sits at a compile-time offset inside the block, and the base
 decoder reads them all in any order at constant cost. There is nothing to
 memoize, so **`memoized()` is not generated for those messages at all** —
-and `AnyMessage` offers only `into_<name>()` for them. This is not an
-omission you work around; the base decoder already is the whole story, and a
-second name for it would only invite the question of which one is faster.
+and `ordered()` is not generated either. `AnyMessage` offers only
+`into_<name>()` for them. Read their fixed fields directly from the base decoder.
 
 The lanes below therefore describe messages that *do* carry groups or
 variable-data.
@@ -254,8 +254,8 @@ pure overhead.
 The sequential path carries one cursor through the message. Ownership and
 generated stage types make a later consuming tail method unavailable until
 the current tail is consumed or explicitly skipped. Fixed fields remain
-ordinary getters; there is no decoder `fixed(closure)` or `.ordered()` entry
-point in the current API.
+ordinary getters. For a fixed-block callback and callbacks for every tail,
+use the [ordered lane](#ordered-decoderordered) over these stages.
 
 **The shape of a group decides how `into_<group>` is spelled**, because the
 shape decides what it costs to know where an entry ends:
@@ -297,7 +297,8 @@ extent, and tail validation happens as the stages advance. Calling `verify`
 first and then decoding adds a separate structural walk.
 
 Inside a dynamic-entry callback, consume its nested tails with `into_*`,
-`try_*`, or `skip_*`, and return that entry's completion. Calling random-access
+`try_*`, `skip_*`, or its own `ordered()` chain, and return that entry's
+completion. Calling random-access
 tail getters before consuming the same tails repeats offset discovery.
 Likewise, a root `manufacturer_len()` before visiting preceding groups has
 to locate the manufacturer first. Ask for lengths on the immediately
@@ -346,9 +347,9 @@ fixed region. On a random-access dynamic group it is the unvisited declared
 count; a malformed entry can still end iteration early. Absent versioned
 tails have zero entries or bytes.
 
-If a fixed field already uses a convenience accessor's name, that field
-keeps its getter and the convenience accessor is omitted on that owner.
-Later stages have no fixed-field getters to collide with. Counts and lengths
+If a primary fixed-field or sibling-tail getter already uses a convenience
+accessor's name, that getter wins and the convenience accessor is omitted on
+that owner. Later stages do not carry those getters. Counts and lengths
 on random-access owners may walk preceding tails; non-consuming does not mean
 constant-time. Group byte length is not available from the count alone when
 entries contain dynamic tails.
@@ -378,27 +379,32 @@ entries contain dynamic tails.
 
 ## Ordered (`decoder.ordered()`)
 
-The staged lane spells a group two ways because the two shapes genuinely
-differ. That is the right default, but code that walks whole messages and
-would rather write the same thing at every tail can take the **ordered lane**:
+The staged lane spells a group two ways because the shapes differ. Code that
+walks whole messages and wants callbacks at every tail can take the **ordered lane**:
 one callback per tail, uniform spelling, and an `EntryInfo` for each entry.
+`ordered()` is generated on message decoders with tails and on group entries
+that carry tails of their own. An entry whose existing accessor is named
+`ordered` keeps that accessor and does not get this lane; use its staged
+methods instead. A nested `ordered()` walk returns the completion its parent's
+callback owes — `.done()` is only to unwrap the staged complete.
 
-It owns no cursor of its own. `ordered()` wraps the base decoder, and every
-method delegates to the staged stage underneath — so the single entry
+`ordered()` wraps the base decoder as `sbe_rt::Ordered<S>`, and every method
+delegates to the staged stage underneath. The cursor lives in that wrapped
+stage; there is no second cursor to synchronize. The single entry
 traversal and the compile-time tail ordering come from the staged lane rather
-than being re-implemented. `done()` hands the staged complete stage back,
-keeping `encoded_length_with_header()` and the full-frame byte views
-reachable.
+than being re-implemented. The message chain ends on
+`encoded_length_with_header()` / `as_bytes_with_header()` on the last ordered
+stage, like encode. `.done()` still unwraps the staged complete when a caller
+wants that type. An entry's completion describes that entry's extent within
+the wire buffer.
 
-**What it costs, precisely.** For a fixed-stride group, nothing: the staged
-lane hands back an iterator that already knows the count and the stride, so
-`EntryInfo` is filled from values the traversal produced anyway. For a group
-whose entries carry their own tails, the staged lane hands back a visit
-closure with no such handle, so the ordered lane reads that group's dimension
-header once before the walk to learn `count` and `block_length`. That is one
-extra 4-byte header read per dynamic group per message — not per entry, and
-never a scan. If you are counting cycles on a message that is all dynamic
-groups, the staged lane remains the floor.
+**Traversal cost.** Fixed-stride groups supply `EntryInfo` from the iterator's
+existing count and stride. For a group whose entries carry tails, `EntryInfo`
+is filled from the attached group decoder the staged walk already opened
+(`total`, remaining count, acting block length). There is no second
+dimension-header wrap. Empty and version-absent groups invoke the callback
+zero times; the non-advancing `<group>_count()` on the ordered stage still
+reports the declared count.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_ordered_lane}}
@@ -408,19 +414,38 @@ groups, the staged lane remains the floor.
 
 | Tail | Callback |
 |------|----------|
-| Fixed block | `fixed(\|&Decoder\|)` — does not advance |
-| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion |
+| Fixed block | `fixed(\|&{Name}DecoderFixedView\|)` — consumes into a following stage; custom error types use `try_fixed` |
+| Group, entries with tails | `group(\|entry, EntryInfo\|)` → returns the entry's completion, or `Ordered<completion>` from a nested `ordered()` walk; `try_group` for a custom `E` |
 | Group, fixed-stride entries | `group(\|entry, EntryInfo\|)` → returns `()` |
 | Var-data | `field(\|&[u8]\|)`, and `field_as_str(\|&str\|)` where the schema declares a text encoding |
 
-`EntryInfo` carries `index`, the wire-declared `count`, and the acting
-`block_length`, plus `is_first()`, `is_last()` and `remaining()`. Both come
-from the group's dimension header, so neither costs a scan. A group's total **byte** length is not there, and deliberately so: for
-entries carrying their own tails it is only settled by traversing them.
+`EntryInfo` carries the zero-based `index`, wire-declared `count`, and acting
+`block_length`, plus `is_first()`, `is_last()` and `remaining()`. Count and
+block length come from the dimension header; the index advances with the walk.
+`remaining()` counts entries after the current one. None needs an entry scan.
+A group's total **byte** length is absent: for entries carrying their own tails
+it is only settled by traversing them.
 
-Entries with tails still return their completion stage from the callback —
-that completion *is* where the next entry starts, and giving it up would mean
-measuring every entry before visiting it.
+Message-level `fixed` is optional: skip it and call the first tail directly, or
+call it and receive a following stage that no longer offers the view. The
+callback's type has only fixed-field getters, acting version, and acting block
+length — not group or var-data accessors — so it cannot start a second walk.
+A first tail named `fixed` suppresses the callback; read those fields before
+`ordered()`. Entry-level ordered wrappers have no `fixed`: the parent callback
+already holds the entry. The compiler orders the consuming tail transitions;
+it does not prevent extra reads inside group callbacks that still hold a
+full entry decoder.
+
+Ordered bytes and text callbacks receive `&'a [u8]` and `&'a str` borrowing the
+original buffer, so those references can be retained after the callback returns.
+Text validation covers only the selected field. A callback error consumes the
+stage and returns no continuation, and earlier callback effects are not rolled
+back if a later field is malformed.
+
+Entries with tails still return their completion from the callback — that
+completion *is* where the next entry starts, and giving it up would mean
+measuring every entry before visiting it. The callback may return the staged
+complete or an `Ordered` of it from a nested `ordered()` walk.
 
 **Use it when** you always decode whole messages in order and want one shape
 at every tail. **Prefer the staged lane** when you skip tails, hold stages

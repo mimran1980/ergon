@@ -2,11 +2,59 @@
 
 ## [Unreleased]
 
+## [0.1.28] — 2026-09-15
+
+### Added
+- **The ordered lane recurses.** `ordered()` is now generated on any decoder
+  that owns tails, not only the message decoder: a group entry carrying its own
+  groups or var-data has one too, so a walk keeps a single spelling all the way
+  down instead of switching to the staged API at the entry boundary. A nested
+  `ordered()` walk is the completion the parent visit owes. Entries with no
+  tails of their own have nothing to order and get no lane.
+- The staged `into_*` iterator is unchanged and still generated beside it. For a
+  fixed-stride nested group it remains the better tool — an `ExactSizeIterator`
+  you can `break` out of, still reaching the next tail by arithmetic. The lane
+  adds a spelling rather than replacing one.
+
+### Changed
+- Nested `ordered()` walks return the parent visit's completion directly
+  (`sbe_rt::IntoEntryComplete`); `.done()` is only to unwrap the staged
+  complete. The message chain ends on `encoded_length_with_header()` /
+  `as_bytes_with_header()`, like encode.
+- The ordered lane is `sbe_rt::Ordered<S>` wrapping each staged stage, instead
+  of a parallel `*DecoderOrdered*` type per tail. Message-level `fixed` takes a
+  `{Name}DecoderFixedView` (fixed fields only) and consumes into
+  `Ordered<OrderedFixed<Decoder>>`. Entry-level wrappers no longer emit `fixed`:
+  the parent callback already holds the entry. Unprefixed group/var-data methods
+  return `DecodeError` so closures infer; `try_*` keeps a custom `E`.
+- `EntryInfo` for dynamic groups is filled from the attached group decoder the
+  staged walk already opened. The discarded `__sbe_*_dim` wrap is gone.
+
+### Fixed
+- A group entry with a field literally named `ordered` no longer collides with
+  the new entry-level lane. Group entries are not renamed against the static
+  reserved list, unlike message and memoized decoders, so such a field already
+  owns `ordered()`; the lane yields and is simply not generated for that entry,
+  matching how `<group>_count` / `<field>_len` yield to a colliding sibling.
+  A converted field named `ordered` (`ordered_wire` / `ordered_as`) no longer
+  suppresses the lane. Covered by `ordered_lane_test`.
+- A first tail named `fixed` no longer emits duplicate `fixed()` methods: the
+  message-level callback yields, and the group/var-data visit keeps the name.
+  Last tail named `done` is a different type from `done()` on the complete
+  stage. Covered by `ordered_lane_test`.
+- The entry-level lane's `group(&mut self, F)` / `try_group` no longer declared
+  a default on their `R` type parameter. Function generic parameter defaults
+  are not valid Rust (`invalid_type_param_default`, deny-by-default); every
+  group whose entries carry their own tails failed to compile. `R` is always
+  inferred from the callback's return expression, so the default was dropped
+  rather than replaced.
+
 ## [0.1.27] — 2026-09-12
 
 ### Added
 - **Ordered decode lane — `decoder.ordered()`.** One callback per tail, in
-  wire order, with the same spelling at every tail: `fixed(|&Decoder|)`, then
+  wire order, with the same spelling at every *message-level* tail (nested
+  groups inside an entry keep the staged spelling): `fixed(|&Decoder|)`, then
   `group(|entry, EntryInfo|)` for each group, then `field(|&[u8]|)` (or
   `field_as_str(|&str|)` where the schema declares a text encoding). `done()`
   returns the staged complete stage, so extent and full-frame helpers stay

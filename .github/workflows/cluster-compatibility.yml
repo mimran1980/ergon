@@ -1,17 +1,25 @@
 name: Cluster Compatibility
 
+# The cluster crate's codecs are *generated*, so a change under `sbe/src/`
+# can break Aeron compatibility without touching a single file in `cluster/`.
+# That is not hypothetical: 0.1.27 changed `sbe/src/codegen/` only, and this
+# workflow stayed silent on the release commit while the equivalent check ran
+# only in the local release gate. A gate that cannot fire is not a gate.
 on:
   push:
     branches: [main]
     paths:
       - 'cluster/**'
       - 'cluster/schemas/**'
+      - 'sbe/src/**'
       - '.github/workflows/cluster-compatibility.yml'
   pull_request:
     branches: [main]
     paths:
       - 'cluster/**'
       - 'cluster/schemas/**'
+      - 'sbe/src/**'
+      - '.github/workflows/cluster-compatibility.yml'
 
 jobs:
   compatibility:

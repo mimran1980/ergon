@@ -166,9 +166,15 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         "throughput_batch_10k|throughput/batch_10k|ergo-sbe|sbe-tool|1.00"
         "wire_parity_encode_full|wire_parity/encode_full|ergo-sbe|sbe-tool|1.00"
         # Criterion group is "parity_extended/…"; the gate prefixes "parity_".
-        # Timing for `optional_enum_nullify` is a memory-bound tie; the blocking
-        # mechanism check is the matching instruction/branch probe. The LTO
-        # ceiling stays literal 1.00 (ergon measures ~0.76 there); only the
+        # `optional_enum_nullify` is placement-sensitive: both codecs compile it
+        # to the same three member loads (sbe-tool adds three length checks), so
+        # sbe-tool's arm lands near 776 ns or 1008 ns depending only on layout —
+        # a crate version bump moved it with no code change. The LTO ceiling
+        # stays literal 1.00. Once the benchmark stopped black-boxing only
+        # ergon's offset (2026-09-15), LTO measured 0.764 / 0.987 / 0.779
+        # across three layouts, 0.987 in sbe-tool's fast layout. A flip is a
+        # harness-symmetry question first (tests/fairness_policy_test.rs); the
+        # mechanism check is the matching instruction/branch probe. Only the
         # no-LTO profile carries the documented allowance below.
         "extended_optional_enum_nullify|extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.00"
         "extended_group_with_data|extended/group_with_data|ergo-sbe|sbe-tool|1.00"

@@ -43,9 +43,27 @@ For the full Car example with groups and var-data, see the
 
 ## Decoding
 
-Sequential decode consumes each tail in wire order. The current API has
-different spellings for groups and var-data, so a complete walk can need
-iterator and tuple bindings:
+Sequential decode consumes each tail in wire order. For callbacks throughout
+the chain, start with `decoder.ordered()`:
+
+```rust,no_run
+{{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_ordered_lane}}
+```
+
+The fixed callback comes before tails and receives a fixed-fields-only view;
+each group callback receives the entry and its `EntryInfo`, and var-data
+callbacks receive bytes or strictly validated text. Unprefixed methods return
+`DecodeError` so the closures infer; `try_*` takes a custom `E`. These
+callbacks borrow the original wire buffer, so bytes and text may
+be retained as the chain advances. The message chain ends on
+`encoded_length_with_header()` / `as_bytes_with_header()`, like encode —
+`.done()` is only to unwrap the staged complete. A nested `ordered()` walk
+returns that completion to the parent callback directly. The
+[L3 sample](../../samples/l3-book.md#ordered--one-spelling-all-the-way-down)
+shows this recursive form.
+
+The underlying staged API also supports explicit iteration and skipping. Its
+group and var-data spellings can require iterator and tuple bindings:
 
 | Group entries | `into_<group>` gives you | Why |
 |---|---|---|
@@ -76,8 +94,8 @@ var-data fields in one expression:
 
 The callback returns `Result<(), E>` where `E: From<DecodeError>`. Its bytes
 are scoped to the callback; use `into_<name>()` when retaining a borrowed
-slice. There is currently no `try_<name>_as_str` callback companion: use the
-strict tuple-returning accessor for schema-declared text.
+slice. There is no staged `try_<name>_as_str` callback companion: use the
+strict tuple-returning accessor, or the ordered lane's `<name>_as_str` callback.
 
 The generated staged walk advances once through dynamic tails. Random-access
 getters used before that walk, including counts or lengths for later tails,

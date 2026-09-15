@@ -53,6 +53,8 @@
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_str (self) -> & 'static str
 # [must_use = "discarding this value is almost always a mistake"] Side::fn raw (self) -> u8
 # [must_use = "encoder must be consumed to write the message"] struct CommonMessageEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct Ordered< S > {  }
+# [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct OrderedFixed< S > {  }
 # [must_use = "raw fixed writer must be embedded in FixedFields"] struct CommonMessageRawFixedWriter< 'a > {  }
 # [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 # [must_use = "the peeked header identity is unused; ignoring it skips dispatch"] MessageHeader::fn peek_header (data : & [u8]) -> Option < PeekedHeader >
@@ -221,6 +223,8 @@ sbe_rt::struct TailBoundaryCache< const N : usize > {  }
 sbe_rt::trait FieldsState: private :: Sealed
 sbe_rt::trait GroupContext: private :: Sealed
 sbe_rt::trait HeaderState: private :: Sealed
+sbe_rt::trait IntoEntryComplete::fn into_entry_complete (self) -> C
+sbe_rt::trait IntoEntryComplete< C >
 sbe_rt::trait IntoGroupResult
 sbe_rt::trait IntoGroupResult::fn into_group_result (self) -> GroupResult
 sbe_rt::trait SbeMessage: super :: __sbe_message_sealed :: Sealed

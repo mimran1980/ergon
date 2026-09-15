@@ -361,9 +361,25 @@ const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
 /// records a measured tie, so the bound is per-label rather than global — one
 /// allowance must never widen the bound the others are held to.
 const PROFILE_SCOPED_OVERRIDE_MAX: &[(&str, f64)] = &[
-    // memory-bound two-byte-enum load; observed 1.0011-1.0062
+    // Memory-bound enum/composite load; observed 1.0011-1.0062.
+    //
+    // 2026-09-13: an attempt to tighten this to a literal 1.00 was made and
+    // reverted. The scenario measures ~0.77 no-LTO, so the allowance looks like
+    // dead weight — but the *sbe-tool* arm is not stable across build sessions.
+    // With byte-identical benchmark source it measured 1002.48 ns during the
+    // 0.1.27 release and 776.88 ns twice three days later, a 22% swing, while
+    // ergon's arm held 777-784 ns throughout. At ~0.76 ns/op this pair is
+    // decided by code placement, so a tightening cannot be validated without a
+    // quiet machine and a characterised reference arm. Do not retry it from a
+    // single green run.
     ("extended_optional_enum_nullify", 1.01),
-    // random walk straddling 1.00; observed up to 1.0444, LTO 0.99
+    // A genuine tie: both arms read the same five scalars plus `detail_slice`,
+    // already batched 10k, so there is no unread member to amplify with. Five
+    // isolated runs on an idle machine measured 1.0038 / 0.9997 / 0.9994 /
+    // 0.9994 / 0.9988 — mean 1.0002, 0.5% spread. A failure here usually means
+    // the machine was loaded: a mid-release run of this same pair measured
+    // 1.0104 while other work was in flight. Re-run on a quiet machine before
+    // believing it.
     ("cluster_decode_session_event", 1.05),
 ];
 
