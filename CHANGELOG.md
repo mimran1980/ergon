@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+- Group-entry `acting_version()` / `acting_block_length()` yield when a field
+  already owns that name, matching the count/len rule. A schema with
+  `actingVersion` / `actingBlockLength` on an entry compiles; the field
+  accessor keeps its name.
+- Ordered `fixed` / `try_fixed` callbacks yield when the first tail is named
+  `fixed` or `tryFixed`, so those schemas compile. Read fixed fields before
+  `ordered()`; the tail keeps the name.
+- Memoized var-data getters re-check the schema maximum even when
+  `encoded_length()` has already published a bounds-valid end. Over-max
+  payloads are `InvalidVarDataLength` on the base lane, a cold memoized
+  getter, and a warmed one.
+- Domain `None` for a `with_all_enums_as_option()` (or `with_null_as_option`)
+  enum writes `NullVal` into a reused buffer. Flat-group `bulk_add_domain`
+  and `to_wire_entry` honour `Option<Enum>` the same way.
+
 ## [0.1.28] — 2026-09-15
 
 ### Added

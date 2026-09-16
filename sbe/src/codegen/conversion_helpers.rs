@@ -354,8 +354,16 @@ pub(crate) fn tail_accessor_ident(
     suffix: &str,
     taken: &[String],
 ) -> Option<syn::Ident> {
-    let name = format!("{base_snake}_{suffix}");
-    (!taken.contains(&name)).then(|| syn::Ident::new(&name, proc_macro2::Span::call_site()))
+    named_accessor_ident(&format!("{base_snake}_{suffix}"), taken)
+}
+
+/// Emit this inherent method name, or `None` when a field or sibling tail
+/// already owns it. The existing accessor keeps its name; the convenience
+/// method is omitted. Used for entry `acting_version` / `acting_block_length`
+/// the same way [`tail_accessor_ident`] is used for count/len.
+pub(crate) fn named_accessor_ident(name: &str, taken: &[String]) -> Option<syn::Ident> {
+    (!taken.iter().any(|n| n == name))
+        .then(|| syn::Ident::new(name, proc_macro2::Span::call_site()))
 }
 
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).

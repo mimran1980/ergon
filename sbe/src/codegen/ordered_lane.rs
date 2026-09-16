@@ -63,11 +63,15 @@ pub(crate) fn generate_ordered_lane(
         .first()
         .map(|g| g.accessor_snake.as_str())
         .or_else(|| vardata.first().map(|v| v.accessor_snake.as_str()));
-    // Message-level `fixed` lives on the same type as the first tail unless it
-    // consumes into `OrderedFixed`. A first tail named `fixed` still collides
-    // on `Ordered<Decoder>` if both methods are emitted, so the callback
-    // yields and callers read fixed fields before `ordered()`.
-    let emit_fixed = is_message && first_tail_snake != Some("fixed") && fixed_fields.is_some();
+    // Message-level `fixed` / `try_fixed` live on the same type as the first
+    // tail unless they consume into `OrderedFixed`. A first tail named `fixed`
+    // or `tryFixed` collides on `Ordered<Decoder>` if both methods are
+    // emitted, so the callback yields and callers read fixed fields before
+    // `ordered()`.
+    let emit_fixed = is_message
+        && first_tail_snake != Some("fixed")
+        && first_tail_snake != Some("try_fixed")
+        && fixed_fields.is_some();
 
     let mut ts = proc_macro2::TokenStream::new();
     let ordered_doc = if is_message {

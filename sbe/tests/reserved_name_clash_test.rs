@@ -802,3 +802,73 @@ fn tail_accessors_yield_to_colliding_field_names() -> Result<(), Box<dyn std::er
     compile_and_run("tail_clash_rt", &src, "let _ = 1;");
     Ok(())
 }
+
+/// Group-entry metadata getters must yield to schema fields of the same name.
+/// A field `actingVersion` / `actingBlockLength` keeps `acting_version()` /
+/// `acting_block_length()`; the convenience methods are omitted. Unconditional
+/// emission is E0592 (HFT review 2026-09-15).
+#[test]
+fn entry_fields_named_acting_version_and_block_length_compile()
+-> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="entrynames" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="actingVersion" id="2" type="uint16"/>
+      <field name="actingBlockLength" id="3" type="uint16"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("entrynames"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+    assert!(
+        src.contains("pub fn acting_version(&self) -> u16"),
+        "entry field actingVersion keeps acting_version()"
+    );
+    assert!(
+        src.contains("pub fn acting_block_length(&self) -> u16"),
+        "entry field actingBlockLength keeps acting_block_length()"
+    );
+    compile_and_run(
+        "entrynames_rt",
+        &src,
+        r#"
+        let len = MEncoder::compute_length_with_header(1);
+        let mut buf = [0u8; 32];
+        let actual = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MFixedFields {})
+            .rows(1, |g| {
+                g.add(|e| { e.acting_version(7u16).acting_block_length(9u16); Ok(()) })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MDecoder::try_decode(&buf[..actual], 0)?;
+        let mut n = 0;
+        for row in dec.rows()? {
+            assert_eq!(row.acting_version(), 7);
+            assert_eq!(row.acting_block_length(), 9);
+            n += 1;
+        }
+        assert_eq!(n, 1);
+        "#,
+    );
+    Ok(())
+}

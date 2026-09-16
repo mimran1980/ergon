@@ -44,6 +44,14 @@ check_pattern 'ParseError::Unsupported' \
 check_pattern 'schema_parse::unsupported' \
     'ParseError has no unsupported diagnostic code'
 
+# Trust-boundary drift: wrap does not return Result.
+check_pattern 'wrap` return `Result' \
+    'bare wrap panics if short — it does not return Result'
+
+# Copied point estimates (quote a run id instead).
+check_pattern '22-23%' \
+    'do not copy bulk_add latency percentages into the book'
+
 
 if [ $rc -eq 0 ]; then
     echo "check-book-content: PASS"

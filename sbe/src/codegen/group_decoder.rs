@@ -12,7 +12,7 @@ use crate::structured_ir::{
 
 use super::conversion_helpers::{
     enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
+    fixed_array_from_bulk_bytes, named_accessor_ident, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -63,6 +63,18 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
+    // Entry field/tail names. Group entries do not rename against the static
+    // reserved list, so the empty slice matches how their fixed accessors are
+    // emitted. Convenience methods (acting_*, count/len) yield to these.
+    let taken_entry_accessors = owner_accessor_names(
+        &g.fields,
+        conversions,
+        &[],
+        g.groups
+            .iter()
+            .map(|ng| ng.name.as_str())
+            .chain(g.var_data.iter().map(|v| v.name.as_str())),
+    );
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
     let bulk_decode_eligible = g.has_fixed_stride()
@@ -838,20 +850,26 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
-    entry_body.extend(quote::quote! {
-        /// Schema version from the parent message header (or wrap args).
-        #mu
-        #[inline]
-        pub const fn acting_version(&self) -> u16 {
-            self.acting_version
-        }
-        /// Acting block length of this entry's fixed block.
-        #mu
-        #[inline]
-        pub const fn acting_block_length(&self) -> usize {
-            self.acting_block_length
-        }
-    });
+    if let Some(ident) = named_accessor_ident("acting_version", &taken_entry_accessors) {
+        entry_body.extend(quote::quote! {
+            /// Schema version from the parent message header (or wrap args).
+            #mu
+            #[inline]
+            pub const fn #ident(&self) -> u16 {
+                self.acting_version
+            }
+        });
+    }
+    if let Some(ident) = named_accessor_ident("acting_block_length", &taken_entry_accessors) {
+        entry_body.extend(quote::quote! {
+            /// Acting block length of this entry's fixed block.
+            #mu
+            #[inline]
+            pub const fn #ident(&self) -> usize {
+                self.acting_block_length
+            }
+        });
+    }
     // Entry decoders keep a one-shot extent cache in every lane: the group
     // iterator computes each entry's end to advance, and the last var-data
     // accessor reuses it instead of re-reading its length header. Dropping it
@@ -1440,19 +1458,6 @@ pub(crate) fn generate_group_decoder(
         },
         quote::quote! { self.offset },
     ));
-
-    // Entry field accessor names. Group entries do not rename against the
-    // static reserved list, so the empty slice matches how their fixed
-    // accessors are emitted above.
-    let taken_entry_accessors = owner_accessor_names(
-        &g.fields,
-        conversions,
-        &[],
-        g.groups
-            .iter()
-            .map(|ng| ng.name.as_str())
-            .chain(g.var_data.iter().map(|v| v.name.as_str())),
-    );
 
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;

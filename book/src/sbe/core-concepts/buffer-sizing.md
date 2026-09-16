@@ -1,15 +1,10 @@
 # Buffer Sizing
 
-**Why this exists:** true zero-copy publish on Aeron (and similar systems) uses
-**`try_claim` / a pre-sized slot**. The transport hands you a buffer of a
-**known length**; you must know the full encoded message size **before** you
-write. Guessing with an oversized scratch `Vec` and copying later defeats that
-model and is easy to get wrong for groups and var-data.
+Aeron `try_claim` (and similar slots) needs the encoded size **before** you
+write. Guessing with `vec![0u8; 4096]` and copying later defeats that model.
 
-ergo-sbe therefore generates **schema-aware length APIs** so you describe the
-shape you are about to encode (counts, nested groups, var-data byte lengths)
-and get an **exact** size first — safer and easier than hand-computing header +
-block + Σ(groups) + Σ(var-data).
+Describe the shape (group counts, nested groups, var-data lengths) and get an
+**exact** size from the generated API:
 
 | Message shape | Generated sizing | Prefer |
 |---------------|------------------|--------|

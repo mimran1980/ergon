@@ -581,6 +581,63 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// A first tail named `tryFixed` must keep `try_fixed()` and suppress the
+/// ordered `try_fixed` / `fixed` callbacks (same yield as a first tail named
+/// `fixed`). Unconditional emission is E0592 (HFT review 2026-09-15).
+#[test]
+fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="tryfixedclash" id="912" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <sbe:message name="Msg" id="1">
+    <field name="seq" id="10" type="uint32"/>
+    <data name="tryFixed" id="20" type="varStringEncoding"/>
+    <data name="note" id="21" type="varStringEncoding"/>
+  </sbe:message>
+</sbe:messageSchema>"#
+    );
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(&xml)?);
+    let src = Generator::new(GenerationConfig::new("tryfixedclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    assert!(
+        !src.contains("struct MsgDecoderFixedView"),
+        "a first tail named `tryFixed` must suppress the ordered fixed callback"
+    );
+    compile_and_run(
+        "tryfixedclash",
+        &src,
+        r#"
+        let len = MsgEncoder::compute_length_with_header(2, 2);
+        let mut storage = [0u8; 64];
+        assert!(len <= storage.len());
+        let buf = &mut storage[..len];
+        let actual = MsgEncoder::try_wrap_and_apply_header(buf, 0)?
+            .fixed(&MsgFixedFields { seq: 9 })
+            .try_fixed(b"hi")?
+            .note(b"ok")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MsgDecoder::try_decode(&storage[..actual], 0)?;
+        assert_eq!(dec.seq(), 9);
+        let complete = dec.ordered()
+            .try_fixed(|b| { assert_eq!(b, b"hi"); Ok(()) })?
+            .note(|b| { assert_eq!(b, b"ok"); Ok(()) })?
+            .done();
+        assert_eq!(complete.encoded_length_with_header(), actual);
+        "#,
+    );
+    Ok(())
+}
+
 /// Last tail named `done` lives on the stage before complete; `done()` the
 /// completer lives on `Ordered<Complete>`. Different types, so both exist.
 #[test]

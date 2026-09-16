@@ -5,6 +5,8 @@ flags default to the value shown.
 
 | Option | Default | Purpose |
 |--------|---------|---------|
+| `new("module")` / `lean("module")` | `Full` / `Lean` | `lean()` is `new().profile(Lean)` — no Display/Debug, meta attrs, or dispatch |
+| `with_module_name(name)` | from `new` | Override the output module when cloning a base config |
 | `with_conversion(selector)` | — | Generic `*_as::<T>()` / `*_from(&t)` per selected field |
 | `with_domain_type(selector, path)` | — | One canonical app type per field (implies conversion); Generated impl |
 | `with_manual_domain_type(selector, path)` | — | Same signatures, caller supplies `TryFromSbe`/`TryToSbe` |
@@ -25,42 +27,23 @@ flags default to the value shown.
 | `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
 
 Turn off `with_display_debug`, `with_meta_attributes`, and `with_dispatch` to
-reduce generated-code size (~6,100 lines/message with all on). Text fields
-stay bytes unless the schema declares a character encoding (then strict
-UTF-8/ASCII helpers apply).
+shrink generated code. Text fields stay bytes unless the schema declares a
+character encoding (then strict UTF-8/ASCII helpers apply).
 
 ## Decoder lanes (no configuration needed)
 
-Tail-offset memoization used to be a generation-time knob
-(`with_memoized_tail_offsets`), paired with a storage-width knob
-(`with_compact_tail_offsets`). **Both are gone.** A knob forced the choice at
-code-generation time, for the whole module, when the right answer depends on
-how each individual call site reads the message.
-
-It is now a runtime lane. Every generated decoder gives you:
+Memoization is a runtime lane, not a generation knob.
+`with_memoized_tail_offsets` / `with_compact_tail_offsets` are gone.
 
 ```rust,ignore
 let decoder = CarDecoder::try_from(bytes)?;  // small, Sync, recalculates tails
 let decoder = decoder.memoized();            // lazy cache, no allocation
 ```
 
-`Decoder::memoized(self)` consumes the base decoder and returns
-`{Name}MemoizedDecoder`, which has the same getter names and a progressive
-cache of discovered dynamic-tail ends. `into_inner()` goes back.
-
-See [Decoder Lanes](../feature-tour/decode-stages.md) for the decision table
-and the cases where each lane wins. Two things worth repeating here:
-
-- Build the memoized decoder **once** and share `&`-references. Calling
-  `.memoized()` in every function creates a separate empty cache each time.
-- The base decoder is `Sync`; the memoized one is `Send` but not `Sync`
-  (`Cell` interior mutability).
-
-Compact `u32` tail-offset storage was removed with the knob. Adoption here is
-conjunctive — less memory **and** no slower **and** no more instructions — and
-it failed two of the three legs, so it was never a defensible default and is
-not worth a second public surface. The reasoning, and how to re-derive it, is
-in [Benchmarks](../benchmarks.md#decoder-lanes).
+Build it **once** and share `&` references. The base decoder is `Sync`; the
+memoized one is `Send` but not `Sync`. Compact `u32` tail-offset storage was
+measured and removed. Decision table:
+[Decoder Lanes](../feature-tour/decode-stages.md).
 
 ## Typed error conversions
 

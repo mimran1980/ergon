@@ -1230,3 +1230,116 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
     );
     Ok(())
 }
+
+/// `with_all_enums_as_option()` makes a required enum `Option` on the DTO.
+/// Encoding `None` into a reused buffer must write the schema null image,
+/// not leave the previous `Some` bytes (HFT review 2026-09-15).
+#[test]
+fn all_enums_as_option_none_writes_null_on_reused_buffer()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    const XML: &str = r#"<messageSchema package="review" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <enum name="Status" encodingType="uint8">
+      <validValue name="Pending">0</validValue>
+      <validValue name="Done">1</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1"><field name="status" id="1" type="Status"/></message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(
+        GenerationConfig::new("review")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_all_enums_as_option(),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .expect("one module")
+    .source
+    .clone();
+    compile_and_run(
+        "dto_none_null",
+        &src,
+        r#"
+        let mut buffer = [0u8; MEncoder::compute_length_with_header()];
+        MDomain { status: Some(Status::Done) }.encode(&mut buffer)?;
+        let expected = MDomain { status: None };
+        expected.encode(&mut buffer)?;
+        let actual = MDomain::try_from_slice_with_header(&buffer, 0)?;
+        assert_eq!(actual, expected, "None must encode the enum null image on a reused buffer");
+        "#,
+    );
+    Ok(())
+}
+
+/// The same option mapping must compile for a flat bulk-eligible group.
+/// `bulk_add_domain` used to assume `Status` while the DTO field is
+/// `Option<Status>` (E0308/E0277; HFT review 2026-09-15).
+#[test]
+fn all_enums_as_option_flat_group_bulk_compiles_and_nulls()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    const XML: &str = r#"<messageSchema package="reviewg" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <enum name="Status" encodingType="uint8">
+      <validValue name="Pending">0</validValue>
+      <validValue name="Done">1</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="status" id="2" type="Status"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(
+        GenerationConfig::new("reviewg")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_all_enums_as_option(),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .expect("one module")
+    .source
+    .clone();
+    assert!(
+        src.contains("fn bulk_add_domain"),
+        "flat required-enum group stays bulk-eligible"
+    );
+    compile_and_run(
+        "dto_none_bulk",
+        &src,
+        r#"
+        let some = MDomain { rows: vec![MRowsEntryDomain { status: Some(Status::Done) }] };
+        let none = MDomain { rows: vec![MRowsEntryDomain { status: None }] };
+        let len = MEncoder::compute_length_with_header(1);
+        let mut buffer = [0u8; 32];
+        assert!(len <= buffer.len());
+        some.encode(&mut buffer)?;
+        none.encode(&mut buffer)?;
+        let actual = MDomain::try_from_slice_with_header(&buffer, 0)?;
+        assert_eq!(actual, none);
+        "#,
+    );
+    Ok(())
+}

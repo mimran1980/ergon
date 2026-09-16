@@ -29,8 +29,10 @@ Three tiers (see book [Trust Boundary](../book/src/sbe/core-concepts/trust-bound
 | Tier | Methods | Short buffer |
 |------|---------|--------------|
 | Checked | `try_wrap`, `try_wrap_and_apply_header`, `try_decode` | `Result::Err` |
-| Trusted | `wrap`, `wrap_and_apply_header`, `decode` | **panic** after extent proof |
+| Trusted | `wrap`, `wrap_and_apply_header` | **panic** after extent proof |
+| Trusted hybrid | `decode` | **panic** if short; **`Err`** on wrong template/schema |
 | Unchecked | `unsafe fn *_unchecked` | **UB** — caller proves extent |
+| Unchecked hybrid | `unsafe decode_unchecked` | **UB** on OOB extent; **`Err`** on wrong template/schema |
 
 Offsets are **message start** (first byte of the header), not sbe-tool’s body
 offset. Safe constructors prove header + fixed body before unchecked field

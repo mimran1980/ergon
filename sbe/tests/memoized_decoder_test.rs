@@ -673,3 +673,54 @@ fn entry_text_helper_yields_to_a_field_that_already_has_its_name()
     );
     Ok(())
 }
+
+/// A payload longer than the schema max must be rejected on the base lane,
+/// on a cold memoized getter, and on a memoized getter after `encoded_length()`
+/// has already published the (bounds-valid) end. Warming the cache must not
+/// skip the max-length check (HFT review 2026-09-15).
+#[test]
+fn memoized_var_data_rejects_over_max_after_encoded_length()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    const XML: &str = r#"<messageSchema package="bounded" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="boundedData">
+      <type name="length" primitiveType="uint8" maxValue="3"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1"><data name="payload" id="1" type="boundedData"/></message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("bounded"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+    compile_and_run(
+        "bounded_memo_max",
+        &src,
+        r#"
+        // Length 4 exceeds schema maxValue 3; the 4 data bytes are in-bounds.
+        let wire = [0u8, 0, 1, 0, 1, 0, 0, 0, 4, b'a', b'b', b'c', b'd'];
+        let base = MDecoder::try_decode(&wire, 0)?;
+        assert!(matches!(base.payload(), Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })));
+        let memoized = MDecoder::try_decode(&wire, 0)?.memoized();
+        assert!(matches!(memoized.payload(), Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })));
+        let _ = memoized.encoded_length();
+        assert!(matches!(
+            memoized.payload(),
+            Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })
+        ), "warming a boundary cache must not disable schema length validation");
+        "#,
+    );
+    Ok(())
+}

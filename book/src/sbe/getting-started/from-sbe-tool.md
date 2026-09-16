@@ -116,15 +116,17 @@ when the header metadata is not already available:
 
 See [Trust Boundary](../core-concepts/trust-boundary.md).
 
-## Decoding: two jobs
+## Decoding: lanes, not one cursor
 
 sbe-tool gives you a single `&mut` decoder carrying a `limit` cursor. Every
 group and var-data accessor reads at `limit` and advances it, so the order you
-call methods in *is* the wire walk. ergon does not keep that as the default.
-Sequential decode follows the encoder's wire order: `into_*` / `skip_*`
-consumes the stage, so the compiler constrains tail progression. A group whose entries carry
-their own tails takes a visit closure; a fixed-stride group hands back an
-iterator. Random-access `try_decode` is the other job — any order, `Sync`.
+call methods in *is* the wire walk. ergon splits that:
+
+- Sequential: `into_*` / `skip_*` (or `decoder.ordered()` for one callback per tail)
+- Random-access: `try_decode` — any order, `Sync`
+
+A group whose entries carry their own tails takes a visit closure; a
+fixed-stride group hands back an iterator.
 
 **Start here when porting:**
 
@@ -158,8 +160,8 @@ coordinate pair threaded to a second `_slice()` call, and no `&mut` on a
 decoder you only wanted to read.
 
 **Fixed-block messages** — no groups, no var-data — get **no** `memoized()`
-method, and `AnyMessage` offers only `into_<name>()` for them. Every field is
-already random-access off the block, so the base decoder is the whole story.
+or `ordered()`, and `AnyMessage` offers only `into_<name>()` for them. Every
+field is already random-access off the block.
 
 Full per-lane pros, cons, and cost table:
 [Decoder lanes](../feature-tour/decode-stages.md).
@@ -176,7 +178,7 @@ reading mixed-version streams.
 | sbe-tool habit | ergo-sbe |
 |----------------|----------|
 | `.parent()` ownership hop | Encode: nested closures. Decode: consuming stages — a visit closure for dynamic groups, an iterator for fixed-stride ones |
-| One `&mut` decoder with a `limit` cursor | Two jobs: random-access `&Decoder`, or the staged `into_*` chain ([decoder lanes](../feature-tour/decode-stages.md)) |
+| One `&mut` decoder with a `limit` cursor | Lanes: random-access `&Decoder`, staged `into_*`, optional `ordered()` / `.memoized()` ([decoder lanes](../feature-tour/decode-stages.md)) |
 | `_decoder()` returning `(offset, len)` for a second `_slice()` call | Var-data accessors return `&'a [u8]` / `&'a str` directly |
 | Generic `Encoder<State>` spelling | Named stage structs + `H: HeaderState` only for header mode ([type-state note](../design-notes/type-state.md)) |
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |

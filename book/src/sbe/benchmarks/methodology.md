@@ -1,16 +1,13 @@
 # Benchmark Methodology
 
-> **Benchmark review requested.** Generated-codec benchmarking is notoriously
-> difficult and easy to get wrong. Surprising results should be presumed to be
-> benchmark defects until wire parity, equal work, optimizer opacity,
-> sufficiently amplified timing, both LTO profiles, and optimized
-> assembly/instruction counts agree. Please review the methodology and report
-> mistakes; these tables are evidence under review, not unquestionable facts.
+Surprising ratios are benchmark defects until wire parity, equal work,
+optimizer opacity, amplified timing, both LTO profiles, and instruction
+counts agree. This page is the method and the gate, not a point-estimate
+table.
 
-ergon's maintained benchmarks compare generated codecs with official
-**sbe-tool** output performing equivalent work. Results are machine- and
-toolchain-specific, so this repository documents the method and gate rather
-than retaining dated point estimates as release guarantees.
+Maintained comparisons run generated codecs against official **sbe-tool**
+output doing equivalent work. Quote a result by run id; do not copy numbers
+here.
 
 ## What the numbers actually measure
 
@@ -81,9 +78,10 @@ does not establish literal parity.
 
 ## Scenarios
 
-All 10 SBE and 5 cluster parity comparisons are documented in
-[Benchmark Results](../benchmarks.md). Each arm performs identical logical
-work: equal trust assumptions, pre-computed headers, matching field subsets,
-symmetrical `black_box`, and pre-timing byte/value assertions.
+The maintained SBE and cluster pairs live in `scripts/check-bench-gate.sh`
+and are listed in [Benchmark Results](../benchmarks.md). Each arm performs
+identical logical work: equal trust assumptions, pre-computed headers,
+matching field subsets, symmetrical `black_box`, and pre-timing byte/value
+assertions.
 
 [Results →](../benchmarks.md)

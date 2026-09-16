@@ -5,8 +5,8 @@
 //! [`super::conversion_helpers`], [`super::runtime`], and `structured_ir` types.
 
 use super::conversion_helpers::{
-    domain_encode_setter_name, dto_domain_type, field_has_conversion_free, find_domain_type,
-    message_field_infos,
+    domain_encode_setter_name, dto_domain_type, enum_uses_null_as_option, field_has_conversion_free,
+    find_domain_type, message_field_infos,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
@@ -87,6 +87,8 @@ pub(crate) fn domain_bulk_slot_write_tokens(
     fields: &[MessageField],
     byte_order: ByteOrder,
     span: proc_macro2::Span,
+    null_as_option: &[crate::ConversionSelector],
+    all_enums_as_option: bool,
 ) -> proc_macro2::TokenStream {
     let to_endian = match byte_order {
         ByteOrder::LittleEndian => syn::Ident::new("to_le_bytes", span),
@@ -107,7 +109,28 @@ pub(crate) fn domain_bulk_slot_write_tokens(
                         .copy_from_slice(&entry.#f_name.0);
                 });
             }
-            FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
+            FieldType::Enum {
+                name: enum_name,
+                encoding_type,
+                ..
+            } => {
+                let r_ty = syn::Ident::new(rust_type(*encoding_type), span);
+                let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
+                let value = if enum_uses_null_as_option(
+                    enum_name,
+                    null_as_option,
+                    all_enums_as_option,
+                ) {
+                    quote::quote! { entry.#f_name.unwrap_or(#type_ident::NullVal) }
+                } else {
+                    quote::quote! { entry.#f_name }
+                };
+                writes.extend(quote::quote! {
+                    slot[#f_offset..#f_offset + #f_size]
+                        .copy_from_slice(&(#r_ty::from(#value)).#to_endian());
+                });
+            }
+            FieldType::Set { encoding_type, .. } => {
                 let r_ty = syn::Ident::new(rust_type(*encoding_type), span);
                 writes.extend(quote::quote! {
                     slot[#f_offset..#f_offset + #f_size]
@@ -190,8 +213,14 @@ fn push_named_type_cell(
         if f.since_version > 0 || accessor_optional {
             struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
             from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-            encode_stmts
-                .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+            if accessor_optional {
+                encode_stmts.push(quote::quote! {
+                    enc.#f_ident(self.#f_ident.unwrap_or(#type_ident::NullVal));
+                });
+            } else {
+                encode_stmts
+                    .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
+            }
         } else {
             struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
             from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
@@ -752,7 +781,13 @@ pub(crate) fn generate_domain_recursive(
                     }
                 }
             }
-            let slot_writes = domain_bulk_slot_write_tokens(&g.fields, byte_order, span);
+            let slot_writes = domain_bulk_slot_write_tokens(
+                &g.fields,
+                byte_order,
+                span,
+                null_as_option,
+                all_enums_as_option,
+            );
             ts.extend(quote::quote! {
                 impl<'a> #g_encoder_ident<'a> {
                     /// Encode flat domain entries with one complete-region bounds check
@@ -1154,8 +1189,21 @@ pub(crate) fn generate_domain_recursive(
                     continue;
                 }
                 let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
+                let value = match &f.field_type {
+                    FieldType::Enum { name: enum_name, .. }
+                        if enum_uses_null_as_option(
+                            enum_name,
+                            null_as_option,
+                            all_enums_as_option,
+                        ) =>
+                    {
+                        let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
+                        quote::quote! { self.#f_ident.unwrap_or(#type_ident::NullVal) }
+                    }
+                    _ => quote::quote! { self.#f_ident },
+                };
                 wire_fields.extend(quote::quote! {
-                    #f_ident: self.#f_ident,
+                    #f_ident: #value,
                 });
             }
             ts.extend(quote::quote! {

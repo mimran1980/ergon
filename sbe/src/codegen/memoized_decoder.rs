@@ -238,6 +238,14 @@ pub(crate) fn generate_memoized_decoder(
                 let buf = self.inner.buf;
                 if let Some(end) = self.cache.end_of(#slot_lit) {
                     let data_start = offset + #prefix_lit;
+                    let wire_length = (end - data_start) as u64;
+                    if wire_length > #max_lit as u64 {
+                        return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                            field: stringify!(#vd_ident),
+                            length: wire_length,
+                            max_length: #max_lit as u64,
+                        });
+                    }
                     return Ok(&buf[data_start..end]);
                 }
                 if offset + #prefix_lit > buf.len() {

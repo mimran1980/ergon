@@ -8229,6 +8229,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(2) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(manufacturer),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {
@@ -8293,6 +8301,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(3) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(model),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {
@@ -8355,6 +8371,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(4) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(activation_code),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {

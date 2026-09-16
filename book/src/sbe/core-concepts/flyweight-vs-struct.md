@@ -1,7 +1,6 @@
 # Flyweight vs Whole-Struct
 
-You can work **field-by-field** (classic flyweight) **or** fill / materialise a
-**whole struct**. Use the style that matches how much of the message you touch.
+Use the style that matches how much of the message you touch.
 
 | Style | Best when | Cost | Schema evolution |
 |-------|-----------|------|------------------|
