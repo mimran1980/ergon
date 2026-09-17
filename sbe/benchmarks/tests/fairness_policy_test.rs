@@ -167,9 +167,16 @@ fn full_message_decode_arms_use_unchecked_wrap_and_include_ordered_path()
     }
     let ordered = timed_arm_body(source, "ergo-sbe_ordered").ok_or("missing ordered arm")?;
     assert!(
-        ordered.contains(".ordered()") && ordered.contains(".fuel_figures("),
-        "the ordered arm must exercise the ordered lane, not a second copy of \
-         the staged one — the two labels measured the same API before"
+        ordered.contains(".ordered()")
+            && ordered.contains(".fuel_figures(")
+            && ordered.contains("entry.ordered()")
+            && ordered.contains(".usage_description(")
+            && ordered.contains(".acceleration(")
+            && !ordered.contains("into_usage_description")
+            && !ordered.contains("into_acceleration")
+            && !ordered.contains("info.index"),
+        "the ordered arm must walk recursively with ordered callbacks at every \
+         tail — not staged into_* inside entries, and not extra index reads"
     );
     let consuming = timed_arm_body(source, "ergo-sbe_consuming").ok_or("missing consuming arm")?;
     assert!(

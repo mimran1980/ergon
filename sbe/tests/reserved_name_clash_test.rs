@@ -79,7 +79,7 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields {
                 remaining: Some(7),
                 buffer: [10, 20, 30, 40],
@@ -89,7 +89,7 @@ fn optional_and_array_fields_named_after_reserved_methods_compile()
             })
             .encoded_length_with_header();
 
-        let dec = MsgDecoder::try_from(&buf[..len]).expect("decode");
+        let dec = MsgDecoder::try_from(&buf[..len])?;
         // Field accessors use natural names (no _field).
         assert_eq!(dec.remaining(), Some(7));
         assert_eq!(dec.buffer(), [10, 20, 30, 40]);
@@ -188,7 +188,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields {
                 encoded_length: 11,
                 encoded_length_with_header: 22,
@@ -200,7 +200,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
                 buffer_too_short: 88,
             })
             .encoded_length_with_header();
-        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        let dec = MsgDecoder::try_from(&buf[..n])?;
         assert_eq!(dec.encoded_length_field(), 11);
         assert_eq!(dec.encoded_length_with_header_field(), 22);
         // as_body_bytes / as_bytes_with_header are on DECODER_RESERVED too.
@@ -267,12 +267,12 @@ fn rewind_field_vs_consuming_method() -> Result<(), Box<dyn std::error::Error>> 
         let payload = b"hello";
         let len = MsgEncoder::compute_length_with_header(payload.len());
         let mut buf = vec![0u8; len];
-        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { rewind: 42, normal: 99 })
             .payload(payload)?
             .encoded_length_with_header();
 
-        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        let dec = MsgDecoder::try_from(&buf[..n])?;
         assert_eq!(dec.rewind_field(), 42);
         assert_eq!(dec.payload(), Ok(payload.as_slice()));
         // rewind() consumes self → returns fresh initial decoder.
@@ -315,18 +315,18 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { x: 1, maybe: Some(2) })
             .encoded_length_with_header();
-        let dec = MsgDecoder::try_from(&buf[..n]).expect("decode");
+        let dec = MsgDecoder::try_from(&buf[..n])?;
         assert_eq!(dec.x(), 1);
         assert_eq!(dec.maybe(), Some(2));
 
         // `fixed(None)` writes the schema null image for optional fields.
-        let n2 = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let n2 = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { x: 99, maybe: None })
             .encoded_length_with_header();
-        let dec2 = MsgDecoder::try_from(&buf[..n2]).expect("decode");
+        let dec2 = MsgDecoder::try_from(&buf[..n2])?;
         assert_eq!(dec2.x(), 99);
         assert_eq!(dec2.maybe(), None);
         "#,
@@ -390,7 +390,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
         &src,
         r#"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
-        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields {
                 type_: 1,
                 fn_: 2,
@@ -399,7 +399,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
             })
             .encoded_length_with_header();
 
-        let dec = MsgDecoder::try_from(&buf[..len]).expect("decode");
+        let dec = MsgDecoder::try_from(&buf[..len])?;
         assert_eq!(dec.type_(), 1);
         assert_eq!(dec.fn_(), 2);
         assert_eq!(dec.match_(), 3);
@@ -449,11 +449,11 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
         &src,
         r#"
         let mut buf = [0u8; Self_Encoder::compute_length_with_header()];
-        let len = Self_Encoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
+        let len = Self_Encoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&Self_FixedFields { value: 42 })
             .encoded_length_with_header();
 
-        let dec = Self_Decoder::try_from(&buf[..len]).expect("decode");
+        let dec = Self_Decoder::try_from(&buf[..len])?;
         assert_eq!(dec.value(), 42);
         "#,
     );

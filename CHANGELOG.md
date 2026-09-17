@@ -17,6 +17,10 @@
 - Domain `None` for a `with_all_enums_as_option()` (or `with_null_as_option`)
   enum writes `NullVal` into a reused buffer. Flat-group `bulk_add_domain`
   and `to_wire_entry` honour `Option<Enum>` the same way.
+- The gated `ergo-sbe_ordered` Car decode arm walks recursively with ordered
+  callbacks at every tail and observes the same fields as the staged
+  consuming arm. `fairness_policy_test` rejects staged `into_*` inside that
+  arm.
 
 ## [0.1.28] — 2026-09-15
 

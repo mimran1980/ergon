@@ -371,6 +371,53 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
     Ok(())
 }
 
+/// `characterEncoding` on the `<data>` element, not on the composite member.
+/// Dropping it used to emit raw `&[u8]` with no `*_as_str`.
+#[test]
+fn data_element_character_encoding_emits_as_str() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="vdelem" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="note" id="2" type="varStringEncoding" characterEncoding="UTF-8"/>
+  </message>
+</messageSchema>"#;
+    let src = generated_source_from("vdelem", XML)?;
+    assert!(
+        src.contains("fn note_as_str("),
+        "data-element characterEncoding must emit *_as_str, got:\n{src}"
+    );
+    compile_and_run(
+        "vdelem",
+        &src,
+        r#"
+        let len = MEncoder::compute_length_with_header("hi".len());
+        let mut buf = [0u8; 32];
+        assert!(len <= buf.len());
+        let actual = MEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&MFixedFields {})
+            .note_as_str("hi")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MDecoder::try_decode(&buf[..actual], 0)?;
+        assert_eq!(dec.note_as_str()?, "hi");
+        let (text, _) = MDecoder::try_decode(&buf[..actual], 0)?.into_note_as_str()?;
+        assert_eq!(text, "hi");
+        "#,
+    );
+    Ok(())
+}
+
 #[test]
 fn as_str_setter_stands_down_when_a_sibling_field_already_claims_the_name()
 -> Result<(), Box<dyn std::error::Error>> {

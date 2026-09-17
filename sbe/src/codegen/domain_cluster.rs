@@ -121,7 +121,7 @@ pub(crate) fn domain_bulk_slot_write_tokens(
                     null_as_option,
                     all_enums_as_option,
                 ) {
-                    quote::quote! { entry.#f_name.unwrap_or(#type_ident::NullVal) }
+                    dto_enum_or_null(&quote::quote! { entry }, &f_name, &type_ident)
                 } else {
                     quote::quote! { entry.#f_name }
                 };
@@ -186,6 +186,17 @@ pub(crate) fn domain_has_conversion(
     false
 }
 
+/// Wire image for a DTO `Option<Enum>`: `Some(v)` writes `v`, `None` writes
+/// [`NullVal`]. Shared by encode, bulk slot write, and `to_wire_entry` so
+/// those three cannot drift.
+fn dto_enum_or_null(
+    owner: &proc_macro2::TokenStream,
+    field: &syn::Ident,
+    type_ident: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    quote::quote! { #owner.#field.unwrap_or(#type_ident::NullVal) }
+}
+
 /// Push the DTO field, `from_decoder` expression, and encode statement for a
 /// field whose wire type is a generated named type (non-boolean enum, set).
 ///
@@ -214,8 +225,9 @@ fn push_named_type_cell(
             struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
             from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
             if accessor_optional {
+                let value = dto_enum_or_null(&quote::quote! { self }, f_ident, type_ident);
                 encode_stmts.push(quote::quote! {
-                    enc.#f_ident(self.#f_ident.unwrap_or(#type_ident::NullVal));
+                    enc.#f_ident(#value);
                 });
             } else {
                 encode_stmts
@@ -1198,7 +1210,7 @@ pub(crate) fn generate_domain_recursive(
                         ) =>
                     {
                         let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                        quote::quote! { self.#f_ident.unwrap_or(#type_ident::NullVal) }
+                        dto_enum_or_null(&quote::quote! { self }, &f_ident, &type_ident)
                     }
                     _ => quote::quote! { self.#f_ident },
                 };

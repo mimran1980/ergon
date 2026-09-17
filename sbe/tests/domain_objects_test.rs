@@ -1277,6 +1277,30 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer()
         assert_eq!(actual, expected, "None must encode the enum null image on a reused buffer");
         "#,
     );
+
+    let src_selector = Generator::new(
+        GenerationConfig::new("reviewsel")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_null_as_option(ergo_sbe::ConversionSelector::named_type("Status")),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .expect("one module")
+    .source
+    .clone();
+    compile_and_run(
+        "dto_none_null_selector",
+        &src_selector,
+        r#"
+        let mut buffer = [0u8; MEncoder::compute_length_with_header()];
+        MDomain { status: Some(Status::Done) }.encode(&mut buffer)?;
+        let expected = MDomain { status: None };
+        expected.encode(&mut buffer)?;
+        let actual = MDomain::try_from_slice_with_header(&buffer, 0)?;
+        assert_eq!(actual, expected, "with_null_as_option None must write NullVal");
+        "#,
+    );
     Ok(())
 }
 
@@ -1339,6 +1363,10 @@ fn all_enums_as_option_flat_group_bulk_compiles_and_nulls()
         none.encode(&mut buffer)?;
         let actual = MDomain::try_from_slice_with_header(&buffer, 0)?;
         assert_eq!(actual, none);
+        assert_eq!(
+            MRowsEntryDomain { status: None }.to_wire_entry().status,
+            Status::NullVal
+        );
         "#,
     );
     Ok(())

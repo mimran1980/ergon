@@ -655,7 +655,8 @@ fn iterator_surface_body(encode_extra: bool) -> String {
 }
 
 #[test]
-fn decoder_iterator_surface_matrix() {
+fn decoder_iterator_surface_matrix() -> Result<(), Box<dyn std::error::Error>> {
     let (_, src) = generate_domain_with(&matrix_schema(), "cm_iterators", |c| c);
     compile_and_run_with_deps("cm_iterators", &src, &iterator_surface_body(true), "");
+    Ok(())
 }

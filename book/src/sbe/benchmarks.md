@@ -73,9 +73,9 @@ Maintained encode/decode use `*_unchecked` constructors so both arms skip
 extent proofs. Checked constructors have separately labelled diagnostic arms;
 the gate does not read them.
 
-The Car `ergo-sbe_ordered` arm is not an equal-work ranking of decoder lanes.
-See [Decoder lanes](feature-tour/decode-stages.md) and
-`versioned_l3_bench` (ergon-vs-ergon, no `1.00` gate).
+The Car `ergo-sbe_ordered` arm uses recursive ordered callbacks at every tail
+and the same field observations as the staged consuming arm. Lane-to-lane
+cost (ergon vs ergon) is `versioned_l3_bench`, which is not a `1.00` gate.
 
 ## Diagnostics (not gated)
 
