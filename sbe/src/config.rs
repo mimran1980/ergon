@@ -570,6 +570,12 @@ impl GenerationConfig {
     ///
     /// `path` must work in `pub use <path> as sbe_rt;`.
     ///
+    /// The owner sizes its runtime to its own schema. When this module needs
+    /// ordered-lane types the owner may lack (`EntryInfo`, `Ordered`,
+    /// `OrderedFixed`), it instead emits a `sbe_rt` module that glob re-exports
+    /// the owner's runtime and defines those types beside it, so every other
+    /// runtime item is still the owner's.
+    ///
     /// ```
     /// # use ergo_sbe::GenerationConfig;
     /// // first module embeds sbe_rt; later modules do:

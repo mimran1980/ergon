@@ -173,8 +173,9 @@ The view has no group/var-data accessors. A first tail named `fixed` or
 `tryFixed` suppresses the callback — read those fields before `ordered()`.
 Entry-level wrappers have no `fixed`: the parent already holds the entry.
 
-Empty / version-absent groups invoke the callback zero times;
-`<group>_count()` on the ordered stage still reports the declared count.
+Empty and version-absent groups invoke the callback zero times.
+`<group>_count()` on the ordered stage reports the wire-declared count for an
+empty group and `0` for a group the wire version predates, which has no count.
 
 Bytes and text callbacks borrow `'a` from the original buffer. A callback
 error consumes the stage. Prefer ordered when you always decode whole

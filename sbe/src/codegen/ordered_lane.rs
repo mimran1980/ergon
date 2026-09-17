@@ -9,7 +9,7 @@ use crate::structured_ir::{
     MessageField, OwnerTailGroup, OwnerTailVarData, decoder_stage_after_ident,
 };
 
-use super::conversion_helpers::tail_accessor_ident;
+use super::conversion_helpers::{acting_accessors, tail_accessor_ident};
 use super::memoized_decoder::forward_fixed_fields;
 
 /// Fixed-field set used to generate the ordered lane's message-level view.
@@ -101,6 +101,13 @@ pub(crate) fn generate_ordered_lane(
     if emit_fixed {
         let ff = fixed_fields.as_ref().expect("emit_fixed implies Some");
         let view_ident = syn::Ident::new(&format!("{stage_prefix}FixedView"), span);
+        // Forwarded fields carry their `DECODER_RESERVED` renames, so a field
+        // can never own `acting_*` on the view.
+        let view_acting = acting_accessors(
+            &[],
+            &quote::quote! { self.inner },
+            &proc_macro2::TokenStream::new(),
+        );
         let forwarded = forward_fixed_fields(
             ff.fields,
             ff.conversions,
@@ -121,21 +128,14 @@ pub(crate) fn generate_ordered_lane(
                 inner: &'v #initial_ident<'a>,
             }
             impl<'v, 'a> #view_ident<'v, 'a> {
-                /// Schema version from the message header (or wrap args).
-                #[inline]
-                pub const fn acting_version(&self) -> u16 {
-                    self.inner.acting_version()
-                }
-                /// Acting block length from the wire header / wrap args.
-                #[inline]
-                pub const fn acting_block_length(&self) -> usize {
-                    self.inner.acting_block_length()
-                }
+                #view_acting
                 #forwarded
             }
             impl<'a> #decoder_ty {
-                /// Read the fixed block before any tail. Consumes this stage
-                /// so a first tail named `fixed` cannot collide with this method.
+                /// Read the fixed block before any tail, then continue from a
+                /// distinct stage that carries only the tail methods. Not
+                /// generated when the first tail is itself named `fixed` or
+                /// `tryFixed`; read fixed fields before `ordered()` there.
                 #[inline]
                 pub fn fixed<F>(
                     self,
@@ -240,16 +240,16 @@ pub(crate) fn generate_ordered_lane(
             }
         }
     });
+    // The last wrapper holds only `done` and extent methods, which no tail can
+    // share a name with here, and the staged stage it wraps has no fields.
+    let last_acting = acting_accessors(
+        &[],
+        &quote::quote! { self.inner },
+        &proc_macro2::TokenStream::new(),
+    );
     ts.extend(quote::quote! {
         impl<'a> #last_ty {
-            #[inline]
-            pub const fn acting_version(&self) -> u16 {
-                self.inner.acting_version()
-            }
-            #[inline]
-            pub const fn acting_block_length(&self) -> usize {
-                self.inner.acting_block_length()
-            }
+            #last_acting
             #[doc = #done_doc]
             #[inline]
             pub fn done(self) -> #last<'a> {
@@ -270,24 +270,29 @@ fn emit_tail_stage(
     vardata: &[OwnerTailVarData],
     staged_stage: &dyn Fn(usize) -> syn::Ident,
     taken_accessors: &[String],
-    check_taken_peek: bool,
+    wraps_decoder: bool,
     span: proc_macro2::Span,
 ) -> proc_macro2::TokenStream {
     let next = staged_stage(i);
     let next_ty = quote::quote! { sbe_rt::Ordered<#next<'a>> };
-    let acting = quote::quote! {
-        #[inline]
-        pub const fn acting_version(&self) -> u16 {
-            #inner_access.acting_version()
-        }
-        #[inline]
-        pub const fn acting_block_length(&self) -> usize {
-            #inner_access.acting_block_length()
-        }
+    // Per type, not per owner. The first wrapper sits on the decoder itself, so
+    // every field and tail name is in play; a later wrapper defines only tail
+    // `i`'s methods, so only that tail can take `acting_*` from it.
+    let tail_name = if i < groups.len() {
+        &groups[i].accessor_snake
+    } else {
+        &vardata[i - groups.len()].accessor_snake
     };
+    let own_tail = [tail_name.clone()];
+    let acting_taken = if wraps_decoder {
+        taken_accessors
+    } else {
+        &own_tail[..]
+    };
+    let acting = acting_accessors(acting_taken, inner_access, &proc_macro2::TokenStream::new());
     if i < groups.len() {
         let tg = &groups[i];
-        let peek = peek_count(inner_access, tg, taken_accessors, check_taken_peek);
+        let peek = peek_count(inner_access, tg, taken_accessors, wraps_decoder);
         let methods = emit_group_methods(inner_access, tg, &next_ty, span);
         quote::quote! {
             impl<'a> #current_ty {
@@ -298,7 +303,7 @@ fn emit_tail_stage(
         }
     } else {
         let vd = &vardata[i - groups.len()];
-        let peek = peek_len(inner_access, vd, taken_accessors, check_taken_peek);
+        let peek = peek_len(inner_access, vd, taken_accessors, wraps_decoder);
         let methods = emit_vardata_methods(inner_access, vd, &next_ty, span);
         quote::quote! {
             impl<'a> #current_ty {

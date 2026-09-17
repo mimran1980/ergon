@@ -359,11 +359,51 @@ pub(crate) fn tail_accessor_ident(
 
 /// Emit this inherent method name, or `None` when a field or sibling tail
 /// already owns it. The existing accessor keeps its name; the convenience
-/// method is omitted. Used for entry `acting_version` / `acting_block_length`
+/// method is omitted. Used for `acting_version` / `acting_block_length`
 /// the same way [`tail_accessor_ident`] is used for count/len.
 pub(crate) fn named_accessor_ident(name: &str, taken: &[String]) -> Option<syn::Ident> {
     (!taken.iter().any(|n| n == name))
         .then(|| syn::Ident::new(name, proc_macro2::Span::call_site()))
+}
+
+/// `acting_version()` / `acting_block_length()` for one type, each omitted when
+/// `taken` (the names that type already defines) owns it.
+///
+/// Every decoder, stage, and ordered wrapper emits these through this one
+/// helper, so the yield decision cannot drift between locations. `owner` is an
+/// expression reaching the struct carrying the `acting_version` /
+/// `acting_block_length` *fields*: reading the fields rather than calling the
+/// methods keeps the body valid when an inner type yielded the name to a
+/// non-`const` field getter or tail accessor.
+pub(crate) fn acting_accessors(
+    taken: &[String],
+    owner: &proc_macro2::TokenStream,
+    attrs: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let version = named_accessor_ident("acting_version", taken).map(|ident| {
+        quote::quote! {
+            /// Schema version from the message header (or wrap args), not the
+            /// compiled schema constant. Fields with `sinceVersion` and optional
+            /// presence depend on this value.
+            #attrs
+            #[inline]
+            pub const fn #ident(&self) -> u16 {
+                #owner.acting_version
+            }
+        }
+    });
+    let block_length = named_accessor_ident("acting_block_length", taken).map(|ident| {
+        quote::quote! {
+            /// Block length from the wire header / wrap args. Tail offsets use
+            /// this acting length, not only the compiled `BLOCK_LENGTH`.
+            #attrs
+            #[inline]
+            pub const fn #ident(&self) -> usize {
+                #owner.acting_block_length
+            }
+        }
+    });
+    quote::quote! { #version #block_length }
 }
 
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).

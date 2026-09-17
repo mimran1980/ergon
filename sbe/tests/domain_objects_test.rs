@@ -1235,8 +1235,8 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
 /// Encoding `None` into a reused buffer must write the schema null image,
 /// not leave the previous `Some` bytes (HFT review 2026-09-15).
 #[test]
-fn all_enums_as_option_none_writes_null_on_reused_buffer()
--> Result<(), Box<dyn std::error::Error>> {
+fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>>
+{
     use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
     const XML: &str = r#"<messageSchema package="review" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -1308,8 +1308,8 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer()
 /// `bulk_add_domain` used to assume `Status` while the DTO field is
 /// `Option<Status>` (E0308/E0277; HFT review 2026-09-15).
 #[test]
-fn all_enums_as_option_flat_group_bulk_compiles_and_nulls()
--> Result<(), Box<dyn std::error::Error>> {
+fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dyn std::error::Error>>
+{
     use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
     const XML: &str = r#"<messageSchema package="reviewg" id="1" version="0" byteOrder="littleEndian">
   <types>

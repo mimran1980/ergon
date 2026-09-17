@@ -14,8 +14,20 @@ mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
 const ENCODE: &str = r#"
-    let mut storage = [0u8; 512];
-    let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+    let sized = CarEncodedLength::new()
+        .fuel_figures_ragged(2, |b| {
+            b.add()?.usage_description(2)?;
+            b.add()?.usage_description(3)?;
+            Ok(())
+        })?
+        .performance_figures(1)
+        .acceleration(3)?
+        .manufacturer(5)?
+        .model(5)?
+        .activation_code(3)?
+        .encoded_length_with_header();
+    let mut storage = [0u8; 256];
+    let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
         .fixed(&CarFixedFields {
             serial_number: 7,
             model_year: 2020,
@@ -47,6 +59,7 @@ const ENCODE: &str = r#"
         .model(b"Civic")?
         .activation_code(b"abc")?
         .encoded_length_with_header();
+    assert_eq!(len, sized);
     let encoded = &storage[..len];
 "#;
 
@@ -97,11 +110,11 @@ fn ordered_lane_walks_every_tail_with_entry_info() -> Result<(), Box<dyn std::er
                 Ok(())
             }})?
             .model(|b| {{
-                text.push(String::from_utf8(b.to_vec()).unwrap());
+                text.push(String::from_utf8_lossy(b).into_owned());
                 Ok(())
             }})?
             .activation_code(|b| {{
-                text.push(String::from_utf8(b.to_vec()).unwrap());
+                text.push(String::from_utf8_lossy(b).into_owned());
                 Ok(())
             }})?;
 
@@ -124,8 +137,17 @@ fn ordered_lane_empty_group_invokes_nothing() -> Result<(), Box<dyn std::error::
         "ordered_empty",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&CarFixedFields {
                 serial_number: 1, model_year: 0, available: BooleanType::F,
                 code: Model::NullVal, some_numbers: [0u32; 4], vehicle_code: [0u8; 6],
@@ -138,6 +160,7 @@ fn ordered_lane_empty_group_invokes_nothing() -> Result<(), Box<dyn std::error::
             .model(b"")?
             .activation_code(b"")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
 
         let mut calls = 0usize;
@@ -314,12 +337,14 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
         "nogroups",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = FlatEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = FlatEncoder::compute_length_with_header(3, 2);
+        let mut storage = [0u8; 64];
+        let len = FlatEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&FlatFixedFields { seq: 9 })
             .label(b"abc")?
             .note(b"de")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
 
         let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -894,8 +919,17 @@ fn ordered_lane_empty_group_count_is_peekable() -> Result<(), Box<dyn std::error
         "ordered_empty_count",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&CarFixedFields {
                 serial_number: 1, model_year: 0, available: BooleanType::F,
                 code: Model::NullVal, some_numbers: [0u32; 4], vehicle_code: [0u8; 6],
@@ -908,6 +942,7 @@ fn ordered_lane_empty_group_count_is_peekable() -> Result<(), Box<dyn std::error
             .model(b"")?
             .activation_code(b"")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
         let ord = CarDecoder::try_decode(encoded, 0)?.ordered();
         assert_eq!(ord.fuel_figures_count()?, 0);

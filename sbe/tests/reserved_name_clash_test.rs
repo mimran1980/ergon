@@ -186,7 +186,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
     compile_and_run(
         "eclash",
         &src,
-        r#"
+        r"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
         let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields {
@@ -212,7 +212,7 @@ fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error
         assert_eq!(dec.fixed(), 66);
         assert_eq!(dec.raw_fixed(), 77);
         assert_eq!(dec.buffer_too_short(), 88);
-        "#,
+        ",
     );
 
     Ok(())
@@ -313,7 +313,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
     compile_and_run(
         "optfix",
         &src,
-        r#"
+        r"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
         let n = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields { x: 1, maybe: Some(2) })
@@ -329,7 +329,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
         let dec2 = MsgDecoder::try_from(&buf[..n2])?;
         assert_eq!(dec2.x(), 99);
         assert_eq!(dec2.maybe(), None);
-        "#,
+        ",
     );
 
     Ok(())
@@ -388,7 +388,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
     compile_and_run(
         "kw",
         &src,
-        r#"
+        r"
         let mut buf = [0u8; MsgEncoder::compute_length_with_header()];
         let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&MsgFixedFields {
@@ -404,7 +404,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
         assert_eq!(dec.fn_(), 2);
         assert_eq!(dec.match_(), 3);
         assert_eq!(dec.impl_(), 4);
-        "#,
+        ",
     );
 
     Ok(())
@@ -447,7 +447,7 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
     compile_and_run(
         "kwmsg",
         &src,
-        r#"
+        r"
         let mut buf = [0u8; Self_Encoder::compute_length_with_header()];
         let len = Self_Encoder::try_wrap_and_apply_header(&mut buf, 0)?
             .fixed(&Self_FixedFields { value: 42 })
@@ -455,7 +455,7 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
 
         let dec = Self_Decoder::try_from(&buf[..len])?;
         assert_eq!(dec.value(), 42);
-        "#,
+        ",
     );
 
     Ok(())
@@ -849,7 +849,7 @@ fn entry_fields_named_acting_version_and_block_length_compile()
     compile_and_run(
         "entrynames_rt",
         &src,
-        r#"
+        r"
         let len = MEncoder::compute_length_with_header(1);
         let mut buf = [0u8; 32];
         let actual = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
@@ -868,7 +868,153 @@ fn entry_fields_named_acting_version_and_block_length_compile()
             n += 1;
         }
         assert_eq!(n, 1);
-        "#,
+        ",
+    );
+    Ok(())
+}
+
+/// `acting_version` / `acting_block_length` yield to a schema name at every
+/// location that owns tails: entry fields beside an entry ordered lane, entry
+/// tails, and message tails. The earlier entry test used a group with no tails,
+/// so it never generated the ordered lane that still emitted both names
+/// unconditionally (E0592 on a tail, E0015 on a non-const field getter).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn acting_names_yield_on_tail_owners_and_ordered_lanes() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="actingtails" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="E" id="1">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="actingVersion" id="2" type="uint16"/>
+      <field name="actingBlockLength" id="3" type="uint16"/>
+      <data name="note" id="4" type="varStringEncoding"/>
+    </group>
+  </message>
+  <message name="T" id="2">
+    <group name="items" id="1" dimensionType="groupSizeEncoding">
+      <field name="px" id="2" type="uint32"/>
+      <group name="actingBlockLength" id="3" dimensionType="groupSizeEncoding">
+        <field name="q" id="4" type="uint32"/>
+      </group>
+      <data name="actingVersion" id="5" type="varStringEncoding"/>
+    </group>
+  </message>
+  <message name="M" id="3">
+    <field name="x" id="1" type="uint32"/>
+    <group name="actingBlockLength" id="2" dimensionType="groupSizeEncoding">
+      <field name="q" id="3" type="uint32"/>
+    </group>
+    <data name="actingVersion" id="4" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("actingtails"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    compile_and_run(
+        "actingtails_rt",
+        &src,
+        r#"
+    // E: entry fields own `acting_*`; the entry ordered lane must still exist.
+    let len = EEncodedLength::new().rows(1).note(2)?.encoded_length_with_header();
+    let mut storage = [0u8; 64];
+    let buf = &mut storage[..len];
+    let actual = EEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&EFixedFields {})
+        .rows(1, |g| {
+            g.add(|mut e| { e.acting_version(7u16).acting_block_length(9u16); e.note(b"hi") })?;
+            Ok(())
+        })?
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
+    let mut notes = Vec::new();
+    let done = EDecoder::try_decode(&storage[..actual], 0)?
+        .ordered()
+        .rows(|e, _| {
+            assert_eq!((e.acting_version(), e.acting_block_length()), (7, 9));
+            Ok(e.ordered().note(|b| { notes.push(b.to_vec()); Ok(()) })?)
+        })?;
+    assert_eq!(done.acting_version(), 0);
+    assert_eq!(notes, vec![b"hi".to_vec()]);
+
+    // T: entry tails own `acting_*`.
+    let len = TEncodedLength::new()
+        .items_ragged(1, |b| {
+            b.add()?.acting_block_length(|n| { n.uniform(1)?; Ok(()) })?.acting_version(1)?;
+            Ok(())
+        })?
+        .encoded_length_with_header();
+    let mut storage = [0u8; 64];
+    let buf = &mut storage[..len];
+    let actual = TEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&TFixedFields {})
+        .items(1, |g| {
+            g.add(|mut e| {
+                e.px(3);
+                e.acting_block_length(1, |n| { n.add(|q| { q.q(5); Ok(()) })?; Ok(()) })?
+                    .acting_version(b"v")
+            })?;
+            Ok(())
+        })?
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
+    let mut seen = Vec::new();
+    TDecoder::try_decode(&storage[..actual], 0)?
+        .ordered()
+        .items(|e, _| {
+            assert_eq!(e.acting_version_len()?, 1);
+            let stage = e.ordered();
+            assert_eq!(stage.acting_block_length_count()?, 1);
+            let stage = stage.acting_block_length(|q, _| { seen.push(q.q()); Ok(()) })?;
+            assert_eq!(stage.acting_block_length(), 4);
+            Ok(stage.acting_version(|b| { seen.push(u32::from(b[0])); Ok(()) })?)
+        })?;
+    assert_eq!(seen, vec![5, u32::from(b'v')]);
+
+    // M: message tails own `acting_*`; metadata keeps the header values.
+    let len = MEncoder::compute_length_with_header(1, 2);
+    let mut storage = [0u8; 64];
+    let buf = &mut storage[..len];
+    let actual = MEncoder::try_wrap_and_apply_header(buf, 0)?
+        .fixed(&MFixedFields { x: 11 })
+        .acting_block_length(1, |g| { g.add(|q| { q.q(6); Ok(()) })?; Ok(()) })?
+        .acting_version(b"ok")?
+        .encoded_length_with_header();
+    assert_eq!(len, actual);
+    let dec = MDecoder::try_decode(&storage[..actual], 0)?;
+    assert_eq!(dec.get_metadata().acting_version(), 0);
+    assert_eq!(dec.acting_version()?, b"ok");
+    assert_eq!(dec.acting_block_length()?.count(), 1);
+    let memo = MDecoder::try_decode(&storage[..actual], 0)?.memoized();
+    assert_eq!(memo.acting_version()?, b"ok");
+    let mut qs = Vec::new();
+    let complete = MDecoder::try_decode(&storage[..actual], 0)?
+        .ordered()
+        .fixed(|v| { assert_eq!((v.x(), v.acting_version()), (11, 0)); Ok(()) })?
+        .acting_block_length(|q, _| { qs.push(q.q()); Ok(()) })?
+        .acting_version(|b| { assert_eq!(b, b"ok"); Ok(()) })?;
+    assert_eq!(qs, vec![6]);
+    assert_eq!(complete.encoded_length_with_header(), actual);
+    "#,
     );
     Ok(())
 }

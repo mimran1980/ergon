@@ -38,9 +38,10 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
         source_b.contains("super::shared_rt::sbe_rt"),
         "consumer module must import shared sbe_rt; got: {source_b}"
     );
-    // Must NOT contain an inline pub mod sbe_rt
+    // Must NOT inline a second runtime. It may still define the ordered-lane
+    // types beside the re-export (see the fixed-block owner test below).
     assert!(
-        !source_b.contains("pub mod sbe_rt"),
+        !source_b.contains("pub enum DecodeError"),
         "consumer module must not inline its own sbe_rt"
     );
     // Both modules compile together and can use types from either.
@@ -52,7 +53,105 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
         &source_b,
         "// shared_rt and consumer_rt types both resolve\n\
          let _ = shared_rt::CarDecoder::BLOCK_LENGTH;\n\
-         let _ = consumer_rt::CarDecoder::BLOCK_LENGTH;\n",
+         let _ = consumer_rt::CarDecoder::BLOCK_LENGTH;\n\
+         let _: shared_rt::sbe_rt::DecodeError =\n\
+             consumer_rt::sbe_rt::DecodeError::InvalidAscii { field: \"x\" };\n",
+    );
+    Ok(())
+}
+
+/// A runtime owner sizes `sbe_rt` to its own schema, so a fixed-block owner has
+/// no ordered-lane types. A consumer with tails must still compile against it
+/// and walk its tails in the ordered spelling. This combination did not compile
+/// once `EntryInfo` / `Ordered` became conditional on the owner's schema.
+#[test]
+fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    const TYPES: &str = r#"<types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>"#;
+    let owner_xml = format!(
+        r#"<messageSchema package="owner" id="1" version="0" byteOrder="littleEndian">{TYPES}
+  <message name="Ping" id="1"><field name="x" id="1" type="uint32"/></message>
+</messageSchema>"#
+    );
+    let user_xml = format!(
+        r#"<messageSchema package="user" id="2" version="0" byteOrder="littleEndian">{TYPES}
+  <message name="M" id="1">
+    <field name="x" id="1" type="uint32"/>
+    <group name="rows" id="2" dimensionType="groupSizeEncoding">
+      <field name="px" id="3" type="uint32"/>
+    </group>
+    <data name="note" id="4" type="varStringEncoding"/>
+  </message>
+</messageSchema>"#
+    );
+    let module =
+        |xml: &str, config: GenerationConfig| -> Result<String, Box<dyn std::error::Error>> {
+            Ok(Generator::new(config)
+                .generate(&Schema::from_ir(parse(xml)?))?
+                .modules()
+                .next()
+                .ok_or("one module")?
+                .source
+                .clone())
+        };
+    let owner = module(&owner_xml, GenerationConfig::new("rt_owner"))?;
+    assert!(
+        !owner.contains("struct EntryInfo") && !owner.contains("struct Ordered"),
+        "a fixed-block owner keeps its runtime lean"
+    );
+    // `super::`-relative on purpose: the path must resolve from the consumer's
+    // own level, not from inside a nested module.
+    let user = module(
+        &user_xml,
+        GenerationConfig::new("rt_user").with_external_sbe_rt("super::rt_owner::sbe_rt"),
+    )?;
+    compile_and_run_two_modules(
+        "external_sbe_rt_fixed_owner",
+        "rt_owner",
+        &owner,
+        "rt_user",
+        &user,
+        r#"
+        use rt_user::*;
+        let len = MEncoder::compute_length_with_header(2, 2);
+        let mut storage = [0u8; 64];
+        let buf = &mut storage[..len];
+        let actual = MEncoder::try_wrap_and_apply_header(buf, 0)?
+            .fixed(&MFixedFields { x: 1 })
+            .rows(2, |g| {
+                g.add(|e| { e.px(10); Ok(()) })?;
+                g.add(|e| { e.px(20); Ok(()) })?;
+                Ok(())
+            })?
+            .note(b"ok")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let mut rows = Vec::new();
+        let complete = MDecoder::try_decode(&storage[..actual], 0)?
+            .ordered()
+            .fixed(|v| { assert_eq!(v.x(), 1); Ok(()) })?
+            .rows(|e, info: sbe_rt::EntryInfo| { rows.push((info.index, info.count, e.px())); Ok(()) })?
+            .note(|b| { assert_eq!(b, b"ok"); Ok(()) })?;
+        assert_eq!(rows, vec![(0, 2, 10), (1, 2, 20)]);
+        assert_eq!(complete.encoded_length_with_header(), actual);
+        let _: rt_owner::sbe_rt::DecodeError = sbe_rt::DecodeError::InvalidAscii { field: "x" };
+        "#,
     );
     Ok(())
 }

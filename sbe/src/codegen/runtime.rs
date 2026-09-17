@@ -203,9 +203,11 @@ fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
 
         /// Message decoder after the ordered `fixed` callback, before the first tail.
         ///
-        /// Distinct from the base decoder so `fixed` cannot collide with a
-        /// first tail of the same name, and so the callback receives a
-        /// fixed-fields-only view rather than the full decoder.
+        /// Distinct from the base decoder so the fixed block cannot be read a
+        /// second time once the walk has moved on, and so the callback receives
+        /// a fixed-fields-only view rather than the full decoder. A first tail
+        /// named `fixed` or `tryFixed` is handled by not generating the
+        /// callback at all, not by this type.
         #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
         pub struct OrderedFixed<S> {
             pub(crate) inner: S,
@@ -235,6 +237,39 @@ fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
             }
         }
     }
+}
+
+/// `sbe_rt` for a module reusing another module's runtime
+/// (`with_external_sbe_rt`) that needs the ordered-lane pieces.
+///
+/// The owner sizes its runtime to its *own* schema, so a fixed-block owner has
+/// no `Ordered` / `OrderedFixed` / `EntryInfo`, and it cannot know what its
+/// consumers will need. The consumer does know, so it re-exports the owner's
+/// runtime and defines the lane types it uses beside it. Local items shadow the
+/// glob, so an owner that already has them is not a conflict; the consumer's
+/// lane types are simply its own.
+pub(crate) fn generate_sbe_rt_reexport_src(
+    owner: &str,
+    with_entry_info: bool,
+    with_ordered: bool,
+) -> String {
+    let owner: syn::Path =
+        syn::parse_str(owner).expect("external sbe_rt path must be a valid Rust path");
+    let entry_info = entry_info_tokens(with_entry_info);
+    let ordered = ordered_wrapper_tokens(with_ordered);
+    // The alias is taken at the consumer's own level, so a `super::`-relative
+    // owner path still resolves from inside the nested `sbe_rt` module.
+    let module = quote::quote! {
+        use #owner as __sbe_rt_owner;
+        pub mod sbe_rt {
+            pub use super::__sbe_rt_owner::*;
+            #entry_info
+            #ordered
+        }
+    };
+    syn::parse_str::<syn::File>(&module.to_string())
+        .map(|file| prettyplease::unparse(&file))
+        .expect("generated SBE runtime re-export must be valid Rust syntax")
 }
 
 pub(crate) fn generate_sbe_rt_src(with_entry_info: bool, with_ordered: bool) -> String {

@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Fixed
+- **`acting_version()` / `acting_block_length()` still collided wherever a
+  type owned tails, so those schemas did not compile.** The 0.1.28 fix covered
+  the group-entry decoder only. The ordered lane emitted both names
+  unconditionally on every wrapper, and the message decoder and memoized
+  wrapper did the same, so a group or var-data named `actingVersion` /
+  `actingBlockLength` (at message or entry level), or an entry field of that
+  name beside entry tails, failed with E0592 or E0015. Every decoder, stage and
+  ordered wrapper now emits them through one helper that yields to a schema
+  name on that type. The header values stay on `get_metadata()`.
+- **`with_external_sbe_rt` against a runtime owner without groups or var-data
+  did not compile.** Since 0.1.27 the owner omits `EntryInfo`, `Ordered` and
+  `OrderedFixed` when its own schema cannot reach them, and it cannot know what
+  its consumers need. A consumer that needs them now re-exports the owner's
+  runtime and defines those types beside it; a consumer with no tails still
+  emits the plain `pub use`.
 - Group-entry `acting_version()` / `acting_block_length()` yield when a field
   already owns that name, matching the count/len rule. A schema with
   `actingVersion` / `actingBlockLength` on an entry compiles; the field
@@ -220,7 +235,14 @@
   `*_as_str` / `*_as_str_unchecked` text accessors on **group entries**, not
   only at message level — the same helper that already existed for message
   var-data, shared rather than duplicated.
-- Cluster Callgrind instruction probes (`just bench-instructions-cluster`) —
+- `GenerationConfig::with_encode_version(version)`: the encoder writes
+  `version` in the header and omits members introduced after it, while the
+  decoder still reads every version in the schema. Useful for producing older
+  wire versions for peers that have not upgraded. It is rejected at generate
+  time when it would drop members alongside domain objects or conversions.
+  Covered by a versioned-L3 fixture (v0–v3) that is byte-compared against
+  sbe-tool at every acting version.
+- Cluster Callgrind instruction probes (`just bench-cluster-instructions`) —
   mechanism-level evidence for cluster session codec hot paths, alongside the
   existing SBE probe lane.
 

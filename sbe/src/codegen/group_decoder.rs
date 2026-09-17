@@ -11,8 +11,8 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes, named_accessor_ident, owner_accessor_names, tail_accessor_ident,
+    acting_accessors, enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
+    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -850,26 +850,11 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
-    if let Some(ident) = named_accessor_ident("acting_version", &taken_entry_accessors) {
-        entry_body.extend(quote::quote! {
-            /// Schema version from the parent message header (or wrap args).
-            #mu
-            #[inline]
-            pub const fn #ident(&self) -> u16 {
-                self.acting_version
-            }
-        });
-    }
-    if let Some(ident) = named_accessor_ident("acting_block_length", &taken_entry_accessors) {
-        entry_body.extend(quote::quote! {
-            /// Acting block length of this entry's fixed block.
-            #mu
-            #[inline]
-            pub const fn #ident(&self) -> usize {
-                self.acting_block_length
-            }
-        });
-    }
+    entry_body.extend(acting_accessors(
+        &taken_entry_accessors,
+        &quote::quote! { self },
+        &mu,
+    ));
     // Entry decoders keep a one-shot extent cache in every lane: the group
     // iterator computes each entry's end to advance, and the last var-data
     // accessor reuses it instead of re-reading its length header. Dropping it
@@ -1682,23 +1667,11 @@ pub(crate) fn generate_group_decoder(
         // `*_as_str_unchecked` surface under the same names. Emitting them only
         // at message level forced callers to drop to `&[u8]` inside a group and
         // re-validate by hand.
-        //
-        // Unless the schema already used the name. Entry fields keep their
-        // schema names in *every* entry location — decoder, encoder, DTO —
-        // so renaming one to free up `<vd>_as_str` would give
-        // the same field different names per location, which is exactly what
-        // the naming rule forbids. A field the author explicitly called
-        // `noteAsStr` wins the name; `note()` still returns the bytes.
-        let claims_taken = g.fields.iter().any(|f| {
-            let n = to_snake_case(&f.name);
-            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
-        });
-        if !claims_taken {
-            entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
-                &vd_snake,
-                vd.character_encoding.as_deref(),
-            ));
-        }
+        entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+            &g.fields,
+        ));
         nvd_idx += 1;
     }
 

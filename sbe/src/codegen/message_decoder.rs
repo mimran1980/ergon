@@ -14,8 +14,8 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, enum_uses_null_as_option, field_has_conversion_free, owner_accessor_names,
-    resolve_field_ident, tail_accessor_ident,
+    DECODER_RESERVED, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
+    owner_accessor_names, resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
@@ -554,25 +554,27 @@ pub(crate) fn generate_message_decoder(
         });
     }
 
-    let mu = must_use_observer();
-    impl_body.extend(quote::quote! {
-        /// Schema version from the message header (or wrap args), not the
-        /// compiled schema constant. Fields with `sinceVersion` and optional
-        /// presence depend on this value.
-        #mu
-        #[inline]
-        pub const fn acting_version(&self) -> u16 {
-            self.acting_version
-        }
+    // Field and tail accessor names, so a tail-derived `<group>_count` /
+    // `<field>_len` or `acting_*` never defines a method the schema already
+    // names. Fields are renamed against `DECODER_RESERVED`; tails are not, so a
+    // tail named `actingVersion` owns `acting_version` and the metadata getter
+    // yields (it stays on `get_metadata()`).
+    let taken_accessor_names = owner_accessor_names(
+        &msg.fields,
+        conversions,
+        DECODER_RESERVED,
+        msg.groups
+            .iter()
+            .map(|g| g.name.as_str())
+            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
+    );
 
-        /// Block length from the wire header / wrap args. Tail offsets use
-        /// this acting length, not only the compiled `BLOCK_LENGTH`.
-        #mu
-        #[inline]
-        pub const fn acting_block_length(&self) -> usize {
-            self.acting_block_length
-        }
-    });
+    let mu = must_use_observer();
+    impl_body.extend(acting_accessors(
+        &taken_accessor_names,
+        &quote::quote! { self },
+        &mu,
+    ));
     for f in &msg.fields {
         let fname_snake = to_snake_case(&f.name);
         let offset = f.offset;
@@ -1151,18 +1153,6 @@ pub(crate) fn generate_message_decoder(
         quote::quote! { self.offset },
     ));
 
-    // Fixed-field accessor names, so a tail-derived `<group>_count` /
-    // `<field>_len` never defines a method the fields already define.
-    let taken_accessor_names = owner_accessor_names(
-        &msg.fields,
-        conversions,
-        DECODER_RESERVED,
-        msg.groups
-            .iter()
-            .map(|g| g.name.as_str())
-            .chain(msg.var_data.iter().map(|v| v.name.as_str())),
-    );
-
     let mut g_idx = 0usize;
     for (gi, g) in msg.groups.iter().enumerate() {
         let scoped = &group_unique_names[gi];
@@ -1320,20 +1310,11 @@ pub(crate) fn generate_message_decoder(
             }
         });
 
-        // Unless a fixed field already claims the derived name — same rule
-        // as the group-entry guard in `group_decoder.rs`: a field the author
-        // explicitly called `noteAsStr` wins the name over the var-data
-        // helper, rather than colliding and failing to compile.
-        let claims_taken = msg.fields.iter().any(|f| {
-            let n = to_snake_case(&f.name);
-            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
-        });
-        if !claims_taken {
-            impl_body.extend(vardata_text_helpers(
-                &vd_snake,
-                vd.character_encoding.as_deref(),
-            ));
-        }
+        impl_body.extend(vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+            &msg.fields,
+        ));
         // Binary / unspecified encoding: no string helper at all. The caller
         // has the raw `_slice` / `into_<field>` accessors and can interpret
         // the bytes as needed.
@@ -1876,10 +1857,23 @@ pub(crate) fn generate_message_decoder(
 ///
 /// Binary / unspecified encoding gets no string helper at all: the caller
 /// decides what the bytes mean.
+///
+/// A fixed field of the owner that the author explicitly named `noteAsStr` (or
+/// `noteAsStrUnchecked`) wins the name, and the helpers are omitted rather than
+/// colliding. Fields are not renamed to make room: that would give one field
+/// different names per location. `note()` still returns the bytes.
 pub(crate) fn vardata_text_helpers(
     vd_snake: &str,
     character_encoding: Option<&str>,
+    owner_fields: &[MessageField],
 ) -> proc_macro2::TokenStream {
+    let claimed = owner_fields.iter().any(|f| {
+        let n = to_snake_case(&f.name);
+        n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
+    });
+    if claimed {
+        return proc_macro2::TokenStream::new();
+    }
     let span = proc_macro2::Span::call_site();
     let vd_ident = syn::Ident::new(vd_snake, span);
     let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), span);

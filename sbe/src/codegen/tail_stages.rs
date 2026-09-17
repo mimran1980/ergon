@@ -11,7 +11,7 @@ use crate::structured_ir::{
     decoder_stage_after_ident, get_vardata_info, rust_type,
 };
 
-use super::conversion_helpers::{DECODER_RESERVED, owner_accessor_names};
+use super::conversion_helpers::{DECODER_RESERVED, acting_accessors, owner_accessor_names};
 use super::ordered_lane::{OrderedFixedFields, generate_ordered_lane};
 use super::runtime::{to_pascal_case, to_snake_case};
 
@@ -91,17 +91,15 @@ pub(crate) fn generate_owner_consuming_stages(
     // acting_version() / acting_block_length() on every stage.
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
+        // Stages carry no fields or bare tail getters, so nothing is taken.
+        let acting = acting_accessors(
+            &[],
+            &quote::quote! { self },
+            &proc_macro2::TokenStream::new(),
+        );
         ts.extend(quote::quote! {
             impl<'a> #stage<'a> {
-                /// Schema version from the message header (or wrap args), not the
-                /// compiled schema constant. Fields with `sinceVersion` and optional
-                /// presence depend on this value.
-                #[inline]
-                pub const fn acting_version(&self) -> u16 { self.acting_version }
-                /// Block length from the wire header / wrap args. Tail offsets use
-                /// this acting length, not only the compiled `BLOCK_LENGTH`.
-                #[inline]
-                pub const fn acting_block_length(&self) -> usize { self.acting_block_length }
+                #acting
             }
         });
     }

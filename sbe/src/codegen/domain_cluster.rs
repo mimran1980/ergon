@@ -5,8 +5,8 @@
 //! [`super::conversion_helpers`], [`super::runtime`], and `structured_ir` types.
 
 use super::conversion_helpers::{
-    domain_encode_setter_name, dto_domain_type, enum_uses_null_as_option, field_has_conversion_free,
-    find_domain_type, message_field_infos,
+    domain_encode_setter_name, dto_domain_type, enum_uses_null_as_option,
+    field_has_conversion_free, find_domain_type, message_field_infos,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::{ByteOrder, Presence, PrimitiveType};
@@ -116,15 +116,12 @@ pub(crate) fn domain_bulk_slot_write_tokens(
             } => {
                 let r_ty = syn::Ident::new(rust_type(*encoding_type), span);
                 let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
-                let value = if enum_uses_null_as_option(
-                    enum_name,
-                    null_as_option,
-                    all_enums_as_option,
-                ) {
-                    dto_enum_or_null(&quote::quote! { entry }, &f_name, &type_ident)
-                } else {
-                    quote::quote! { entry.#f_name }
-                };
+                let value =
+                    if enum_uses_null_as_option(enum_name, null_as_option, all_enums_as_option) {
+                        dto_enum_or_null(&quote::quote! { entry }, &f_name, &type_ident)
+                    } else {
+                        quote::quote! { entry.#f_name }
+                    };
                 writes.extend(quote::quote! {
                     slot[#f_offset..#f_offset + #f_size]
                         .copy_from_slice(&(#r_ty::from(#value)).#to_endian());
@@ -1202,12 +1199,13 @@ pub(crate) fn generate_domain_recursive(
                 }
                 let f_ident = syn::Ident::new(&to_snake_case(&f.name), span);
                 let value = match &f.field_type {
-                    FieldType::Enum { name: enum_name, .. }
-                        if enum_uses_null_as_option(
-                            enum_name,
-                            null_as_option,
-                            all_enums_as_option,
-                        ) =>
+                    FieldType::Enum {
+                        name: enum_name, ..
+                    } if enum_uses_null_as_option(
+                        enum_name,
+                        null_as_option,
+                        all_enums_as_option,
+                    ) =>
                     {
                         let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                         dto_enum_or_null(&quote::quote! { self }, &f_ident, &type_ident)
