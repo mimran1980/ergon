@@ -275,21 +275,20 @@ fn emit_tail_stage(
 ) -> proc_macro2::TokenStream {
     let next = staged_stage(i);
     let next_ty = quote::quote! { sbe_rt::Ordered<#next<'a>> };
-    // Per type, not per owner. The first wrapper sits on the decoder itself, so
-    // every field and tail name is in play; a later wrapper defines only tail
-    // `i`'s methods, so only that tail can take `acting_*` from it.
+    // Per type, not per owner: every wrapper defines only tail `i`'s methods
+    // (plus the peek), so tail `i` is the only name that can take `acting_*`
+    // from it. The owner's own fields and other tails live on other types and
+    // are not in play here — suppressing on those would drop an accessor
+    // nothing on this type defines. `wraps_decoder` answers a different
+    // question, for the peek: whether the *inner* type still has the count/len
+    // method this wrapper forwards to.
     let tail_name = if i < groups.len() {
         &groups[i].accessor_snake
     } else {
         &vardata[i - groups.len()].accessor_snake
     };
     let own_tail = [tail_name.clone()];
-    let acting_taken = if wraps_decoder {
-        taken_accessors
-    } else {
-        &own_tail[..]
-    };
-    let acting = acting_accessors(acting_taken, inner_access, &proc_macro2::TokenStream::new());
+    let acting = acting_accessors(&own_tail, inner_access, &proc_macro2::TokenStream::new());
     if i < groups.len() {
         let tg = &groups[i];
         let peek = peek_count(inner_access, tg, taken_accessors, wraps_decoder);

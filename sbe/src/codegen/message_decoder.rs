@@ -1313,7 +1313,7 @@ pub(crate) fn generate_message_decoder(
         impl_body.extend(vardata_text_helpers(
             &vd_snake,
             vd.character_encoding.as_deref(),
-            &msg.fields,
+            &taken_accessor_names,
         ));
         // Binary / unspecified encoding: no string helper at all. The caller
         // has the raw `_slice` / `into_<field>` accessors and can interpret
@@ -1858,20 +1858,18 @@ pub(crate) fn generate_message_decoder(
 /// Binary / unspecified encoding gets no string helper at all: the caller
 /// decides what the bytes mean.
 ///
-/// A fixed field of the owner that the author explicitly named `noteAsStr` (or
-/// `noteAsStrUnchecked`) wins the name, and the helpers are omitted rather than
-/// colliding. Fields are not renamed to make room: that would give one field
-/// different names per location. `note()` still returns the bytes.
+/// A field or sibling tail of the owner that the author explicitly named
+/// `noteAsStr` (or `noteAsStrUnchecked`) wins the name, and the helpers are
+/// omitted rather than colliding. Nothing is renamed to make room: that would
+/// give one accessor different names per location. `note()` still returns the
+/// bytes. Same yield rule, and same helper, as `<group>_count` / `<field>_len`.
 pub(crate) fn vardata_text_helpers(
     vd_snake: &str,
     character_encoding: Option<&str>,
-    owner_fields: &[MessageField],
+    taken: &[String],
 ) -> proc_macro2::TokenStream {
-    let claimed = owner_fields.iter().any(|f| {
-        let n = to_snake_case(&f.name);
-        n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
-    });
-    if claimed {
+    let free = |suffix: &str| tail_accessor_ident(vd_snake, suffix, taken).is_some();
+    if !free("as_str") || !free("as_str_unchecked") {
         return proc_macro2::TokenStream::new();
     }
     let span = proc_macro2::Span::call_site();

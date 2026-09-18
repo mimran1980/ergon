@@ -1003,6 +1003,13 @@ fn acting_names_yield_on_tail_owners_and_ordered_lanes() -> Result<(), Box<dyn s
     let dec = MDecoder::try_decode(&storage[..actual], 0)?;
     assert_eq!(dec.get_metadata().acting_version(), 0);
     assert_eq!(dec.acting_version()?, b"ok");
+    // `actingVersion` is the *second* tail here, so it takes the name only from
+    // the wrapper that defines its own accessor. The first wrapper keeps the
+    // header getter: suppression is per type, not per schema.
+    assert_eq!(
+        MDecoder::try_decode(&storage[..actual], 0)?.ordered().acting_version(),
+        0
+    );
     assert_eq!(dec.acting_block_length()?.count(), 1);
     let memo = MDecoder::try_decode(&storage[..actual], 0)?.memoized();
     assert_eq!(memo.acting_version()?, b"ok");

@@ -42,7 +42,7 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
     // types beside the re-export (see the fixed-block owner test below).
     assert!(
         !source_b.contains("pub enum DecodeError"),
-        "consumer module must not inline its own sbe_rt"
+        "consumer module must share the owner's runtime, not inline a second copy"
     );
     // Both modules compile together and can use types from either.
     compile_and_run_two_modules(
@@ -112,8 +112,8 @@ fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
         };
     let owner = module(&owner_xml, GenerationConfig::new("rt_owner"))?;
     assert!(
-        !owner.contains("struct EntryInfo") && !owner.contains("struct Ordered"),
-        "a fixed-block owner keeps its runtime lean"
+        owner.contains("struct EntryInfo") && owner.contains("struct Ordered"),
+        "a runtime is emitted whole, so a consumer sharing it gets the lane types"
     );
     // `super::`-relative on purpose: the path must resolve from the consumer's
     // own level, not from inside a nested module.
@@ -150,7 +150,12 @@ fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
             .note(|b| { assert_eq!(b, b"ok"); Ok(()) })?;
         assert_eq!(rows, vec![(0, 2, 10), (1, 2, 20)]);
         assert_eq!(complete.encoded_length_with_header(), actual);
+        // One runtime, one set of types: a helper written against the owner's
+        // `EntryInfo` must accept the consumer's. Defining a second copy in the
+        // consumer would make these distinct types.
+        fn owner_entry_info(info: rt_owner::sbe_rt::EntryInfo) -> usize { info.count }
         let _: rt_owner::sbe_rt::DecodeError = sbe_rt::DecodeError::InvalidAscii { field: "x" };
+        assert_eq!(owner_entry_info(sbe_rt::EntryInfo { index: 0, count: 2, block_length: 4 }), 2);
         "#,
     );
     Ok(())

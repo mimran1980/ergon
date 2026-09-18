@@ -275,7 +275,7 @@ pub(crate) fn generate_memoized_decoder(
         impl_body.extend(super::message_decoder::vardata_text_helpers(
             &vd_snake,
             vd.character_encoding.as_deref(),
-            &msg.fields,
+            &taken_accessor_names,
         ));
         vd_idx += 1;
     }

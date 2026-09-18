@@ -1670,7 +1670,7 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
             &vd_snake,
             vd.character_encoding.as_deref(),
-            &g.fields,
+            &taken_entry_accessors,
         ));
         nvd_idx += 1;
     }

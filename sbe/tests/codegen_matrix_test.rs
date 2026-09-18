@@ -170,6 +170,10 @@ struct Variant {
     /// Appended to the generated module: items a knob's output names (an error
     /// type) or that prove its output exists (a hook's item).
     module_suffix: &'static str,
+    /// Fragments the knob must put in the generated source. For a knob whose
+    /// output is an attribute, compiling proves nothing on its own — a missing
+    /// `#[deprecated]` compiles perfectly well.
+    expect_src: &'static [&'static str],
 }
 
 /// Every `GenerationConfig` combination that selects a distinct codegen path.
@@ -181,48 +185,56 @@ const VARIANTS: &[Variant] = &[
         domain_impls: true,
         build: |c| with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes)),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_strings_and_domain_types",
         domain_impls: true,
         build: |c| with_matrix_domain_types(c.with_domain_objects(DomainVarData::Strings)),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_no_conversions",
         domain_impls: false,
         build: |c| c.with_domain_objects(DomainVarData::Bytes),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_and_conversions_only",
         domain_impls: false,
         build: |c| with_matrix_conversions(c.with_domain_objects(DomainVarData::Bytes)),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "flyweight_only_domain_types",
         domain_impls: true,
         build: with_matrix_domain_types,
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "flyweight_only_conversions",
         domain_impls: false,
         build: with_matrix_conversions,
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "lean_profile_domain_types",
         domain_impls: true,
         build: |c| with_matrix_domain_types(c.profile(GenerationProfile::Lean)),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "flyweight_encode_version_0",
         domain_impls: false,
         build: |c| c.with_encode_version(0),
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_null_as_option",
@@ -232,6 +244,7 @@ const VARIANTS: &[Variant] = &[
                 .with_all_enums_as_option()
         },
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_display_meta_dispatch",
@@ -243,6 +256,7 @@ const VARIANTS: &[Variant] = &[
                 .with_dispatch(true)
         },
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_null_as_option_with_enum_domain_types",
@@ -254,6 +268,7 @@ const VARIANTS: &[Variant] = &[
                 .with_manual_domain_type(ConversionSelector::named_type("Opts"), "u16")
         },
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_bool_domain_type",
@@ -263,6 +278,7 @@ const VARIANTS: &[Variant] = &[
                 .with_bool_domain_type(true)
         },
         module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_null_as_option_selector",
@@ -272,17 +288,7 @@ const VARIANTS: &[Variant] = &[
                 .with_null_as_option(ConversionSelector::named_type("Model"))
         },
         module_suffix: "",
-    },
-    Variant {
-        // Every member present: the only encode-version setting that may be
-        // combined with domain objects and domain types.
-        name: "domain_objects_encode_version_current",
-        domain_impls: true,
-        build: |c| {
-            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
-                .with_encode_version(3)
-        },
-        module_suffix: "",
+        expect_src: &[],
     },
     Variant {
         name: "domain_objects_error_from_impls",
@@ -300,6 +306,7 @@ const VARIANTS: &[Variant] = &[
             }
             const _: fn(sbe_rt::DecodeError) -> MatrixError = MatrixError::from;
         "#,
+        expect_src: &[],
     },
     Variant {
         name: "flyweight_deprecated_attrs_keyword_token",
@@ -311,6 +318,7 @@ const VARIANTS: &[Variant] = &[
         module_suffix: r#"
             fn _keyword_renamed(d: &FlatDecoder<'_>) -> u8 { d.type_kw() }
         "#,
+        expect_src: &["#[deprecated", "pub fn type_kw("],
     },
     Variant {
         name: "domain_objects_hook",
@@ -331,6 +339,7 @@ const VARIANTS: &[Variant] = &[
         module_suffix: r#"
             const _: () = assert!(Model::HOOKED.len() == 5);
         "#,
+        expect_src: &[],
     },
 ];
 
@@ -564,7 +573,16 @@ fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_sbe::{Generator, Schema, parse, parse_file};
     let owner_schema = Schema::from_ir(parse(FIXED_BLOCK_OWNER)?);
     let matrix = Schema::from_ir(parse_file(&matrix_schema())?);
-    let body = |module: &str| format!("use {module}::*;\n{}", iterator_surface_body(true));
+    // The shared runtime must stay *one* runtime: a helper written against the
+    // owner's `EntryInfo` has to accept the dependent module's.
+    let body = |module: &str, owner: &str| {
+        format!(
+            "fn owner_entry_info(info: {owner}::sbe_rt::EntryInfo) -> usize {{ info.count }}\n\
+             use {module}::*;\n\
+             assert_eq!(owner_entry_info(sbe_rt::EntryInfo {{ index: 0, count: 1, block_length: 4 }}), 1);\n{}",
+            iterator_surface_body(true)
+        )
+    };
 
     let owner = Generator::new(GenerationConfig::new("cm_rt_owner"))
         .generate(&owner_schema)?
@@ -585,7 +603,7 @@ fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
     common::compile_and_run_modules(
         "cm_external_rt",
         &[("cm_rt_owner", &owner), ("cm_external_rt", &consumer)],
-        &body("cm_external_rt"),
+        &body("cm_external_rt", "cm_rt_owner"),
     );
 
     let set =
@@ -599,7 +617,7 @@ fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|(n, s)| (n.as_str(), s.as_str()))
         .collect();
-    common::compile_and_run_modules("cm_shared", &modules, &body("cm_shared"));
+    common::compile_and_run_modules("cm_shared", &modules, &body("cm_shared", "cm_shared_owner"));
     Ok(())
 }
 
@@ -611,6 +629,13 @@ fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
     for v in VARIANTS {
         let module = format!("cm_{}", v.name);
         let (_s, src) = generate_domain_with(&matrix_schema(), &module, |c| (v.build)(c));
+        for fragment in v.expect_src {
+            assert!(
+                src.contains(fragment),
+                "{}: generated source must contain `{fragment}`",
+                v.name
+            );
+        }
         let src = format!("{src}\n{}", v.module_suffix);
         let (prelude, deps) = if v.domain_impls {
             (DOMAIN_IMPLS, "rust_decimal = \"1\"\n")

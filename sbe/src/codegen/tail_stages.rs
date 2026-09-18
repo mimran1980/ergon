@@ -88,15 +88,16 @@ pub(crate) fn generate_owner_consuming_stages(
         });
     }
 
-    // acting_version() / acting_block_length() on every stage.
+    // acting_version() / acting_block_length() on every stage. A stage carries
+    // no fields, and its tail accessors are `into_*` / `skip_*` / `<tail>_count`
+    // / `<tail>_len`, none of which can spell `acting_*`, so nothing is taken.
+    let acting = acting_accessors(
+        &[],
+        &quote::quote! { self },
+        &proc_macro2::TokenStream::new(),
+    );
     for i in 0..total_tail {
         let stage = stage_after_ident(i);
-        // Stages carry no fields or bare tail getters, so nothing is taken.
-        let acting = acting_accessors(
-            &[],
-            &quote::quote! { self },
-            &proc_macro2::TokenStream::new(),
-        );
         ts.extend(quote::quote! {
             impl<'a> #stage<'a> {
                 #acting

@@ -151,9 +151,6 @@ const SOURCE: &[u8] = b"feed-a";
 const CHECKSUM: &[u8] = b"";
 const NOTE: &[u8] = b"note-text";
 
-fn utf8(bytes: &[u8]) -> Result<&str, core::str::Utf8Error> {
-    core::str::from_utf8(bytes)
-}
 "#;
 
 /// ergo-sbe encoders, one per acting version. Buffers are sized by the
@@ -676,13 +673,13 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
                     for leg in al.legs {
                         legs.advance()?;
                         legs.leg_qty(leg.qty);
-                        legs.leg_ref(utf8(leg.reference)?);
+                        legs.leg_ref(core::str::from_utf8(leg.reference)?);
                     }
                     allocs = legs.parent()?;
                 }
                 orders = allocs.parent()?;
-                orders.order_id(utf8(ord.id)?);
-                orders.trader_id(utf8(ord.trader)?);
+                orders.order_id(core::str::from_utf8(ord.id)?);
+                orders.trader_id(core::str::from_utf8(ord.trader)?);
             }
             bids = orders.parent()?;
             let mut stats = ToolStats::default();
@@ -693,7 +690,7 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
                 stats.fill_qty(st.qty);
             }
             bids = stats.parent()?;
-            bids.venue(utf8(lvl.venue)?);
+            bids.venue(core::str::from_utf8(lvl.venue)?);
         }
         t = bids.parent()?;
 
@@ -719,13 +716,13 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
                     for leg in al.legs {
                         legs.advance()?;
                         legs.leg_qty(leg.qty);
-                        legs.leg_ref(utf8(leg.reference)?);
+                        legs.leg_ref(core::str::from_utf8(leg.reference)?);
                     }
                     allocs = legs.parent()?;
                 }
                 orders = allocs.parent()?;
-                orders.order_id(utf8(ord.id)?);
-                orders.trader_id(utf8(ord.trader)?);
+                orders.order_id(core::str::from_utf8(ord.id)?);
+                orders.trader_id(core::str::from_utf8(ord.trader)?);
             }
             asks = orders.parent()?;
             let mut stats = ToolAskStats::default();
@@ -736,7 +733,7 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
                 stats.fill_qty(st.qty);
             }
             asks = stats.parent()?;
-            asks.venue(utf8(lvl.venue)?);
+            asks.venue(core::str::from_utf8(lvl.venue)?);
         }
         t = asks.parent()?;
 
@@ -749,10 +746,10 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
         }
         t = audit.parent()?;
 
-        t.symbol(utf8(SYMBOL)?);
-        t.source(utf8(SOURCE)?);
-        t.checksum(utf8(CHECKSUM)?);
-        t.note(utf8(NOTE)?);
+        t.symbol(core::str::from_utf8(SYMBOL)?);
+        t.source(core::str::from_utf8(SOURCE)?);
+        t.checksum(core::str::from_utf8(CHECKSUM)?);
+        t.note(core::str::from_utf8(NOTE)?);
         let tl = t.get_limit();
 
         assert_frames_eq("versioned_l3 dense v3", &ergo_bytes, &tbuf[..tl]);

@@ -13,11 +13,13 @@
   ordered wrapper now emits them through one helper that yields to a schema
   name on that type. The header values stay on `get_metadata()`.
 - **`with_external_sbe_rt` against a runtime owner without groups or var-data
-  did not compile.** Since 0.1.27 the owner omits `EntryInfo`, `Ordered` and
-  `OrderedFixed` when its own schema cannot reach them, and it cannot know what
-  its consumers need. A consumer that needs them now re-exports the owner's
-  runtime and defines those types beside it; a consumer with no tails still
-  emits the plain `pub use`.
+  did not compile.** 0.1.27 and 0.1.28 sized `EntryInfo`, `Ordered` and
+  `OrderedFixed` to the emitting schema, but a runtime owner cannot see the
+  schemas of the modules that share it. A generated `sbe_rt` is a whole runtime
+  again, so one shared runtime means one set of types:
+  `consumer::sbe_rt::EntryInfo` *is* the owner's, as it was before 0.1.27.
+- **`<field>_as_str` yields to a sibling tail of that name**, not only to a
+  fixed field, through the same helper as `<group>_count` / `<field>_len`.
 - Group-entry `acting_version()` / `acting_block_length()` yield when a field
   already owns that name, matching the count/len rule. A schema with
   `actingVersion` / `actingBlockLength` on an entry compiles; the field

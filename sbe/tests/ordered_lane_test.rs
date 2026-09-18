@@ -109,12 +109,12 @@ fn ordered_lane_walks_every_tail_with_entry_info() -> Result<(), Box<dyn std::er
                 text.push(s.to_owned());
                 Ok(())
             }})?
-            .model(|b| {{
-                text.push(String::from_utf8_lossy(b).into_owned());
+            .model_as_str(|s| {{
+                text.push(s.to_owned());
                 Ok(())
             }})?
-            .activation_code(|b| {{
-                text.push(String::from_utf8_lossy(b).into_owned());
+            .activation_code_as_str(|s| {{
+                text.push(s.to_owned());
                 Ok(())
             }})?;
 
@@ -288,8 +288,7 @@ fn ordered_lane_callback_error_propagates() -> Result<(), Box<dyn std::error::Er
 /// so the group-less case compiles" is the inference that shipped fifteen
 /// codegen defects; the two are separate branches.
 #[test]
-fn ordered_lane_without_groups_compiles_without_entry_info()
--> Result<(), Box<dyn std::error::Error>> {
+fn ordered_lane_without_groups_compiles() -> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="nogroups" id="901" version="0"
@@ -322,9 +321,12 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
         .source
         .clone();
 
+    // `EntryInfo` is emitted even though this schema cannot reach it: the
+    // runtime is also what `with_external_sbe_rt` consumers share, and the
+    // owner cannot see their schemas (see `baseline_test.rs`).
     assert!(
-        !src.contains("struct EntryInfo"),
-        "a group-less schema must not carry EntryInfo as dead code"
+        src.contains("struct EntryInfo"),
+        "the runtime is emitted whole, so consumers sharing it get EntryInfo"
     );
     assert!(
         src.contains("pub fn ordered(self)"),
@@ -332,7 +334,7 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
     );
 
     // Compilation is the assertion: the lane must walk fixed + both var-data
-    // tails and reach done() with no EntryInfo in the module.
+    // tails and reach done() on a schema with no group callbacks at all.
     compile_and_run(
         "nogroups",
         &src,
