@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.29] — 2026-09-19
+
 ### Fixed
 - **`acting_version()` / `acting_block_length()` still collided wherever a
   type owned tails, so those schemas did not compile.** The 0.1.28 fix covered

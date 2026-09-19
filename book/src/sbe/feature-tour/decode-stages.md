@@ -169,8 +169,11 @@ A nested `ordered()` walk **is** the completion the parent callback owes.
 length is absent: entries with tails only settle it by traversing.
 
 Message-level `fixed` is optional. Skip it, or call it and lose the view.
-The view has no group/var-data accessors. A first tail named `fixed` or
-`tryFixed` suppresses the callback — read those fields before `ordered()`.
+The view has no group/var-data accessors. A first tail named `fixed` owns
+both the `fixed()` and `try_fixed()` names, so both callbacks yield; a first
+tail named `tryFixed` owns only `try_fixed()`, so `fixed()` stays available
+for the fixed-block callback. Either way, read the colliding field through
+the tail accessor before `ordered()` reaches it.
 Entry-level wrappers have no `fixed`: the parent already holds the entry.
 
 Empty and version-absent groups invoke the callback zero times.

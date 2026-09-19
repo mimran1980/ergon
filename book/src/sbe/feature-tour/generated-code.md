@@ -92,9 +92,9 @@ entry field is `actingVersion`, it keeps `acting_version()` and the metadata
 getter is omitted.
 
 Convenience accessors (`<group>_count`, `<field>_len`, ordered `fixed` /
-`try_fixed` when the first tail owns that name) yield the same way — the
-primary getter wins. Covered by `reserved_name_clash_test` and
-`ordered_lane_test`.
+`try_fixed`) yield to a same-named tail — the primary getter wins. `fixed`
+and `try_fixed` yield independently: `fixed` as first tail takes both names;
+`tryFixed` takes only `try_fixed()`. `reserved_name_clash_test`, `ordered_lane_test`.
 
 ### What does `remaining()` mean?
 
