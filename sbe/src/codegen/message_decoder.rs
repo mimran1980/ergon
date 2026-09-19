@@ -15,7 +15,7 @@ use crate::structured_ir::*;
 
 use super::conversion_helpers::{
     DECODER_RESERVED, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
-    owner_accessor_names, resolve_field_ident, tail_accessor_ident,
+    named_accessor_ident, owner_accessor_names, resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
@@ -1859,28 +1859,30 @@ pub(crate) fn generate_message_decoder(
 /// decides what the bytes mean.
 ///
 /// A field or sibling tail of the owner that the author explicitly named
-/// `noteAsStr` (or `noteAsStrUnchecked`) wins the name, and the helpers are
-/// omitted rather than colliding. Nothing is renamed to make room: that would
-/// give one accessor different names per location. `note()` still returns the
-/// bytes. Same yield rule, and same helper, as `<group>_count` / `<field>_len`.
+/// `noteAsStr` (or `noteAsStrUnchecked`) wins that name. Each helper yields
+/// independently — a sibling `noteAsStr` does not drop `note_as_str_unchecked`.
+/// Nothing is renamed to make room: that would give one accessor different
+/// names per location. `note()` still returns the bytes. Same yield rule, and
+/// same helper, as `<group>_count` / `<field>_len`.
 pub(crate) fn vardata_text_helpers(
     vd_snake: &str,
     character_encoding: Option<&str>,
     taken: &[String],
 ) -> proc_macro2::TokenStream {
-    let free = |suffix: &str| tail_accessor_ident(vd_snake, suffix, taken).is_some();
-    if !free("as_str") || !free("as_str_unchecked") {
+    let Some(kind) = super::runtime::text_encoding_kind(character_encoding) else {
+        return proc_macro2::TokenStream::new();
+    };
+    let str_ident = named_accessor_ident(&format!("{vd_snake}_as_str"), taken);
+    let str_unchecked = named_accessor_ident(&format!("{vd_snake}_as_str_unchecked"), taken);
+    if str_ident.is_none() && str_unchecked.is_none() {
         return proc_macro2::TokenStream::new();
     }
     let span = proc_macro2::Span::call_site();
     let vd_ident = syn::Ident::new(vd_snake, span);
-    let str_ident = syn::Ident::new(&format!("{vd_snake}_as_str"), span);
-    let str_unchecked = syn::Ident::new(&format!("{vd_snake}_as_str_unchecked"), span);
     let field_lit = syn::LitStr::new(vd_snake, span);
 
-    let kind = super::runtime::text_encoding_kind(character_encoding);
-    let checked = match kind {
-        Some(super::runtime::TextEncoding::Utf8) => quote::quote! {
+    let checked = str_ident.map(|str_ident| match kind {
+        super::runtime::TextEncoding::Utf8 => quote::quote! {
             /// View this UTF-8 var-data field as `&str`.
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
@@ -1891,7 +1893,7 @@ pub(crate) fn vardata_text_helpers(
                 })
             }
         },
-        Some(super::runtime::TextEncoding::Ascii) => quote::quote! {
+        super::runtime::TextEncoding::Ascii => quote::quote! {
             /// View this ASCII var-data field as `&str`.
             #[inline]
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
@@ -1903,29 +1905,32 @@ pub(crate) fn vardata_text_helpers(
                 Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
             }
         },
-        None => return proc_macro2::TokenStream::new(),
-    };
+    });
 
-    let safety_note = if matches!(kind, Some(super::runtime::TextEncoding::Ascii)) {
+    let safety_note = if matches!(kind, super::runtime::TextEncoding::Ascii) {
         "The wire bytes must be 7-bit ASCII. For ASCII-declared fields from a trusted source this is always true."
     } else {
         "The wire bytes must be valid UTF-8."
     };
     let safety_lit = syn::LitStr::new(safety_note, span);
+    let unchecked = str_unchecked.map(|str_unchecked| {
+        quote::quote! {
+            /// View this text var-data field as `&str` without character encoding
+            /// validation. Structural bounds are still checked.
+            ///
+            /// # Safety
+            ///
+            #[doc = #safety_lit]
+            #[inline]
+            pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
+                let bytes = self.#vd_ident()?;
+                Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
+            }
+        }
+    });
 
     quote::quote! {
         #checked
-
-        /// View this text var-data field as `&str` without character encoding
-        /// validation. Structural bounds are still checked.
-        ///
-        /// # Safety
-        ///
-        #[doc = #safety_lit]
-        #[inline]
-        pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
-            let bytes = self.#vd_ident()?;
-            Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
-        }
+        #unchecked
     }
 }

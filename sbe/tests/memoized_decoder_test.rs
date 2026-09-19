@@ -724,3 +724,62 @@ fn memoized_var_data_rejects_over_max_after_encoded_length()
     );
     Ok(())
 }
+
+/// Group-entry last-var-data must reject over-max on a cold getter and after
+/// the iterator has published a bounds-valid `tail_end`.
+#[test]
+fn group_entry_var_data_rejects_over_max_after_encoded_length()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    const XML: &str = r#"<messageSchema package="gbounded" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="boundedData">
+      <type name="length" primitiveType="uint8" maxValue="3"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <data name="payload" id="2" type="boundedData"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("gbounded"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .expect("one module")
+        .source
+        .clone();
+    compile_and_run(
+        "gbounded_max",
+        &src,
+        r#"
+        // header 8 + dim 4 + length 1 + 4 data bytes. Length 4 exceeds max 3.
+        let wire = [
+            0u8, 0, 1, 0, 1, 0, 0, 0,
+            0, 0, 1, 0,
+            4, b'a', b'b', b'c', b'd',
+        ];
+        let dec = MDecoder::try_decode(&wire, 0)?;
+        let mut rows = dec.rows()?;
+        let entry = rows.next().ok_or("one entry")??;
+        assert!(matches!(
+            entry.payload(),
+            Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })
+        ), "warm entry cache must not disable schema length validation");
+        "#,
+    );
+    Ok(())
+}

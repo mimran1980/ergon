@@ -568,13 +568,12 @@ impl GenerationConfig {
 
     /// Re-use one `sbe_rt` runtime across separately generated schema modules.
     ///
-    /// `path` must work in `pub use <path> as sbe_rt;`.
-    ///
-    /// The owner sizes its runtime to its own schema. When this module needs
-    /// ordered-lane types the owner may lack (`EntryInfo`, `Ordered`,
-    /// `OrderedFixed`), it instead emits a `sbe_rt` module that glob re-exports
-    /// the owner's runtime and defines those types beside it, so every other
-    /// runtime item is still the owner's.
+    /// `path` must work in `pub use <path> as sbe_rt;`. Every generated `sbe_rt`
+    /// is whole (`EntryInfo`, `Ordered`, `OrderedFixed` included) whether or not
+    /// that schema's own messages can reach them, so a consumer is only
+    /// `pub use <path> as sbe_rt` — never a second module that glob-re-exports
+    /// the owner and defines those types beside it. One shared runtime means
+    /// one set of types: `consumer::sbe_rt::EntryInfo` *is* the owner's.
     ///
     /// ```
     /// # use ergo_sbe::GenerationConfig;
@@ -583,6 +582,8 @@ impl GenerationConfig {
     /// GenerationConfig::new("md")
     ///     .with_external_sbe_rt("crate::common::sbe_rt");
     /// ```
+    ///
+    /// Covered by `baseline_test::external_sbe_rt_from_fixed_block_owner_supports_consumer_tails`.
     #[must_use]
     pub fn with_external_sbe_rt(mut self, path: impl Into<String>) -> Self {
         self.external_sbe_rt_path = Some(path.into());

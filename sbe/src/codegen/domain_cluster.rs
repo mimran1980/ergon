@@ -221,15 +221,15 @@ fn push_named_type_cell(
         if f.since_version > 0 || accessor_optional {
             struct_fields.push(quote::quote! { pub #f_ident: Option<#type_ident> });
             from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });
-            if accessor_optional {
-                let value = dto_enum_or_null(&quote::quote! { self }, f_ident, type_ident);
-                encode_stmts.push(quote::quote! {
-                    enc.#f_ident(#value);
-                });
-            } else {
-                encode_stmts
-                    .push(quote::quote! { if let Some(v) = self.#f_ident { enc.#f_ident(v); } });
-            }
+            // Versioned required fields are `Option` on the DTO because an old
+            // wire may omit them; the encoder still writes the compiled block,
+            // so `None` must write `NullVal` rather than skip (a reused buffer
+            // would keep the previous `Some` image). Same write as
+            // `null_as_option` / `all_enums_as_option`.
+            let value = dto_enum_or_null(&quote::quote! { self }, f_ident, type_ident);
+            encode_stmts.push(quote::quote! {
+                enc.#f_ident(#value);
+            });
         } else {
             struct_fields.push(quote::quote! { pub #f_ident: #type_ident });
             from_exprs.push(quote::quote! { #f_ident: dec.#f_ident() });

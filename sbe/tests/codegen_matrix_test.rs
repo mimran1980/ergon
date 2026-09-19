@@ -317,6 +317,8 @@ const VARIANTS: &[Variant] = &[
         },
         module_suffix: r#"
             fn _keyword_renamed(d: &FlatDecoder<'_>) -> u8 { d.type_kw() }
+            fn _keyword_renamed_row(d: &NestedRowsEntryDecoder<'_>) -> u8 { d.type_kw() }
+            fn _keyword_renamed_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> u8 { d.type_kw() }
         "#,
         expect_src: &["#[deprecated", "pub fn type_kw("],
     },
@@ -550,8 +552,8 @@ fn enum_and_set_domain_types_reach_the_dto() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// A runtime owner with no groups or var-data: its `sbe_rt` carries no
-/// ordered-lane types, which is the owner shape a tail-owning consumer broke on.
+/// A runtime owner with no groups or var-data. Its `sbe_rt` is still whole
+/// (`EntryInfo` / `Ordered` included) so a tail-owning consumer can share it.
 const FIXED_BLOCK_OWNER: &str = r#"<messageSchema package="owner" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">

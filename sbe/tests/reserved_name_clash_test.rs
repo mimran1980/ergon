@@ -851,8 +851,9 @@ fn entry_fields_named_acting_version_and_block_length_compile()
         &src,
         r"
         let len = MEncoder::compute_length_with_header(1);
-        let mut buf = [0u8; 32];
-        let actual = MEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+        let mut storage = [0u8; 32];
+        let buf = &mut storage[..len];
+        let actual = MEncoder::try_wrap_and_apply_header(buf, 0)?
             .fixed(&MFixedFields {})
             .rows(1, |g| {
                 g.add(|e| { e.acting_version(7u16).acting_block_length(9u16); Ok(()) })?;
@@ -860,7 +861,7 @@ fn entry_fields_named_acting_version_and_block_length_compile()
             })?
             .encoded_length_with_header();
         assert_eq!(len, actual);
-        let dec = MDecoder::try_decode(&buf[..actual], 0)?;
+        let dec = MDecoder::try_decode(&storage[..actual], 0)?;
         let mut n = 0;
         for row in dec.rows()? {
             assert_eq!(row.acting_version(), 7);
@@ -1022,6 +1023,93 @@ fn acting_names_yield_on_tail_owners_and_ordered_lanes() -> Result<(), Box<dyn s
     assert_eq!(qs, vec![6]);
     assert_eq!(complete.encoded_length_with_header(), actual);
     "#,
+    );
+    Ok(())
+}
+
+/// Nested-entry `actingVersion` / `actingBlockLength` beside nested tails.
+/// Message-level and one-level entry cells do not prove this location.
+#[test]
+fn nested_entry_fields_named_acting_version_compile() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="nestedacting" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="N" id="1">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="px" id="2" type="uint32"/>
+      <group name="cells" id="3" dimensionType="groupSizeEncoding">
+        <field name="actingVersion" id="4" type="uint16"/>
+        <field name="actingBlockLength" id="5" type="uint16"/>
+        <data name="note" id="6" type="varStringEncoding"/>
+      </group>
+    </group>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(GenerationConfig::new("nestedacting"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    compile_and_run(
+        "nestedacting_rt",
+        &src,
+        r#"
+        let len = NEncodedLength::new()
+            .rows_ragged(1, |r| {
+                r.add()?.cells(|c| {
+                    c.add()?.note(2)?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 64];
+        let buf = &mut storage[..len];
+        let actual = NEncoder::try_wrap_and_apply_header(buf, 0)?
+            .fixed(&NFixedFields {})
+            .rows(1, |g| {
+                g.add(|mut e| {
+                    e.px(3);
+                    e.cells(1, |c| {
+                        c.add(|mut n| {
+                            n.acting_version(7u16).acting_block_length(9u16);
+                            n.note(b"hi")
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = NDecoder::try_decode(&storage[..actual], 0)?;
+        for row in dec.rows()? {
+            let row = row?;
+            assert_eq!(row.px(), 3);
+            for cell in row.cells()? {
+                let cell = cell?;
+                assert_eq!((cell.acting_version(), cell.acting_block_length()), (7, 9));
+                assert_eq!(cell.note()?, b"hi");
+            }
+        }
+        "#,
     );
     Ok(())
 }

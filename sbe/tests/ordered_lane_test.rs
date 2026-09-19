@@ -279,9 +279,9 @@ fn ordered_lane_callback_error_propagates() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// A schema with var-data but **no groups** still gets an ordered lane, and it
-/// must compile without `EntryInfo` — which is emitted only for schemas that
-/// declare a group, because nothing else can reach it.
+/// A schema with var-data but **no groups** still gets an ordered lane.
+/// `EntryInfo` is still emitted: the runtime is whole so `with_external_sbe_rt`
+/// consumers can share it, even though this schema cannot reach the type.
 ///
 /// This is its own cell on purpose. Every other test here uses the Car schema,
 /// which has groups, so it proves the opposite branch. "The group case compiles
@@ -544,8 +544,10 @@ const HEADER_TYPES: &str = r#"
     </composite>
 "#;
 
-/// A message whose first tail is named `fixed` must still compile: the
-/// callback yields, and `fixed()` on the ordered wrapper is the group visit.
+/// A message whose first tail is named `fixed` must still compile: `fixed()`
+/// on the ordered wrapper is the group visit. That tail also owns
+/// `try_fixed()`, so both ordered callbacks yield; read fixed fields before
+/// `ordered()`.
 #[test]
 fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(
@@ -574,7 +576,7 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
         .clone();
     assert!(
         !src.contains("struct MsgDecoderFixedView"),
-        "a first tail named `fixed` must suppress the ordered fixed callback"
+        "a first tail named `fixed` also owns try_fixed(), so both ordered callbacks yield"
     );
     compile_and_run(
         "fixedclash",
@@ -608,9 +610,9 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// A first tail named `tryFixed` must keep `try_fixed()` and suppress the
-/// ordered `try_fixed` / `fixed` callbacks (same yield as a first tail named
-/// `fixed`). Unconditional emission is E0592 (HFT review 2026-09-15).
+/// A first tail named `tryFixed` keeps `try_fixed()` as the var-data visit
+/// and `fixed()` as the fixed-block callback. Yielding both was over-broad
+/// (HFT review 2026-09-18).
 #[test]
 fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(
@@ -636,8 +638,8 @@ fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::erro
         .source
         .clone();
     assert!(
-        !src.contains("struct MsgDecoderFixedView"),
-        "a first tail named `tryFixed` must suppress the ordered fixed callback"
+        src.contains("struct MsgDecoderFixedView"),
+        "a first tail named `tryFixed` keeps fixed() and the fixed-block view"
     );
     compile_and_run(
         "tryfixedclash",
@@ -654,8 +656,8 @@ fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::erro
             .encoded_length_with_header();
         assert_eq!(len, actual);
         let dec = MsgDecoder::try_decode(&storage[..actual], 0)?;
-        assert_eq!(dec.seq(), 9);
         let complete = dec.ordered()
+            .fixed(|v| { assert_eq!(v.seq(), 9); Ok(()) })?
             .try_fixed(|b| { assert_eq!(b, b"hi"); Ok(()) })?
             .note(|b| { assert_eq!(b, b"ok"); Ok(()) })?
             .done();

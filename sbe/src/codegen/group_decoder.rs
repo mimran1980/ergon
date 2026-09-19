@@ -1560,6 +1560,20 @@ pub(crate) fn generate_group_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         let vd_snake_str = vd_snake.clone();
+        let max_check = if let Some(max) = vd.max_length {
+            let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+            quote::quote! {
+                if wire_length > #max_lit as u64 {
+                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                        field: stringify!(#vd_snake_ident),
+                        length: wire_length,
+                        max_length: #max_lit as u64,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         let version_check = if vd.since_version > 0 {
             let since_lit = syn::LitInt::new(
                 &vd.since_version.to_string(),
@@ -1590,6 +1604,8 @@ pub(crate) fn generate_group_decoder(
                     if let Some(end) = #warm_entry_end {
                         let data_offset =
                             self.offset + self.acting_block_length + #prefix_size_lit;
+                        let wire_length = end.saturating_sub(data_offset) as u64;
+                        #max_check
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                     }
                 }
@@ -1608,6 +1624,8 @@ pub(crate) fn generate_group_decoder(
                             available: self.buf.len().saturating_sub(offset),
                         },
                     )?;
+                    let wire_length = end.saturating_sub(data_offset) as u64;
+                    #max_check
                     // SAFETY: a warm `tail_end` proves this entry's extent was
                     // validated when the iterator computed it.
                     return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
@@ -1624,6 +1642,7 @@ pub(crate) fn generate_group_decoder(
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
+                    #max_check
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
                         stringify!(#vd_snake_ident),
                         offset,
@@ -1649,6 +1668,7 @@ pub(crate) fn generate_group_decoder(
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
+                    #max_check
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
                         stringify!(#vd_snake_ident),
                         offset,

@@ -9,7 +9,7 @@ use crate::structured_ir::{
     MessageField, OwnerTailGroup, OwnerTailVarData, decoder_stage_after_ident,
 };
 
-use super::conversion_helpers::{acting_accessors, tail_accessor_ident};
+use super::conversion_helpers::{acting_accessors, named_accessor_ident, tail_accessor_ident};
 use super::memoized_decoder::forward_fixed_fields;
 
 /// Fixed-field set used to generate the ordered lane's message-level view.
@@ -47,7 +47,7 @@ pub(crate) fn generate_ordered_lane(
     if total_tail == 0 {
         return proc_macro2::TokenStream::new();
     }
-    if taken_accessors.iter().any(|n| n == "ordered") {
+    if named_accessor_ident("ordered", taken_accessors).is_none() {
         return proc_macro2::TokenStream::new();
     }
     let span = proc_macro2::Span::call_site();
@@ -64,14 +64,20 @@ pub(crate) fn generate_ordered_lane(
         .map(|g| g.accessor_snake.as_str())
         .or_else(|| vardata.first().map(|v| v.accessor_snake.as_str()));
     // Message-level `fixed` / `try_fixed` live on the same type as the first
-    // tail unless they consume into `OrderedFixed`. A first tail named `fixed`
-    // or `tryFixed` collides on `Ordered<Decoder>` if both methods are
-    // emitted, so the callback yields and callers read fixed fields before
-    // `ordered()`.
-    let emit_fixed = is_message
-        && first_tail_snake != Some("fixed")
-        && first_tail_snake != Some("try_fixed")
-        && fixed_fields.is_some();
+    // tail unless they consume into `OrderedFixed`. Each name yields through
+    // `named_accessor_ident`. The first tail also owns `try_{tail}`, so a
+    // group/var-data named `fixed` takes both `fixed()` and `try_fixed()`.
+    // A first tail named `tryFixed` only takes `try_fixed()`; `fixed()` stays.
+    let first_taken: Vec<String> = first_tail_snake
+        .map(|s| vec![s.to_string(), format!("try_{s}")])
+        .unwrap_or_default();
+    let emit_fixed_cb = is_message
+        && fixed_fields.is_some()
+        && named_accessor_ident("fixed", &first_taken).is_some();
+    let emit_try_fixed = is_message
+        && fixed_fields.is_some()
+        && named_accessor_ident("try_fixed", &first_taken).is_some();
+    let emit_fixed_phase = emit_fixed_cb || emit_try_fixed;
 
     let mut ts = proc_macro2::TokenStream::new();
     let ordered_doc = if is_message {
@@ -98,8 +104,10 @@ pub(crate) fn generate_ordered_lane(
     let decoder_inner = quote::quote! { self.inner };
     let after_fixed_inner = quote::quote! { self.inner.inner };
 
-    if emit_fixed {
-        let ff = fixed_fields.as_ref().expect("emit_fixed implies Some");
+    if emit_fixed_phase {
+        let ff = fixed_fields
+            .as_ref()
+            .expect("emit_fixed_phase implies Some");
         let view_ident = syn::Ident::new(&format!("{stage_prefix}FixedView"), span);
         // Forwarded fields carry their `DECODER_RESERVED` renames, so a field
         // can never own `acting_*` on the view.
@@ -115,6 +123,63 @@ pub(crate) fn generate_ordered_lane(
             ff.null_as_option,
             ff.all_enums_as_option,
         );
+        let advance = quote::quote! {
+            let view = #view_ident { inner: &self.inner };
+            f(&view)?;
+            Ok(sbe_rt::Ordered {
+                inner: sbe_rt::OrderedFixed { inner: self.inner },
+            })
+        };
+        let fixed_method = emit_fixed_cb.then(|| {
+            if emit_try_fixed {
+                quote::quote! {
+                    /// Read the fixed block before any tail, then continue from a
+                    /// distinct stage that carries only the tail methods. Yields
+                    /// when the first tail is named `fixed`; use [`Self::try_fixed`]
+                    /// there.
+                    #[inline]
+                    pub fn fixed<F>(
+                        self,
+                        f: F,
+                    ) -> Result<#after_fixed_ty, sbe_rt::DecodeError>
+                    where
+                        F: FnOnce(&#view_ident<'_, 'a>) -> Result<(), sbe_rt::DecodeError>,
+                    {
+                        self.try_fixed(f)
+                    }
+                }
+            } else {
+                quote::quote! {
+                    /// Read the fixed block before any tail, then continue from a
+                    /// distinct stage that carries only the tail methods. Standalone
+                    /// because the first tail owns `try_fixed()`.
+                    #[inline]
+                    pub fn fixed<F>(
+                        self,
+                        f: F,
+                    ) -> Result<#after_fixed_ty, sbe_rt::DecodeError>
+                    where
+                        F: FnOnce(&#view_ident<'_, 'a>) -> Result<(), sbe_rt::DecodeError>,
+                    {
+                        #advance
+                    }
+                }
+            }
+        });
+        let try_fixed_method = emit_try_fixed.then(|| {
+            quote::quote! {
+                /// Read the fixed block before any tail, with a caller error type.
+                /// Yields when the first tail is named `tryFixed`; use [`Self::fixed`]
+                /// there.
+                #[inline]
+                pub fn try_fixed<E, F>(self, f: F) -> Result<#after_fixed_ty, E>
+                where
+                    F: FnOnce(&#view_ident<'_, 'a>) -> Result<(), E>,
+                {
+                    #advance
+                }
+            }
+        });
         ts.extend(quote::quote! {
             /// Fixed-block view for the ordered lane's `fixed` callback.
             ///
@@ -132,32 +197,8 @@ pub(crate) fn generate_ordered_lane(
                 #forwarded
             }
             impl<'a> #decoder_ty {
-                /// Read the fixed block before any tail, then continue from a
-                /// distinct stage that carries only the tail methods. Not
-                /// generated when the first tail is itself named `fixed` or
-                /// `tryFixed`; read fixed fields before `ordered()` there.
-                #[inline]
-                pub fn fixed<F>(
-                    self,
-                    f: F,
-                ) -> Result<#after_fixed_ty, sbe_rt::DecodeError>
-                where
-                    F: FnOnce(&#view_ident<'_, 'a>) -> Result<(), sbe_rt::DecodeError>,
-                {
-                    self.try_fixed(f)
-                }
-                /// Read the fixed block before any tail, with a caller error type.
-                #[inline]
-                pub fn try_fixed<E, F>(self, f: F) -> Result<#after_fixed_ty, E>
-                where
-                    F: FnOnce(&#view_ident<'_, 'a>) -> Result<(), E>,
-                {
-                    let view = #view_ident { inner: &self.inner };
-                    f(&view)?;
-                    Ok(sbe_rt::Ordered {
-                        inner: sbe_rt::OrderedFixed { inner: self.inner },
-                    })
-                }
+                #fixed_method
+                #try_fixed_method
             }
         });
     }
@@ -175,7 +216,7 @@ pub(crate) fn generate_ordered_lane(
         true,
         span,
     ));
-    if emit_fixed {
+    if emit_fixed_phase {
         ts.extend(emit_tail_stage(
             &after_fixed_ty,
             &after_fixed_inner,
@@ -270,7 +311,7 @@ fn emit_tail_stage(
     vardata: &[OwnerTailVarData],
     staged_stage: &dyn Fn(usize) -> syn::Ident,
     taken_accessors: &[String],
-    wraps_decoder: bool,
+    inner_may_yield_count_len: bool,
     span: proc_macro2::Span,
 ) -> proc_macro2::TokenStream {
     let next = staged_stage(i);
@@ -279,9 +320,9 @@ fn emit_tail_stage(
     // (plus the peek), so tail `i` is the only name that can take `acting_*`
     // from it. The owner's own fields and other tails live on other types and
     // are not in play here — suppressing on those would drop an accessor
-    // nothing on this type defines. `wraps_decoder` answers a different
-    // question, for the peek: whether the *inner* type still has the count/len
-    // method this wrapper forwards to.
+    // nothing on this type defines. `inner_may_yield_count_len` answers a
+    // different question, for the peek: whether the *inner* type still has the
+    // count/len method this wrapper forwards to.
     let tail_name = if i < groups.len() {
         &groups[i].accessor_snake
     } else {
@@ -291,7 +332,7 @@ fn emit_tail_stage(
     let acting = acting_accessors(&own_tail, inner_access, &proc_macro2::TokenStream::new());
     if i < groups.len() {
         let tg = &groups[i];
-        let peek = peek_count(inner_access, tg, taken_accessors, wraps_decoder);
+        let peek = peek_count(inner_access, tg, taken_accessors, inner_may_yield_count_len);
         let methods = emit_group_methods(inner_access, tg, &next_ty, span);
         quote::quote! {
             impl<'a> #current_ty {
@@ -302,7 +343,7 @@ fn emit_tail_stage(
         }
     } else {
         let vd = &vardata[i - groups.len()];
-        let peek = peek_len(inner_access, vd, taken_accessors, wraps_decoder);
+        let peek = peek_len(inner_access, vd, taken_accessors, inner_may_yield_count_len);
         let methods = emit_vardata_methods(inner_access, vd, &next_ty, span);
         quote::quote! {
             impl<'a> #current_ty {
@@ -318,9 +359,11 @@ fn peek_count(
     inner_access: &proc_macro2::TokenStream,
     tg: &OwnerTailGroup,
     taken: &[String],
-    check_taken: bool,
+    inner_may_yield_count_len: bool,
 ) -> proc_macro2::TokenStream {
-    if check_taken && tail_accessor_ident(&tg.accessor_snake, "count", taken).is_none() {
+    if inner_may_yield_count_len
+        && tail_accessor_ident(&tg.accessor_snake, "count", taken).is_none()
+    {
         return proc_macro2::TokenStream::new();
     }
     let ident = quote::format_ident!("{}_count", tg.accessor_snake);
@@ -337,9 +380,10 @@ fn peek_len(
     inner_access: &proc_macro2::TokenStream,
     vd: &OwnerTailVarData,
     taken: &[String],
-    check_taken: bool,
+    inner_may_yield_count_len: bool,
 ) -> proc_macro2::TokenStream {
-    if check_taken && tail_accessor_ident(&vd.accessor_snake, "len", taken).is_none() {
+    if inner_may_yield_count_len && tail_accessor_ident(&vd.accessor_snake, "len", taken).is_none()
+    {
         return proc_macro2::TokenStream::new();
     }
     let ident = quote::format_ident!("{}_len", vd.accessor_snake);

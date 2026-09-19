@@ -38,8 +38,8 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
         source_b.contains("super::shared_rt::sbe_rt"),
         "consumer module must import shared sbe_rt; got: {source_b}"
     );
-    // Must NOT inline a second runtime. It may still define the ordered-lane
-    // types beside the re-export (see the fixed-block owner test below).
+    // Must NOT inline a second runtime. The owner emits a whole `sbe_rt`;
+    // the consumer only `pub use`s it.
     assert!(
         !source_b.contains("pub enum DecodeError"),
         "consumer module must share the owner's runtime, not inline a second copy"
@@ -60,10 +60,11 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// A runtime owner sizes `sbe_rt` to its own schema, so a fixed-block owner has
-/// no ordered-lane types. A consumer with tails must still compile against it
-/// and walk its tails in the ordered spelling. This combination did not compile
-/// once `EntryInfo` / `Ordered` became conditional on the owner's schema.
+/// A runtime owner cannot see its consumers' schemas, so every generated
+/// `sbe_rt` is whole — including `EntryInfo` / `Ordered` on a fixed-block
+/// owner. A consumer with tails `pub use`s that runtime and walks in the
+/// ordered spelling. Sizing the owner to its own schema (0.1.27/0.1.28) made
+/// `consumer::sbe_rt::EntryInfo` a different type from the owner's.
 #[test]
 fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
 -> Result<(), Box<dyn std::error::Error>> {

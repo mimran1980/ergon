@@ -3973,6 +3973,14 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
             let data_offset = self.offset + self.acting_block_length + 4;
+            let wire_length = end.saturating_sub(data_offset) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(usage_description),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let offset = self.tail_offset_0()?;
@@ -3984,11 +3992,26 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                     needed: usize::MAX,
                     available: self.buf.len().saturating_sub(offset),
                 })?;
+            let wire_length = end.saturating_sub(data_offset) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(usage_description),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
+        if wire_length > 1073741824 as u64 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: stringify!(usage_description),
+                length: wire_length,
+                max_length: 1073741824 as u64,
+            });
+        }
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
             stringify!(usage_description),
             offset,
@@ -7032,9 +7055,9 @@ impl<'v, 'a> CarDecoderFixedView<'v, 'a> {
 }
 impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
     /// Read the fixed block before any tail, then continue from a
-    /// distinct stage that carries only the tail methods. Not
-    /// generated when the first tail is itself named `fixed` or
-    /// `tryFixed`; read fixed fields before `ordered()` there.
+    /// distinct stage that carries only the tail methods. Yields
+    /// when the first tail is named `fixed`; use [`Self::try_fixed`]
+    /// there.
     #[inline]
     pub fn fixed<F>(
         self,
@@ -7049,6 +7072,8 @@ impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
         self.try_fixed(f)
     }
     /// Read the fixed block before any tail, with a caller error type.
+    /// Yields when the first tail is named `tryFixed`; use [`Self::fixed`]
+    /// there.
     #[inline]
     pub fn try_fixed<E, F>(
         self,

@@ -24,20 +24,25 @@
   already owns that name, matching the count/len rule. A schema with
   `actingVersion` / `actingBlockLength` on an entry compiles; the field
   accessor keeps its name.
-- Ordered `fixed` / `try_fixed` callbacks yield when the first tail is named
-  `fixed` or `tryFixed`, so those schemas compile. Read fixed fields before
-  `ordered()`; the tail keeps the name.
-- Memoized var-data getters re-check the schema maximum even when
-  `encoded_length()` has already published a bounds-valid end. Over-max
-  payloads are `InvalidVarDataLength` on the base lane, a cold memoized
-  getter, and a warmed one.
+- Ordered `fixed` / `try_fixed` callbacks yield independently. A first tail
+  named `tryFixed` keeps `fixed()`. A first tail named `fixed` also owns
+  `try_fixed()` (the try-visit), so both callbacks yield and callers read
+  fixed fields before `ordered()`.
+- Memoized **and group-entry** var-data getters re-check the schema maximum
+  even when `encoded_length()` / the iterator has already published a
+  bounds-valid end. Over-max payloads are `InvalidVarDataLength` on the base
+  lane, a cold getter, and a warmed one.
 - Domain `None` for a `with_all_enums_as_option()` (or `with_null_as_option`)
-  enum writes `NullVal` into a reused buffer. Flat-group `bulk_add_domain`
-  and `to_wire_entry` honour `Option<Enum>` the same way.
+  enum writes `NullVal` into a reused buffer, including nested-entry DTOs.
+  Flat-group `bulk_add_domain` and `to_wire_entry` honour `Option<Enum>` the
+  same way. A versioned required enum `None` writes `NullVal` rather than
+  skipping the write.
+- `*_as_str` / `*_as_str_unchecked` yield per name: a sibling `noteAsStr`
+  does not drop `note_as_str_unchecked`.
 - The gated `ergo-sbe_ordered` Car decode arm walks recursively with ordered
   callbacks at every tail and observes the same fields as the staged
-  consuming arm. `fairness_policy_test` rejects staged `into_*` inside that
-  arm.
+  consuming arm. `fairness_policy_test` rejects staged `.into_*` anywhere in
+  that arm.
 
 ## [0.1.28] — 2026-09-15
 
