@@ -24,3 +24,9 @@ docs/superpowers/
 mutants.out*/
 .cargo-home/
 /release-assets/
+
+# libFuzzer corpus/artifacts: locally-regenerated fuzzing state, not source.
+# Grows unboundedly per run; already tracked entries predate this rule and
+# are left alone (not untracked) rather than deleted.
+sbe/fuzz/corpus/
+sbe/fuzz/artifacts/
