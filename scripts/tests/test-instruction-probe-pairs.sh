@@ -61,4 +61,41 @@ missing="$fixture/missing"
 write_summary "$missing/no-lto" ergon decode_x 10.0
 expect_failure "missing arm" python3 "$judge" "$missing" "$fixture/probes.tsv"
 
+# The ordered lane must retire strictly fewer instructions than the iterator
+# walk it wraps. Equal is a failure, not a tie.
+write_ordered_pair() {
+    local dir=$1 iterator=$2 ordered=$3
+    write_summary "$dir/no-lto" ergon decode_full_message "$iterator"
+    write_summary "$dir/no-lto" sbe-tool decode_full_message "$iterator"
+    write_summary "$dir/no-lto" ergon decode_full_message_ordered "$ordered"
+    write_summary "$dir/no-lto" sbe-tool decode_full_message_ordered "$ordered"
+}
+cat >"$fixture/ordered.tsv" <<'EOF'
+symbol	arm	pair	topic	operations
+ergo_probe_decode_full_message	ergon	decode_full_message	decode	10000
+tool_probe_decode_full_message	sbe-tool	decode_full_message	decode	10000
+ergo_probe_decode_full_message_ordered	ergon	decode_full_message_ordered	decode	10000
+tool_probe_decode_full_message_ordered	sbe-tool	decode_full_message_ordered	decode	10000
+EOF
+
+ordered_below="$fixture/ordered-below"
+write_ordered_pair "$ordered_below" 20.0 19.5
+python3 "$judge" "$ordered_below" "$fixture/ordered.tsv" >/dev/null
+
+ordered_equal="$fixture/ordered-equal"
+write_ordered_pair "$ordered_equal" 20.0 20.0
+expect_failure "is not strictly below iterator" python3 "$judge" "$ordered_equal" "$fixture/ordered.tsv"
+
+ordered_above="$fixture/ordered-above"
+write_ordered_pair "$ordered_above" 20.0 20.5
+expect_failure "is not strictly below iterator" python3 "$judge" "$ordered_above" "$fixture/ordered.tsv"
+
+# Both probe drivers reject a missing or unknown profile before touching the
+# host, so this half of their fail-closed contract is provable anywhere.
+for driver in run-sbe-instruction-probes.sh run-cluster-instruction-probes.sh; do
+    expect_failure "name at least one profile" bash "$root/scripts/$driver"
+    expect_failure "unknown profile 'fast'" bash "$root/scripts/$driver" --profile fast
+    expect_failure "usage:" bash "$root/scripts/$driver" --bogus
+done
+
 echo "test-instruction-probe-pairs: PASS"

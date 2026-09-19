@@ -78,10 +78,21 @@ changes:
 just bench-cluster
 ```
 
-Every maintained ergo-sbe/reference ratio must be at most `1.00` under
-equal-work inputs. Record fresh measurements instead of copying old benchmark
-numbers into documentation. Documentation-only changes do not require a
-benchmark run.
+The project target is `1.00` (ergon / sbe-tool) under equal-work inputs.
+`scripts/check-bench-gate.sh` already ships these documented exceptions — do
+not raise them further:
+
+| Comparison | no-LTO | LTO |
+|---|---:|---:|
+| SBE `optional_enum_nullify` | 1.01 | 1.00 |
+| Cluster session-message-header decode | 1.01 | 1.01 |
+| Cluster session-event decode | 1.05 | 1.01 |
+| All other maintained comparisons | 1.00 | 1.00 |
+
+A gate pass is not literal `1.00` everywhere. A ceiling above `1.00` records a
+repeatable sbe-tool win on a placement-sensitive micro-op; it is not permission
+to add overhead. Record fresh measurements instead of copying old numbers into
+documentation. Documentation-only changes do not require a benchmark run.
 
 Shared GitHub runners execute both profiles and publish Criterion diagnostics,
 but noisy wall-clock ratios are not merge gates there. Run the strict ratio

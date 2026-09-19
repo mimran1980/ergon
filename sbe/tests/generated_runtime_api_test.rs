@@ -67,14 +67,12 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm()
         &src,
         r#"
         // Encode Alpha (template_id=1, x=42)
-        let alen = visitor_test::AlphaEncoder::compute_length_with_header();
-        let mut abuf = vec![0u8; alen];
+        let mut abuf = [0u8; visitor_test::AlphaEncoder::compute_length_with_header()];
         let len = visitor_test::AlphaEncoder::wrap_and_apply_header(&mut abuf, 0)
             .fixed(&visitor_test::AlphaFixedFields { x: 42 })
             .encoded_length_with_header();
         // Encode Beta (template_id=2, y=99)
-        let blen = visitor_test::BetaEncoder::compute_length_with_header();
-        let mut bbuf = vec![0u8; blen];
+        let mut bbuf = [0u8; visitor_test::BetaEncoder::compute_length_with_header()];
         let _ = visitor_test::BetaEncoder::wrap_and_apply_header(&mut bbuf, 0)
             .fixed(&visitor_test::BetaFixedFields { y: 99 })
             .encoded_length_with_header();

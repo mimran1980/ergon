@@ -73,12 +73,10 @@ diagnostic arms (`ergo-sbe_wrap_checked`, `ergo-sbe_try_from`,
 price the safety ergon offers, not to be compared against an unchecked
 reference.
 
-The maintained Car `ergo-sbe_ordered` arm uses ordered callbacks at message
-level and staged methods inside entries. It also observes entry indices that
-the other arms do not observe. Its result therefore does not isolate the cost
-of the recursive ordered API or establish an equal-work ranking between lanes.
-For that comparison, use recursive callbacks and match every observation across
-the arms, including any metadata used by the application.
+The maintained Car `ergo-sbe_ordered` arm walks with recursive ordered
+callbacks at every tail and observes the same fields as the staged consuming
+arm (no extra `EntryInfo` index). Lane-to-lane cost is
+`versioned_l3_bench`, not the `1.00` sbe-tool gate.
 
 The benchmark gate exists to prove that ergo-sbe is **not slower than**
 sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is

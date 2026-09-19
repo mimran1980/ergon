@@ -25,41 +25,44 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
         "l3_stages_rt",
         &src,
         r#"
-        let mut buf = [0u8; 1024];
-        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
-        .fixed(&L3BookFixedFields { timestamp: 99, sequence: 7 })
-        .bids(2, |g| {
-            g.add(|mut lvl| {
-                lvl.price(100);
-                lvl.qty(10);
-                lvl.orders(2, |o| {
-                    o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") }).unwrap();
-                    o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
-                })
-            }).unwrap();
-            g.add(|mut lvl| {
-                lvl.price(101);
-                lvl.qty(5);
-                lvl.orders(0, |_| Ok(()))
-            })
-        }).unwrap().asks(1, |g| {
-            g.add(|mut lvl| {
-                lvl.price(200);
-                lvl.qty(20);
-                lvl.orders(1, |o| {
-                    o.add(|mut ord| {
-                        ord.order_qty(8);
-                        ord.order_id(b"ask-1")
+        let len = L3BookEncodedLength::new()
+            .bids_ragged(2, |b| {
+                b.add()?.orders(|o| { o.add()?.order_id(5)?; o.add()?.order_id(5)?; Ok(()) })?;
+                b.add()?.orders(|_| Ok(()))?;
+                Ok(())
+            })?
+            .asks_ragged(1, |b| {
+                b.add()?.orders(|o| { o.add()?.order_id(5)?; Ok(()) })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 256];
+        let total_len = L3BookEncoder::try_wrap_and_apply_header(&mut storage[..len], 0)?
+            .fixed(&L3BookFixedFields { timestamp: 99, sequence: 7 })
+            .bids(2, |g| {
+                g.add(|mut lvl| {
+                    lvl.price(100).qty(10);
+                    lvl.orders(2, |o| {
+                        o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") })?;
+                        o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
                     })
+                })?;
+                g.add(|mut lvl| {
+                    lvl.price(101).qty(5);
+                    lvl.orders(0, |_| Ok(()))
                 })
-            })
-        }).unwrap();
-        let encoded = c.as_bytes_with_header();
-        // as_bytes_with_header() is the explicit header-inclusive view.
-        assert_eq!(c.as_bytes_with_header(), encoded);
-        let total_len = encoded.len();
+            })?
+            .asks(1, |g| {
+                g.add(|mut lvl| {
+                    lvl.price(200).qty(20);
+                    lvl.orders(1, |o| o.add(|mut ord| { ord.order_qty(8); ord.order_id(b"ask-1") }))
+                })
+            })?
+            .encoded_length_with_header();
+        assert_eq!(total_len, len);
+        let encoded = &storage[..len];
 
-        let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
+        let dec = L3BookDecoder::try_decode(encoded, 0)?;
         assert_eq!(dec.timestamp(), 99);
         assert_eq!(dec.sequence(), 7);
 
@@ -81,8 +84,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
                 })?;
                 all_order_ids.push(ids);
                 Ok(complete)
-            })
-            .unwrap()
+            })?
             .into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
                 ask_prices.push(lvl.price());
                 assert_eq!(lvl.qty(), 20);
@@ -90,8 +92,7 @@ fn decode_l3_through_consuming_stages() -> Result<(), Box<dyn std::error::Error>
                     ask_order_qtys.push(ord.order_qty());
                     ord.into_order_id().map(|(_id, done)| done)
                 })
-            })
-            .unwrap();
+            })?;
         assert_eq!(level_prices, vec![100i64, 101]);
         assert_eq!(level_qtys, vec![10i64, 5]);
         assert_eq!(all_order_ids, vec![vec![b"ord-1".to_vec(), b"ord-2".to_vec()], vec![]]);
@@ -114,8 +115,19 @@ fn decode_l3_through_into_entries() -> Result<(), Box<dyn std::error::Error>> {
         "l3_visit_rt",
         &src,
         r#"
-        let mut storage = [0u8; 512];
-        let len = L3BookEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = L3BookEncodedLength::new()
+            .bids_ragged(2, |b| {
+                b.add()?.orders(|o| { o.add()?.order_id(5)?; o.add()?.order_id(5)?; Ok(()) })?;
+                b.add()?.orders(|_| Ok(()))?;
+                Ok(())
+            })?
+            .asks_ragged(1, |b| {
+                b.add()?.orders(|o| { o.add()?.order_id(5)?; Ok(()) })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 256];
+        let len = L3BookEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&L3BookFixedFields { timestamp: 99, sequence: 7 })
             .bids(2, |g| {
                 g.add(|mut lvl| {
@@ -152,6 +164,7 @@ fn decode_l3_through_into_entries() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
 
         let dec = L3BookDecoder::try_decode(encoded, 0)?;
@@ -245,28 +258,37 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
         "l3_entry_stages_rt",
         &src,
         r#"
-        let mut buf = [0u8; 1024];
-        let c = L3BookEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap()
-        .fixed(&L3BookFixedFields { timestamp: 5, sequence: 3 })
-        .bids(2, |g| {
-            g.add(|mut lvl| {
-                lvl.price(100);
-                lvl.qty(10);
-                lvl.orders(2, |o| {
-                    o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") }).unwrap();
-                    o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
+        let len = L3BookEncodedLength::new()
+            .bids_ragged(2, |b| {
+                b.add()?.orders(|o| { o.add()?.order_id(5)?; o.add()?.order_id(5)?; Ok(()) })?;
+                b.add()?.orders(|_| Ok(()))?;
+                Ok(())
+            })?
+            .asks(0)
+            .finish_empty()?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 256];
+        let written = L3BookEncoder::try_wrap_and_apply_header(&mut storage[..len], 0)?
+            .fixed(&L3BookFixedFields { timestamp: 5, sequence: 3 })
+            .bids(2, |g| {
+                g.add(|mut lvl| {
+                    lvl.price(100).qty(10);
+                    lvl.orders(2, |o| {
+                        o.add(|mut ord| { ord.order_qty(4); ord.order_id(b"ord-1") })?;
+                        o.add(|mut ord| { ord.order_qty(6); ord.order_id(b"ord-2") })
+                    })
+                })?;
+                g.add(|mut lvl| {
+                    lvl.price(101).qty(5);
+                    lvl.orders(0, |_| Ok(()))
                 })
-            }).unwrap();
-            g.add(|mut lvl| {
-                lvl.price(101);
-                lvl.qty(5);
-                lvl.orders(0, |_| Ok(()))
-            })
-        }).unwrap().asks(0, |_| Ok(())).unwrap();
-        let encoded = c.as_bytes_with_header();
-        assert_eq!(c.as_bytes_with_header(), encoded);
+            })?
+            .asks(0, |_| Ok(()))?
+            .encoded_length_with_header();
+        assert_eq!(written, len);
+        let encoded = &storage[..len];
 
-        let dec = L3BookDecoder::try_decode(encoded, 0).unwrap();
+        let dec = L3BookDecoder::try_decode(encoded, 0)?;
         let mut order_ids = Vec::new();
         let mut prices = Vec::new();
         let done = dec
@@ -277,13 +299,11 @@ fn decode_l3_entry_consuming_stages() -> Result<(), Box<dyn std::error::Error>> 
                     order_ids.push(id.to_vec());
                     Ok(done)
                 })
-            })
-            .unwrap()
+            })?
             // asks is empty, so the closure runs zero times.
             .into_asks(|lvl| -> Result<_, sbe_rt::DecodeError> {
                 lvl.into_orders(|ord| ord.into_order_id().map(|(_id, done)| done))
-            })
-            .unwrap();
+            })?;
         assert_eq!(prices, vec![100i64, 101]);
         assert_eq!(order_ids, vec![b"ord-1".to_vec(), b"ord-2".to_vec()]);
         assert_eq!(done.encoded_length_with_header(), encoded.len());

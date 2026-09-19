@@ -1,5 +1,6 @@
 # Configuration
 
+- [Feature Integrations](configuration/feature-integrations.md)
 - [with_conversion vs with_domain_type](configuration/conversion-vs-domain.md)
 - [GenerationConfig Options](configuration/generation-config.md)
 - [Code-Generation Hooks](configuration/hooks.md)

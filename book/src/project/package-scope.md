@@ -1,8 +1,16 @@
 # Package Scope
 
-crates.io ships generator source, manifest, and this README. Tests, fixtures,
-samples, and benches live on GitHub only — use the links above.
+crates.io ships generator source, the crate README, and the manifest.
 
-## License
+Not published: tests, fixtures, samples, benches, the book, Java harnesses,
+and upstream reference trees. Those live on GitHub.
 
-Apache-2.0 · [mimran1980/ergon](https://github.com/mimran1980/ergon)
+| Crate | crates.io |
+|-------|-----------|
+| `ergo-sbe` | generator |
+| `ergo-aeron-cluster` | Cluster client |
+
+Samples and `ergo-sbe-benchmarks` are `publish = false`. Cluster codecs stay
+crate-private; use `AeronCluster`, not `cluster_codec_types`.
+
+Apache-2.0.

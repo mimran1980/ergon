@@ -1,17 +1,14 @@
 # Timestamp Conversions
 
-SBE represents timestamps as `uint64` wire fields with a `semanticType` attribute
-(`UTCTimestamp` = nanoseconds, `UTCTimestampMicros` = microseconds,
-`UTCTimestampMillis` = milliseconds). The `chrono` feature (see
-[Feature Integrations](../configuration/feature-integrations.md)) converts
-these to `chrono::DateTime<Utc>` and `chrono::NaiveDateTime` with one line
-of config.
-
-## Nanoseconds and microseconds — built-in
-
-Enable the `chrono` feature in your `Cargo.toml`:
+SBE timestamps are typically `uint64` fields with a `semanticType`
+(`UTCTimestamp` = nanos, `UTCTimestampMicros` = micros,
+`UTCTimestampMillis` = millis). The `chrono` feature maps them to
+`DateTime<Utc>` / `NaiveDateTime`. Enable it on **both** Cargo entries:
 
 ```toml
+[build-dependencies]
+ergo-sbe = { version = "0.1", features = ["chrono"] }
+
 [dependencies]
 ergo-sbe = { version = "0.1", features = ["chrono"] }
 chrono = "0.4"
@@ -56,9 +53,6 @@ enc.try_updated_at(
         .naive_utc(),
 )?;
 ```
-
-Conversion cost: 2.8 ns (nanos → DateTime), 5.5 ns (micros → NaiveDateTime).
-See the [measured benchmarks](../configuration/feature-integrations.md#measured-conversion-cost).
 
 ## One selector, many fields
 

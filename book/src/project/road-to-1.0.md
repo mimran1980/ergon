@@ -62,30 +62,21 @@ Cluster may remain `0.x` after sbe 1.0.
   attaches them to a GitHub release. A number without a matching run-id /
   HEAD commit is not evidence.
 
-### Status (2026-08-25)
+### Status
 
-Ancestry of a claimed release is `git merge-base --is-ancestor <tag> main`
-(not `git describe --tags`). Audited 2026-08-25:
-
-```sh
-git merge-base --is-ancestor v0.1.15 main   # true
-git merge-base --is-ancestor v0.1.21 main   # false
-```
-
-`v0.1.15` is the latest tag that is an ancestor of `main`. GitHub Releases
-`v0.1.19`, `v0.1.20`, and `v0.1.21` publish `bench-sbe-lto.tar.gz`,
-`bench-sbe-no-lto.tar.gz`, `bench-cluster-lto.tar.gz`, and
-`bench-cluster-no-lto.tar.gz`, but those tags are not ancestors of `main`.
+A claimed 1.0 streak tag must be an ancestor of `main`
+(`git merge-base --is-ancestor <tag> main`), not merely a GitHub Release.
+`git describe --tags` is not the check.
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | Manifest exists; crate-level cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
-| 2. Parity gate at ≤1.00 | **Open.** Gate is a literal `1.00` for SBE **and** cluster. Three consecutive GitHub Release minors have downloadable bench archives, but those tags are not ancestors of `main`, so the chain is not sealed on the 1.0 branch. |
+| 1. API-freeze audit | Manifest exists; cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
+| 2. Parity gate at ≤1.00 | **Open.** Need three consecutive released minors on `main` with recorded Criterion runs. |
 | 3. Wire compatibility | Dual-encode parity tests and FIX SBE conformance are green. |
-| 4. Trust boundary | Fuzz + Miri fixtures exist; treat any open P0 as blocking. |
+| 4. Trust boundary | Fuzz + Miri fixtures exist; any open P0 is blocking. |
 | 5. Docs | Book + migration pages published. |
-| 6. External signal | **Open.** Matches [external-pilot.md](external-pilot.md): the in-repo FIX SBE suite is internal wire evidence, not an external user or latency case study. |
-| Cluster 1.0 criteria | Separate clock; compatibility page + `just bench-cluster` exist. |
+| 6. External signal | **Open.** In-repo FIX SBE is internal evidence, not an external user. See [external-pilot.md](external-pilot.md). |
+| Cluster 1.0 | Separate clock; [compatibility](../cluster/compatibility.md) + `just bench-cluster` exist. |
 
 ## 1.0 API migrations (still 1.0-only)
 

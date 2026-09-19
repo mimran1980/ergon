@@ -9,12 +9,14 @@ For re-encode, eligible flat groups are bulk-written directly from
 Eligibility requires fixed-size entries whose domain fields have the same wire
 representation; nested groups, var-data, optional/versioned fields, configured
 domain conversions, and bool remapping use the general `add` path. Integer
-min/max checks are preserved in both paths.
+min/max checks are preserved in both paths. `with_all_enums_as_option()` /
+`with_null_as_option` maps a required enum to `Option<Enum>` on the DTO:
+`None` writes the schema `NullVal` image (including on a reused buffer), and
+`bulk_add_domain` / `to_wire_entry` use that same mapping.
 
-On the audited Apple M4 1,000-entry fixture, automatic DTO bulk encode measured
-509 ns versus 1.336 µs for the exact previous per-entry path with LTO, and
-509 ns versus 1.998 µs without LTO. This is a DTO-to-DTO diagnostic, not an
-ergon/sbe-tool fairness ratio.
+DTO re-encode of eligible flat groups is a DTO-to-DTO diagnostic
+(`group_encode_bench`), not an ergon/sbe-tool ratio. Read a fresh run; do not
+quote numbers from this page.
 
 ```rust,no_run
 // build.rs — DomainVarData picks the DTO field type for var-data:

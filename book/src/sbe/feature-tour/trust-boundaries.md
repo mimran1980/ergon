@@ -8,7 +8,7 @@ walks the complete dynamic tail before bulk access:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
-## Three-tier constructors (0.1.12+)
+## Three-tier constructors
 
 | Tier | Entry | Bad buffer |
 |------|-------|------------|

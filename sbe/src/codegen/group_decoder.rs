@@ -11,7 +11,7 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
+    acting_accessors, enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
     fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
@@ -63,6 +63,18 @@ pub(crate) fn generate_group_decoder(
     let count_field_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
     let g_name_lit = syn::LitStr::new(&g.name, proc_macro2::Span::call_site());
     let total_tail = g.groups.len() + g.var_data.len();
+    // Entry field/tail names. Group entries do not rename against the static
+    // reserved list, so the empty slice matches how their fixed accessors are
+    // emitted. Convenience methods (acting_*, count/len) yield to these.
+    let taken_entry_accessors = owner_accessor_names(
+        &g.fields,
+        conversions,
+        &[],
+        g.groups
+            .iter()
+            .map(|ng| ng.name.as_str())
+            .chain(g.var_data.iter().map(|v| v.name.as_str())),
+    );
     // Bulk decode is only safe when every non-constant entry field is
     // present in all supported versions (sinceVersion == 0) and required.
     let bulk_decode_eligible = g.has_fixed_stride()
@@ -838,20 +850,11 @@ pub(crate) fn generate_group_decoder(
     }
 
     let mut entry_body = proc_macro2::TokenStream::new();
-    entry_body.extend(quote::quote! {
-        /// Schema version from the parent message header (or wrap args).
-        #mu
-        #[inline]
-        pub const fn acting_version(&self) -> u16 {
-            self.acting_version
-        }
-        /// Acting block length of this entry's fixed block.
-        #mu
-        #[inline]
-        pub const fn acting_block_length(&self) -> usize {
-            self.acting_block_length
-        }
-    });
+    entry_body.extend(acting_accessors(
+        &taken_entry_accessors,
+        &quote::quote! { self },
+        &mu,
+    ));
     // Entry decoders keep a one-shot extent cache in every lane: the group
     // iterator computes each entry's end to advance, and the last var-data
     // accessor reuses it instead of re-reading its length header. Dropping it
@@ -1441,19 +1444,6 @@ pub(crate) fn generate_group_decoder(
         quote::quote! { self.offset },
     ));
 
-    // Entry field accessor names. Group entries do not rename against the
-    // static reserved list, so the empty slice matches how their fixed
-    // accessors are emitted above.
-    let taken_entry_accessors = owner_accessor_names(
-        &g.fields,
-        conversions,
-        &[],
-        g.groups
-            .iter()
-            .map(|ng| ng.name.as_str())
-            .chain(g.var_data.iter().map(|v| v.name.as_str())),
-    );
-
     // Nested group accessors — scope under parent group name
     let mut ng_idx = 0usize;
     for ng in &g.groups {
@@ -1570,6 +1560,20 @@ pub(crate) fn generate_group_decoder(
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
         let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
         let vd_snake_str = vd_snake.clone();
+        let max_check = if let Some(max) = vd.max_length {
+            let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+            quote::quote! {
+                if wire_length > #max_lit as u64 {
+                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                        field: stringify!(#vd_snake_ident),
+                        length: wire_length,
+                        max_length: #max_lit as u64,
+                    });
+                }
+            }
+        } else {
+            proc_macro2::TokenStream::new()
+        };
         let version_check = if vd.since_version > 0 {
             let since_lit = syn::LitInt::new(
                 &vd.since_version.to_string(),
@@ -1600,6 +1604,8 @@ pub(crate) fn generate_group_decoder(
                     if let Some(end) = #warm_entry_end {
                         let data_offset =
                             self.offset + self.acting_block_length + #prefix_size_lit;
+                        let wire_length = end.saturating_sub(data_offset) as u64;
+                        #max_check
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                     }
                 }
@@ -1618,6 +1624,8 @@ pub(crate) fn generate_group_decoder(
                             available: self.buf.len().saturating_sub(offset),
                         },
                     )?;
+                    let wire_length = end.saturating_sub(data_offset) as u64;
+                    #max_check
                     // SAFETY: a warm `tail_end` proves this entry's extent was
                     // validated when the iterator computed it.
                     return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
@@ -1634,6 +1642,7 @@ pub(crate) fn generate_group_decoder(
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
+                    #max_check
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
                         stringify!(#vd_snake_ident),
                         offset,
@@ -1659,6 +1668,7 @@ pub(crate) fn generate_group_decoder(
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
+                    #max_check
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
                         stringify!(#vd_snake_ident),
                         offset,
@@ -1677,23 +1687,11 @@ pub(crate) fn generate_group_decoder(
         // `*_as_str_unchecked` surface under the same names. Emitting them only
         // at message level forced callers to drop to `&[u8]` inside a group and
         // re-validate by hand.
-        //
-        // Unless the schema already used the name. Entry fields keep their
-        // schema names in *every* entry location — decoder, encoder, DTO —
-        // so renaming one to free up `<vd>_as_str` would give
-        // the same field different names per location, which is exactly what
-        // the naming rule forbids. A field the author explicitly called
-        // `noteAsStr` wins the name; `note()` still returns the bytes.
-        let claims_taken = g.fields.iter().any(|f| {
-            let n = to_snake_case(&f.name);
-            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
-        });
-        if !claims_taken {
-            entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
-                &vd_snake,
-                vd.character_encoding.as_deref(),
-            ));
-        }
+        entry_body.extend(crate::codegen::message_decoder::vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+            &taken_entry_accessors,
+        ));
         nvd_idx += 1;
     }
 

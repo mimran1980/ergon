@@ -1142,32 +1142,20 @@ impl Generator {
                 .expect("sealing module path must be a valid Rust path"),
         };
 
+        // A generated `sbe_rt` is one runtime, whole: `EntryInfo`, `Ordered` and
+        // `OrderedFixed` are emitted whether or not this schema's own messages
+        // can reach them. Sizing them to the schema (0.1.27/0.1.28) broke
+        // `with_external_sbe_rt`: the owner cannot know what its consumers
+        // need, and a consumer that defines its own copies makes
+        // `consumer::sbe_rt::EntryInfo` a *different type* from the owner's,
+        // which is exactly what sharing one runtime is supposed to prevent.
         if let Some(ref ext) = self.config.external_sbe_rt_path {
             let _ = writeln!(src, "pub use {ext} as sbe_rt;\n");
             if self.config.has_conversions() {
                 emit_conversion_traits(&mut src);
             }
         } else if emit_sbe_rt {
-            // `EntryInfo` only exists for the ordered lane's group callbacks. A
-            // schema with no groups would carry it as dead code, which measurably
-            // perturbs code placement on sub-nanosecond paths. In shared-module
-            // mode this module's runtime also serves its siblings, so emit it
-            // unconditionally there rather than guess at their shapes.
-            let needs_entry_info = self.config.shared_module.is_some()
-                || ir
-                    .tokens
-                    .iter()
-                    .any(|t| t.signal == crate::ir::Signal::BeginGroup);
-            // `Ordered` / `OrderedFixed` are only reachable through the
-            // ordered lane, which exists iff a message or entry has tails.
-            // Emitting them on a fixed-block schema perturbs code placement
-            // the same way an unused `EntryInfo` does.
-            let needs_ordered = self.config.shared_module.is_some()
-                || ir.tokens.iter().any(|t| {
-                    t.signal == crate::ir::Signal::BeginGroup
-                        || t.signal == crate::ir::Signal::BeginVarData
-                });
-            src.push_str(&generate_sbe_rt_src(needs_entry_info, needs_ordered));
+            src.push_str(&generate_sbe_rt_src());
             // A shared runtime is implemented against by sibling modules, so its
             // sealing module widens to `pub(super)`. A self-contained module
             // keeps it private, which is what makes `SbeMessage` unimplementable

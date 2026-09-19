@@ -151,9 +151,6 @@ const SOURCE: &[u8] = b"feed-a";
 const CHECKSUM: &[u8] = b"";
 const NOTE: &[u8] = b"note-text";
 
-fn utf8(bytes: &[u8]) -> &str {
-    core::str::from_utf8(bytes).expect("fixture text is UTF-8")
-}
 "#;
 
 /// ergo-sbe encoders, one per acting version. Buffers are sized by the
@@ -646,7 +643,7 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
         let mut tbuf = vec![0u8; ergo_bytes.len()];
         let mut t = ToolEnc::default()
             .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
-        t = t.header(0).parent().unwrap();
+        t = t.header(0).parent()?;
         t.timestamp(TIMESTAMP);
         t.sequence(SEQUENCE);
         t.epoch(EPOCH);
@@ -657,102 +654,102 @@ fn versioned_l3_dense_nested_book_is_byte_identical_to_sbe_tool() {
         let mut bids = ToolBids::default();
         bids = t.bids_encoder(BIDS.len() as u16, bids);
         for lvl in BIDS {
-            bids.advance().unwrap();
+            bids.advance()?;
             bids.price(lvl.price);
             bids.qty(lvl.qty);
             bids.participant(lvl.participant);
             let mut orders = ToolOrders::default();
             orders = bids.orders_encoder(lvl.orders.len() as u16, orders);
             for ord in lvl.orders {
-                orders.advance().unwrap();
+                orders.advance()?;
                 orders.order_qty(ord.qty);
                 let mut allocs = ToolAllocs::default();
                 allocs = orders.allocations_encoder(ord.allocations.len() as u16, allocs);
                 for al in ord.allocations {
-                    allocs.advance().unwrap();
+                    allocs.advance()?;
                     allocs.alloc_qty(al.qty);
                     let mut legs = ToolLegs::default();
                     legs = allocs.legs_encoder(al.legs.len() as u16, legs);
                     for leg in al.legs {
-                        legs.advance().unwrap();
+                        legs.advance()?;
                         legs.leg_qty(leg.qty);
-                        legs.leg_ref(utf8(leg.reference));
+                        legs.leg_ref(core::str::from_utf8(leg.reference)?);
                     }
-                    allocs = legs.parent().unwrap();
+                    allocs = legs.parent()?;
                 }
-                orders = allocs.parent().unwrap();
-                orders.order_id(utf8(ord.id));
-                orders.trader_id(utf8(ord.trader));
+                orders = allocs.parent()?;
+                orders.order_id(core::str::from_utf8(ord.id)?);
+                orders.trader_id(core::str::from_utf8(ord.trader)?);
             }
-            bids = orders.parent().unwrap();
+            bids = orders.parent()?;
             let mut stats = ToolStats::default();
             stats = bids.stats_encoder(lvl.stats.len() as u16, stats);
             for st in lvl.stats {
-                stats.advance().unwrap();
+                stats.advance()?;
                 stats.fill_count(st.fills);
                 stats.fill_qty(st.qty);
             }
-            bids = stats.parent().unwrap();
-            bids.venue(utf8(lvl.venue));
+            bids = stats.parent()?;
+            bids.venue(core::str::from_utf8(lvl.venue)?);
         }
-        t = bids.parent().unwrap();
+        t = bids.parent()?;
 
         let mut asks = ToolAsks::default();
         asks = t.asks_encoder(ASKS.len() as u16, asks);
         for lvl in ASKS {
-            asks.advance().unwrap();
+            asks.advance()?;
             asks.price(lvl.price);
             asks.qty(lvl.qty);
             asks.participant(lvl.participant);
             let mut orders = ToolAskOrders::default();
             orders = asks.ask_orders_encoder(lvl.orders.len() as u16, orders);
             for ord in lvl.orders {
-                orders.advance().unwrap();
+                orders.advance()?;
                 orders.order_qty(ord.qty);
                 let mut allocs = ToolAskAllocs::default();
                 allocs = orders.ask_allocations_encoder(ord.allocations.len() as u16, allocs);
                 for al in ord.allocations {
-                    allocs.advance().unwrap();
+                    allocs.advance()?;
                     allocs.alloc_qty(al.qty);
                     let mut legs = ToolAskLegs::default();
                     legs = allocs.ask_legs_encoder(al.legs.len() as u16, legs);
                     for leg in al.legs {
-                        legs.advance().unwrap();
+                        legs.advance()?;
                         legs.leg_qty(leg.qty);
-                        legs.leg_ref(utf8(leg.reference));
+                        legs.leg_ref(core::str::from_utf8(leg.reference)?);
                     }
-                    allocs = legs.parent().unwrap();
+                    allocs = legs.parent()?;
                 }
-                orders = allocs.parent().unwrap();
-                orders.order_id(utf8(ord.id));
-                orders.trader_id(utf8(ord.trader));
+                orders = allocs.parent()?;
+                orders.order_id(core::str::from_utf8(ord.id)?);
+                orders.trader_id(core::str::from_utf8(ord.trader)?);
             }
-            asks = orders.parent().unwrap();
+            asks = orders.parent()?;
             let mut stats = ToolAskStats::default();
             stats = asks.ask_stats_encoder(lvl.stats.len() as u16, stats);
             for st in lvl.stats {
-                stats.advance().unwrap();
+                stats.advance()?;
                 stats.fill_count(st.fills);
                 stats.fill_qty(st.qty);
             }
-            asks = stats.parent().unwrap();
-            asks.venue(utf8(lvl.venue));
+            asks = stats.parent()?;
+            asks.venue(core::str::from_utf8(lvl.venue)?);
         }
-        t = asks.parent().unwrap();
+        t = asks.parent()?;
 
         let mut audit = ToolAudit::default();
         audit = t.audit_encoder(AUDIT.len() as u16, audit);
         for row in AUDIT {
-            audit.advance().unwrap();
+            audit.advance()?;
             audit.ts(row.ts);
             audit.code(row.code);
         }
-        t = audit.parent().unwrap();
+        t = audit.parent()?;
 
-        t.symbol(utf8(SYMBOL));
-        t.source(utf8(SOURCE));
-        t.checksum(utf8(CHECKSUM));
-        t.note(utf8(NOTE));
+        t.symbol(core::str::from_utf8(SYMBOL)?);
+        t.source(core::str::from_utf8(SOURCE)?);
+        t.checksum(core::str::from_utf8(CHECKSUM)?);
+        t.note(core::str::from_utf8(NOTE)?);
         let tl = t.get_limit();
 
         assert_frames_eq("versioned_l3 dense v3", &ergo_bytes, &tbuf[..tl]);
@@ -784,7 +781,7 @@ fn versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version() {
                 let mut group = $start;
                 assert_eq!(group.count() as usize, ($levels).len(), "{} count", $label);
                 for (i, lvl) in ($levels).iter().enumerate() {
-                    assert_eq!(group.advance().unwrap(), Some(i));
+                    assert_eq!(group.advance()?, Some(i));
                     assert_eq!(group.price(), lvl.price, "{}[{i}].price", $label);
                     assert_eq!(group.qty(), lvl.qty, "{}[{i}].qty", $label);
                     if version >= 1 {
@@ -798,10 +795,10 @@ fn versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version() {
                         orders.count() as usize, lvl.orders.len(), "{}[{i}].orders count", $label
                     );
                     for (j, ord) in lvl.orders.iter().enumerate() {
-                        assert_eq!(orders.advance().unwrap(), Some(j));
+                        assert_eq!(orders.advance()?, Some(j));
                         assert_eq!(orders.order_qty(), ord.qty, "{}[{i}].orders[{j}].qty", $label);
                         if version >= 2 {
-                            let mut allocs = orders.$allocations().unwrap();
+                            let mut allocs = orders.$allocations().ok_or("allocations absent at this version")?;
                             assert_eq!(
                                 allocs.count() as usize,
                                 ord.allocations.len(),
@@ -809,21 +806,21 @@ fn versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version() {
                                 $label
                             );
                             for (k, al) in ord.allocations.iter().enumerate() {
-                                assert_eq!(allocs.advance().unwrap(), Some(k));
+                                assert_eq!(allocs.advance()?, Some(k));
                                 assert_eq!(allocs.alloc_qty(), al.qty);
                                 if version >= 3 {
-                                    let mut legs = allocs.$legs().unwrap();
+                                    let mut legs = allocs.$legs().ok_or("legs absent at this version")?;
                                     assert_eq!(legs.count() as usize, al.legs.len());
                                     for (l, leg) in al.legs.iter().enumerate() {
-                                        assert_eq!(legs.advance().unwrap(), Some(l));
+                                        assert_eq!(legs.advance()?, Some(l));
                                         assert_eq!(legs.leg_qty(), leg.qty);
                                         let c = legs.leg_ref_decoder();
                                         assert_eq!(&wire[c.0..c.0 + c.1], leg.reference);
                                     }
-                                    allocs = legs.parent().unwrap();
+                                    allocs = legs.parent()?;
                                 }
                             }
-                            orders = allocs.parent().unwrap();
+                            orders = allocs.parent()?;
                         }
                         let c = orders.order_id_decoder();
                         assert_eq!(&wire[c.0..c.0 + c.1], ord.id, "{}[{i}].orders[{j}].id", $label);
@@ -832,31 +829,31 @@ fn versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version() {
                             assert_eq!(&wire[c.0..c.0 + c.1], ord.trader);
                         }
                     }
-                    group = orders.parent().unwrap();
+                    group = orders.parent()?;
 
                     if version >= 2 {
-                        let mut stats = group.$stats().unwrap();
+                        let mut stats = group.$stats().ok_or("stats absent at this version")?;
                         assert_eq!(stats.count() as usize, lvl.stats.len());
                         for (s, st) in lvl.stats.iter().enumerate() {
-                            assert_eq!(stats.advance().unwrap(), Some(s));
+                            assert_eq!(stats.advance()?, Some(s));
                             assert_eq!(stats.fill_count(), st.fills);
                             assert_eq!(stats.fill_qty(), st.qty);
                         }
-                        group = stats.parent().unwrap();
+                        group = stats.parent()?;
                     }
                     if version >= 1 {
                         let c = group.venue_decoder();
                         assert_eq!(&wire[c.0..c.0 + c.1], lvl.venue, "{}[{i}].venue", $label);
                     }
                 }
-                group.parent().unwrap()
+                group.parent()?
             }};
         }
 
         for version in 0u16..=3 {
             let wire = ergo_wire(version)?;
-            let block_length = u16::from_le_bytes(wire[0..2].try_into().unwrap());
-            let wire_version = u16::from_le_bytes(wire[6..8].try_into().unwrap());
+            let block_length = u16::from_le_bytes(wire[0..2].try_into()?);
+            let wire_version = u16::from_le_bytes(wire[6..8].try_into()?);
             assert_eq!(wire_version, version, "ergo-sbe stamped the wrong version");
 
             let mut dec = ToolDec::default().wrap(
@@ -885,14 +882,14 @@ fn versioned_l3_sbe_tool_ordered_decode_reads_every_acting_version() {
             );
 
             if version >= 2 {
-                let mut audit = dec.audit_decoder().unwrap();
+                let mut audit = dec.audit_decoder().ok_or("audit absent at this version")?;
                 assert_eq!(audit.count() as usize, AUDIT.len());
                 for (i, row) in AUDIT.iter().enumerate() {
-                    assert_eq!(audit.advance().unwrap(), Some(i));
+                    assert_eq!(audit.advance()?, Some(i));
                     assert_eq!(audit.ts(), row.ts);
                     assert_eq!(audit.code(), row.code);
                 }
-                dec = audit.parent().unwrap();
+                dec = audit.parent()?;
             }
 
             let c = dec.symbol_decoder();

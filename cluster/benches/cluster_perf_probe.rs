@@ -111,13 +111,13 @@ const PROBES: &[Probe] = &[
 
 /// Untimed preflight both arms share: proves the two codecs decode the fixture
 /// to identical values before either probe is trusted to measure anything.
-fn assert_probe_correctness() {
+fn assert_probe_correctness() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder as ErgoDecoder;
     use reference_sbe::{
         ReadBuf, message_header_codec::MessageHeaderDecoder, session_event_codec::SessionEventDecoder as ToolDecoder,
     };
 
-    let ergo = ErgoDecoder::decode(&SESSION_EVENT_FIXTURE, 0).expect("fixture must decode");
+    let ergo = ErgoDecoder::try_decode(&SESSION_EVENT_FIXTURE, 0)?;
     let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(&SESSION_EVENT_FIXTURE), 0);
     let mut tool = ToolDecoder::default().header(header, 0);
 
@@ -127,7 +127,8 @@ fn assert_probe_correctness() {
     assert_eq!(ergo.leader_member_id(), tool.leader_member_id());
     assert_eq!(ergo.code() as u8, tool.code() as u8);
     let coords = tool.detail_decoder();
-    assert_eq!(ergo.detail_slice().unwrap(), tool.detail_slice(coords));
+    assert_eq!(ergo.detail_slice()?, tool.detail_slice(coords));
+    Ok(())
 }
 
 // ─── Probes: SessionEvent decode ────────────────────────────────────────────
@@ -285,7 +286,7 @@ fn run(probe: &Probe) {
     );
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_registry();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -295,7 +296,7 @@ fn main() {
         }
         [flag, symbol] if flag == "--probe" => {
             // Setup and validation happen here, outside every collected region.
-            assert_probe_correctness();
+            assert_probe_correctness()?;
             let Some(probe) = PROBES.iter().find(|p| p.symbol == symbol) else {
                 eprintln!(
                     "unknown probe {symbol:?}; registered probes:\n{}",
@@ -310,7 +311,7 @@ fn main() {
             run(probe);
         }
         [flag, topic] if flag == "--topic" => {
-            assert_probe_correctness();
+            assert_probe_correctness()?;
             let selected: Vec<&Probe> = PROBES.iter().filter(|p| p.topic == topic).collect();
             if selected.is_empty() {
                 eprintln!("no probes registered for topic {topic:?}");
@@ -322,4 +323,5 @@ fn main() {
         }
         _ => usage(),
     }
+    Ok(())
 }

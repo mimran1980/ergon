@@ -80,9 +80,17 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
         "field_order",
         &src,
         r#"
-        let mut buf = [0u8; 256];
-        let car = CarEncoder::try_wrap_and_apply_header(&mut buf, 0)
-            .unwrap()
+        let len = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let written = CarEncoder::try_wrap_and_apply_header(&mut storage[..len], 0)?
             .fixed(&CarFixedFields {
                 serial_number: 123_456_789,
                 model_year: 2024,
@@ -92,16 +100,18 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
                 vehicle_code: *b"ABCDEF",
                 extras: OptionalExtras::default(),
                 engine: Engine::new(1200, 6, [1, 2, 3], -5i8, BooleanType::T, Booster::new(BoostType::SUPERCHARGER, 7)),
-            });
-        let car = car.fuel_figures(0, |_| Ok(())).unwrap();
-        let car = car.performance_figures(0, |_| Ok(())).unwrap();
-        let car = car.manufacturer(b"").unwrap();
-        let car = car.model(b"").unwrap();
-        let car = car.activation_code(b"").unwrap();
-        let encoded = car.as_bytes_with_header();
+            })
+            .fuel_figures(0, |_| Ok(()))?
+            .performance_figures(0, |_| Ok(()))?
+            .manufacturer(b"")?
+            .model(b"")?
+            .activation_code(b"")?
+            .encoded_length_with_header();
+        assert_eq!(written, len);
+        let encoded = &storage[..len];
 
         // Declaration (forward) order, on a fresh decode.
-        let fwd = CarDecoder::try_decode(encoded, 0).unwrap();
+        let fwd = CarDecoder::try_decode(encoded, 0)?;
         let serial = fwd.serial_number();
         let year = fwd.model_year();
         let avail = fwd.available();
@@ -111,7 +121,7 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
         let cap = fwd.engine().capacity();
 
         // Exact reverse order, on a SEPARATE fresh decode — same buffer.
-        let rev = CarDecoder::try_decode(encoded, 0).unwrap();
+        let rev = CarDecoder::try_decode(encoded, 0)?;
         assert_eq!(rev.engine().capacity(), cap);
         assert_eq!(rev.vehicle_code(), vcode);
         assert_eq!(rev.some_numbers(), nums);
@@ -122,7 +132,7 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
 
         // Scrambled order, on a THIRD fresh decode — deliberately not
         // ascending, not descending, not the schema's own field order.
-        let mix = CarDecoder::try_decode(encoded, 0).unwrap();
+        let mix = CarDecoder::try_decode(encoded, 0)?;
         assert_eq!(mix.code(), code);
         assert_eq!(mix.serial_number(), serial);
         assert_eq!(mix.engine().capacity(), cap);
@@ -135,7 +145,7 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
         // reads sandwiched between, must agree both times. If a fixed-field
         // read consumed or advanced any hidden state, this would be the
         // first place it broke.
-        let d = CarDecoder::try_decode(encoded, 0).unwrap();
+        let d = CarDecoder::try_decode(encoded, 0)?;
         let code_first = d.code();
         let _ = d.serial_number();
         let _ = d.engine();
@@ -231,12 +241,8 @@ fn vardata_empty_and_max_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         // Tail in wire order: fuel -> performance -> manufacturer/model/activation
-        assert!(car2.fuel_figures().unwrap().is_empty(), "empty fuel group");
-        let after_perf = car2
-            .skip_fuel_figures()
-            .unwrap()
-            .skip_performance_figures()
-            .unwrap();
+        assert!(car2.fuel_figures()?.is_empty(), "empty fuel group");
+        let after_perf = car2.skip_fuel_figures()?.skip_performance_figures()?;
         let (mfr, a1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"", "empty var-data");
         let (model, a2) = a1.into_model().unwrap();
@@ -729,7 +735,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         // Valid varData reads — traverse the groups first (wire order).
         let after_perf = car2
-            .skip_fuel_figures().unwrap().skip_performance_figures().unwrap();
+            .skip_fuel_figures()?.skip_performance_figures()?;
         let (mfr, a1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(mfr, b"Porsche");
         let (model, a2) = a1.into_model().unwrap();

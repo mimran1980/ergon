@@ -11,12 +11,9 @@ use std::fmt::Write;
 /// The progressive tail-boundary cache runtime, used by every generated
 /// `{Name}MemoizedDecoder`. Emitted unconditionally: `Decoder::memoized()` is
 /// always available on a tail-bearing message, so the type is always reachable.
-fn tail_boundary_cache_tokens(
-    with_entry_info: bool,
-    with_ordered: bool,
-) -> proc_macro2::TokenStream {
-    let entry_info = entry_info_tokens(with_entry_info);
-    let ordered = ordered_wrapper_tokens(with_ordered);
+fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
+    let entry_info = entry_info_tokens();
+    let ordered = ordered_wrapper_tokens();
     quote::quote! {
             /// Progressive cache of dynamic-tail *end* offsets.
             ///
@@ -136,14 +133,12 @@ fn tail_boundary_cache_tokens(
     }
 }
 
-/// `EntryInfo` is only reachable through the ordered lane's group callbacks, so
-/// a schema with no groups would carry it as dead code. That is not merely
-/// tidiness: emitting an unused struct perturbs code placement enough to move
-/// sub-nanosecond benchmark arms (see `optional_enum_nullify`, 2026-09-12).
-fn entry_info_tokens(enabled: bool) -> proc_macro2::TokenStream {
-    if !enabled {
-        return proc_macro2::TokenStream::new();
-    }
+/// `EntryInfo` is reachable through the ordered lane's group callbacks, and on
+/// a group-less schema through no path at all. It is emitted regardless: a
+/// module's `sbe_rt` is also the runtime its `with_external_sbe_rt` consumers
+/// share, and the owner cannot see their schemas. Sizing it to the owner's own
+/// schema (0.1.27) made those consumers uncompilable.
+fn entry_info_tokens() -> proc_macro2::TokenStream {
     quote::quote! {
         /// Position of a group entry within its group, handed to every
         /// ordered-lane entry callback.
@@ -186,10 +181,9 @@ fn entry_info_tokens(enabled: bool) -> proc_macro2::TokenStream {
     }
 }
 
-fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
-    if !enabled {
-        return proc_macro2::TokenStream::new();
-    }
+/// Emitted on the same terms as [`entry_info_tokens`]: whole runtime, so a
+/// consumer sharing it never has to define a second `Ordered`.
+fn ordered_wrapper_tokens() -> proc_macro2::TokenStream {
     quote::quote! {
         /// Sequential decode façade: one callback per tail, in wire order.
         ///
@@ -203,9 +197,11 @@ fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
 
         /// Message decoder after the ordered `fixed` callback, before the first tail.
         ///
-        /// Distinct from the base decoder so `fixed` cannot collide with a
-        /// first tail of the same name, and so the callback receives a
-        /// fixed-fields-only view rather than the full decoder.
+        /// Distinct from the base decoder so the fixed block cannot be read a
+        /// second time once the walk has moved on, and so the callback receives
+        /// a fixed-fields-only view rather than the full decoder. A first tail
+        /// named `fixed` or `tryFixed` is handled by not generating the
+        /// callback at all, not by this type.
         #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
         pub struct OrderedFixed<S> {
             pub(crate) inner: S,
@@ -237,8 +233,8 @@ fn ordered_wrapper_tokens(enabled: bool) -> proc_macro2::TokenStream {
     }
 }
 
-pub(crate) fn generate_sbe_rt_src(with_entry_info: bool, with_ordered: bool) -> String {
-    let tail_boundary_cache = tail_boundary_cache_tokens(with_entry_info, with_ordered);
+pub(crate) fn generate_sbe_rt_src() -> String {
+    let tail_boundary_cache = tail_boundary_cache_tokens();
     let module = quote::quote! {
         pub mod sbe_rt {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]

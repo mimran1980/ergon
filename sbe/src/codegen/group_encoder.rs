@@ -9,7 +9,7 @@ use crate::structured_ir::{
     get_dimension_info, get_vardata_info, rust_type,
 };
 
-use super::conversion_helpers::field_has_conversion_free;
+use super::conversion_helpers::{field_has_conversion_free, owner_accessor_names};
 use super::field_type::field_type_ident;
 use super::message_encoder::vardata_encode_str_setter;
 use super::runtime::{to_pascal_case, to_snake_case};
@@ -817,12 +817,13 @@ pub(crate) fn generate_group_encoder(
         } else {
             quote::quote! {}
         };
+        let taken = owner_accessor_names(&g.fields, conversions, &[], core::iter::empty());
         let str_setter = vardata_encode_str_setter(
             &vd_snake,
             &vd.name,
             vd.character_encoding.as_deref(),
             &quote::quote! { #next_stage<'a> },
-            &g.fields,
+            &taken,
         );
         quote::quote! {
             #[inline]

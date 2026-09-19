@@ -46,10 +46,11 @@ Rationale: [Type-state design note](type-state.md).
 “benchmarking only” framing.
 
 - Default generation exposes the three-tier constructor boundary: `try_*`
-  (Result), bare names (panic after extent proof), and `unsafe fn *_unchecked`.
+  (`Result`), bare `wrap` (panic after extent proof), bare `decode` (panic if
+  short, `Err` on wrong template/schema), and `unsafe fn *_unchecked`.
 - Safety contract: validate with `try_decode` / `try_from` / `try_wrap` /
-  `verify` at trust edges; bare constructors also prove fixed extent before
-  returning; only `*_unchecked` may skip that proof (UB if wrong).
+  `verify` at trust edges; only `*_unchecked` may skip the extent proof
+  (UB if wrong).
 - Hot loops after validation are an **intended** use case for the
   unchecked lane. Checked constructors remain the default for untrusted input.
 

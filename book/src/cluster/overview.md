@@ -52,9 +52,8 @@ for the common benchmark rules.
 
 ## Limitations
 
-The current limitations are documented in the [Compatibility](./compatibility.md)
-page, which also lists supported Aeron/rusteron versions, schema identities,
-failure modes, and the CI multi-node test matrix.
-- Java interoperability depends on the local Aeron harness and environment.
+Limitations, Aeron/rusteron versions, schema identities, failure modes, and
+the CI multi-node matrix: [Compatibility](./compatibility.md). Java
+interoperability depends on the local Aeron harness.
 
 Apache-2.0.

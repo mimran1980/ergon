@@ -7,7 +7,6 @@ book/src/cluster/chained-decoding.md:49 — deliberate; hidden cluster codec sea
 book/src/cluster/chained-decoding.md:87 — deliberate; hidden cluster codec seam requires the cluster crate, which is outside the SBE book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
 book/src/cluster/session-builder.md:52 — deliberate; see page context
-book/src/introduction.md:75 — deliberate; see page context
 book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:15 — deliberate; see page context
 book/src/samples/l3-book.md:14 — deliberate; see page context
@@ -21,46 +20,46 @@ book/src/samples/l3-book.md:106 — deliberate; {{#include}} of the l3-book samp
 book/src/samples/l3-book.md:115 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:127 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:171 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/sbe/configuration.md:14 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:52 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:64 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:70 — deliberate; see page context
 book/src/sbe/configuration/conversion-vs-domain.md:85 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
 book/src/sbe/configuration/conversion-vs-domain.md:89 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
-book/src/sbe/configuration/feature-integrations.md:41 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:50 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:30 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:37 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:45 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:57 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:67 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:103 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:118 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:125 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:135 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:148 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:164 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:181 — deliberate; see page context
-book/src/sbe/configuration/feature-integrations.md:227 — deliberate; see page context
-book/src/sbe/configuration/generation-config.md:42 — deliberate; names generated CarDecoder types that do not exist in the book harness
+book/src/sbe/configuration/feature-integrations.md:72 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:78 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:87 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:101 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:113 — deliberate; see page context
+book/src/sbe/configuration/feature-integrations.md:132 — deliberate; see page context
+book/src/sbe/configuration/generation-config.md:38 — deliberate; names generated CarDecoder types that do not exist in the book harness
 book/src/sbe/configuration/hooks.md:21 — deliberate; see page context
-book/src/sbe/core-concepts/composite-layout.md:22 — deliberate; see page context
-book/src/sbe/core-concepts/wire-order-stages.md:46 — deliberate; see page context
+book/src/sbe/configuration.md:15 — deliberate; see page context
+book/src/sbe/core-concepts/composite-layout.md:19 — deliberate; see page context
+book/src/sbe/core-concepts/wire-order-stages.md:24 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:17 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:45 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:76 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:90 — deliberate; see page context
 book/src/sbe/design-notes/nullval.md:104 — deliberate; see page context
-book/src/sbe/design-notes/type-state.md:12 — deliberate; see page context
-book/src/sbe/design-notes/type-state.md:55 — deliberate; see page context
-book/src/sbe/feature-tour/decode-stages.md:187 — deliberate; illustrates application-supplied read_header/read_groups/read_final_tail helpers and input bytes, not a standalone program
+book/src/sbe/design-notes/type-state.md:7 — deliberate; see page context
+book/src/sbe/design-notes/type-state.md:34 — deliberate; see page context
+book/src/sbe/feature-tour/decode-stages.md:64 — deliberate; illustrates application-supplied read_header/read_groups/read_final_tail helpers and input bytes, not a standalone program
 book/src/sbe/feature-tour/generated-code.md:7 — deliberate; see page context
 book/src/sbe/feature-tour/generated-code.md:47 — deliberate; see page context
-book/src/sbe/feature-tour/generated-code.md:101 — deliberate; see page context
-book/src/sbe/feature-tour/generated-code.md:115 — deliberate; see page context
-book/src/sbe/feature-tour/generated-code.md:126 — deliberate; see page context
-book/src/sbe/feature-tour/generated-code.md:156 — deliberate; see page context
-book/src/sbe/feature-tour/generated-code.md:177 — deliberate; see page context
+book/src/sbe/feature-tour/generated-code.md:110 — deliberate; see page context
+book/src/sbe/feature-tour/generated-code.md:124 — deliberate; see page context
+book/src/sbe/feature-tour/generated-code.md:135 — deliberate; see page context
+book/src/sbe/feature-tour/generated-code.md:165 — deliberate; see page context
+book/src/sbe/feature-tour/generated-code.md:186 — deliberate; see page context
 book/src/sbe/getting-started/encode-decode.md:54 — deliberate; see page context
 book/src/sbe/getting-started/error-diagnostics.md:85 — deliberate; illustrative error handling over a schema path that does not exist at doc-build time
 book/src/sbe/getting-started/from-sbe-tool.md:18 — deliberate; see page context
-book/src/sbe/getting-started/from-sbe-tool.md:137 — deliberate; side-by-side sbe-tool and ergo-sbe snippet, neither generator's types exist in the book harness
+book/src/sbe/getting-started/from-sbe-tool.md:139 — deliberate; side-by-side sbe-tool and ergo-sbe snippet, neither generator's types exist in the book harness
 book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
 book/src/sbe/getting-started/include.md:23 — deliberate; see page context
@@ -68,17 +67,17 @@ book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page cont
 book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
 book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context
-book/src/sbe/recipes.md:23 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:10 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:39 — deliberate; see page context
 book/src/sbe/recipes/app-types-composites.md:32 — deliberate; snippet references generated codec types (QuoteEncoder etc.) that don't exist in the book harness
 book/src/sbe/recipes/display-debug.md:18 — deliberate; see page context
-book/src/sbe/recipes/domain-dtos.md:27 — deliberate; see page context
+book/src/sbe/recipes/domain-dtos.md:29 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:22 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:46 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:76 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:87 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:141 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:165 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:220 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:19 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:43 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:70 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:81 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:135 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:159 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:214 — deliberate; see page context
+book/src/sbe/recipes.md:23 — deliberate; see page context

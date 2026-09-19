@@ -203,29 +203,45 @@ fn assert_ordered_decode_parity() {
     let car = unsafe { CarDecoder::wrap_unchecked(BASELINE, 0, bl_e, ver_e) };
     let mut fuel_rows = Vec::new();
     let mut perf_rows = Vec::new();
-    let after_perf = car
-        .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+    let mut manufacturer = &[][..];
+    let mut model = &[][..];
+    let mut activation_code = &[][..];
+    car.ordered()
+        .fuel_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
             let speed = entry.speed();
             let mpg = entry.mpg().to_bits();
-            let (usage, complete) = entry.into_usage_description()?;
-            fuel_rows.push((speed, mpg, usage.to_vec()));
+            entry.ordered().usage_description(|usage| {
+                fuel_rows.push((speed, mpg, usage.to_vec()));
+                Ok(())
+            })
+        })
+        .unwrap()
+        .performance_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
+            let octane = entry.octane_rating();
+            let mut acc = Vec::new();
+            let complete = entry.ordered().acceleration(|a, _info| {
+                acc.push((a.mph(), a.seconds().to_bits()));
+                Ok(())
+            })?;
+            perf_rows.push((octane, acc));
             Ok(complete)
         })
         .unwrap()
-        .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
-            let octane = entry.octane_rating();
-            let mut acc = Vec::new();
-            let mut acc_iter = entry.into_acceleration()?;
-            for a in &mut acc_iter {
-                acc.push((a.mph(), a.seconds().to_bits()));
-            }
-            perf_rows.push((octane, acc));
-            acc_iter.finish()
+        .manufacturer(|mfr| {
+            manufacturer = mfr;
+            Ok(())
+        })
+        .unwrap()
+        .model(|m| {
+            model = m;
+            Ok(())
+        })
+        .unwrap()
+        .activation_code(|code| {
+            activation_code = code;
+            Ok(())
         })
         .unwrap();
-    let (manufacturer, after_manufacturer) = after_perf.into_manufacturer().unwrap();
-    let (model, after_model) = after_manufacturer.into_model().unwrap();
-    let (activation_code, _) = after_model.into_activation_code().unwrap();
 
     let mut expected_fuel = Vec::new();
     let expected = CarDecoder::try_from(BASELINE).unwrap();
@@ -959,20 +975,20 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                 // The ordered lane, not a second copy of the staged one:
                 // same fields, same traversal, one callback per tail.
                 car.ordered()
-                    .fuel_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
-                        black_box((entry.speed(), entry.mpg(), info.index));
-                        let (usage, complete) = entry.into_usage_description()?;
-                        black_box(usage);
-                        Ok(complete)
+                    .fuel_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
+                        black_box((entry.speed(), entry.mpg()));
+                        entry.ordered().usage_description(|usage| {
+                            black_box(usage);
+                            Ok(())
+                        })
                     })
                     .unwrap()
-                    .performance_figures(|entry, info| -> Result<_, sbe_rt::DecodeError> {
-                        black_box((entry.octane_rating(), info.index));
-                        let mut acc = entry.into_acceleration()?;
-                        for a in &mut acc {
+                    .performance_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
+                        black_box(entry.octane_rating());
+                        entry.ordered().acceleration(|a, _info| {
                             black_box((a.mph(), a.seconds()));
-                        }
-                        acc.finish()
+                            Ok(())
+                        })
                     })
                     .unwrap()
                     .manufacturer(|mfr| -> Result<(), sbe_rt::DecodeError> {

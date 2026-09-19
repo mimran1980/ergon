@@ -1,6 +1,6 @@
 # Recipes
 
-Runnable, tested code for every pattern lives in [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour). See its `src/lib.rs` for the full API map.
+Runnable code: [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour) `src/lib.rs`.
 
 - [Aeron try_claim](recipes/aeron-try-claim.md)
 - [Display / Debug](recipes/display-debug.md)
