@@ -81,11 +81,20 @@ impl<'a> CarComplete<'a> {
 ## Metadata: no field-name collisions
 
 Utility methods like `remaining`, `buffer`, `as_bytes_with_header`, and
-`as_body_bytes` are scoped inside a zero-copy **metadata struct** returned by
-`get_metadata()`. This means a schema field named `remaining` or `buffer`
-generates `dec.remaining()` / `dec.buffer()` as field accessors — no `_field`
-suffix needed. No generated method name can ever collide with a user's schema
-field name.
+`as_body_bytes` live on a zero-copy **metadata struct** from `get_metadata()`.
+A schema field named `remaining` or `buffer` therefore generates
+`dec.remaining()` / `dec.buffer()` as field accessors — no `_field` suffix.
+
+Reserved decoder names (`ordered`, `memoized`, `acting_version`,
+`acting_block_length`, …) still rename a colliding **message-level** field
+(`ordered_field()`). Group entries do **not** rename against that list: if an
+entry field is `actingVersion`, it keeps `acting_version()` and the metadata
+getter is omitted.
+
+Convenience accessors (`<group>_count`, `<field>_len`, ordered `fixed` /
+`try_fixed`) yield to a same-named tail — the primary getter wins. `fixed`
+and `try_fixed` yield independently: `fixed` as first tail takes both names;
+`tryFixed` takes only `try_fixed()`. `reserved_name_clash_test`, `ordered_lane_test`.
 
 ### What does `remaining()` mean?
 

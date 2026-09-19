@@ -1,64 +1,39 @@
-# Type-state is zero-cost (and the hybrid design)
+# Type-state is zero-cost
 
-## The question evaluators often ask
-
-> Did compile-time wire-order enforcement cost anything on the hot path?
-
-Stage identity adds no runtime tag. The named structs themselves are not
-zero-sized: they carry buffer and cursor state. Marker types such as
-`HeaderPresent` are zero-sized. A transition moves the state into the next
-concrete type; for an encoder this is schematically:
+Stage identity adds no runtime tag. The named structs carry buffer and cursor
+state; markers such as `HeaderPresent` are zero-sized. A transition moves that
+state into the next concrete type:
 
 ```rust,ignore
 (buf, msg_offset, pos)  +  PhantomData / zero-sized stage identity
 ```
 
-There is no heap allocation, no vtable, no enum discriminant on the wire path,
-and no extra branch for “which stage am I in?” — the stage is in the **type**,
-so the methods that exist are exactly the ones legal at that point in the
-schema. Inlining can remove the intermediate moves. Decoder stages additionally
-carry acting version and block length, and dynamic group callbacks check that
-the returned completion belongs to the supplied entry.
+No heap, no vtable, no enum discriminant, no “which stage am I in?” branch —
+the stage is the **type**, so the methods that exist are the ones legal at
+that point. Inlining can remove the intermediate moves. Decoder stages also
+carry acting version and block length; dynamic group callbacks check that the
+returned completion belongs to the supplied entry.
 
-Benchmarks that show “no difference vs a single struct / vs sbe-tool at the
-1.00 ceiling” are therefore the **expected proof** that the abstraction is
-zero-cost — not a lucky accident and not a reason to doubt the design. If a
-type-state transition ever showed up as a measurable cost under a fair,
-amplified, dual-LTO comparison, that would be a codegen defect.
+A fair dual-LTO comparison at the `1.00` sbe-tool ceiling is the expected
+proof that the abstraction is free. A measurable type-state tax would be a
+codegen defect. Whether a particular revision passes requires a fresh run:
+[Benchmarks](../benchmarks.md).
 
-The project performance target is `1.00×` sbe-tool under **both** LTO-on
-and LTO-off profiles. Whether a particular revision passes requires a fresh
-run; the type-state design alone does not prove it. Methodology and evidence
-locations: [Benchmarks](../benchmarks.md).
-
-## Type-state = multiple named structs
-
-“Type-state” and “multiple different structs” are not alternatives. Named
-stages (`CarEncoder` → `CarAfterFuelFigures` → … → `CarComplete`) **are** the
-type-state pattern. The other spelling is a single generic
-`Encoder<'a, Stage>` with phantom stage markers. Both compile the same way;
-only the API surface differs.
-
-## Why the hybrid (named stages + one header marker)
+Named stages (`CarEncoder` → `CarAfterFuelFigures` → `CarComplete`) **are**
+the type-state pattern. The other spelling is `Encoder<'a, Stage>` with
+phantom markers. Both compile the same way; only the API surface differs.
 
 | Concern | Choice | Why |
 |---------|--------|-----|
-| Linear tail (groups / var-data in wire order) | **Named structs** per stage | Best compile errors (`expected CarAfterFuelFigures, found CarEncoder` names the group you skipped); best rustdoc; scannable API surface |
-| Header present vs body-only mode | **One** `H: HeaderState` marker on every stage | Avoids doubling the entire stage graph (`CarAfterX` × Present/Absent). Orthogonal to wire order. Default `H = HeaderPresent` so the common case needs no turbofish |
-| Default inference | `HeaderPresent` | Matches “encode a full frame” as the usual path; body-only is explicit via `wrap` / `HeaderAbsent` |
+| Linear tail (groups / var-data) | **Named structs** per stage | Compile errors name the group you skipped (`expected CarAfterFuelFigures`); rustdoc stays scannable |
+| Header vs body-only | **One** `H: HeaderState` on every stage | Avoids doubling the graph. Default `H = HeaderPresent` |
+| Completeness of the fixed block | `F: FieldsState` on the root encoder | `as_bytes_with_header` exists only after `fixed(&FixedFields)` |
 
-Duplicating every stage for header mode would provide **no** latency advantage
-and would double the generated type count.
-
-## What users see
+Tail stages drop `F` — they are already past the fixed block.
 
 ```rust,ignore
-// Approximate generated shape — not Encoder<AfterBids>:
-pub struct BookEncoder<'a, H: HeaderState = HeaderPresent, F: FieldsState = FieldsUnfixed> {
-    /* buf, msg_offset, pos + ZST markers */
-}
+pub struct BookEncoder<'a, H: HeaderState = HeaderPresent, F: FieldsState = FieldsUnfixed> { /* … */ }
 pub struct BookAfterBids<'a, H: HeaderState = HeaderPresent> { /* same layout */ }
-pub struct BookAfterAsks<'a, H: HeaderState = HeaderPresent> { /* same layout */ }
 
 impl BookEncoder<'a, H, FieldsFixed> {
     pub fn bids(self, …) -> Result<BookAfterBids<'a>, …> { … }
@@ -66,20 +41,7 @@ impl BookEncoder<'a, H, FieldsFixed> {
 }
 ```
 
-`F` is why `wrap*` cannot publish `as_bytes_with_header` until `fixed(&FixedFields)`
-has written the required body. Tail stages drop `F` — they are already past the
-fixed block.
-
-Calling stages out of order is a type error. See
-[Wire order via named stages](../core-concepts/wire-order-stages.md) for the
-product rationale (bids/asks inversion) and
-[Coming from sbe-tool](../getting-started/from-sbe-tool.md) for the migration
-mapping (`.parent()` hopscotch → closures + stages).
-
-## API freeze note
-
-Stage names use `After{GroupPascal}` (e.g. `fuelFigures` →
-`CarAfterFuelFigures`). Multi-word group names are PascalCased the same way
-as other generated types. Reserved method names on decoder/encoder stages are
-covered by `reserved_name_clash_test` so field collisions rename accessors
-without shadowing stage transition methods.
+Stage names: `After{GroupPascal}` (`fuelFigures` → `CarAfterFuelFigures`).
+Reserved method names: `reserved_name_clash_test`. Product rationale:
+[Wire order](../core-concepts/wire-order-stages.md). Migration:
+[Coming from sbe-tool](../getting-started/from-sbe-tool.md).

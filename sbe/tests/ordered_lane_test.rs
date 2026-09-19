@@ -14,8 +14,20 @@ mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
 
 const ENCODE: &str = r#"
-    let mut storage = [0u8; 512];
-    let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+    let sized = CarEncodedLength::new()
+        .fuel_figures_ragged(2, |b| {
+            b.add()?.usage_description(2)?;
+            b.add()?.usage_description(3)?;
+            Ok(())
+        })?
+        .performance_figures(1)
+        .acceleration(3)?
+        .manufacturer(5)?
+        .model(5)?
+        .activation_code(3)?
+        .encoded_length_with_header();
+    let mut storage = [0u8; 256];
+    let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
         .fixed(&CarFixedFields {
             serial_number: 7,
             model_year: 2020,
@@ -47,6 +59,7 @@ const ENCODE: &str = r#"
         .model(b"Civic")?
         .activation_code(b"abc")?
         .encoded_length_with_header();
+    assert_eq!(len, sized);
     let encoded = &storage[..len];
 "#;
 
@@ -96,12 +109,12 @@ fn ordered_lane_walks_every_tail_with_entry_info() -> Result<(), Box<dyn std::er
                 text.push(s.to_owned());
                 Ok(())
             }})?
-            .model(|b| {{
-                text.push(String::from_utf8(b.to_vec()).unwrap());
+            .model_as_str(|s| {{
+                text.push(s.to_owned());
                 Ok(())
             }})?
-            .activation_code(|b| {{
-                text.push(String::from_utf8(b.to_vec()).unwrap());
+            .activation_code_as_str(|s| {{
+                text.push(s.to_owned());
                 Ok(())
             }})?;
 
@@ -124,8 +137,17 @@ fn ordered_lane_empty_group_invokes_nothing() -> Result<(), Box<dyn std::error::
         "ordered_empty",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&CarFixedFields {
                 serial_number: 1, model_year: 0, available: BooleanType::F,
                 code: Model::NullVal, some_numbers: [0u32; 4], vehicle_code: [0u8; 6],
@@ -138,6 +160,7 @@ fn ordered_lane_empty_group_invokes_nothing() -> Result<(), Box<dyn std::error::
             .model(b"")?
             .activation_code(b"")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
 
         let mut calls = 0usize;
@@ -256,17 +279,16 @@ fn ordered_lane_callback_error_propagates() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// A schema with var-data but **no groups** still gets an ordered lane, and it
-/// must compile without `EntryInfo` — which is emitted only for schemas that
-/// declare a group, because nothing else can reach it.
+/// A schema with var-data but **no groups** still gets an ordered lane.
+/// `EntryInfo` is still emitted: the runtime is whole so `with_external_sbe_rt`
+/// consumers can share it, even though this schema cannot reach the type.
 ///
 /// This is its own cell on purpose. Every other test here uses the Car schema,
 /// which has groups, so it proves the opposite branch. "The group case compiles
 /// so the group-less case compiles" is the inference that shipped fifteen
 /// codegen defects; the two are separate branches.
 #[test]
-fn ordered_lane_without_groups_compiles_without_entry_info()
--> Result<(), Box<dyn std::error::Error>> {
+fn ordered_lane_without_groups_compiles() -> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="nogroups" id="901" version="0"
@@ -299,9 +321,12 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
         .source
         .clone();
 
+    // `EntryInfo` is emitted even though this schema cannot reach it: the
+    // runtime is also what `with_external_sbe_rt` consumers share, and the
+    // owner cannot see their schemas (see `baseline_test.rs`).
     assert!(
-        !src.contains("struct EntryInfo"),
-        "a group-less schema must not carry EntryInfo as dead code"
+        src.contains("struct EntryInfo"),
+        "the runtime is emitted whole, so consumers sharing it get EntryInfo"
     );
     assert!(
         src.contains("pub fn ordered(self)"),
@@ -309,17 +334,19 @@ fn ordered_lane_without_groups_compiles_without_entry_info()
     );
 
     // Compilation is the assertion: the lane must walk fixed + both var-data
-    // tails and reach done() with no EntryInfo in the module.
+    // tails and reach done() on a schema with no group callbacks at all.
     compile_and_run(
         "nogroups",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = FlatEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = FlatEncoder::compute_length_with_header(3, 2);
+        let mut storage = [0u8; 64];
+        let len = FlatEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&FlatFixedFields { seq: 9 })
             .label(b"abc")?
             .note(b"de")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
 
         let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -517,8 +544,10 @@ const HEADER_TYPES: &str = r#"
     </composite>
 "#;
 
-/// A message whose first tail is named `fixed` must still compile: the
-/// callback yields, and `fixed()` on the ordered wrapper is the group visit.
+/// A message whose first tail is named `fixed` must still compile: `fixed()`
+/// on the ordered wrapper is the group visit. That tail also owns
+/// `try_fixed()`, so both ordered callbacks yield; read fixed fields before
+/// `ordered()`.
 #[test]
 fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(
@@ -547,7 +576,7 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
         .clone();
     assert!(
         !src.contains("struct MsgDecoderFixedView"),
-        "a first tail named `fixed` must suppress the ordered fixed callback"
+        "a first tail named `fixed` also owns try_fixed(), so both ordered callbacks yield"
     );
     compile_and_run(
         "fixedclash",
@@ -577,6 +606,63 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
         assert_eq!(xs, vec![3u32]);
         assert_eq!(complete.encoded_length_with_header(), actual);
     "#,
+    );
+    Ok(())
+}
+
+/// A first tail named `tryFixed` keeps `try_fixed()` as the var-data visit
+/// and `fixed()` as the fixed-block callback. Yielding both was over-broad
+/// (HFT review 2026-09-18).
+#[test]
+fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="tryfixedclash" id="912" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>{HEADER_TYPES}</types>
+  <sbe:message name="Msg" id="1">
+    <field name="seq" id="10" type="uint32"/>
+    <data name="tryFixed" id="20" type="varStringEncoding"/>
+    <data name="note" id="21" type="varStringEncoding"/>
+  </sbe:message>
+</sbe:messageSchema>"#
+    );
+    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    let schema = Schema::from_ir(parse(&xml)?);
+    let src = Generator::new(GenerationConfig::new("tryfixedclash"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("one module")?
+        .source
+        .clone();
+    assert!(
+        src.contains("struct MsgDecoderFixedView"),
+        "a first tail named `tryFixed` keeps fixed() and the fixed-block view"
+    );
+    compile_and_run(
+        "tryfixedclash",
+        &src,
+        r#"
+        let len = MsgEncoder::compute_length_with_header(2, 2);
+        let mut storage = [0u8; 64];
+        assert!(len <= storage.len());
+        let buf = &mut storage[..len];
+        let actual = MsgEncoder::try_wrap_and_apply_header(buf, 0)?
+            .fixed(&MsgFixedFields { seq: 9 })
+            .try_fixed(b"hi")?
+            .note(b"ok")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MsgDecoder::try_decode(&storage[..actual], 0)?;
+        let complete = dec.ordered()
+            .fixed(|v| { assert_eq!(v.seq(), 9); Ok(()) })?
+            .try_fixed(|b| { assert_eq!(b, b"hi"); Ok(()) })?
+            .note(|b| { assert_eq!(b, b"ok"); Ok(()) })?
+            .done();
+        assert_eq!(complete.encoded_length_with_header(), actual);
+        "#,
     );
     Ok(())
 }
@@ -837,8 +923,17 @@ fn ordered_lane_empty_group_count_is_peekable() -> Result<(), Box<dyn std::error
         "ordered_empty_count",
         &src,
         r#"
-        let mut storage = [0u8; 256];
-        let len = CarEncoder::try_wrap_and_apply_header(&mut storage, 0)?
+        let sized = CarEncodedLength::new()
+            .fuel_figures(0)
+            .finish_empty()?
+            .performance_figures(0)
+            .finish_empty()?
+            .manufacturer(0)?
+            .model(0)?
+            .activation_code(0)?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let len = CarEncoder::try_wrap_and_apply_header(&mut storage[..sized], 0)?
             .fixed(&CarFixedFields {
                 serial_number: 1, model_year: 0, available: BooleanType::F,
                 code: Model::NullVal, some_numbers: [0u32; 4], vehicle_code: [0u8; 6],
@@ -851,6 +946,7 @@ fn ordered_lane_empty_group_count_is_peekable() -> Result<(), Box<dyn std::error
             .model(b"")?
             .activation_code(b"")?
             .encoded_length_with_header();
+        assert_eq!(len, sized);
         let encoded = &storage[..len];
         let ord = CarDecoder::try_decode(encoded, 0)?.ordered();
         assert_eq!(ord.fuel_figures_count()?, 0);

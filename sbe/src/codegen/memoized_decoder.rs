@@ -20,8 +20,8 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, field_has_conversion_free, find_domain_type, owner_accessor_names,
-    resolve_field_ident, tail_accessor_ident,
+    DECODER_RESERVED, acting_accessors, field_has_conversion_free, find_domain_type,
+    owner_accessor_names, resolve_field_ident, tail_accessor_ident,
 };
 use super::converter_impls::is_optional_domain_field;
 use super::doc_attr_tokens;
@@ -108,18 +108,6 @@ pub(crate) fn generate_memoized_decoder(
 
     // Header/state accessors and an escape hatch back to the base lane.
     impl_body.extend(quote::quote! {
-        /// Schema version from the message header (or wrap args).
-        #[inline]
-        pub const fn acting_version(&self) -> u16 {
-            self.inner.acting_version
-        }
-
-        /// Acting block length from the message header (or wrap args).
-        #[inline]
-        pub const fn acting_block_length(&self) -> usize {
-            self.inner.acting_block_length
-        }
-
         /// Borrow the underlying uncached decoder (fixed fields, metadata).
         #[inline]
         pub const fn inner(&self) -> &#decoder_ident<'a> {
@@ -160,6 +148,11 @@ pub(crate) fn generate_memoized_decoder(
             .map(|g| g.name.as_str())
             .chain(msg.var_data.iter().map(|v| v.name.as_str())),
     );
+    impl_body.extend(acting_accessors(
+        &taken_accessor_names,
+        &quote::quote! { self.inner },
+        &proc_macro2::TokenStream::new(),
+    ));
     let inner_acting_version = quote::quote! { self.inner.acting_version };
 
     // Group getters: identical names, cached tail starts.
@@ -238,6 +231,14 @@ pub(crate) fn generate_memoized_decoder(
                 let buf = self.inner.buf;
                 if let Some(end) = self.cache.end_of(#slot_lit) {
                     let data_start = offset + #prefix_lit;
+                    let wire_length = (end - data_start) as u64;
+                    if wire_length > #max_lit as u64 {
+                        return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                            field: stringify!(#vd_ident),
+                            length: wire_length,
+                            max_length: #max_lit as u64,
+                        });
+                    }
                     return Ok(&buf[data_start..end]);
                 }
                 if offset + #prefix_lit > buf.len() {
@@ -269,21 +270,13 @@ pub(crate) fn generate_memoized_decoder(
             }
         });
 
-        // Same generator as the base decoder, so the text surface cannot
-        // diverge: both lanes get checked and unchecked helpers for UTF-8 and
-        // ASCII, and neither gets one for binary var-data. Same collision
-        // guard as the base decoder's own call site too — a fixed field
-        // named e.g. `noteAsStr` wins the name over this helper.
-        let claims_taken = msg.fields.iter().any(|f| {
-            let n = to_snake_case(&f.name);
-            n == format!("{vd_snake}_as_str") || n == format!("{vd_snake}_as_str_unchecked")
-        });
-        if !claims_taken {
-            impl_body.extend(super::message_decoder::vardata_text_helpers(
-                &vd_snake,
-                vd.character_encoding.as_deref(),
-            ));
-        }
+        // Same generator (and collision guard) as the base decoder, so the
+        // text surface cannot diverge between lanes.
+        impl_body.extend(super::message_decoder::vardata_text_helpers(
+            &vd_snake,
+            vd.character_encoding.as_deref(),
+            &taken_accessor_names,
+        ));
         vd_idx += 1;
     }
 

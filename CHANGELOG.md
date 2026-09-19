@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+## [0.1.29] — 2026-09-19
+
+### Fixed
+- **`acting_version()` / `acting_block_length()` still collided wherever a
+  type owned tails, so those schemas did not compile.** The 0.1.28 fix covered
+  the group-entry decoder only. The ordered lane emitted both names
+  unconditionally on every wrapper, and the message decoder and memoized
+  wrapper did the same, so a group or var-data named `actingVersion` /
+  `actingBlockLength` (at message or entry level), or an entry field of that
+  name beside entry tails, failed with E0592 or E0015. Every decoder, stage and
+  ordered wrapper now emits them through one helper that yields to a schema
+  name on that type. The header values stay on `get_metadata()`.
+- **`with_external_sbe_rt` against a runtime owner without groups or var-data
+  did not compile.** 0.1.27 and 0.1.28 sized `EntryInfo`, `Ordered` and
+  `OrderedFixed` to the emitting schema, but a runtime owner cannot see the
+  schemas of the modules that share it. A generated `sbe_rt` is a whole runtime
+  again, so one shared runtime means one set of types:
+  `consumer::sbe_rt::EntryInfo` *is* the owner's, as it was before 0.1.27.
+- **`<field>_as_str` yields to a sibling tail of that name**, not only to a
+  fixed field, through the same helper as `<group>_count` / `<field>_len`.
+- Group-entry `acting_version()` / `acting_block_length()` yield when a field
+  already owns that name, matching the count/len rule. A schema with
+  `actingVersion` / `actingBlockLength` on an entry compiles; the field
+  accessor keeps its name.
+- Ordered `fixed` / `try_fixed` callbacks yield independently. A first tail
+  named `tryFixed` keeps `fixed()`. A first tail named `fixed` also owns
+  `try_fixed()` (the try-visit), so both callbacks yield and callers read
+  fixed fields before `ordered()`.
+- Memoized **and group-entry** var-data getters re-check the schema maximum
+  even when `encoded_length()` / the iterator has already published a
+  bounds-valid end. Over-max payloads are `InvalidVarDataLength` on the base
+  lane, a cold getter, and a warmed one.
+- Domain `None` for a `with_all_enums_as_option()` (or `with_null_as_option`)
+  enum writes `NullVal` into a reused buffer, including nested-entry DTOs.
+  Flat-group `bulk_add_domain` and `to_wire_entry` honour `Option<Enum>` the
+  same way. A versioned required enum `None` writes `NullVal` rather than
+  skipping the write.
+- `*_as_str` / `*_as_str_unchecked` yield per name: a sibling `noteAsStr`
+  does not drop `note_as_str_unchecked`.
+- The gated `ergo-sbe_ordered` Car decode arm walks recursively with ordered
+  callbacks at every tail and observes the same fields as the staged
+  consuming arm. `fairness_policy_test` rejects staged `.into_*` anywhere in
+  that arm.
+
 ## [0.1.28] — 2026-09-15
 
 ### Added
@@ -200,7 +244,14 @@
   `*_as_str` / `*_as_str_unchecked` text accessors on **group entries**, not
   only at message level — the same helper that already existed for message
   var-data, shared rather than duplicated.
-- Cluster Callgrind instruction probes (`just bench-instructions-cluster`) —
+- `GenerationConfig::with_encode_version(version)`: the encoder writes
+  `version` in the header and omits members introduced after it, while the
+  decoder still reads every version in the schema. Useful for producing older
+  wire versions for peers that have not upgraded. It is rejected at generate
+  time when it would drop members alongside domain objects or conversions.
+  Covered by a versioned-L3 fixture (v0–v3) that is byte-compared against
+  sbe-tool at every acting version.
+- Cluster Callgrind instruction probes (`just bench-cluster-instructions`) —
   mechanism-level evidence for cluster session codec hot paths, alongside the
   existing SBE probe lane.
 

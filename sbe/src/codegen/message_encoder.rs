@@ -14,7 +14,7 @@ use crate::structured_ir::*;
 
 use super::conversion_helpers::{
     ENCODER_RESERVED, FixedArrayTextKind, field_has_conversion_free, fixed_array_text_kind,
-    resolve_field_ident,
+    named_accessor_ident, owner_accessor_names, resolve_field_ident,
 };
 use super::encoded_length;
 use super::field_type::field_type_ident;
@@ -1385,12 +1385,13 @@ pub(crate) fn generate_message_encoder(
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
             let vd_snake_with = syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
+            let taken = owner_accessor_names(&msg.fields, conversions, &[], core::iter::empty());
             let str_setter = vardata_encode_str_setter(
                 &vd_snake,
                 &vd.name,
                 vd.character_encoding.as_deref(),
                 &quote::quote! { #next_stage<'a, H> },
-                &msg.fields,
+                &taken,
             );
             let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             let prefix_size_lit = syn::LitInt::new(&prefix_size.to_string(), span);
@@ -1737,23 +1738,21 @@ pub(crate) fn generate_message_encoder(
 /// generic) — so message and entry callers share this one decision without
 /// forcing entries through a signature shape that doesn't apply to them.
 ///
-/// `owner_fields` are the fixed fields emitted on the same stage. A field
-/// whose accessor already spells `<vd>_as_str` wins the name, mirroring the
-/// decode-side guard in `var_data_as_str_methods` — entry fields keep their
-/// schema spelling in every location, so a var-data setter can't rename
-/// around a collision the way message-level fields do via `DECODER_RESERVED`.
+/// `taken` is the accessor names already on this encode stage. A field whose
+/// accessor already spells `<vd>_as_str` wins the name, via the same
+/// [`named_accessor_ident`] yield as decode. Encode stages are one tail each,
+/// so a sibling tail of that name lives on the *next* stage and is not in
+/// `taken` — collapsing those would drop a setter that does not collide.
+/// Entry fields share the first-tail type, which is why they belong here.
 pub(crate) fn vardata_encode_str_setter(
     vd_ident: &syn::Ident,
     field_name: &str,
     character_encoding: Option<&str>,
     ret_ty: &proc_macro2::TokenStream,
-    owner_fields: &[MessageField],
+    taken: &[String],
 ) -> proc_macro2::TokenStream {
     let claimed = format!("{vd_ident}_as_str");
-    if owner_fields
-        .iter()
-        .any(|f| to_snake_case(&f.name) == claimed)
-    {
+    if named_accessor_ident(&claimed, taken).is_none() {
         return proc_macro2::TokenStream::new();
     }
 

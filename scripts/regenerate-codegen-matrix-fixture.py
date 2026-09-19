@@ -33,6 +33,7 @@ SHAPES = [
     ("eBoolOpt",   "BooleanType", 'presence="optional"',      "bool enum, optional (field-level presence)"),
     ("eNorm",      "Model",     "",                            "non-bool enum"),
     ("setOpt",     "Opts",      "",                            "bitset"),
+    ("sDep",       "uint32",    'deprecated="2"',              "deprecated scalar (with_deprecated_attrs)"),
 ]
 
 # sinceVersion values under test.
@@ -55,6 +56,11 @@ def fields(start_id, indent):
             a = f" {attrs}" if attrs else ""
             out.append(f'{indent}<field name="{prefix}V{v}" id="{fid}" type="{ty}"{a}{since}/>')
             fid += 1
+    # Not a shape: a Rust keyword name, so every location takes the
+    # keyword-append rename (with_keyword_append_token).
+    out.append(f"{indent}<!-- Rust keyword name -->")
+    out.append(f'{indent}<field name="type" id="{fid}" type="uint8"/>')
+    fid += 1
     return out, fid
 
 

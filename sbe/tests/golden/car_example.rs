@@ -591,9 +591,11 @@ pub mod sbe_rt {
     }
     /// Message decoder after the ordered `fixed` callback, before the first tail.
     ///
-    /// Distinct from the base decoder so `fixed` cannot collide with a
-    /// first tail of the same name, and so the callback receives a
-    /// fixed-fields-only view rather than the full decoder.
+    /// Distinct from the base decoder so the fixed block cannot be read a
+    /// second time once the walk has moved on, and so the callback receives
+    /// a fixed-fields-only view rather than the full decoder. A first tail
+    /// named `fixed` or `tryFixed` is handled by not generating the
+    /// callback at all, not by this type.
     #[must_use = "ordered stage must be advanced or remaining tails are skipped"]
     pub struct OrderedFixed<S> {
         pub(crate) inner: S,
@@ -3810,13 +3812,16 @@ pub struct FuelFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
-    /// Schema version from the parent message header (or wrap args).
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
-    /// Acting block length of this entry's fixed block.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
@@ -3968,6 +3973,14 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
             let data_offset = self.offset + self.acting_block_length + 4;
+            let wire_length = end.saturating_sub(data_offset) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(usage_description),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let offset = self.tail_offset_0()?;
@@ -3979,11 +3992,26 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                     needed: usize::MAX,
                     available: self.buf.len().saturating_sub(offset),
                 })?;
+            let wire_length = end.saturating_sub(data_offset) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(usage_description),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
+        if wire_length > 1073741824 as u64 {
+            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                field: stringify!(usage_description),
+                length: wire_length,
+                max_length: 1073741824 as u64,
+            });
+        }
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
             stringify!(usage_description),
             offset,
@@ -4297,15 +4325,18 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     }
 }
 impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoder<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Byte length without advancing this ordered stage.
     #[inline]
@@ -4376,15 +4407,18 @@ text pass. Invalid text is an error, never a sentinel.*/
     }
 }
 impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
@@ -4842,13 +4876,16 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
-    /// Schema version from the parent message header (or wrap args).
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
-    /// Acting block length of this entry's fixed block.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
@@ -5485,13 +5522,16 @@ pub struct PerformanceFiguresAccelerationEntryDecoder<'a> {
     acting_block_length: usize,
 }
 impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
-    /// Schema version from the parent message header (or wrap args).
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_version(&self) -> u16 {
         self.acting_version
     }
-    /// Acting block length of this entry's fixed block.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
@@ -5839,15 +5879,18 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     }
 }
 impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoder<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Wire-declared entry count without advancing this ordered stage.
     #[inline]
@@ -5915,15 +5958,18 @@ Empty groups invoke it zero times.*/
     }
 }
 impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
@@ -6943,15 +6989,18 @@ pub struct CarDecoderFixedView<'v, 'a> {
     inner: &'v CarDecoder<'a>,
 }
 impl<'v, 'a> CarDecoderFixedView<'v, 'a> {
-    /// Schema version from the message header (or wrap args).
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    /// Acting block length from the wire header / wrap args.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     ///Generated method `serial_number`.
     #[inline]
@@ -7005,8 +7054,10 @@ impl<'v, 'a> CarDecoderFixedView<'v, 'a> {
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
-    /// Read the fixed block before any tail. Consumes this stage
-    /// so a first tail named `fixed` cannot collide with this method.
+    /// Read the fixed block before any tail, then continue from a
+    /// distinct stage that carries only the tail methods. Yields
+    /// when the first tail is named `fixed`; use [`Self::try_fixed`]
+    /// there.
     #[inline]
     pub fn fixed<F>(
         self,
@@ -7021,6 +7072,8 @@ impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
         self.try_fixed(f)
     }
     /// Read the fixed block before any tail, with a caller error type.
+    /// Yields when the first tail is named `tryFixed`; use [`Self::fixed`]
+    /// there.
     #[inline]
     pub fn try_fixed<E, F>(
         self,
@@ -7041,15 +7094,18 @@ impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Wire-declared entry count without advancing this ordered stage.
     #[inline]
@@ -7105,15 +7161,18 @@ Empty groups invoke it zero times.*/
     }
 }
 impl<'a> sbe_rt::Ordered<sbe_rt::OrderedFixed<CarDecoder<'a>>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.inner.acting_version()
+        self.inner.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.inner.acting_block_length()
+        self.inner.inner.acting_block_length
     }
     /// Wire-declared entry count without advancing this ordered stage.
     #[inline]
@@ -7170,15 +7229,18 @@ Empty groups invoke it zero times.*/
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Wire-declared entry count without advancing this ordered stage.
     #[inline]
@@ -7237,15 +7299,18 @@ Empty groups invoke it zero times.*/
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Byte length without advancing this ordered stage.
     #[inline]
@@ -7310,15 +7375,18 @@ text pass. Invalid text is an error, never a sentinel.*/
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Byte length without advancing this ordered stage.
     #[inline]
@@ -7383,15 +7451,18 @@ text pass. Invalid text is an error, never a sentinel.*/
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoderAfterModel<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     /// Byte length without advancing this ordered stage.
     #[inline]
@@ -7456,15 +7527,18 @@ text pass. Invalid text is an error, never a sentinel.*/
     }
 }
 impl<'a> sbe_rt::Ordered<CarDecoderComplete<'a>> {
-    ///Generated method `acting_version`.
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
     #[inline]
     pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version()
+        self.inner.acting_version
     }
-    ///Generated method `acting_block_length`.
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
     #[inline]
     pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length()
+        self.inner.acting_block_length
     }
     ///The completed staged decoder. Prefer [`Self::encoded_length_with_header`] / [`Self::as_bytes_with_header`] on this type — the message chain ends like encode, without `.done()`.
     #[inline]
@@ -8057,16 +8131,6 @@ pub struct CarMemoizedDecoder<'a> {
     cache: sbe_rt::TailBoundaryCache<5>,
 }
 impl<'a> CarMemoizedDecoder<'a> {
-    /// Schema version from the message header (or wrap args).
-    #[inline]
-    pub const fn acting_version(&self) -> u16 {
-        self.inner.acting_version
-    }
-    /// Acting block length from the message header (or wrap args).
-    #[inline]
-    pub const fn acting_block_length(&self) -> usize {
-        self.inner.acting_block_length
-    }
     /// Borrow the underlying uncached decoder (fixed fields, metadata).
     #[inline]
     pub const fn inner(&self) -> &CarDecoder<'a> {
@@ -8187,6 +8251,19 @@ impl<'a> CarMemoizedDecoder<'a> {
     pub fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
         self.cache.stats()
     }
+    /// Schema version from the message header (or wrap args), not the
+    /// compiled schema constant. Fields with `sinceVersion` and optional
+    /// presence depend on this value.
+    #[inline]
+    pub const fn acting_version(&self) -> u16 {
+        self.inner.acting_version
+    }
+    /// Block length from the wire header / wrap args. Tail offsets use
+    /// this acting length, not only the compiled `BLOCK_LENGTH`.
+    #[inline]
+    pub const fn acting_block_length(&self) -> usize {
+        self.inner.acting_block_length
+    }
     /// Wire-declared entry count without advancing this decoder.
     #[inline]
     pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
@@ -8229,6 +8306,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(2) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(manufacturer),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {
@@ -8293,6 +8378,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(3) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(model),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {
@@ -8355,6 +8448,14 @@ impl<'a> CarMemoizedDecoder<'a> {
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(4) {
             let data_start = offset + 4;
+            let wire_length = (end - data_start) as u64;
+            if wire_length > 1073741824 as u64 {
+                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
+                    field: stringify!(activation_code),
+                    length: wire_length,
+                    max_length: 1073741824 as u64,
+                });
+            }
             return Ok(&buf[data_start..end]);
         }
         if offset + 4 > buf.len() {

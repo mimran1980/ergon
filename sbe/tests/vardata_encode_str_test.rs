@@ -371,6 +371,52 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
     Ok(())
 }
 
+/// `characterEncoding` on the `<data>` element, not on the composite member.
+/// Dropping it used to emit raw `&[u8]` with no `*_as_str`.
+#[test]
+fn data_element_character_encoding_emits_as_str() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="vdelem" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="note" id="2" type="varStringEncoding" characterEncoding="UTF-8"/>
+  </message>
+</messageSchema>"#;
+    let src = generated_source_from("vdelem", XML)?;
+    assert!(
+        src.contains("fn note_as_str("),
+        "data-element characterEncoding must emit *_as_str, got:\n{src}"
+    );
+    compile_and_run(
+        "vdelem",
+        &src,
+        r#"
+        let len = MEncoder::compute_length_with_header("hi".len());
+        let mut storage = [0u8; 32];
+        let actual = MEncoder::wrap_and_apply_header(&mut storage[..len], 0)
+            .fixed(&MFixedFields {})
+            .note_as_str("hi")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MDecoder::try_decode(&storage[..actual], 0)?;
+        assert_eq!(dec.note_as_str()?, "hi");
+        let (text, _) = MDecoder::try_decode(&storage[..actual], 0)?.into_note_as_str()?;
+        assert_eq!(text, "hi");
+        "#,
+    );
+    Ok(())
+}
+
 #[test]
 fn as_str_setter_stands_down_when_a_sibling_field_already_claims_the_name()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -414,6 +460,152 @@ fn as_str_setter_stands_down_when_a_sibling_field_already_claims_the_name()
             .tag(b"abc")?
             .encoded_length_with_header();
         assert_eq!(sized, len);
+        "#,
+    );
+    Ok(())
+}
+
+/// `<field>_as_str` yields to a sibling *tail* of that name, not only a field.
+/// Message, group-entry, and nested-entry are separate codegen locations.
+/// Encode stages are one tail each, so the first-stage `_as_str` setter still
+/// exists beside a later tail of that name.
+#[test]
+fn as_str_yields_to_a_sibling_tail_at_every_location() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="vdtail" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varUtf8">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <data name="note" id="1" type="varUtf8"/>
+    <data name="noteAsStr" id="2" type="varUtf8"/>
+  </message>
+  <message name="E" id="2">
+    <group name="legs" id="1" dimensionType="groupSizeEncoding">
+      <group name="cells" id="4" dimensionType="groupSizeEncoding">
+        <data name="note" id="5" type="varUtf8"/>
+        <data name="noteAsStr" id="6" type="varUtf8"/>
+      </group>
+      <data name="note" id="2" type="varUtf8"/>
+      <data name="noteAsStr" id="3" type="varUtf8"/>
+    </group>
+  </message>
+</messageSchema>"#;
+    let src = generated_source_from("vdtail", XML)?;
+    compile_and_run(
+        "vdtail",
+        &src,
+        r#"
+        // Message: sibling tail owns note_as_str(); the text helper yields.
+        // Encode stages differ, so note_as_str(&str) still writes `note`.
+        let len = MEncoder::compute_length_with_header(2, 2);
+        let mut storage = [0u8; 64];
+        let actual = MEncoder::wrap_and_apply_header(&mut storage[..len], 0)
+            .fixed(&MFixedFields {})
+            .note_as_str("hi")?
+            .note_as_str(b"ok")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MDecoder::try_decode(&storage[..actual], 0)?;
+        assert_eq!(dec.note()?, b"hi");
+        assert_eq!(dec.note_as_str()?, b"ok");
+        assert_eq!(dec.note_as_str_as_str()?, "ok");
+        unsafe { assert_eq!(dec.note_as_str_unchecked()?, "hi"); }
+
+        // Entry + nested-entry: same yield, compile_and_run is the lock.
+        let len = EEncodedLength::new()
+            .legs_ragged(1, |b| {
+                b.add()?.cells(|c| {
+                    c.add()?.note(2)?.note_as_str(2)?;
+                    Ok(())
+                })?.note(2)?.note_as_str(2)?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let mut storage = [0u8; 128];
+        let actual = EEncoder::wrap_and_apply_header(&mut storage[..len], 0)
+            .fixed(&EFixedFields {})
+            .legs(1, |g| {
+                g.add(|e| {
+                    e.cells(1, |c| {
+                        c.add(|n| n.note_as_str("ef")?.note_as_str(b"gh"))?;
+                        Ok(())
+                    })?
+                    .note_as_str("ab")?
+                    .note_as_str(b"cd")
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = EDecoder::try_decode(&storage[..actual], 0)?;
+        for leg in dec.legs()? {
+            let leg = leg?;
+            assert_eq!(leg.note()?, b"ab");
+            assert_eq!(leg.note_as_str()?, b"cd");
+            unsafe { assert_eq!(leg.note_as_str_unchecked()?, "ab"); }
+            for cell in leg.cells()? {
+                let cell = cell?;
+                assert_eq!(cell.note()?, b"ef");
+                assert_eq!(cell.note_as_str()?, b"gh");
+                unsafe { assert_eq!(cell.note_as_str_unchecked()?, "ef"); }
+            }
+        }
+        "#,
+    );
+    Ok(())
+}
+
+/// A sibling that takes `*_as_str` must not drop `*_as_str_unchecked`.
+#[test]
+fn as_str_unchecked_survives_when_as_str_is_taken() -> Result<(), Box<dyn std::error::Error>> {
+    const XML: &str = r#"<messageSchema package="vdunchecked" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="varUtf8">
+      <type name="length" primitiveType="uint32" maxValue="1073741824"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="noteAsStr" id="1" type="uint32"/>
+    <data name="note" id="2" type="varUtf8"/>
+  </message>
+</messageSchema>"#;
+    let src = generated_source_from("vdunchecked", XML)?;
+    compile_and_run(
+        "vdunchecked",
+        &src,
+        r#"
+        let len = MEncoder::compute_length_with_header(2);
+        let mut storage = [0u8; 32];
+        let buf = &mut storage[..len];
+        let actual = MEncoder::wrap_and_apply_header(buf, 0)
+            .fixed(&MFixedFields { note_as_str: 7 })
+            .note(b"hi")?
+            .encoded_length_with_header();
+        assert_eq!(len, actual);
+        let dec = MDecoder::try_decode(&storage[..actual], 0)?;
+        assert_eq!(dec.note_as_str(), 7);
+        assert_eq!(dec.note()?, b"hi");
+        unsafe { assert_eq!(dec.note_as_str_unchecked()?, "hi"); }
         "#,
     );
     Ok(())

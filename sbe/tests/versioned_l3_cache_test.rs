@@ -688,6 +688,44 @@ fn encode_version_beyond_schema_is_rejected() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
+fn encode_version_below_schema_rejects_domain_objects_and_conversions()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{
+        ConversionSelector, DomainVarData, GenerateError, GenerationConfig, Generator, Schema,
+        parse_file,
+    };
+    let ir = parse_file(&Paths::versioned_l3_schema(3))?;
+    let schema = Schema::from_ir(ir);
+    let reason = "cannot drop members while generating domain objects or conversions";
+    for (label, config) in [
+        (
+            "domain_objects",
+            GenerationConfig::new("combo_dto")
+                .with_encode_version(1)
+                .with_domain_objects(DomainVarData::Bytes),
+        ),
+        (
+            "conversions",
+            GenerationConfig::new("combo_conv")
+                .with_encode_version(1)
+                .with_conversion(ConversionSelector::field_path("L3Book.timestamp")),
+        ),
+    ] {
+        let err = Generator::new(config).generate(&schema).unwrap_err();
+        match err {
+            GenerateError::InvalidConfiguration {
+                option, reason: r, ..
+            } => {
+                assert_eq!(option, "encode_version", "{label}");
+                assert_eq!(r, reason, "{label}");
+            }
+            other => panic!("{label}: expected InvalidConfiguration, got {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn snapshot_encoder_matches_encode_version_filter() -> Result<(), Box<dyn std::error::Error>> {
     let (_s_snap, snap) = generate(&Paths::versioned_l3_schema(1), "snap_v1");
     let (_s_filt, filt) = generate_domain_with(&Paths::versioned_l3_schema(3), "filt_v1", |c| {
