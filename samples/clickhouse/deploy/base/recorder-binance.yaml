@@ -1,0 +1,165 @@
+# One exchange StatefulSet pod: Python/Nautilus app + embedded Rust
+# recorder, local IPC Media Driver + Archive in-process, archive-agent for
+# registration/catalog, shared-memory Aeron directory, Archive PVC.
+apiVersion: v1
+kind: Service
+metadata:
+  name: binance-archive
+  labels:
+    app: recorder
+    exchange: binance
+spec:
+  clusterIP: None
+  selector:
+    app: recorder
+    exchange: binance
+  ports:
+    - name: metrics
+      port: 9101
+    - name: archive-control
+      port: 4001
+    - name: archive-control-response
+      port: 4002
+    - name: archive-events
+      port: 4003
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: binance
+spec:
+  serviceName: binance-archive
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recorder
+      exchange: binance
+  template:
+    metadata:
+      labels:
+        app: recorder
+        exchange: binance
+    spec:
+      # No exchange credential variables are passed to this pod, ever.
+      automountServiceAccountToken: false
+      containers:
+        - name: market-recorder
+          image: ergo/market-recorder:local
+          imagePullPolicy: IfNotPresent
+          args: ["--exchange", "binance", "--mode", "fixture", "--instance", "binance-0"]
+          env:
+            - name: AERON_DIR
+              value: /dev/shm/aeron/driver
+            # The channel and stream the Archive records and the ingester
+            # replays. Both sides must agree; the ingester passes --stream-id
+            # with the same value, and the default here is deliberately not
+            # relied upon.
+            - name: ERGO_RECORDED_CHANNEL
+              value: aeron:ipc
+            - name: ERGO_RECORDED_STREAM_ID
+              value: "42"
+          volumeMounts:
+            - name: aeron-dir
+              mountPath: /dev/shm/aeron
+            - name: ergo-run
+              mountPath: /var/run/ergo
+            - name: recording-config
+              mountPath: /etc/recording
+              readOnly: true
+          resources:
+            # The OOMKill here was not the imports (measured at ~65 MiB) but the
+            # bridge's session ring, which eagerly allocated 4096 x 1 MiB =
+            # 4 GiB. That is now sized from MAX_RECORD_BYTES (~344 MiB total),
+            # so the original profile is ample again.
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test -f /tmp/recorder-ready"]
+            periodSeconds: 5
+        - name: media-driver-archive
+          image: ergo/archive-driver:local
+          imagePullPolicy: IfNotPresent
+          # The image's default CMD lets Aeron pick its own default channels and
+          # archive directory, which left the mounted `archive` volume unused and
+          # put the control channel on 8010 while the Service advertised 4001.
+          # Name all three explicitly so the pod, the Service and the ingester
+          # agree on where the Archive is.
+          command: ["java"]
+          args:
+            # The image's CMD carried this classpath; overriding `args`
+            # replaces the whole CMD, so it has to be repeated or the JVM
+            # reports ClassNotFoundException for ArchivingMediaDriver.
+            - --add-opens
+            - java.base/jdk.internal.misc=ALL-UNNAMED
+            - -cp
+            - /opt/aeron/aeron-all-1.53.2.jar
+            # Aeron deletes and recreates its dir on startup; pointing it at
+            # the mount point itself failed, because a mount cannot be
+            # unlinked. Use a directory inside the shared volume.
+            # The Archive logged nothing at all without these, which made a
+            # failed cross-pod replay indistinguishable from a quiet success.
+            - -Daeron.event.log=all
+            - -Daeron.event.archive.log=all
+            - -Daeron.dir=/dev/shm/aeron/driver
+            - -Daeron.archive.dir=/var/lib/aeron-archive
+            - -Daeron.archive.control.channel=aeron:udp?endpoint=0.0.0.0:4001
+            - -Daeron.archive.control.response.channel=aeron:udp?endpoint=0.0.0.0:4002
+            - -Daeron.archive.recording.events.channel=aeron:udp?endpoint=0.0.0.0:4003
+            - -Daeron.archive.replication.channel=aeron:udp?endpoint=0.0.0.0:0
+            - io.aeron.archive.ArchivingMediaDriver
+          env:
+            - name: AERON_DIR
+              value: /dev/shm/aeron
+          volumeMounts:
+            - name: aeron-dir
+              mountPath: /dev/shm/aeron
+            - name: archive
+              mountPath: /var/lib/aeron-archive
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+        - name: archive-agent
+          image: ergo/archive-agent:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--socket"
+            - "/var/run/ergo/registration.sock"
+            - "--catalog"
+            - "/var/lib/aeron-archive/registration-catalog.db"
+            - "--metrics-addr"
+            - "0.0.0.0:9101"
+          ports:
+            - containerPort: 9101
+              name: metrics
+          volumeMounts:
+            - name: archive
+              mountPath: /var/lib/aeron-archive
+            - name: ergo-run
+              mountPath: /var/run/ergo
+      volumes:
+        - name: ergo-run
+          emptyDir: {}
+        - name: aeron-dir
+          emptyDir:
+            medium: Memory
+            # Aeron holds term buffers plus the archive's index here; 256Mi was
+            # the original guess and leaves little headroom.
+            sizeLimit: 1Gi
+        - name: recording-config
+          configMap:
+            name: recording-config
+  volumeClaimTemplates:
+    - metadata:
+        name: archive
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,458 @@
+# Prometheus + Grafana + JupyterLab: provisioned from files, no hosted
+# accounts. Grafana uses the official ClickHouse plugin with stable
+# data-source UIDs; Prometheus scrapes the app/agent/ingester exporters.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s
+    rule_files:
+      - /etc/prometheus/rules.yml
+    scrape_configs:
+      - job_name: archive-agents
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [clickhouse] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: recorder
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_exchange]
+            target_label: exchange
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+      - job_name: ingester
+        static_configs:
+          - targets: ["ingester:9101"]
+      # The ingester's own batch send-to-acknowledgement latency histogram —
+      # a separate port because 9101 above is the co-located
+      # archive-agent-metrics sidecar, which never observes a ClickHouse
+      # batch flush.
+      - job_name: ingester-batch-latency
+        static_configs:
+          - targets: ["ingester:9102"]
+  rules.yml: |
+    groups:
+      - name: recording-pipeline
+        rules:
+          - alert: RecorderDropsIncreasing
+            expr: increase(ergo_recorder_dropped_total[5m]) > 100
+            for: 1m
+            labels: { severity: warning }
+            annotations:
+              summary: "Recorder dropping records ({{ $labels.exchange }})"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels: { app: prometheus }
+spec:
+  selector: { app: prometheus }
+  ports:
+    - port: 9090
+      name: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: clickhouse
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus
+spec:
+  serviceName: prometheus
+  replicas: 1
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      # `kubernetes_sd_configs` lists pods; without this binding the
+      # archive-agents job discovers nothing and reports no error.
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=7d
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: ClickHouse
+        uid: ergo-clickhouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        isDefault: true
+        jsonData:
+          # v4 of the plugin reads `host`; it ignores the top-level `url`.
+          host: clickhouse
+          port: 8123
+          protocol: http
+          defaultDatabase: market
+          username: default
+        secureJsonData:
+          password: ergo_test
+      - name: Prometheus
+        uid: ergo-prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: ergo
+        folder: ergo
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+data:
+  market-data.json: |
+    {
+      "title": "Market data",
+      "uid": "ergo-market-data",
+      "schemaVersion": 39,
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "Trades per minute by venue",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toStartOfMinute(fromUnixTimestamp64Nano(_record_captured_at_ns)) AS t, venue, count() AS n FROM market.trades FINAL WHERE $timeFilter GROUP BY t, venue ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Best bid/ask (top instruments)",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toStartOfMinute(fromUnixTimestamp64Nano(_record_captured_at_ns)) AS t, instrument, argMax(bids__price[-1], _record_captured_at_ns) AS best_bid, argMax(asks__price[1], _record_captured_at_ns) AS best_ask FROM market.l2_books FINAL WHERE $timeFilter GROUP BY t, instrument ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+        },
+        {
+          "id": 3, "type": "stat", "title": "Recorder freshness (seconds)",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT (toUnixTimestamp64Nano(now64(9)) - max(_record_captured_at_ns)) / 1000000000 FROM market.sbe_messages", "refId": "A" }
+          ],
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 8 }
+        }
+      ]
+    }
+  pipeline.json: |
+    {
+      "title": "Recording pipeline",
+      "uid": "ergo-pipeline",
+      "schemaVersion": 39,
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "Published / dropped (recorders)",
+          "datasource": { "type": "prometheus", "uid": "ergo-prometheus" },
+          "targets": [
+            { "expr": "rate(ergo_agent_registrations_ok_total[5m])", "refId": "A" },
+            { "expr": "rate(ergo_agent_registrations_failed_total[5m])", "refId": "B" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Rows ingested / batches flushed",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toStartOfMinute(fromUnixTimestamp64Nano(_record_captured_at_ns)) AS t, count() AS rows FROM market.raw_exchange_messages FINAL WHERE $timeFilter GROUP BY t ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+        },
+        {
+          "id": 3, "type": "table", "title": "Temporary tables (disabled shows not-created state)",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT 'book_debug' AS table, 'disabled-or-not-created' AS state", "refId": "A" }
+          ],
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 8 }
+        }
+      ]
+    }
+  aeron.json: |
+    {
+      "title": "Aeron",
+      "uid": "ergo-aeron",
+      "schemaVersion": 39,
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "Archive agent health by exchange",
+          "datasource": { "type": "prometheus", "uid": "ergo-prometheus" },
+          "targets": [
+            { "expr": "ergo_agent_up", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Replay position vs recorded stop",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toDateTime(intDiv(captured_at_ns, 1000000000)) AS t, replay_position, recording_stop_position FROM market.aeron_metrics WHERE $timeFilter ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+        },
+        {
+          "id": 3, "type": "table", "title": "Recordings: bounds, drain position, rows",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT recording_id, min(recording_start_position) AS start_pos, max(recording_stop_position) AS stop_pos, max(replay_position) AS replayed_to, max(rows_ingested) AS rows FROM market.aeron_metrics WHERE $timeFilter GROUP BY recording_id ORDER BY recording_id DESC", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 }
+        }
+      ]
+    }
+
+  latency.json: |
+    {
+      "title": "Latency",
+      "uid": "ergo-latency",
+      "schemaVersion": 39,
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "Ingest rate (metric samples per minute)",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toStartOfMinute(intDiv(captured_at_ns, 1000000000)) AS t, count() AS samples FROM market.aeron_metrics WHERE $timeFilter GROUP BY t ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Prometheus scrape duration (observation cost)",
+          "datasource": { "type": "prometheus", "uid": "ergo-prometheus" },
+          "targets": [
+            { "expr": "scrape_duration_seconds", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "Ingest lag (seconds behind capture)",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT toDateTime(intDiv(max(captured_at_ns), 1000000000)) AS t, (toUnixTimestamp64Nano(now64(9)) - max(captured_at_ns)) / 1000000000 AS lag_seconds FROM market.aeron_metrics WHERE $timeFilter GROUP BY t ORDER BY t", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+        },
+        {
+          "id": 4, "type": "heatmap", "title": "ClickHouse batch ack latency (p50/p95/p99)",
+          "datasource": { "type": "prometheus", "uid": "ergo-prometheus" },
+          "targets": [
+            { "expr": "sum(rate(ergo_ingester_batch_ack_seconds_bucket[1m])) by (le)", "format": "heatmap", "legendFormat": "{{le}}", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+        },
+        {
+          "id": 5, "type": "text", "title": "Not yet exported",
+          "options": { "mode": "markdown", "content": "PLAN section 10 also asks for recording-call distributions and normalised callback-to-publication histograms. ClickHouse batch-acknowledgement (panel above) is now exported by the ingester's own /metrics; those two producer-side stages still do not export histograms." },
+          "gridPos": { "h": 4, "w": 12, "x": 12, "y": 16 }
+        }
+      ]
+    }
+
+  storage.json: |
+    {
+      "title": "Storage",
+      "uid": "ergo-storage",
+      "schemaVersion": 39,
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "table", "title": "Parts, disk and compression per backing table",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT table, count() AS parts, formatReadableSize(sum(bytes_on_disk)) AS on_disk, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE database = 'market' AND active GROUP BY table ORDER BY sum(bytes_on_disk) DESC", "refId": "A" }
+          ],
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "id": 2, "type": "stat", "title": "In-flight merges",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT count() FROM system.merges", "refId": "A" }
+          ],
+          "gridPos": { "h": 5, "w": 8, "x": 0, "y": 10 }
+        },
+        {
+          "id": 3, "type": "stat", "title": "Pending mutations",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT count() FROM system.mutations WHERE is_done = 0", "refId": "A" }
+          ],
+          "gridPos": { "h": 5, "w": 8, "x": 8, "y": 10 }
+        },
+        {
+          "id": 4, "type": "stat", "title": "Cold-tier bucket objects",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT count() FROM system.disks", "refId": "A" }
+          ],
+          "gridPos": { "h": 5, "w": 8, "x": 16, "y": 10 }
+        },
+        {
+          "id": 5, "type": "table", "title": "Temporary tables and their retention policy",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "ergo-clickhouse" },
+          "targets": [
+            { "rawQuery": true, "query": "SELECT table_name, policy, row_ttl_ns, idle_ttl_ns, if(row_ttl_ns = 0, 'no retention configured', 'expires ' || toString(row_ttl_ns / 1000000000) || 's after capture') AS expiry FROM market._recording_status FINAL ORDER BY table_name", "refId": "A" }
+          ],
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels: { app: grafana }
+spec:
+  selector: { app: grafana }
+  ports:
+    - port: 3000
+      name: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: grafana
+spec:
+  serviceName: grafana
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_INSTALL_PLUGINS
+              value: grafana-clickhouse-datasource
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        # Grafana only scans `provisioning/datasources/` and
+        # `provisioning/dashboards/`; a file sitting directly in
+        # `provisioning/` is ignored, which is why the declared datasources
+        # never appeared. `items[].path` places each key in its subdirectory.
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: datasources.yaml
+                path: datasources/ergo.yaml
+              - key: dashboards.yaml
+                path: dashboards/ergo.yaml
+        - name: dashboards
+          configMap: { name: grafana-dashboards }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter
+  labels: { app: jupyter }
+spec:
+  selector: { app: jupyter }
+  ports:
+    - port: 8888
+      name: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jupyter
+spec:
+  serviceName: jupyter
+  replicas: 1
+  selector:
+    matchLabels: { app: jupyter }
+  template:
+    metadata:
+      labels: { app: jupyter }
+    spec:
+      containers:
+        - name: jupyter
+          image: ergo/jupyter-lab:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+          volumeMounts:
+            - name: notebooks
+              mountPath: /home/jovyan/work
+              readOnly: true
+      volumes:
+        # `start.sh` builds this ConfigMap from the repo's `notebooks/`
+        # directory. The previous `hostPath: /notebooks` was never populated,
+        # so the pod served an empty work directory.
+        - name: notebooks
+          configMap:
+            name: ergo-notebooks

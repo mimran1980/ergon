@@ -1,0 +1,12 @@
+# Only the stable recording ConfigMap lives here. The watcher applies the
+# validated snapshot; disableNameSuffixHash keeps the mounted object name
+# stable across edits so pods never restart on config changes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: clickhouse
+configMapGenerator:
+  - name: recording-config
+    files:
+      - recording.yaml
+generatorOptions:
+  disableNameSuffixHash: true

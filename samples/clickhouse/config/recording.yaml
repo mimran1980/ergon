@@ -1,0 +1,25 @@
+api_version: recording/v1
+defaults:
+  temporary_enabled: false
+  row_ttl: 24h
+  idle_table_ttl: 7d
+rules:
+  # Temporary diagnostic tables — edit `enabled` to toggle recording live.
+  - process: market-recorder
+    instance: "*"
+    table: book_debug
+    enabled: false
+    row_ttl: 24h
+    idle_table_ttl: 7d
+  - process: market-recorder
+    instance: "*"
+    table: pipeline_debug
+    enabled: false
+    row_ttl: 1h
+    idle_table_ttl: 7d
+  - process: market-recorder
+    instance: "*"
+    table: adapter_debug
+    enabled: false
+    row_ttl: 24h
+    idle_table_ttl: 7d

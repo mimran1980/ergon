@@ -1,0 +1,184 @@
+# Central ingester: one active instance (StatefulSet, 1 replica) with its
+# local Media Driver for remote replay traffic, the durable catalog +
+# checkpoint volume, and the recording config mount.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingester
+  labels:
+    app: ingester
+spec:
+  clusterIP: None
+  selector:
+    app: ingester
+  ports:
+    - name: metrics
+      port: 9101
+    # ClickHouse batch send-to-acknowledgement latency histogram, served by
+    # the `ingester` container itself — separate from `metrics` (9101),
+    # which is the co-located archive-agent-metrics sidecar and never
+    # observes anything the ingester's own batch flush does.
+    - name: batch-latency
+      port: 9102
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ingester
+spec:
+  serviceName: ingester
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingester
+  template:
+    metadata:
+      labels:
+        app: ingester
+    spec:
+      containers:
+        - name: ingester
+          image: ergo/ingester:local
+          imagePullPolicy: IfNotPresent
+          # The ingester connects to ClickHouse as the same local
+          # default/ergo_test identity the harness, scripts and notebooks use;
+          # without it every DDL and insert fails with 516.
+          args:
+            - --mode
+            - aeron
+            - --clickhouse-url
+            - http://clickhouse:8123
+            - --database
+            - market
+            - --user
+            - default
+            - --password
+            - ergo_test
+            # The `state` volume, not the working directory: the defaults are
+            # `catalog.db`/`checkpoints.db` relative to CWD and the container
+            # has no writable one.
+            - --catalog
+            - /var/lib/ergo/catalog.db
+            - --checkpoints
+            - /var/lib/ergo/checkpoints.db
+            # PLAN §9: the recorder pods own their Archives; this pod attaches
+            # over UDP rather than launching one. A non-empty `--aeron-dir` is
+            # what selects the remote path, and `--stream-id` must match the
+            # recorder's ERGO_RECORDED_STREAM_ID.
+            - --aeron-dir
+            # The driver's directory, not the mount root: `aeron.dir` for the
+            # media-driver container is `/dev/shm/aeron/driver`, and pointing
+            # the client at the parent finds no CnC file, which surfaces as
+            # `aeron_context(NULL): Invalid argument`.
+            - /dev/shm/aeron/driver
+            - --stream-id
+            - "42"
+            # PLAN §9: "resolve each recorder's endpoints through its headless
+            # Service and iterate sources". Each recorder pod owns its own
+            # Archive, so both must be named or one exchange is recorded and
+            # never read. Endpoints are derived from the name:
+            # `binance` -> binance-archive.clickhouse.svc.cluster.local:4001.
+            - --archive-source
+            - binance
+            - --archive-source
+            - bybit
+            # PLAN §9: the ingester is long-running. Without this it drains the
+            # recording it found and exits 0, and because the StatefulSet's
+            # restartPolicy is Always, Kubernetes restarts it forever — which
+            # surfaces as `ingester-0 CrashLoopBackOff` even though nothing
+            # crashed. With `--follow` it instead waits for the producer's next
+            # recording or for the current one to grow.
+            - --follow
+            - --metrics-addr
+            - 0.0.0.0:9102
+          ports:
+            - containerPort: 9102
+              name: batch-latency
+          env:
+            # The Archive sends control responses back to a channel the client
+            # listens on, so these must name *this* pod, not localhost: the
+            # recorder is a different pod and `localhost` would resolve to its
+            # own loopback.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # The per-source channels are derived from `--archive-source`
+            # names; these two are what that derivation needs. The response
+            # and replay channels are per-index ports on this pod (8011/8021
+            # for the first source, 8012/8022 for the second), because
+            # `localhost` would resolve inside the *recorder's* pod and the
+            # Archive would deliver nothing.
+            - name: ERGO_ARCHIVE_NAMESPACE
+              value: clickhouse
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/ergo
+            - name: aeron-dir
+              mountPath: /dev/shm/aeron
+            - name: recording-config
+              mountPath: /etc/recording
+              readOnly: true
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+        # PLAN §9: the ingester needs its OWN local Media Driver for the remote
+        # replay traffic. Without one the archive client has no CnC to attach
+        # to and fails with `aeron_context(NULL): Invalid argument`. It does not
+        # need an Archive — the recordings live on the recorder pods.
+        - name: media-driver
+          image: ergo/archive-driver:local
+          imagePullPolicy: IfNotPresent
+          command: ["java"]
+          args:
+            - --add-opens
+            - java.base/jdk.internal.misc=ALL-UNNAMED
+            - -cp
+            - /opt/aeron/aeron-all-1.53.2.jar
+            - -Daeron.dir=/dev/shm/aeron/driver
+            # Remote replay arrives over UDP; the driver must not require the
+            # sender to be on this host.
+            - -Daeron.ipc.term.buffer.length=8m
+            - io.aeron.driver.MediaDriver
+          env:
+            - name: AERON_DIR
+              value: /dev/shm/aeron/driver
+          volumeMounts:
+            - name: aeron-dir
+              mountPath: /dev/shm/aeron
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+        - name: archive-agent-metrics
+          image: ergo/archive-agent:local
+          imagePullPolicy: IfNotPresent
+          args: ["--mode", "metrics-only", "--metrics-addr", "0.0.0.0:9101", "--catalog", "/var/lib/ergo/agent.db"]
+          ports:
+            - containerPort: 9101
+              name: metrics
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/ergo
+      volumes:
+        - name: aeron-dir
+          emptyDir:
+            medium: Memory
+            # The driver's term buffers plus the CnC file live here.
+            sizeLimit: 1Gi
+        - name: recording-config
+          configMap:
+            name: recording-config
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

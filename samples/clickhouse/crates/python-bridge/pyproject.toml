@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ergo-recorder"
+version = "0.1.0"
+description = "Prepared recorder PyO3 extension for the clickhouse sample"
+requires-python = ">=3.12"
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+module-name = "ergo_recorder"
+features = ["pyo3/extension-module"]

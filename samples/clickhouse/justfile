@@ -1,0 +1,115 @@
+# Sample-local recipes. Run from samples/clickhouse/.
+#
+# NOTE: the root workspace has its own test/bench lanes; everything here is
+# sample-scoped and must not leak into root CI.
+
+default:
+  @ just --list
+
+# Build and test the private sample workspace (library + apps).
+#
+# `--workspace` beats `-p` in cargo, so the producer-feature lane must not
+# carry both: doing so re-tested every member (including the PyO3 cdylib,
+# which cannot run as a plain test binary).
+test:
+    cargo test --workspace --all-features --exclude ergo-python-bridge
+    cargo test -p ergo-clickhouse-persist --no-default-features --features producer
+    just python-test
+
+# Build the PyO3 recorder into the sample venv and run Python tests.
+#
+# The bridge links Aeron (the recorder pod publishes over pod-local IPC), and
+# rusteron builds those shared objects into the cargo tree rather than
+# installing them, so both the build and the import need the dyld fallback path.
+python-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    env -u CONDA_PREFIX VIRTUAL_ENV=$PWD/.venv .venv/bin/maturin develop --manifest-path crates/python-bridge/Cargo.toml --features pyo3/extension-module
+    # Only the *import* needs the Aeron shared objects, so the path is built
+    # after the build has created `target/debug/build` — on a clean tree it does
+    # not exist beforehand.
+    LIBDIRS=$(find target/debug/build -name 'libaeron*.dylib' -exec dirname {} \; 2>/dev/null | sort -u | tr '\n' ':' || true)
+    export DYLD_FALLBACK_LIBRARY_PATH="$PWD/${LIBDIRS%:}"
+    PYTHONPATH=apps/market-recorder/src:tests .venv/bin/pytest apps/market-recorder/tests tests/test_public_clients.py
+
+# Lints for the sample workspace.
+#
+# `--all-targets` matters: without it, unused imports and `let _ =` discards in
+# test files go unseen, and those are exactly where a checked assertion quietly
+# stops being checked.
+lint:
+    cargo clippy --workspace --all-features --all-targets -- -D warnings
+    cargo fmt --check
+
+# Build the recording-config CLI used by the config watcher.
+build-cli:
+    cargo build -p recording-config --release
+
+# Validate a recording.yaml without applying it.
+validate-config file="config/recording.yaml":
+    ./target/release/recording-config --file {{file}} --permanent trades,quotes,bars,l2_books,raw_exchange_messages,sbe_messages,instruments,order_book_deltas,book_snapshots,funding_rates,mark_prices,index_prices,open_interest,liquidations,market_status
+
+# Start the local fixture stack (kind) after a preflight.
+clickhouse-up mode="fixture":
+    ./scripts/start.sh --mode {{mode}} --cluster kind
+
+# Foreground watcher: validates + applies config edits to the cluster.
+clickhouse-watch-config:
+    python3 scripts/config-watch.py --config-dir config
+
+# Apply a saved edit once, without running the watcher.
+clickhouse-apply-config:
+    ./scripts/apply-config.sh
+
+# Desired/applied revisions, effective rules, recording counters.
+clickhouse-status:
+    ./scripts/status.sh
+
+# Run the 7 verification notebooks against the latest fixture run.
+#
+# The venv interpreter is the one with nbformat/nbclient/nbconvert installed,
+# and the notebooks read the ClickHouse password from the environment.
+verify-notebooks run_id=`cat artifacts/latest_run_id 2>/dev/null || echo NONE`:
+    CLICKHOUSE_DATABASE={{env_var_or_default("CLICKHOUSE_DATABASE", "market_lane")}} CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-ergo_test} .venv/bin/python scripts/execute-notebooks.py --mode fixture --run-id {{run_id}}
+
+# Full local verification (fixture): queries, config edits, recovery.
+verify-local:
+    ./scripts/verify-local.sh
+
+# Aeron archive round trip: publish the fixture export, replay it, verify rows.
+#
+# Its own database, not `market`. This lane DROPs the database it uses, and the
+# in-cluster ingester writes `market` continuously (it reads both recorders'
+# Archives now) — so sharing one meant the lane both wiped live cluster data
+# and then failed on rows the cluster had written beside its own
+# ("trades from another run present"). `market_lane` keeps the two apart.
+verify-aeron run_id=`date -u +%Y%m%d%H%M%S`:
+    CLICKHOUSE_DATABASE={{env_var_or_default("CLICKHOUSE_DATABASE", "market_lane")}} ./scripts/verify-aeron.sh {{run_id}}
+
+# Continuous ingest: `--follow` drains, then stays up without re-reading.
+verify-follow run_id=`date -u +%Y%m%d%H%M%S`:
+    ./scripts/verify-follow.sh {{run_id}}
+
+# In-cluster chain: recorder pods -> pod-local Archive -> ingester -> ClickHouse.
+verify-cluster:
+    ./scripts/verify-cluster-chain.sh
+
+# Live public-only feeds (no exchange credentials) for 10 minutes.
+verify-live duration="10m":
+    ./scripts/verify-live.sh --duration {{duration}}
+
+# Native prepared-recording latency (sample-local; not the root SBE gate).
+bench-recording:
+    cargo bench -p ergo-clickhouse-persist --bench recording
+
+# Stop project workloads; keeps PVCs.
+clickhouse-down:
+    ./scripts/stop.sh
+
+# Stop and delete this project's volumes (destructive, named namespace only).
+clickhouse-purge:
+    ./scripts/stop.sh --purge-data
+
+# Free build caches/artifacts; reports disk headroom (volumes preserved).
+clean mode="safe":
+    ./scripts/clean.sh {{mode}}

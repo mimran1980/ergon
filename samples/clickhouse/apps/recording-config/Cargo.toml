@@ -1,0 +1,13 @@
+[package]
+name = "recording-config"
+description = "Shared parser/validation/status CLI for recording/v1 config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+ergo-clickhouse-persist = { workspace = true }

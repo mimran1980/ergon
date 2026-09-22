@@ -1,0 +1,11 @@
+target/
+Cargo.lock
+artifacts/
+crates/market-schema/src/generated/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+uv.lock
+nohup.out
+*.log
