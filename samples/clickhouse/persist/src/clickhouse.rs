@@ -46,13 +46,19 @@ impl ClickHouse {
         }
     }
 
+    /// `CREATE DATABASE IF NOT EXISTS` for [`Self::database`].
+    pub(crate) fn create_database(&self) -> Result<(), Error> {
+        let sql = format!("CREATE DATABASE IF NOT EXISTS {}", quote(&self.database));
+        self.query(&sql).map(drop)
+    }
+
     /// Run a statement and return the response body.
     pub fn query(&self, sql: &str) -> Result<String, Error> {
         self.post(sql, &[])
     }
 
     /// `INSERT INTO table (columns) FORMAT RowBinary` with `rows` as the body.
-    pub fn insert(&self, table: &str, columns: &[&str], rows: &[u8]) -> Result<(), Error> {
+    pub(crate) fn insert(&self, table: &str, columns: &[&str], rows: &[u8]) -> Result<(), Error> {
         let cols: Vec<String> = columns.iter().map(|c| quote(c)).collect();
         let sql = format!(
             "INSERT INTO {}.{} ({}) FORMAT RowBinary",

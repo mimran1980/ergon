@@ -65,9 +65,8 @@ enum Kind {
 #[derive(Clone, Debug)]
 struct Group {
     name: String,
-    /// Offset/type of `numInGroup` and `blockLength` inside the dimension.
-    count: (usize, PrimitiveType),
-    block: (usize, PrimitiveType),
+    count: Uint,
+    block: Uint,
     header_len: usize,
     fields: Vec<Field>,
 }
@@ -75,8 +74,26 @@ struct Group {
 #[derive(Clone, Debug)]
 struct VarData {
     column: String,
-    length: (usize, PrimitiveType),
+    length: Uint,
     header_len: usize,
+}
+
+/// An unsigned integer inside a group or var-data header: `numInGroup`,
+/// `blockLength`, or a var-data `length`.
+#[derive(Clone, Copy, Debug)]
+struct Uint {
+    offset: usize,
+    prim: PrimitiveType,
+}
+
+impl Uint {
+    /// Read it from the header starting at `header`.
+    fn read(self, msg: &[u8], header: usize) -> Result<usize, DecodeError> {
+        let at = header + self.offset;
+        msg.get(at..at + self.prim.size())
+            .and_then(|raw| usize::try_from(uint(raw)).ok())
+            .ok_or(DecodeError("group or var-data header past end of message"))
+    }
 }
 
 /// A decode failure for one message; the row is skipped, never half-written.
@@ -118,14 +135,11 @@ fn message_ranges(ir: &Ir) -> Vec<&[Token]> {
 impl Table {
     fn from_tokens(tokens: &[Token]) -> Result<Self, Error> {
         let msg = &tokens[0];
-        let unsupported = |what: &str, name: &str| {
-            Error::Schema(format!("{}.{name}: {what} is not supported", msg.name))
-        };
         let mut table = Self {
             name: snake_case(&msg.name),
             template_id: msg
                 .id
-                .ok_or_else(|| unsupported("a message without id", ""))?,
+                .ok_or_else(|| unsupported(&msg.name, "", "a message without id"))?,
             fields: Vec::new(),
             groups: Vec::new(),
             var_data: Vec::new(),
@@ -136,21 +150,21 @@ impl Table {
             let end = matching_end(tokens, i);
             match t.signal {
                 Signal::BeginField => {
-                    if let Some(f) = field(&tokens[i..=end], "", &msg.name)? {
+                    if let Some(f) = field(&tokens[i..=end], &msg.name)? {
                         table.fields.push(f);
                     }
                 }
                 Signal::BeginGroup => table.groups.push(group(&tokens[i..=end], &msg.name)?),
                 Signal::BeginVarData => {
                     let (length, header_len) = var_header(&tokens[i..=end])
-                        .ok_or_else(|| unsupported("this var-data encoding", &t.name))?;
+                        .ok_or_else(|| unsupported(&msg.name, &t.name, "this var-data encoding"))?;
                     table.var_data.push(VarData {
                         column: snake_case(&t.name),
                         length,
                         header_len,
                     });
                 }
-                _ => return Err(unsupported("this token", &t.name)),
+                _ => return Err(unsupported(&msg.name, &t.name, "this token")),
             }
             i = end + 1;
         }
@@ -227,10 +241,8 @@ impl Table {
         }
         let mut pos = body + acting_block;
         for g in &self.groups {
-            let count = read_uint(msg, pos + g.count.0, g.count.1)?;
-            let block = read_uint(msg, pos + g.block.0, g.block.1)?;
-            let count = usize::try_from(count).map_err(|_| DecodeError("group count"))?;
-            let block = usize::try_from(block).map_err(|_| DecodeError("group block length"))?;
+            let count = g.count.read(msg, pos)?;
+            let block = g.block.read(msg, pos)?;
             let first = pos + g.header_len;
             let end = count
                 .checked_mul(block)
@@ -252,8 +264,7 @@ impl Table {
             pos = end;
         }
         for v in &self.var_data {
-            let len = read_uint(msg, pos + v.length.0, v.length.1)?;
-            let len = usize::try_from(len).map_err(|_| DecodeError("var-data length"))?;
+            let len = v.length.read(msg, pos)?;
             let start = pos + v.header_len;
             let data = msg
                 .get(start..start + len)
@@ -345,10 +356,9 @@ impl Field {
 }
 
 /// Parse one `BeginField..EndField` span. `None` for constant fields (not on the wire).
-fn field(tokens: &[Token], prefix: &str, message: &str) -> Result<Option<Field>, Error> {
+fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
     let t = &tokens[0];
-    let name = format!("{prefix}{}", t.name);
-    let fail = |what: &str| Error::Schema(format!("{message}.{name}: {what} is not supported"));
+    let fail = |what: &str| unsupported(message, &t.name, what);
     if t.encoding.presence == Presence::Constant {
         return Ok(None);
     }
@@ -393,7 +403,7 @@ fn field(tokens: &[Token], prefix: &str, message: &str) -> Result<Option<Field>,
         _ => return Err(fail("this field type")),
     };
     Ok(Some(Field {
-        column: snake_case(&name),
+        column: snake_case(&t.name),
         offset,
         prim,
         kind,
@@ -403,7 +413,7 @@ fn field(tokens: &[Token], prefix: &str, message: &str) -> Result<Option<Field>,
 
 fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
     let name = snake_case(&tokens[0].name);
-    let fail = |what: &str| Error::Schema(format!("{message}.{name}: {what} is not supported"));
+    let fail = |what: &str| unsupported(message, &name, what);
     let mut dimension = Vec::new();
     let mut fields = Vec::new();
     let mut i = 1;
@@ -418,7 +428,7 @@ fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
                     .collect();
             }
             Signal::BeginField => {
-                if let Some(f) = field(&tokens[i..=end], "", message)? {
+                if let Some(f) = field(&tokens[i..=end], message)? {
                     fields.push(f);
                 }
             }
@@ -428,14 +438,10 @@ fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
         }
         i = end + 1;
     }
-    let member = |n: &str| {
-        dimension
-            .iter()
-            .find(|d| d.name == n)
-            .and_then(|d| Some((d.encoding.offset?, d.encoding.primitive_type?)))
-    };
-    let count = member("numInGroup").ok_or_else(|| fail("a group without numInGroup"))?;
-    let block = member("blockLength").ok_or_else(|| fail("a group without blockLength"))?;
+    let count = member(dimension.iter().copied(), "numInGroup")
+        .ok_or_else(|| fail("a group without numInGroup"))?;
+    let block = member(dimension.iter().copied(), "blockLength")
+        .ok_or_else(|| fail("a group without blockLength"))?;
     let header_len = dimension
         .iter()
         .filter_map(|d| Some(d.encoding.offset? + d.encoding.primitive_type?.size()))
@@ -450,18 +456,25 @@ fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
     })
 }
 
-fn var_header(tokens: &[Token]) -> Option<((usize, PrimitiveType), usize)> {
-    let member = |n: &str| {
-        tokens
-            .iter()
-            .find(|t| t.signal == Signal::BeginField && t.name == n)
-    };
-    let length = member("length")?;
-    let data = member("varData")?;
-    Some((
-        (length.encoding.offset?, length.encoding.primitive_type?),
-        data.encoding.offset?,
-    ))
+/// The var-data `length` member and the offset of its bytes.
+fn var_header(tokens: &[Token]) -> Option<(Uint, usize)> {
+    Some((member(tokens, "length")?, member(tokens, "varData")?.offset))
+}
+
+/// The `name` field (offset and type) among `tokens`.
+fn member<'a>(tokens: impl IntoIterator<Item = &'a Token>, name: &str) -> Option<Uint> {
+    let t = tokens
+        .into_iter()
+        .find(|t| t.signal == Signal::BeginField && t.name == name)?;
+    Some(Uint {
+        offset: t.encoding.offset?,
+        prim: t.encoding.primitive_type?,
+    })
+}
+
+/// `Message.name: what is not supported`.
+fn unsupported(message: &str, name: &str, what: &str) -> Error {
+    Error::Schema(format!("{message}.{name}: {what} is not supported"))
 }
 
 /// Index of the token closing the one at `i` (itself for leaf tokens).
@@ -520,12 +533,6 @@ fn bytes<const N: usize>(msg: &[u8], at: usize) -> Result<[u8; N], DecodeError> 
         .ok_or(DecodeError("message shorter than its header"))
 }
 
-fn read_uint(msg: &[u8], at: usize, prim: PrimitiveType) -> Result<u64, DecodeError> {
-    msg.get(at..at + prim.size())
-        .map(uint)
-        .ok_or(DecodeError("dimension past end of message"))
-}
-
 /// Little-endian unsigned value of up to 8 bytes.
 fn uint(raw: &[u8]) -> u64 {
     let mut le = [0u8; 8];
@@ -567,18 +574,22 @@ pub(crate) fn snake_case(name: &str) -> String {
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn snake_case_names() {
+    fn snake_case_names() -> TestResult {
         assert_eq!(snake_case("BookSnapshot"), "book_snapshot");
         assert_eq!(snake_case("bidPrice"), "bid_price");
         assert_eq!(snake_case("tsEvent"), "ts_event");
         assert_eq!(snake_case("price"), "price");
+        Ok(())
     }
 
     #[test]
-    fn varint_matches_leb128() {
+    fn varint_matches_leb128() -> TestResult {
         let mut out = Vec::new();
         write_varint(300, &mut out);
         assert_eq!(out, [0xAC, 0x02]);
+        Ok(())
     }
 }

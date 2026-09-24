@@ -55,10 +55,11 @@ impl DataActor for Recorder {
     fn on_start(&mut self) -> anyhow::Result<()> {
         let second = NonZeroUsize::try_from(1000)?;
         for id in INSTRUMENTS.map(InstrumentId::from) {
+            let bybit = id.venue.as_str() == "BYBIT";
             self.subscribe_trades(id, None, None);
             self.subscribe_quotes(id, None, None);
             // Bybit only streams depths 1/50/200/1000; Binance 5/10/20.
-            let depth = if id.venue.as_str() == "BYBIT" { 50 } else { 20 };
+            let depth = if bybit { 50 } else { 20 };
             self.subscribe_book_at_interval(
                 id,
                 BookType::L2_MBP,
@@ -67,7 +68,7 @@ impl DataActor for Recorder {
                 None,
                 None,
             );
-            if id.venue.as_str() == "BYBIT" {
+            if bybit {
                 self.subscribe_mark_prices(id, None, None);
                 self.subscribe_funding_rates(id, None, None);
             }
@@ -76,7 +77,11 @@ impl DataActor for Recorder {
     }
 
     fn on_trade(&mut self, t: &TradeTick) -> anyhow::Result<()> {
-        self.persist.record(TradeEncoder::TEMPLATE_ID, |buf| {
+        let (symbol, venue) = names(&t.instrument_id);
+        let trade_id = t.trade_id.as_str().as_bytes();
+        let len =
+            TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
+        self.persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
             Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&TradeFixedFields {
                     ts_event: t.ts_event.as_u64(),
@@ -89,15 +94,17 @@ impl DataActor for Recorder {
                         AggressorSide::NoAggressor => Side::NoSide,
                     },
                 })
-                .symbol(t.instrument_id.symbol.as_str().as_bytes())?
-                .venue(t.instrument_id.venue.as_str().as_bytes())?
-                .trade_id(t.trade_id.as_str().as_bytes())?
+                .symbol(symbol)?
+                .venue(venue)?
+                .trade_id(trade_id)?
                 .encoded_length_with_header())
         })
     }
 
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
-        self.persist.record(QuoteEncoder::TEMPLATE_ID, |buf| {
+        let (symbol, venue) = names(&q.instrument_id);
+        let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
+        self.persist.record(QuoteEncoder::TEMPLATE_ID, len, |buf| {
             Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&QuoteFixedFields {
                     ts_event: q.ts_event.as_u64(),
@@ -107,25 +114,32 @@ impl DataActor for Recorder {
                     bid_size: q.bid_size.as_f64(),
                     ask_size: q.ask_size.as_f64(),
                 })
-                .symbol(q.instrument_id.symbol.as_str().as_bytes())?
-                .venue(q.instrument_id.venue.as_str().as_bytes())?
+                .symbol(symbol)?
+                .venue(venue)?
                 .encoded_length_with_header())
         })
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
+        // Sizing a snapshot walks the book: skip all of it when the table is off.
+        if !self.persist.enabled(BookSnapshotEncoder::TEMPLATE_ID) {
+            return Ok(());
+        }
         let now = self.core.timestamp_ns().as_u64();
+        let (symbol, venue) = names(&book.instrument_id);
+        let bids = book.bids(Some(BOOK_LEVELS)).count();
+        let asks = book.asks(Some(BOOK_LEVELS)).count();
+        let len =
+            BookSnapshotEncoder::compute_length_with_header(bids, asks, symbol.len(), venue.len());
         self.persist
-            .record(BookSnapshotEncoder::TEMPLATE_ID, |buf| {
-                let bids = book.bids(Some(BOOK_LEVELS)).count() as u16;
-                let asks = book.asks(Some(BOOK_LEVELS)).count() as u16;
+            .record(BookSnapshotEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&BookSnapshotFixedFields {
                         ts_event: book.ts_last.as_u64(),
                         ts_init: now,
                         sequence: book.sequence,
                     })
-                    .bids(bids, |g| {
+                    .bids(bids as u16, |g| {
                         for l in book.bids(Some(BOOK_LEVELS)) {
                             g.add_struct(&BookSnapshotBidsEntry {
                                 price: l.price.value.as_f64(),
@@ -134,7 +148,7 @@ impl DataActor for Recorder {
                         }
                         Ok(())
                     })?
-                    .asks(asks, |g| {
+                    .asks(asks as u16, |g| {
                         for l in book.asks(Some(BOOK_LEVELS)) {
                             g.add_struct(&BookSnapshotAsksEntry {
                                 price: l.price.value.as_f64(),
@@ -143,41 +157,52 @@ impl DataActor for Recorder {
                         }
                         Ok(())
                     })?
-                    .symbol(book.instrument_id.symbol.as_str().as_bytes())?
-                    .venue(book.instrument_id.venue.as_str().as_bytes())?
+                    .symbol(symbol)?
+                    .venue(venue)?
                     .encoded_length_with_header())
             })
     }
 
     fn on_mark_price(&mut self, m: &MarkPriceUpdate) -> anyhow::Result<()> {
-        self.persist.record(MarkPriceEncoder::TEMPLATE_ID, |buf| {
-            Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&MarkPriceFixedFields {
-                    ts_event: m.ts_event.as_u64(),
-                    ts_init: m.ts_init.as_u64(),
-                    price: m.value.as_f64(),
-                })
-                .symbol(m.instrument_id.symbol.as_str().as_bytes())?
-                .venue(m.instrument_id.venue.as_str().as_bytes())?
-                .encoded_length_with_header())
-        })
+        let (symbol, venue) = names(&m.instrument_id);
+        let len = MarkPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
+        self.persist
+            .record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&MarkPriceFixedFields {
+                        ts_event: m.ts_event.as_u64(),
+                        ts_init: m.ts_init.as_u64(),
+                        price: m.value.as_f64(),
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
-        self.persist.record(FundingRateEncoder::TEMPLATE_ID, |buf| {
-            Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&FundingRateFixedFields {
-                    ts_event: f.ts_event.as_u64(),
-                    ts_init: f.ts_init.as_u64(),
-                    rate: f.rate.to_f64().unwrap_or(f64::NAN),
-                    interval_minutes: f.interval,
-                    next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
-                })
-                .symbol(f.instrument_id.symbol.as_str().as_bytes())?
-                .venue(f.instrument_id.venue.as_str().as_bytes())?
-                .encoded_length_with_header())
-        })
+        let (symbol, venue) = names(&f.instrument_id);
+        let len = FundingRateEncoder::compute_length_with_header(symbol.len(), venue.len());
+        self.persist
+            .record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&FundingRateFixedFields {
+                        ts_event: f.ts_event.as_u64(),
+                        ts_init: f.ts_init.as_u64(),
+                        rate: f.rate.to_f64().unwrap_or(f64::NAN),
+                        interval_minutes: f.interval,
+                        next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })
     }
+}
+
+/// An instrument's symbol and venue: the var-data every message ends with.
+fn names(id: &InstrumentId) -> (&[u8], &[u8]) {
+    (id.symbol.as_str().as_bytes(), id.venue.as_str().as_bytes())
 }
 
 #[tokio::main]

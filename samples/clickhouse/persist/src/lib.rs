@@ -1,21 +1,11 @@
 //! Record SBE messages into ClickHouse.
 //!
 //! The SBE schema is the table definition: every message is a table and every
-//! field a column (see `table.rs`). The application records a message by
-//! encoding it with its generated SBE encoder straight into persist's buffer;
-//! a writer thread batches the buffer into `INSERT … FORMAT RowBinary`
-//! (`recorder/src/main.rs` is the full example):
-//!
-//! ```text
-//! let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
-//! persist.record(TradeEncoder::TEMPLATE_ID, |buf| {
-//!     Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
-//!         .fixed(&fields)
-//!         .symbol(b"BTCUSDT")?
-//!         .encoded_length_with_header())
-//! })?;
-//! writer.stop(); // flushes what is queued
-//! ```
+//! field a column (see `table.rs`). The application sizes a message with its
+//! generated `compute_length_with_header`, and [`Persist::record`] hands the
+//! encoder a slot of exactly that length in persist's buffer. A writer thread
+//! batches the buffer into `INSERT … FORMAT RowBinary`. `on_trade` in
+//! `recorder/src/main.rs` and `examples/record_latency.rs` show the calls.
 //!
 //! Recording never allocates, never copies, and never waits on ClickHouse: a
 //! disabled table costs one atomic load, an enabled one an uncontended lock
@@ -36,9 +26,10 @@
 //!   `ALTER TABLE … ADD COLUMN` the next time the recorder starts.
 //! * `enabled` switches recording on or off within a second, no restart.
 //!
-//! Records wait in memory until they are inserted. If ClickHouse is down they
-//! are retained up to `max_buffered_bytes`, then dropped and counted — there
-//! is no disk spool.
+//! A failed insert re-checks its table first, so a table altered or dropped
+//! while recording is reported (static) or fixed (dynamic, or recreated) and
+//! the records are retried. See [`Settings::max_buffered_bytes`] for how much
+//! is held meanwhile; there is no disk spool.
 
 mod clickhouse;
 mod table;
@@ -64,6 +55,8 @@ pub enum Error {
     ClickHouse(String),
     /// `tables.yaml` is missing or invalid.
     Config(String),
+    /// The writer thread could not be started.
+    Thread(String),
 }
 
 impl std::fmt::Display for Error {
@@ -72,6 +65,7 @@ impl std::fmt::Display for Error {
             Self::Schema(m) => write!(f, "schema: {m}"),
             Self::ClickHouse(m) => write!(f, "clickhouse: {m}"),
             Self::Config(m) => write!(f, "tables.yaml: {m}"),
+            Self::Thread(m) => write!(f, "writer thread: {m}"),
         }
     }
 }
@@ -81,7 +75,7 @@ impl std::error::Error for Error {}
 /// Whether persistence may change a table's columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum TableKind {
+pub(crate) enum TableKind {
     /// Created if missing, never altered.
     Static,
     /// Created and extended to follow the schema.
@@ -91,12 +85,12 @@ pub enum TableKind {
 /// One entry of `tables.yaml`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TableConfig {
+pub(crate) struct TableConfig {
     /// Static or dynamic.
-    pub kind: TableKind,
+    pub(crate) kind: TableKind,
     /// Record this table now (default `true`).
     #[serde(default = "yes")]
-    pub enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 const fn yes() -> bool {
@@ -115,15 +109,17 @@ fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> {
         .map_err(|e| Error::Config(e.to_string()))
 }
 
-/// Connection and file locations, usually from the environment.
+/// Where to write, what to read, and how much to hold.
 #[derive(Clone, Debug)]
 pub struct Settings {
     /// Target server and database.
     pub clickhouse: ClickHouse,
     /// `tables.yaml`, re-read while running.
     pub config_path: PathBuf,
-    /// Size of each of the two record buffers, allocated once up front.
-    /// Records that do not fit are dropped and counted.
+    /// The record buffer's size. Two are allocated up front (the writer swaps
+    /// them), and records waiting for a retry take at most as much again, so
+    /// memory never exceeds three times this. When it is all in use, new
+    /// records are dropped and counted; queued ones are kept.
     pub max_buffered_bytes: usize,
     /// How often the writer inserts. ClickHouse wants about one insert per
     /// table per second; more often only makes more parts to merge.
@@ -134,31 +130,36 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// `CLICKHOUSE_URL` (`http://localhost:8123`), `CLICKHOUSE_USER` (`lab`),
-    /// `CLICKHOUSE_PASSWORD` (`lab`), `CLICKHOUSE_DATABASE` (`market`) and
-    /// `PERSIST_CONFIG` (`config/tables.yaml`).
+    /// Defaults: 64 MiB buffer, 1 s flush, 30 s recheck.
+    #[must_use]
+    pub fn new(clickhouse: ClickHouse, config_path: impl Into<PathBuf>) -> Self {
+        Self {
+            clickhouse,
+            config_path: config_path.into(),
+            max_buffered_bytes: 64 << 20,
+            flush_interval: Duration::from_secs(1),
+            recheck: Duration::from_secs(30),
+        }
+    }
+
+    /// [`Settings::new`] from `CLICKHOUSE_URL` (`http://localhost:8123`),
+    /// `CLICKHOUSE_USER` (`lab`), `CLICKHOUSE_PASSWORD` (`lab`),
+    /// `CLICKHOUSE_DATABASE` (`market`) and `PERSIST_CONFIG`
+    /// (`config/tables.yaml`).
     #[must_use]
     pub fn from_env() -> Self {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
-        Self {
-            clickhouse: ClickHouse::new(
+        Self::new(
+            ClickHouse::new(
                 &var("CLICKHOUSE_URL", "http://localhost:8123"),
                 &var("CLICKHOUSE_USER", "lab"),
                 &var("CLICKHOUSE_PASSWORD", "lab"),
                 &var("CLICKHOUSE_DATABASE", "market"),
             ),
-            config_path: var("PERSIST_CONFIG", "config/tables.yaml").into(),
-            max_buffered_bytes: 256 << 20,
-            flush_interval: Duration::from_secs(1),
-            recheck: Duration::from_secs(30),
-        }
+            var("PERSIST_CONFIG", "config/tables.yaml"),
+        )
     }
 }
-
-/// Largest message [`Persist::record`] guarantees room for. Recording is
-/// refused (and counted as dropped) once less than this is free, so an
-/// encoder is never handed a buffer too short for its fixed block.
-pub const MAX_MESSAGE: usize = 64 * 1024;
 
 #[derive(Debug)]
 struct Shared {
@@ -184,6 +185,16 @@ impl Frames {
             len: 0,
         }
     }
+}
+
+/// The messages in a buffer of `u32` LE length-prefixed messages.
+fn messages(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        let (len, tail) = rest.split_first_chunk::<4>()?;
+        let (message, tail) = tail.split_at_checked(u32::from_le_bytes(*len) as usize)?;
+        rest = tail;
+        Some(message)
+    })
 }
 
 /// The recording handle. Cheap to clone; share it with every callback.
@@ -216,6 +227,7 @@ impl Persist {
             config_path: settings.config_path,
             config_text: String::new(),
             spare: Frames::new(settings.max_buffered_bytes),
+            rows: Vec::new(),
             max_retained: settings.max_buffered_bytes,
             recheck: settings.recheck,
             totals: BTreeMap::new(),
@@ -247,7 +259,7 @@ impl Persist {
                 }
                 writer.tick();
             })
-            .map_err(|e| Error::Config(format!("cannot start writer thread: {e}")))?;
+            .map_err(|e| Error::Thread(e.to_string()))?;
         Ok((
             persist,
             Handle {
@@ -257,7 +269,8 @@ impl Persist {
         ))
     }
 
-    /// Is `template_id` recorded right now? One relaxed atomic load.
+    /// Is `template_id` recorded right now? One relaxed atomic load. Check it
+    /// before preparing a message that is costly to size or encode.
     #[inline]
     #[must_use]
     pub fn enabled(&self, template_id: u16) -> bool {
@@ -267,16 +280,21 @@ impl Persist {
             .is_some_and(|e| e.load(Ordering::Relaxed))
     }
 
-    /// Record one message of `template_id`. If its table is enabled, `encode`
-    /// writes the message (header included) straight into persist's buffer
-    /// and returns its length; otherwise `encode` is never called.
+    /// Record one message of `template_id` that is exactly `len` bytes,
+    /// header included (the generated `compute_length_with_header`). If its
+    /// table is enabled, `encode` writes the message into a slot of exactly
+    /// `len` bytes and returns the length it wrote; otherwise `encode` is
+    /// never called.
     ///
-    /// A full buffer drops the record and counts it in [`Persist::dropped`].
-    /// An error from `encode` is returned as is, and nothing is queued.
+    /// The record is dropped and counted in [`Persist::dropped`] when the
+    /// buffer has no room for it, or when `encode` wrote another length or
+    /// template than claimed (debug builds panic on that). An error from
+    /// `encode` is returned as is, and nothing is queued.
     #[inline]
     pub fn record<E>(
         &self,
         template_id: u16,
+        len: usize,
         encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<(), E> {
         if !self.enabled(template_id) {
@@ -290,28 +308,37 @@ impl Persist {
             .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let start = pending.len + 4;
-        let free = pending.data.len().saturating_sub(start);
-        if free < MAX_MESSAGE {
-            drop(pending);
-            self.shared.dropped.fetch_add(1, Ordering::Relaxed);
-            return Ok(());
-        }
-        let len = encode(&mut pending.data[start..])?;
-        debug_assert!(len <= free, "encode returned a length past its buffer");
-        let len = len.min(free);
         let at = pending.len;
-        pending.data[at..start].copy_from_slice(&(len as u32).to_le_bytes());
-        pending.len = start + len;
-        debug_assert_eq!(
-            pending.data[start + 2..start + 4],
-            template_id.to_le_bytes(),
-            "recorded a message under another template id"
+        let start = at + 4;
+        let end = start + len;
+        let fits = len >= table::HEADER_LEN && end <= pending.data.len();
+        let (Ok(prefix), true) = (u32::try_from(len), fits) else {
+            self.drop_one();
+            return Ok(());
+        };
+        let slot = &mut pending.data[start..end];
+        let written = encode(slot)?;
+        let honest = written == len && slot[2..4] == template_id.to_le_bytes();
+        debug_assert!(
+            honest,
+            "encode wrote {written} bytes of template {}, but claimed {len} bytes of {template_id}",
+            u16::from_le_bytes([slot[2], slot[3]])
         );
+        if honest {
+            pending.data[at..start].copy_from_slice(&prefix.to_le_bytes());
+            pending.len = end;
+        } else {
+            self.drop_one();
+        }
         Ok(())
     }
 
-    /// Records dropped so far because the buffer was full.
+    fn drop_one(&self) {
+        self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records dropped so far: no room in the buffer, a mis-sized encode, or
+    /// a table removed from `tables.yaml` while its records were queued.
     #[must_use]
     pub fn dropped(&self) -> u64 {
         self.shared.dropped.load(Ordering::Relaxed)
@@ -332,8 +359,8 @@ impl Handle {
 
     fn join(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
+        if self.thread.take().is_some_and(|t| t.join().is_err()) {
+            log::error!("the persist writer thread panicked; records since then were not written");
         }
     }
 }
@@ -367,8 +394,10 @@ struct TableState {
     columns: Vec<String>,
     problems: Vec<String>,
     retry_at: Instant,
-    rows: Vec<u8>,
-    row_count: usize,
+    /// SBE messages not yet inserted, length-prefixed. Kept as SBE rather
+    /// than rows so they can be decoded again if the table changes.
+    queued: Vec<u8>,
+    queued_count: usize,
 }
 
 impl TableState {
@@ -380,8 +409,8 @@ impl TableState {
             columns: Vec::new(),
             problems: Vec::new(),
             retry_at: Instant::now(),
-            rows: Vec::new(),
-            row_count: 0,
+            queued: Vec::new(),
+            queued_count: 0,
         }
     }
 
@@ -399,6 +428,8 @@ pub struct Writer {
     config_path: PathBuf,
     config_text: String,
     spare: Frames,
+    /// RowBinary for the insert in progress; reused.
+    rows: Vec<u8>,
     max_retained: usize,
     recheck: Duration,
     totals: BTreeMap<String, u64>,
@@ -465,13 +496,13 @@ impl Writer {
 
     /// Create/compare every table named in `tables.yaml`, enabled or not, so
     /// a disabled table exists (empty) and queries against it still work.
-    /// `false` while ClickHouse cannot be reached, so queued records stay
-    /// queued instead of being decoded.
+    /// `false` while an enabled table's columns are unknown, so records stay
+    /// in the record buffer instead of being taken for a table that cannot
+    /// accept them.
     fn sync_tables(&mut self, report: &mut Report) -> bool {
         if !self.database_ready {
-            let sql = format!("CREATE DATABASE IF NOT EXISTS `{}`", self.ch.database);
-            match self.ch.query(&sql) {
-                Ok(_) => self.database_ready = true,
+            match self.ch.create_database() {
+                Ok(()) => self.database_ready = true,
                 Err(e) => {
                     report.errors.push(e.to_string());
                     return false;
@@ -487,7 +518,7 @@ impl Writer {
             // Tables with outstanding problems are re-checked, so running the
             // suggested ALTER is picked up without a restart.
             let due = state.include.is_none() || !state.problems.is_empty();
-            if due && now >= state.retry_at && state.rows.is_empty() {
+            if due && now >= state.retry_at {
                 match self.ch.sync(&state.table, config.kind) {
                     Ok(sync) => {
                         report.applied.extend(sync.applied);
@@ -519,8 +550,6 @@ impl Writer {
                     }
                 }
             }
-            // An enabled table whose columns are not known yet (never synced,
-            // or in its retry back-off) cannot take rows: keep everything queued.
             // ponytail: one table that never syncs holds back every table until
             // the buffer fills; give each table its own queue if that matters.
             ready &= state.include.is_some() || !config.enabled;
@@ -528,83 +557,90 @@ impl Writer {
         ready
     }
 
+    /// Move the record buffer's messages to their tables' queues, unless
+    /// those queues are full: then they wait, and `record` drops new ones
+    /// once the buffer fills.
     fn drain(&mut self, report: &mut Report) {
+        let queued: usize = self.tables.iter().map(|s| s.queued.len()).sum();
         {
             let mut pending = self
                 .shared
                 .pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
+            if queued + pending.len > self.max_retained {
+                report.errors.push(format!(
+                    "{queued} bytes of records are waiting for ClickHouse; holding new records"
+                ));
+                return;
+            }
             std::mem::swap(&mut *pending, &mut self.spare);
         }
-        let frames = &self.spare.data[..self.spare.len];
-        let mut at = 0;
-        while let Some(len) = frames
-            .get(at..at + 4)
-            .and_then(|b| b.try_into().ok())
-            .map(u32::from_le_bytes)
-        {
-            let msg = &frames[at + 4..at + 4 + len as usize];
-            at += 4 + len as usize;
-            let template = u16::from_le_bytes([msg[2], msg[3]]);
-            let Some(state) = self
+        for message in messages(&self.spare.data[..self.spare.len]) {
+            let template = u16::from_le_bytes([message[2], message[3]]);
+            match self
                 .tables
                 .iter_mut()
                 .find(|s| s.table.template_id == template)
-            else {
-                continue;
-            };
-            let Some(include) = &state.include else {
-                // Its table could not be synced (only possible for a table
-                // that was just disabled); nowhere to write it.
-                self.shared.dropped.fetch_add(1, Ordering::Relaxed);
-                continue;
-            };
-            match state.table.write_row(msg, include, &mut state.rows) {
-                Ok(()) => state.row_count += 1,
-                Err(e) => report.errors.push(format!(
-                    "{}: undecodable message skipped: {}",
-                    state.table.name, e.0
-                )),
+            {
+                Some(state) if state.config.is_some() => {
+                    let len = message.len() as u32;
+                    state.queued.extend_from_slice(&len.to_le_bytes());
+                    state.queued.extend_from_slice(message);
+                    state.queued_count += 1;
+                }
+                // Removed from tables.yaml after it was recorded.
+                _ => {
+                    self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         self.spare.len = 0;
     }
 
     fn flush(&mut self, report: &mut Report) {
-        let mut retained = 0;
         for state in &mut self.tables {
-            if state.row_count == 0 {
+            let Some(include) = &state.include else {
+                continue; // re-synced first; the messages wait
+            };
+            if state.queued_count == 0 {
                 continue;
             }
+            self.rows.clear();
+            let mut rows = 0;
+            for message in messages(&state.queued) {
+                match state.table.write_row(message, include, &mut self.rows) {
+                    Ok(()) => rows += 1,
+                    Err(e) => report.errors.push(format!(
+                        "{}: undecodable message skipped: {}",
+                        state.table.name, e.0
+                    )),
+                }
+            }
             let columns: Vec<&str> = state.columns.iter().map(String::as_str).collect();
-            match self.ch.insert(&state.table.name, &columns, &state.rows) {
+            let inserted = match rows {
+                0 => Ok(()),
+                _ => self.ch.insert(&state.table.name, &columns, &self.rows),
+            };
+            match inserted {
                 Ok(()) => {
-                    report
-                        .inserted
-                        .insert(state.table.name.clone(), state.row_count);
-                    *self.totals.entry(state.table.name.clone()).or_default() +=
-                        state.row_count as u64;
-                    state.rows.clear();
-                    state.row_count = 0;
+                    if rows > 0 {
+                        report.inserted.insert(state.table.name.clone(), rows);
+                        *self.totals.entry(state.table.name.clone()).or_default() += rows as u64;
+                    }
+                    state.queued.clear();
+                    state.queued_count = 0;
                 }
                 Err(e) => {
                     report.errors.push(format!(
-                        "{}: insert failed, keeping the rows to retry: {e}",
-                        state.table.name
+                        "{}: insert failed, keeping {} records to retry: {e}",
+                        state.table.name, state.queued_count
                     ));
-                    retained += state.rows.len();
-                    if retained > self.max_retained {
-                        report.errors.push(format!(
-                            "{}: dropping {} rows, retry buffer full",
-                            state.table.name, state.row_count
-                        ));
-                        self.shared
-                            .dropped
-                            .fetch_add(state.row_count as u64, Ordering::Relaxed);
-                        state.rows.clear();
-                        state.row_count = 0;
-                    }
+                    // The table (or database) may have been altered or dropped
+                    // since it was synced: compare it again before retrying.
+                    state.include = None;
+                    state.retry_at = Instant::now();
+                    self.database_ready = false;
                 }
             }
         }

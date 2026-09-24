@@ -150,6 +150,131 @@ do not stack `with_conversion` on the same selector.
 .with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")
 ```
 
+## ClickHouse lab (`clickhouse/`)
+
+Live public Binance and Bybit data, recorded into ClickHouse through SBE.
+- **The app is small on purpose:** NautilusTrader supplies the data, and one
+  actor (`clickhouse/recorder/src/main.rs`) encodes each callback as an SBE
+  message.
+- **The interesting code is `clickhouse/persist/`:** it turns the SBE schema
+  into ClickHouse tables and keeps them in step with the schema and with
+  `config/tables.yaml`.
+
+```sh
+cd samples/clickhouse
+just up        # kind cluster + ClickHouse + Grafana + JupyterLab + recorder
+```
+
+You need Docker, kind, kubectl, just and jq. There are no exchange API keys:
+only public streams are used.
+
+| What | Where |
+|---|---|
+| ClickHouse query UI | <http://localhost:8123/play> (user `lab`, password `lab`) |
+| Grafana | <http://localhost:3000>: *Market data* and *ClickHouse tables* (every table, plus ad-hoc SQL) |
+| Notebook | <http://localhost:8888/lab/tree/verify.ipynb>, then Run All |
+| Recorder log | `just logs` |
+| End-to-end check | `just verify` |
+
+- `just stop` and `just start` pause the cluster and keep the data;
+  `just destroy` deletes it.
+- The cluster mounts `samples/clickhouse/`, so the pods see `config/`,
+  `grafana/` and `notebooks/` straight from your checkout.
+
+**The API.** Size a message with its generated length helper; `record` then
+hands the encoder a slot of exactly that length (see `on_trade`):
+
+```rust
+let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
+
+let len = TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
+persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
+    Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
+        .fixed(&fields)
+        .symbol(symbol)?
+        .venue(venue)?
+        .trade_id(trade_id)?
+        .encoded_length_with_header())
+})?;
+
+writer.stop(); // on shutdown: flushes what is queued
+```
+
+`record` never allocates, copies or waits on ClickHouse:
+- **Disabled table:** one atomic load; the encoder never runs.
+- **Enabled table:** an uncontended lock plus the encode.
+
+`just latency` times it on the calling thread while the writer inserts, next
+to a timing-only control.
+
+**Tables come from the schema.** Each message is a `MergeTree` table named
+in snake_case, and each field is a column:
+
+| SBE | ClickHouse |
+|---|---|
+| integers, `float`, `double` | `Int8`…`UInt64`, `Float32`, `Float64` |
+| `semanticType="UTCTimestamp"` (ns) | `DateTime64(9, 'UTC')` |
+| enum | `LowCardinality(String)`, the value's name |
+| `char` array | `String` |
+| `presence="optional"` | `Nullable(T)` |
+| group `bids { price size }` | `bids.price Array(Float64)`, `bids.size Array(Float64)` |
+| var-data | `String` |
+
+- Every table also gets `inserted_at DEFAULT now64(3)`.
+- Composites, sets, non-`char` arrays, nested groups and big-endian schemas
+  are rejected when the schema loads.
+
+**Once a second, the writer thread:**
+1. re-reads `tables.yaml`;
+2. creates or compares the tables listed there;
+3. decodes each message into RowBinary;
+4. sends one `INSERT` per table.
+
+If an insert fails, its table is compared again before the retry. A table
+altered or dropped while recording is therefore reported, or recreated,
+rather than lost.
+
+**Memory:** records wait in a 64 MiB buffer, and as much again can wait for a
+retry. Past that, new records are dropped and counted in
+`persist.dropped()`. There is no disk spool.
+
+### Things to try
+
+- **Turn recording on and off.** In `config/tables.yaml`, set
+  `book_snapshot: { kind: dynamic, enabled: true }` and save.
+  - Within a second the recorder logs `recording book_snapshot: on`, and
+    Grafana's *Order book* panels fill in. Set it back to `false` and the
+    rows stop.
+  - No restart is needed. An invalid edit is logged and the last good
+    configuration kept.
+- **Add a column to a dynamic table.**
+  - In `schema/market.xml`, add `<field name="bidLevels" id="12" type="uint8"/>`
+    to `BookSnapshot`, after `sequence`.
+  - Set `bid_levels: bids as u8,` in `on_book`, then run `just recorder`.
+  - The log shows ``applied: ALTER TABLE `market`.`book_snapshot` ADD COLUMN IF NOT EXISTS `bid_levels` UInt8``.
+  - Older rows read `0`. Remove the field again and the column stays, with
+    new rows getting the default.
+- **Change a static table.** `trade` and `quote` are never altered.
+  - Add `<field name="quoteQty" id="9" type="double"/>` to `Trade`, after
+    `aggressor`.
+  - Set `quote_qty: t.price.as_f64() * t.size.as_f64(),` in `on_trade`, then
+    run `just recorder`.
+  - The recorder logs
+    ``ERROR trade: static table is missing column quote_qty; not writing it. Fix: ALTER TABLE `market`.`trade` ADD COLUMN IF NOT EXISTS `quote_qty` Float64``
+    and keeps writing every other column.
+  - Run that SQL in `/play` and the column fills within 30 seconds.
+  - A changed column type is reported the same way for both kinds;
+    `MODIFY COLUMN` is never run automatically.
+
+### Checks
+
+```sh
+just test     # persist unit + integration tests (starts a throwaway ClickHouse on :18123)
+just lint     # clippy -D warnings + rustfmt
+just latency  # persist.record() on the app thread, beside a timing-only control
+just verify   # the running lab: /play, live data, every Grafana panel, the notebook, a live toggle
+```
+
 ## Rules
 
 - Keep every sample outside the workspace and unpublished.
