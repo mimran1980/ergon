@@ -1,6 +1,8 @@
 /target/
 **/target/
 Cargo.lock
+# The ClickHouse sample is an application: pin its ~380 NautilusTrader deps.
+!samples/clickhouse/Cargo.lock
 .DS_Store
 *.swp
 *.swo

@@ -432,6 +432,35 @@ fn unreachable_clickhouse_keeps_records_until_the_buffer_is_full() -> TestResult
 }
 
 #[test]
+fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
+    let lab = Lab::new("nocreate", "tables:\n  shapes: { kind: dynamic }\n")?;
+    // A user that may create the database but not the table in it.
+    let user = "persist_test_nocreate";
+    lab.query(&format!("DROP USER IF EXISTS {user}"))?;
+    lab.query(&format!("CREATE USER {user} IDENTIFIED BY 'x'"))?;
+    lab.query(&format!("GRANT CREATE DATABASE ON DB.* TO {user}"))?;
+    let url =
+        std::env::var("CLICKHOUSE_TEST_URL").unwrap_or_else(|_| "http://localhost:18123".into());
+    let settings = Settings {
+        clickhouse: ClickHouse::new(&url, user, "x", &lab.ch.database),
+        config_path: lab.config.clone(),
+        max_buffered_bytes: 1 << 20,
+        recheck: Duration::ZERO,
+    };
+    let (persist, mut writer) = Persist::new(V1, settings)?;
+    let mut buf = [0u8; 256];
+    let len = v1_message(&mut buf)?;
+    assert!(persist.record(&buf[..len]));
+    // The first tick fails to create the table; the second falls inside the
+    // retry back-off. Neither may throw the queued record away.
+    assert!(!writer.tick().errors.is_empty());
+    writer.tick();
+    assert_eq!(persist.dropped(), 0);
+    lab.query(&format!("DROP USER {user}"))?;
+    Ok(())
+}
+
+#[test]
 fn unsupported_field_shapes_are_rejected_up_front() {
     let composite = V1.replace(
         r#"<field name="code" id="16" type="Code"/>"#,

@@ -430,37 +430,43 @@ impl Writer {
             // Tables with outstanding problems are re-checked, so running the
             // suggested ALTER is picked up without a restart.
             let due = state.include.is_none() || !state.problems.is_empty();
-            if !due || now < state.retry_at || !state.rows.is_empty() {
-                continue;
-            }
-            match self.ch.sync(&state.table, config.kind) {
-                Ok(sync) => {
-                    report.applied.extend(sync.applied);
-                    if sync.problems != state.problems {
-                        report.problems.extend(
-                            sync.problems
-                                .iter()
-                                .map(|p| format!("{}: {p}", state.table.name)),
-                        );
+            if due && now >= state.retry_at && state.rows.is_empty() {
+                match self.ch.sync(&state.table, config.kind) {
+                    Ok(sync) => {
+                        report.applied.extend(sync.applied);
+                        if sync.problems.is_empty() && !state.problems.is_empty() {
+                            log::info!("{}: fixed, writing every column", state.table.name);
+                        }
+                        if sync.problems != state.problems {
+                            report.problems.extend(
+                                sync.problems
+                                    .iter()
+                                    .map(|p| format!("{}: {p}", state.table.name)),
+                            );
+                        }
+                        state.columns = state
+                            .table
+                            .columns()
+                            .into_iter()
+                            .zip(&sync.include)
+                            .filter(|(_, i)| **i)
+                            .map(|(c, _)| c.name)
+                            .collect();
+                        state.include = Some(sync.include);
+                        state.problems = sync.problems;
+                        state.retry_at = now + self.recheck;
                     }
-                    state.columns = state
-                        .table
-                        .columns()
-                        .into_iter()
-                        .zip(&sync.include)
-                        .filter(|(_, i)| **i)
-                        .map(|(c, _)| c.name)
-                        .collect();
-                    state.include = Some(sync.include);
-                    state.problems = sync.problems;
-                    state.retry_at = now + self.recheck;
-                }
-                Err(e) => {
-                    report.errors.push(format!("{}: {e}", state.table.name));
-                    state.retry_at = now + Duration::from_secs(5);
-                    ready &= state.include.is_some() || !config.enabled;
+                    Err(e) => {
+                        report.errors.push(format!("{}: {e}", state.table.name));
+                        state.retry_at = now + Duration::from_secs(5);
+                    }
                 }
             }
+            // An enabled table whose columns are not known yet (never synced,
+            // or in its retry back-off) cannot take rows: keep everything queued.
+            // ponytail: one table that never syncs holds back every table until
+            // the buffer fills; give each table its own queue if that matters.
+            ready &= state.include.is_some() || !config.enabled;
         }
         ready
     }

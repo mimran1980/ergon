@@ -33,7 +33,7 @@ machinery as possible:
   Bybit mark prices and funding rates, for BTC/ETH on both venues.
 - [x] **persist**: schema → tables, RowBinary decode, static/dynamic sync,
   live config reload, bounded buffer, error rate-limiting.
-- [x] **Tests** (`just test`: 2 unit tests and 9 integration tests against a
+- [x] **Tests** (`just test`: 2 unit tests and 10 integration tests against a
   real ClickHouse 25.8): every supported field shape round-trips; a dynamic
   table gains new schema columns; removed fields (a scalar and a group field
   beside its siblings) keep their columns and read defaults, for both kinds;
@@ -70,6 +70,32 @@ machinery as possible:
 - [x] `just lint` (clippy `-D warnings`, rustfmt) and the repository test
   policy (`scripts/check-test-policy.sh`) pass.
 
+## Re-check (2026-09-24, later the same day)
+
+The status above was re-verified rather than trusted:
+
+- **Bug found and fixed**: while a table was in its 5 s sync retry
+  back-off, `sync_tables` reported ready and `drain` dropped that table's
+  queued records, breaking the D3 promise that records stay queued. The
+  readiness check now runs for every enabled table on every tick. Test:
+  `table_that_cannot_be_created_keeps_its_records_queued` (a user allowed to
+  create the database but not the table) failed before the fix, passes after.
+- **`just verify`** now runs the *Columns of $table* and *Latest rows in
+  $table* panels against every table, not only `trade` (22 queries).
+- **Schema evolution, live, with fresh names**: adding `BookSnapshot.spread`
+  applied `ALTER … ADD COLUMN spread Float64`, and new values equal
+  `asks[1] - bids[1]`. Adding `Trade.notional` logged the static-table ERROR
+  with its `ALTER`, and trades kept flowing. The manual `ALTER` was picked up
+  by the next 30 s recheck, with a clean cutover and exact `price × size`
+  values. That moment now also logs `trade: fixed, writing every column`
+  (added afterwards, not yet seen live). Reverting both
+  fields restarted cleanly, and the columns stay with default values.
+- This sample's `Cargo.lock` is no longer ignored
+  (`!samples/clickhouse/Cargo.lock` in the root `.gitignore`). Committing it
+  pins the ~380 Nautilus dependencies.
+- `just test` (2 unit + 10 integration), `just lint`, `just verify` and
+  `scripts/check-test-policy.sh` all pass.
+
 ## Open / possible next steps
 
 - **Durability** (D3): no spool if ClickHouse is down longer than the
@@ -78,9 +104,6 @@ machinery as possible:
 - **Grafana writes as `lab`**, the same user the recorder uses. That is
   acceptable only because every port is bound to 127.0.0.1. Add a read-only
   ClickHouse user if the lab is ever exposed.
-- **`Cargo.lock` is ignored** by the repository's root `.gitignore`, so each
-  fresh build re-resolves about 350 Nautilus dependencies. Committing a
-  lockfile for this sample would pin them.
 - **First load of a Grafana dashboard** takes several seconds while the
   ClickHouse plugin bundle loads; panel queries themselves take about 0.7 s.
 
