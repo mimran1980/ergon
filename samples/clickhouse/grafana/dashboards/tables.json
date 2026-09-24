@@ -181,12 +181,12 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT event_time, query_kind, query FROM system.query_log WHERE type = 'QueryFinish' AND query_kind IN ('Create', 'Alter', 'Drop') AND has(databases, 'market') AND NOT startsWith(query, 'CREATE DATABASE') AND $__timeFilter(event_time) ORDER BY event_time DESC LIMIT 50",
+          "rawSql": "SELECT event_time, query_kind, query FROM system.query_log WHERE type = 'QueryFinish' AND query_kind IN ('Create', 'Alter', 'Drop') AND has(databases, 'market') AND NOT startsWith(query, 'CREATE DATABASE') ORDER BY event_time DESC LIMIT 50",
           "format": 1,
           "queryType": "table"
         }
       ],
-      "description": "What persistence (or anyone) changed. A new SBE field in a dynamic table shows up here as ADD COLUMN."
+      "description": "Latest CREATE, ALTER and DROP against market, including table creation at startup. A new SBE field on a dynamic table shows up here as ADD COLUMN."
     },
     {
       "id": 14,
