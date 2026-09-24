@@ -1,0 +1,221 @@
+{
+  "uid": "tables",
+  "title": "ClickHouse tables",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "table",
+        "label": "Table",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "refresh": 1,
+        "query": "SELECT name FROM system.tables WHERE database = 'market' ORDER BY name",
+        "definition": "SELECT name FROM system.tables WHERE database = 'market' ORDER BY name",
+        "current": {
+          "text": "trade",
+          "value": "trade"
+        }
+      },
+      {
+        "name": "sql",
+        "label": "SQL",
+        "type": "textbox",
+        "query": "SELECT symbol, venue, count() AS trades, avg(price) AS avg_price FROM market.trade GROUP BY symbol, venue",
+        "current": {
+          "text": "SELECT symbol, venue, count() AS trades, avg(price) AS avg_price FROM market.trade GROUP BY symbol, venue",
+          "value": "SELECT symbol, venue, count() AS trades, avg(price) AS avg_price FROM market.trade GROUP BY symbol, venue"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Tables in `market`",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT t.name AS table, t.total_rows AS rows, formatReadableSize(t.total_bytes) AS size, p.last_insert AS last_insert, t.metadata_modification_time AS schema_changed FROM system.tables AS t LEFT JOIN (SELECT table, max(modification_time) AS last_insert FROM system.parts WHERE database = 'market' AND active GROUP BY table) AS p ON p.table = t.name WHERE t.database = 'market' ORDER BY t.name",
+          "format": 1,
+          "queryType": "table"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Rows inserted per table",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, table, sum(rows) AS rows FROM system.part_log WHERE database = 'market' AND event_type = 'NewPart' AND $__timeFilter(event_time) GROUP BY time, table ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "description": "From system.part_log. Turn a dynamic table on or off in config/tables.yaml and watch its line start or stop.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Columns of $table",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT name, type, default_expression FROM system.columns WHERE database = 'market' AND table = ${table:singlequote} ORDER BY position",
+          "format": 1,
+          "queryType": "table"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Latest rows in $table",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 8,
+        "w": 16,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT * FROM market.${table} WHERE $__timeFilter(ts_event) ORDER BY ts_event DESC LIMIT 100",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "description": "Uses ts_event, which every message in schema/market.xml starts with; the time filter lets ClickHouse skip old partitions."
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Schema changes (CREATE / ALTER)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT event_time, query_kind, query FROM system.query_log WHERE type = 'QueryFinish' AND query_kind IN ('Create', 'Alter', 'Drop') AND has(databases, 'market') AND NOT startsWith(query, 'CREATE DATABASE') AND $__timeFilter(event_time) ORDER BY event_time DESC LIMIT 50",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "description": "What persistence (or anyone) changed. A new SBE field in a dynamic table shows up here as ADD COLUMN."
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Ad-hoc SQL",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "${sql:raw}",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "description": "Type any query in the SQL box at the top. Grafana Explore and http://localhost:8123/play work too."
+    }
+  ]
+}

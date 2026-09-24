@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Market data recorded by the sample. Every message here is a ClickHouse
+  table (message name in snake_case, e.g. BookSnapshot -> book_snapshot).
+  Fields become columns, groups become Array columns (`bids.price`), var-data
+  becomes String. Whether a table is recorded, and whether persistence may
+  alter it, is set in config/tables.yaml.
+
+  To see schema evolution: add a field here, rebuild the recorder, redeploy.
+  Dynamic tables gain the column; static tables log the ALTER they need.
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="market"
+                   id="88"
+                   version="0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varString">
+            <type name="length" primitiveType="uint32" maxValue="1024"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+        <!-- UNIX epoch nanoseconds; stored as DateTime64(9, 'UTC'). -->
+        <type name="Timestamp" primitiveType="uint64" semanticType="UTCTimestamp"/>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="NoSide">0</validValue>
+            <validValue name="Buy">1</validValue>
+            <validValue name="Sell">2</validValue>
+        </enum>
+    </types>
+
+    <sbe:message name="Trade" id="1">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="price" id="3" type="double"/>
+        <field name="size" id="4" type="double"/>
+        <field name="aggressor" id="5" type="Side"/>
+        <data name="symbol" id="6" type="varString"/>
+        <data name="venue" id="7" type="varString"/>
+        <data name="tradeId" id="8" type="varString"/>
+    </sbe:message>
+
+    <sbe:message name="Quote" id="2">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="bidPrice" id="3" type="double"/>
+        <field name="askPrice" id="4" type="double"/>
+        <field name="bidSize" id="5" type="double"/>
+        <field name="askSize" id="6" type="double"/>
+        <data name="symbol" id="7" type="varString"/>
+        <data name="venue" id="8" type="varString"/>
+    </sbe:message>
+
+    <sbe:message name="BookSnapshot" id="3">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="sequence" id="3" type="uint64"/>
+        <group name="bids" id="4" dimensionType="groupSizeEncoding">
+            <field name="price" id="5" type="double"/>
+            <field name="size" id="6" type="double"/>
+        </group>
+        <group name="asks" id="7" dimensionType="groupSizeEncoding">
+            <field name="price" id="8" type="double"/>
+            <field name="size" id="9" type="double"/>
+        </group>
+        <data name="symbol" id="10" type="varString"/>
+        <data name="venue" id="11" type="varString"/>
+    </sbe:message>
+
+    <sbe:message name="MarkPrice" id="4">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="price" id="3" type="double"/>
+        <data name="symbol" id="4" type="varString"/>
+        <data name="venue" id="5" type="varString"/>
+    </sbe:message>
+
+    <sbe:message name="FundingRate" id="5">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="rate" id="3" type="double"/>
+        <field name="intervalMinutes" id="4" type="uint16" presence="optional"/>
+        <field name="nextFundingTs" id="5" type="Timestamp" presence="optional"/>
+        <data name="symbol" id="6" type="varString"/>
+        <data name="venue" id="7" type="varString"/>
+    </sbe:message>
+</sbe:messageSchema>

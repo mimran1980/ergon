@@ -1,0 +1,473 @@
+//! Round trips through a real ClickHouse server.
+//!
+//! `CLICKHOUSE_TEST_URL` (default `http://localhost:18123`, user/password
+//! `lab`) — `just test` starts that server. Every test fails, never skips,
+//! when it is unreachable. Each test works in its own database.
+
+use std::error::Error;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use persist::{ClickHouse, Persist, Report, Settings, Writer};
+
+#[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
+mod v1 {
+    include!(concat!(env!("OUT_DIR"), "/shapes_v1.rs"));
+}
+#[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
+mod v2 {
+    include!(concat!(env!("OUT_DIR"), "/shapes_v2.rs"));
+}
+
+const V1: &str = include_str!("schemas/shapes_v1.xml");
+const V2: &str = include_str!("schemas/shapes_v2.xml");
+
+type TestResult = Result<(), Box<dyn Error>>;
+
+/// A private database plus a `tables.yaml` in a temp directory.
+struct Lab {
+    ch: ClickHouse,
+    config: PathBuf,
+}
+
+impl Lab {
+    fn new(test: &str, tables_yaml: &str) -> Result<Self, Box<dyn Error>> {
+        let url = std::env::var("CLICKHOUSE_TEST_URL")
+            .unwrap_or_else(|_| "http://localhost:18123".into());
+        let db = format!("persist_test_{test}");
+        let ch = ClickHouse::new(&url, "lab", "lab", &db);
+        ch.query(&format!("DROP DATABASE IF EXISTS {db}"))
+            .map_err(|e| format!("ClickHouse at {url} is required (run `just test`): {e}"))?;
+        let dir = std::env::temp_dir().join(format!("persist-test-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let lab = Self {
+            ch,
+            config: dir.join("tables.yaml"),
+        };
+        lab.write_config(tables_yaml)?;
+        Ok(lab)
+    }
+
+    fn write_config(&self, text: &str) -> std::io::Result<()> {
+        std::fs::write(&self.config, text)
+    }
+
+    fn persist(&self, schema: &str) -> Result<(Persist, Writer), Box<dyn Error>> {
+        let settings = Settings {
+            clickhouse: self.ch.clone(),
+            config_path: self.config.clone(),
+            max_buffered_bytes: 1 << 20,
+            recheck: Duration::ZERO,
+        };
+        Ok(Persist::new(schema, settings)?)
+    }
+
+    fn query(&self, sql: &str) -> Result<String, Box<dyn Error>> {
+        Ok(self
+            .ch
+            .query(&sql.replace("DB", &self.ch.database))?
+            .trim_end()
+            .to_string())
+    }
+}
+
+fn clean(report: &Report) -> Result<(), String> {
+    if report.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("unexpected errors: {:?}", report.errors))
+    }
+}
+
+fn v1_message(buf: &mut [u8]) -> Result<usize, v1::sbe_rt::EncodeError> {
+    Ok(v1::ShapesEncoder::wrap_and_apply_header(buf, 0)
+        .fixed(&v1::ShapesFixedFields {
+            ts: 1_700_000_000_123_456_789,
+            i8: -8,
+            i16: -16,
+            i32: -32,
+            i64: -64,
+            u8: 8,
+            u16: 16,
+            u32: 32,
+            u64: u64::MAX,
+            f32: 1.5,
+            f64: 2.25,
+            opt_i32: Some(-7),
+            opt_u64: None,
+            opt_f64: Some(3.5),
+            colour: v1::Colour::Green,
+            code: *b"ABC\0\0\0",
+        })
+        .entries(2, |e| {
+            e.add_struct(&v1::EntriesEntry {
+                qty: 10,
+                side: v1::Colour::Red,
+                maybe: f64::NAN,
+            })?;
+            e.add_struct(&v1::EntriesEntry {
+                qty: -20,
+                side: v1::Colour::Green,
+                maybe: 0.5,
+            })?;
+            Ok(())
+        })?
+        .note(b"hello")?
+        .encoded_length_with_header())
+}
+
+fn v2_message(buf: &mut [u8]) -> Result<usize, v2::sbe_rt::EncodeError> {
+    Ok(v2::ShapesEncoder::wrap_and_apply_header(buf, 0)
+        .fixed(&v2::ShapesFixedFields {
+            ts: 1_700_000_001_000_000_000,
+            i8: 1,
+            i16: 2,
+            i32: 3,
+            i64: 4,
+            u8: 5,
+            u16: 6,
+            u32: 7,
+            u64: 8,
+            f32: 0.25,
+            f64: 0.5,
+            opt_i32: None,
+            opt_u64: Some(9),
+            opt_f64: None,
+            colour: v2::Colour::Red,
+            code: *b"XYZXYZ",
+            extra: 42,
+        })
+        .entries(1, |e| {
+            e.add_struct(&v2::EntriesEntry {
+                qty: 1,
+                side: v2::Colour::Red,
+                maybe: 1.5,
+                fee: 0.75,
+            })?;
+            Ok(())
+        })?
+        .note(b"v2")?
+        .encoded_length_with_header())
+}
+
+#[test]
+fn every_field_shape_round_trips() -> TestResult {
+    let lab = Lab::new("shapes", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let (persist, mut writer) = lab.persist(V1)?;
+    let mut buf = [0u8; 256];
+    let len = v1_message(&mut buf)?;
+    assert!(persist.record(&buf[..len]));
+    let report = writer.tick();
+    clean(&report)?;
+    assert_eq!(report.inserted.get("shapes"), Some(&1));
+
+    let types = lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'shapes' ORDER BY position FORMAT TSV")?;
+    assert_eq!(
+        types,
+        [
+            "ts\tDateTime64(9, \\'UTC\\')",
+            "i8\tInt8",
+            "i16\tInt16",
+            "i32\tInt32",
+            "i64\tInt64",
+            "u8\tUInt8",
+            "u16\tUInt16",
+            "u32\tUInt32",
+            "u64\tUInt64",
+            "f32\tFloat32",
+            "f64\tFloat64",
+            "opt_i32\tNullable(Int32)",
+            "opt_u64\tNullable(UInt64)",
+            "opt_f64\tNullable(Float64)",
+            "colour\tLowCardinality(String)",
+            "code\tString",
+            "entries.qty\tArray(Int64)",
+            "entries.side\tArray(LowCardinality(String))",
+            "entries.maybe\tArray(Nullable(Float64))",
+            "note\tString",
+            "inserted_at\tDateTime64(3, \\'UTC\\')",
+        ]
+        .join("\n")
+    );
+    let row = lab.query("SELECT * EXCEPT inserted_at FROM DB.shapes FORMAT TSV")?;
+    assert_eq!(
+        row,
+        "2023-11-14 22:13:20.123456789\t-8\t-16\t-32\t-64\t8\t16\t32\t18446744073709551615\t1.5\t2.25\t-7\t\\N\t3.5\tGreen\tABC\t[10,-20]\t['Red','Green']\t[NULL,0.5]\thello"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_table_gains_new_schema_columns() -> TestResult {
+    let lab = Lab::new("dynamic", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let mut buf = [0u8; 256];
+    {
+        let (persist, mut writer) = lab.persist(V1)?;
+        let len = v1_message(&mut buf)?;
+        persist.record(&buf[..len]);
+        clean(&writer.tick())?;
+    }
+    // The recorder restarts with a schema that has two more fields.
+    let (persist, mut writer) = lab.persist(V2)?;
+    let len = v2_message(&mut buf)?;
+    persist.record(&buf[..len]);
+    let report = writer.tick();
+    clean(&report)?;
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(
+        report.applied,
+        [
+            "ALTER TABLE `persist_test_dynamic`.`shapes` ADD COLUMN IF NOT EXISTS `extra` UInt32",
+            "ALTER TABLE `persist_test_dynamic`.`shapes` ADD COLUMN IF NOT EXISTS `entries.fee` Array(Float64)",
+        ]
+    );
+    let rows = lab.query(
+        "SELECT note, extra, entries.fee, entries.qty FROM DB.shapes ORDER BY ts FORMAT TSV",
+    )?;
+    // Old rows read new columns as defaults; a new `entries.*` array is padded
+    // to its siblings' length, so the nested arrays stay aligned.
+    assert_eq!(rows, "hello\t0\t[0,0]\t[10,-20]\nv2\t42\t[0.75]\t[1]");
+    Ok(())
+}
+
+#[test]
+fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
+    let lab = Lab::new("static", "tables:\n  shapes: { kind: static }\n")?;
+    let mut buf = [0u8; 256];
+    {
+        let (persist, mut writer) = lab.persist(V1)?;
+        let len = v1_message(&mut buf)?;
+        persist.record(&buf[..len]);
+        clean(&writer.tick())?;
+    }
+    let before = lab.query(
+        "SELECT name FROM system.columns WHERE database = 'DB' AND table = 'shapes' FORMAT TSV",
+    )?;
+
+    let (persist, mut writer) = lab.persist(V2)?;
+    let len = v2_message(&mut buf)?;
+    persist.record(&buf[..len]);
+    let report = writer.tick();
+    clean(&report)?;
+    assert!(
+        report.applied.is_empty(),
+        "static table altered: {:?}",
+        report.applied
+    );
+    assert_eq!(
+        report.problems,
+        [
+            "shapes: static table is missing column extra; not writing it. Fix: ALTER TABLE `persist_test_static`.`shapes` ADD COLUMN IF NOT EXISTS `extra` UInt32",
+            "shapes: static table is missing column entries.fee; not writing it. Fix: ALTER TABLE `persist_test_static`.`shapes` ADD COLUMN IF NOT EXISTS `entries.fee` Array(Float64)",
+        ]
+    );
+    assert_eq!(report.inserted.get("shapes"), Some(&1));
+    let after = lab.query(
+        "SELECT name FROM system.columns WHERE database = 'DB' AND table = 'shapes' FORMAT TSV",
+    )?;
+    assert_eq!(before, after);
+    assert_eq!(
+        lab.query("SELECT note FROM DB.shapes ORDER BY ts FORMAT TSV")?,
+        "hello\nv2"
+    );
+
+    // Running the suggested SQL is picked up by the next re-check.
+    lab.query("ALTER TABLE DB.shapes ADD COLUMN IF NOT EXISTS `extra` UInt32")?;
+    persist.record(&buf[..len]);
+    let report = writer.tick();
+    clean(&report)?;
+    assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+    assert_eq!(
+        lab.query("SELECT extra FROM DB.shapes WHERE note = 'v2' ORDER BY extra FORMAT TSV")?,
+        "0\n42"
+    );
+    Ok(())
+}
+
+#[test]
+fn removed_schema_fields_keep_their_columns() -> TestResult {
+    for kind in ["static", "dynamic"] {
+        let lab = Lab::new(
+            &format!("removed_{kind}"),
+            &format!("tables:\n  shapes: {{ kind: {kind} }}\n"),
+        )?;
+        let mut buf = [0u8; 256];
+        {
+            let (persist, mut writer) = lab.persist(V2)?;
+            let len = v2_message(&mut buf)?;
+            persist.record(&buf[..len]);
+            clean(&writer.tick())?;
+        }
+        // The schema loses `extra` and the group field `entries.fee`; the
+        // insert then omits `entries.fee` beside the `entries.*` it still sends.
+        let (persist, mut writer) = lab.persist(V1)?;
+        let len = v1_message(&mut buf)?;
+        persist.record(&buf[..len]);
+        let report = writer.tick();
+        clean(&report)?;
+        assert!(report.problems.is_empty(), "{kind}: {:?}", report.problems);
+        assert!(report.applied.is_empty(), "{kind}: {:?}", report.applied);
+        assert_eq!(report.inserted.get("shapes"), Some(&1), "{kind}");
+        let rows = lab.query(
+            "SELECT note, extra, entries.fee, entries.qty FROM DB.shapes ORDER BY ts FORMAT TSV",
+        )?;
+        assert_eq!(
+            rows, "hello\t0\t[0,0]\t[10,-20]\nv2\t42\t[0.75]\t[1]",
+            "{kind}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_column_type_is_reported_not_altered() -> TestResult {
+    for kind in ["static", "dynamic"] {
+        let lab = Lab::new(
+            &format!("type_{kind}"),
+            &format!("tables:\n  shapes: {{ kind: {kind} }}\n"),
+        )?;
+        lab.query("CREATE DATABASE DB")?;
+        lab.query("CREATE TABLE DB.shapes (ts DateTime64(9, 'UTC'), i16 Int32, note String) ENGINE = MergeTree ORDER BY ts")?;
+        let (persist, mut writer) = lab.persist(V1)?;
+        let mut buf = [0u8; 256];
+        let len = v1_message(&mut buf)?;
+        persist.record(&buf[..len]);
+        let report = writer.tick();
+        clean(&report)?;
+        let modify = format!(
+            "Fix: ALTER TABLE `persist_test_type_{kind}`.`shapes` MODIFY COLUMN `i16` Int16"
+        );
+        assert!(
+            report.problems.iter().any(|p| p.contains(&modify)),
+            "{kind}: {:?}",
+            report.problems
+        );
+        assert_eq!(lab.query("SELECT type FROM system.columns WHERE database = 'DB' AND table = 'shapes' AND name = 'i16'")?, "Int32");
+        assert_eq!(
+            lab.query("SELECT i16, note FROM DB.shapes FORMAT TSV")?,
+            "0\thello",
+            "{kind}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn enabled_follows_the_config_file() -> TestResult {
+    let lab = Lab::new(
+        "toggle",
+        "tables:\n  shapes: { kind: dynamic, enabled: false }\n",
+    )?;
+    let (persist, mut writer) = lab.persist(V1)?;
+    let mut buf = [0u8; 256];
+    let len = v1_message(&mut buf)?;
+    let msg = &buf[..len];
+
+    assert!(!persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
+    assert!(!persist.record(msg));
+    let report = writer.tick();
+    clean(&report)?;
+    assert!(report.inserted.is_empty());
+    // Listed but disabled: the table exists, empty, so queries against it work.
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "0");
+
+    lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: true }\n")?;
+    let report = writer.tick();
+    assert_eq!(report.toggled, [("shapes".to_string(), true)]);
+    assert!(persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
+    assert!(persist.record(msg));
+    assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
+
+    // An invalid edit is rejected and the last good configuration stays.
+    lab.write_config("tables:\n  shapes: { kind: sometimes }\n")?;
+    let report = writer.tick();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("keeping the previous configuration")),
+        "{:?}",
+        report.errors
+    );
+    assert!(persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
+
+    lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: false }\n")?;
+    assert_eq!(writer.tick().toggled, [("shapes".to_string(), false)]);
+    assert!(!persist.record(msg));
+    writer.tick();
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
+    Ok(())
+}
+
+#[test]
+fn unreachable_clickhouse_keeps_records_until_the_buffer_is_full() -> TestResult {
+    let dir = std::env::temp_dir().join(format!("persist-test-down-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join("tables.yaml"),
+        "tables:\n  shapes: { kind: static }\n",
+    )?;
+    let settings = Settings {
+        clickhouse: ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere"),
+        config_path: dir.join("tables.yaml"),
+        max_buffered_bytes: 1000,
+        recheck: Duration::ZERO,
+    };
+    let (persist, mut writer) = Persist::new(V1, settings)?;
+    let mut buf = [0u8; 256];
+    let len = v1_message(&mut buf)?;
+    let mut queued = 0;
+    while persist.record(&buf[..len]) {
+        queued += 1;
+    }
+    assert_eq!(queued, 1000 / (len + 4));
+    assert_eq!(persist.dropped(), 1);
+    let report = writer.tick();
+    assert!(!report.errors.is_empty());
+    assert!(report.inserted.is_empty());
+    // Still queued: the writer did not drain while ClickHouse was unreachable.
+    assert!(!persist.record(&buf[..len]));
+    assert_eq!(persist.dropped(), 2);
+    Ok(())
+}
+
+#[test]
+fn unsupported_field_shapes_are_rejected_up_front() {
+    let composite = V1.replace(
+        r#"<field name="code" id="16" type="Code"/>"#,
+        r#"<field name="code" id="16" type="groupSizeEncoding"/>"#,
+    );
+    let err = persist::tables_from_schema(&composite)
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        err.as_deref(),
+        Some("schema: Shapes.code: a composite is not supported")
+    );
+}
+
+#[test]
+fn market_schema_tables() -> TestResult {
+    let tables = persist::tables_from_schema(include_str!("../../schema/market.xml"))?;
+    let names: Vec<&str> = tables.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "trade",
+            "quote",
+            "book_snapshot",
+            "mark_price",
+            "funding_rate"
+        ]
+    );
+    let ch = ClickHouse::new("http://unused", "", "", "market");
+    let book = tables
+        .iter()
+        .find(|t| t.name == "book_snapshot")
+        .ok_or("book_snapshot")?;
+    assert_eq!(
+        ch.create_sql(book),
+        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Float64),\n    `bids.size` Array(Float64),\n    `asks.price` Array(Float64),\n    `asks.size` Array(Float64),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
+    );
+    Ok(())
+}

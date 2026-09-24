@@ -1,115 +1,98 @@
-# Sample-local recipes. Run from samples/clickhouse/.
+# ClickHouse persistence lab. Run from samples/clickhouse/.
 #
-# NOTE: the root workspace has its own test/bench lanes; everything here is
-# sample-scoped and must not leak into root CI.
+#   just up         create the kind cluster and run everything
+#   just recorder   rebuild + redeploy the recorder after a code/schema change
+#   just logs       follow the recorder log
+#   just verify     check the running lab end to end
+#   just test       unit + ClickHouse integration tests
+#   just stop / just start   pause the cluster, keeping data
+#   just destroy    delete the cluster and its data
+
+cluster := "clickhouse-lab"
 
 default:
-  @ just --list
+    @just --list
 
-# Build and test the private sample workspace (library + apps).
-#
-# `--workspace` beats `-p` in cargo, so the producer-feature lane must not
-# carry both: doing so re-tested every member (including the PyO3 cdylib,
-# which cannot run as a plain test binary).
-test:
-    cargo test --workspace --all-features --exclude ergo-python-bridge
-    cargo test -p ergo-clickhouse-persist --no-default-features --features producer
-    just python-test
+# Create the cluster (if needed), build images, deploy, wait, print URLs.
+up: _cluster images
+    kubectl --context kind-{{cluster}} apply -f deploy/lab.yaml
+    kubectl --context kind-{{cluster}} -n lab rollout status statefulset/clickhouse --timeout=300s
+    kubectl --context kind-{{cluster}} -n lab rollout status deploy/grafana deploy/jupyter deploy/recorder --timeout=300s
+    @just urls
 
-# Build the PyO3 recorder into the sample venv and run Python tests.
-#
-# The bridge links Aeron (the recorder pod publishes over pod-local IPC), and
-# rusteron builds those shared objects into the cargo tree rather than
-# installing them, so both the build and the import need the dyld fallback path.
-python-test:
+urls:
+    @echo "ClickHouse UI  http://localhost:8123/play   (user lab / password lab)"
+    @echo "Grafana        http://localhost:3000"
+    @echo "JupyterLab     http://localhost:8888/lab/tree/verify.ipynb"
+    @echo "Config         $PWD/config/tables.yaml  (edits apply live)"
+
+_cluster:
     #!/usr/bin/env bash
     set -euo pipefail
-    env -u CONDA_PREFIX VIRTUAL_ENV=$PWD/.venv .venv/bin/maturin develop --manifest-path crates/python-bridge/Cargo.toml --features pyo3/extension-module
-    # Only the *import* needs the Aeron shared objects, so the path is built
-    # after the build has created `target/debug/build` — on a clean tree it does
-    # not exist beforehand.
-    LIBDIRS=$(find target/debug/build -name 'libaeron*.dylib' -exec dirname {} \; 2>/dev/null | sort -u | tr '\n' ':' || true)
-    export DYLD_FALLBACK_LIBRARY_PATH="$PWD/${LIBDIRS%:}"
-    PYTHONPATH=apps/market-recorder/src:tests .venv/bin/pytest apps/market-recorder/tests tests/test_public_clients.py
+    if ! kind get clusters | grep -qx {{cluster}}; then
+        sed "s|LAB_DIR|$PWD|" deploy/kind.yaml | kind create cluster --config -
+    fi
 
-# Lints for the sample workspace.
-#
-# `--all-targets` matters: without it, unused imports and `let _ =` discards in
-# test files go unseen, and those are exactly where a checked assertion quietly
-# stops being checked.
+images: build-recorder
+    docker build -q -t lab/jupyter:local -f deploy/jupyter.Dockerfile deploy
+    just _load lab/jupyter:local
+    just _load lab/recorder:local
+
+# `kind load docker-image` fails on Docker's containerd image store
+# ("content digest … not found"), so import a single-platform save directly.
+_load image:
+    docker save --platform linux/$(docker version -f '{{{{.Server.Arch}}') {{image}} \
+        | docker exec -i {{cluster}}-control-plane ctr -n k8s.io images import --all-platforms -
+
+# Compile the recorder for Linux (cached volumes) and build its image.
+build-recorder:
+    docker run --rm -v "$PWD/../..":/src -w /src/samples/clickhouse \
+        -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
+        -e CARGO_TARGET_DIR=/target rust:1.98.1-bookworm \
+        sh -c 'cargo build --release -p recorder && mkdir -p target/linux && cp /target/release/recorder target/linux/'
+    docker build -q -t lab/recorder:local -f deploy/recorder.Dockerfile target/linux
+
+# Rebuild and restart the recorder (after changing schema/market.xml or code).
+recorder: build-recorder
+    just _load lab/recorder:local
+    kubectl --context kind-{{cluster}} -n lab rollout restart deploy/recorder
+    kubectl --context kind-{{cluster}} -n lab rollout status deploy/recorder --timeout=120s
+
+logs:
+    kubectl --context kind-{{cluster}} -n lab logs -f deploy/recorder
+
+# Run the recorder on this machine instead (writes to the lab's ClickHouse).
+run:
+    kubectl --context kind-{{cluster}} -n lab scale deploy/recorder --replicas=0
+    cargo run --release -p recorder
+
+# End-to-end checks against the running lab.
+verify:
+    ./scripts/verify.sh
+
+# Unit tests plus integration tests against a throwaway ClickHouse container.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! docker ps --format '{{{{.Names}}' | grep -qx persist-test-clickhouse; then
+        docker rm -f persist-test-clickhouse >/dev/null 2>&1 || true
+        docker run -d --name persist-test-clickhouse -p 18123:8123 --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_USER=lab -e CLICKHOUSE_PASSWORD=lab -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            clickhouse/clickhouse-server:25.8 >/dev/null
+        until curl -sf http://localhost:18123/ping >/dev/null; do sleep 1; done
+    fi
+    cargo test --workspace
+
 lint:
-    cargo clippy --workspace --all-features --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --check
 
-# Build the recording-config CLI used by the config watcher.
-build-cli:
-    cargo build -p recording-config --release
+stop:
+    docker stop {{cluster}}-control-plane
 
-# Validate a recording.yaml without applying it.
-validate-config file="config/recording.yaml":
-    ./target/release/recording-config --file {{file}} --permanent trades,quotes,bars,l2_books,raw_exchange_messages,sbe_messages,instruments,order_book_deltas,book_snapshots,funding_rates,mark_prices,index_prices,open_interest,liquidations,market_status
+start:
+    docker start {{cluster}}-control-plane
 
-# Start the local fixture stack (kind) after a preflight.
-clickhouse-up mode="fixture":
-    ./scripts/start.sh --mode {{mode}} --cluster kind
-
-# Foreground watcher: validates + applies config edits to the cluster.
-clickhouse-watch-config:
-    python3 scripts/config-watch.py --config-dir config
-
-# Apply a saved edit once, without running the watcher.
-clickhouse-apply-config:
-    ./scripts/apply-config.sh
-
-# Desired/applied revisions, effective rules, recording counters.
-clickhouse-status:
-    ./scripts/status.sh
-
-# Run the 7 verification notebooks against the latest fixture run.
-#
-# The venv interpreter is the one with nbformat/nbclient/nbconvert installed,
-# and the notebooks read the ClickHouse password from the environment.
-verify-notebooks run_id=`cat artifacts/latest_run_id 2>/dev/null || echo NONE`:
-    CLICKHOUSE_DATABASE={{env_var_or_default("CLICKHOUSE_DATABASE", "market_lane")}} CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-ergo_test} .venv/bin/python scripts/execute-notebooks.py --mode fixture --run-id {{run_id}}
-
-# Full local verification (fixture): queries, config edits, recovery.
-verify-local:
-    ./scripts/verify-local.sh
-
-# Aeron archive round trip: publish the fixture export, replay it, verify rows.
-#
-# Its own database, not `market`. This lane DROPs the database it uses, and the
-# in-cluster ingester writes `market` continuously (it reads both recorders'
-# Archives now) — so sharing one meant the lane both wiped live cluster data
-# and then failed on rows the cluster had written beside its own
-# ("trades from another run present"). `market_lane` keeps the two apart.
-verify-aeron run_id=`date -u +%Y%m%d%H%M%S`:
-    CLICKHOUSE_DATABASE={{env_var_or_default("CLICKHOUSE_DATABASE", "market_lane")}} ./scripts/verify-aeron.sh {{run_id}}
-
-# Continuous ingest: `--follow` drains, then stays up without re-reading.
-verify-follow run_id=`date -u +%Y%m%d%H%M%S`:
-    ./scripts/verify-follow.sh {{run_id}}
-
-# In-cluster chain: recorder pods -> pod-local Archive -> ingester -> ClickHouse.
-verify-cluster:
-    ./scripts/verify-cluster-chain.sh
-
-# Live public-only feeds (no exchange credentials) for 10 minutes.
-verify-live duration="10m":
-    ./scripts/verify-live.sh --duration {{duration}}
-
-# Native prepared-recording latency (sample-local; not the root SBE gate).
-bench-recording:
-    cargo bench -p ergo-clickhouse-persist --bench recording
-
-# Stop project workloads; keeps PVCs.
-clickhouse-down:
-    ./scripts/stop.sh
-
-# Stop and delete this project's volumes (destructive, named namespace only).
-clickhouse-purge:
-    ./scripts/stop.sh --purge-data
-
-# Free build caches/artifacts; reports disk headroom (volumes preserved).
-clean mode="safe":
-    ./scripts/clean.sh {{mode}}
+# Deletes the cluster, including all recorded data.
+destroy:
+    kind delete cluster --name {{cluster}}

@@ -1,0 +1,292 @@
+{
+  "uid": "market",
+  "title": "Market data",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "BTC trade price",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM market.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "ETH trade price",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM market.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'ETH%' GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Trades per second",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, count() / $__interval_s AS trades FROM market.trade WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Quote spread (bps)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg((ask_price - bid_price) / ((ask_price + bid_price) / 2)) * 10000 AS spread_bps FROM market.quote WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Bybit mark price vs last trade (bps)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT m.time AS time, m.symbol AS symbol, (t.price - m.mark) / m.mark * 10000 AS basis_bps FROM (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS mark FROM market.mark_price WHERE $__timeFilter(ts_event) GROUP BY time, symbol) AS m INNER JOIN (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS price FROM market.trade WHERE venue = 'BYBIT' AND $__timeFilter(ts_event) GROUP BY time, symbol) AS t ON m.time = t.time AND m.symbol = t.symbol ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "description": "mark_price is a dynamic table (config/tables.yaml).",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Latest funding rates",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT symbol, venue, argMax(rate, ts_event) AS rate, argMax(interval_minutes, ts_event) AS interval_minutes, argMax(next_funding_ts, ts_event) AS next_funding, max(ts_event) AS updated FROM market.funding_rate GROUP BY symbol, venue ORDER BY symbol",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "description": "funding_rate is a dynamic table (config/tables.yaml)."
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Order book: best bid / ask (book_snapshot)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(bids.price[1]) AS best_bid, avg(asks.price[1]) AS best_ask FROM market.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "description": "book_snapshot is a dynamic table that starts disabled. Set `enabled: true` for it in config/tables.yaml and rows appear here within seconds.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Order book: top-10 depth (book_snapshot)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(arraySum(bids.size)) AS bid_depth, avg(arraySum(asks.size)) AS ask_depth FROM market.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "description": "Sum of size over the 10 levels recorded per side.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

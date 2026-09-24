@@ -1,0 +1,15 @@
+# What the recorder writes to ClickHouse. Edit and save: changes apply within
+# a second, no restart. Each table is a message in schema/market.xml.
+#
+# kind: static   Created if missing, then never altered. If the schema and the
+#                table disagree, the recorder logs an ERROR with the ALTER to
+#                run and keeps writing every column that still matches.
+# kind: dynamic  Follows the schema: a field added to market.xml becomes a new
+#                column the next time the recorder starts.
+# enabled:       Record it now (default true). Set false to stop recording.
+tables:
+  trade:         { kind: static }
+  quote:         { kind: static }
+  mark_price:    { kind: dynamic, enabled: true }
+  funding_rate:  { kind: dynamic, enabled: true }
+  book_snapshot: { kind: dynamic, enabled: false }

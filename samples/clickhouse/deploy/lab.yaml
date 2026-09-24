@@ -1,0 +1,150 @@
+# Everything the lab runs, in namespace `lab`. Files under /lab come from this
+# checkout (see kind.yaml), so edits on your machine reach the pods directly.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab
+---
+# ClickHouse. Query UI: http://localhost:8123/play (user lab, password lab).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: lab
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector: { matchLabels: { app: clickhouse } }
+  template:
+    metadata: { labels: { app: clickhouse } }
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.8
+          env:
+            - { name: CLICKHOUSE_USER, value: lab }
+            - { name: CLICKHOUSE_PASSWORD, value: lab }
+            - { name: CLICKHOUSE_DB, value: market }
+            - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
+          ports: [{ containerPort: 8123 }]
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+          volumeMounts: [{ name: data, mountPath: /var/lib/clickhouse }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 20Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: lab
+spec:
+  type: NodePort
+  selector: { app: clickhouse }
+  ports: [{ port: 8123, targetPort: 8123, nodePort: 30123 }]
+---
+# The recorder: NautilusTrader + persist. Reads /lab/config/tables.yaml live.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recorder
+  namespace: lab
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: recorder } }
+  template:
+    metadata: { labels: { app: recorder } }
+    spec:
+      containers:
+        - name: recorder
+          image: lab/recorder:local
+          imagePullPolicy: Never
+          env:
+            - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+          volumeMounts: [{ name: config, mountPath: /lab/config, readOnly: true }]
+      volumes:
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }
+---
+# Grafana: http://localhost:3000. Datasource and dashboards come from grafana/.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: lab
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.4.11
+          env:
+            - { name: GF_PLUGINS_PREINSTALL_SYNC, value: grafana-clickhouse-datasource }
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Admin }
+            - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
+            - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /lab/grafana/dashboards/market.json }
+            - { name: GF_PATHS_PROVISIONING, value: /lab/grafana/provisioning }
+          ports: [{ containerPort: 3000 }]
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+          volumeMounts: [{ name: grafana, mountPath: /lab/grafana, readOnly: true }]
+      volumes:
+        - name: grafana
+          hostPath: { path: /lab/grafana, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: lab
+spec:
+  type: NodePort
+  selector: { app: grafana }
+  ports: [{ port: 3000, targetPort: 3000, nodePort: 30300 }]
+---
+# JupyterLab: http://localhost:8888, notebooks/ from this checkout (read-write).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter
+  namespace: lab
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: jupyter } }
+  template:
+    metadata: { labels: { app: jupyter } }
+    spec:
+      containers:
+        - name: jupyter
+          image: lab/jupyter:local
+          imagePullPolicy: Never
+          env:
+            - { name: CLICKHOUSE_HOST, value: clickhouse }
+          ports: [{ containerPort: 8888 }]
+          volumeMounts:
+            - { name: notebooks, mountPath: /lab/notebooks }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: notebooks
+          hostPath: { path: /lab/notebooks, type: Directory }
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter
+  namespace: lab
+spec:
+  type: NodePort
+  selector: { app: jupyter }
+  ports: [{ port: 8888, targetPort: 8888, nodePort: 30888 }]

@@ -15,6 +15,7 @@ implementations — they move with experimental APIs on purpose.
 | Later | [`cluster-tutorial/`](cluster-tutorial/) | Connect, offer, poll, keep-alive, close |
 | Later | [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | Claim-based Cluster publishing + HA-shaped book |
 | Later | [`cluster-rfq/`](cluster-rfq/) | RFQ / auction codecs over Cluster |
+| Lab | [`clickhouse/`](clickhouse/) | Record live Binance/Bybit data (NautilusTrader) into ClickHouse with SBE-defined tables; Grafana, notebook, live config on kind |
 
 ```sh
 # 1 — always start here

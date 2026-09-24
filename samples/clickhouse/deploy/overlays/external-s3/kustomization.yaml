@@ -1,7 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - ../../base
-# Points ClickHouse cold storage at an existing external S3 bucket:
-# supply S3 endpoint/keys via a Secret named external-s3-credentials and
-# patch the storage policy in a user_files overlay before applying.

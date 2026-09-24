@@ -1,7 +1,16 @@
+# One-node kind cluster. The sample directory is mounted into the node at
+# /lab, so pods read config/, grafana/ and notebooks/ straight from this
+# checkout: edit a file on your machine and the pod sees it.
+# `just up` substitutes LAB_DIR with the absolute sample path.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: clickhouse
+name: clickhouse-lab
 nodes:
   - role: control-plane
-  - role: worker
-  - role: worker
+    extraMounts:
+      - hostPath: LAB_DIR
+        containerPath: /lab
+    extraPortMappings:
+      - { containerPort: 30123, hostPort: 8123, listenAddress: 127.0.0.1 }  # ClickHouse HTTP + /play UI
+      - { containerPort: 30300, hostPort: 3000, listenAddress: 127.0.0.1 }  # Grafana
+      - { containerPort: 30888, hostPort: 8888, listenAddress: 127.0.0.1 }  # JupyterLab

@@ -1,9 +1,0 @@
-# Frozen after task 0 on 2026-09-20 (macOS arm64, CPython 3.12.12).
-nautilus-trader==1.231.0
-maturin==1.15.0
-pytest==9.1.1
-nbclient==0.11.0
-ipykernel==7.3.0
-nbconvert==7.17.1
-matplotlib==3.11.2
-clickhouse-connect==1.8.0

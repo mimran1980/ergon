@@ -1,0 +1,25 @@
+[package]
+name = "recorder"
+description = "Public Binance/Bybit market data via NautilusTrader, persisted with SBE."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+persist = { path = "../persist" }
+rust_decimal = "1"
+anyhow = "1"
+nautilus-binance = "0.64"
+nautilus-bybit = "0.64"
+nautilus-common = "0.64"
+nautilus-live = "0.64"
+nautilus-model = "0.64"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[build-dependencies]
+ergo-sbe.workspace = true
+
+[lints]
+workspace = true

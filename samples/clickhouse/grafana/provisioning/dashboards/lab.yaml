@@ -1,0 +1,10 @@
+# Dashboards are the JSON files in grafana/dashboards/; edits there reload
+# within 10 seconds. Changes saved in the UI are kept until the file changes.
+apiVersion: 1
+providers:
+  - name: lab
+    type: file
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /lab/grafana/dashboards

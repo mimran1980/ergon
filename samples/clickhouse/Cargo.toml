@@ -1,54 +1,23 @@
 [workspace]
 resolver = "3"
-members = [
-    "crates/persist",
-    "crates/persist-derive",
-    "crates/persist-tracing",
-    "crates/market-schema",
-    "crates/python-bridge",
-    "apps/recording-config",
-    "apps/archive-agent",
-    "apps/ingester",
-]
+members = ["persist", "recorder"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.98.1"
 license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-ergo-clickhouse-persist = { path = "crates/persist" }
-ergo-clickhouse-persist-derive = { path = "crates/persist-derive" }
-ergo-clickhouse-persist-tracing = { path = "crates/persist-tracing" }
-ergo-market-schema = { path = "crates/market-schema" }
 ergo-sbe = { path = "../../sbe" }
-rusteron-client = "0.2"
-rusteron-media-driver = "0.2"
-rusteron-archive = "0.2.7"
-serde = { version = "1", default-features = false, features = ["derive", "std"] }
-serde_yaml = "0.9"
-rusqlite = { version = "0.32", features = ["bundled"] }
-ureq = { version = "2", default-features = false, features = ["tls"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
-missing_docs = "deny"
 
 [workspace.lints.clippy]
-all = "deny"
-pedantic = "deny"
+all = { level = "deny", priority = -1 }
 unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-
-[profile.bench]
-lto = true
-codegen-units = 1
 
 [profile.release]
-lto = true
-codegen-units = 1
+debug = "line-tables-only"
