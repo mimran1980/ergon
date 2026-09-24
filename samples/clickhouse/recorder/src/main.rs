@@ -11,9 +11,7 @@
 mod market;
 
 use std::num::NonZeroUsize;
-use std::time::Duration;
 
-use market::sbe_rt::EncodeError;
 use market::{
     BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder, BookSnapshotFixedFields,
     FundingRateEncoder, FundingRateFixedFields, MarkPriceEncoder, MarkPriceFixedFields,
@@ -49,7 +47,6 @@ const BOOK_LEVELS: usize = 10;
 struct Recorder {
     core: DataActorCore,
     persist: Persist,
-    buf: Vec<u8>,
 }
 
 nautilus_actor!(Recorder);
@@ -79,7 +76,7 @@ impl DataActor for Recorder {
     }
 
     fn on_trade(&mut self, t: &TradeTick) -> anyhow::Result<()> {
-        self.record(TradeEncoder::TEMPLATE_ID, |buf| {
+        self.persist.record(TradeEncoder::TEMPLATE_ID, |buf| {
             Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&TradeFixedFields {
                     ts_event: t.ts_event.as_u64(),
@@ -100,7 +97,7 @@ impl DataActor for Recorder {
     }
 
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
-        self.record(QuoteEncoder::TEMPLATE_ID, |buf| {
+        self.persist.record(QuoteEncoder::TEMPLATE_ID, |buf| {
             Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&QuoteFixedFields {
                     ts_event: q.ts_event.as_u64(),
@@ -118,41 +115,42 @@ impl DataActor for Recorder {
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
         let now = self.core.timestamp_ns().as_u64();
-        self.record(BookSnapshotEncoder::TEMPLATE_ID, |buf| {
-            let bids = book.bids(Some(BOOK_LEVELS)).count() as u16;
-            let asks = book.asks(Some(BOOK_LEVELS)).count() as u16;
-            Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&BookSnapshotFixedFields {
-                    ts_event: book.ts_last.as_u64(),
-                    ts_init: now,
-                    sequence: book.sequence,
-                })
-                .bids(bids, |g| {
-                    for l in book.bids(Some(BOOK_LEVELS)) {
-                        g.add_struct(&BookSnapshotBidsEntry {
-                            price: l.price.value.as_f64(),
-                            size: l.size(),
-                        })?;
-                    }
-                    Ok(())
-                })?
-                .asks(asks, |g| {
-                    for l in book.asks(Some(BOOK_LEVELS)) {
-                        g.add_struct(&BookSnapshotAsksEntry {
-                            price: l.price.value.as_f64(),
-                            size: l.size(),
-                        })?;
-                    }
-                    Ok(())
-                })?
-                .symbol(book.instrument_id.symbol.as_str().as_bytes())?
-                .venue(book.instrument_id.venue.as_str().as_bytes())?
-                .encoded_length_with_header())
-        })
+        self.persist
+            .record(BookSnapshotEncoder::TEMPLATE_ID, |buf| {
+                let bids = book.bids(Some(BOOK_LEVELS)).count() as u16;
+                let asks = book.asks(Some(BOOK_LEVELS)).count() as u16;
+                Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&BookSnapshotFixedFields {
+                        ts_event: book.ts_last.as_u64(),
+                        ts_init: now,
+                        sequence: book.sequence,
+                    })
+                    .bids(bids, |g| {
+                        for l in book.bids(Some(BOOK_LEVELS)) {
+                            g.add_struct(&BookSnapshotBidsEntry {
+                                price: l.price.value.as_f64(),
+                                size: l.size(),
+                            })?;
+                        }
+                        Ok(())
+                    })?
+                    .asks(asks, |g| {
+                        for l in book.asks(Some(BOOK_LEVELS)) {
+                            g.add_struct(&BookSnapshotAsksEntry {
+                                price: l.price.value.as_f64(),
+                                size: l.size(),
+                            })?;
+                        }
+                        Ok(())
+                    })?
+                    .symbol(book.instrument_id.symbol.as_str().as_bytes())?
+                    .venue(book.instrument_id.venue.as_str().as_bytes())?
+                    .encoded_length_with_header())
+            })
     }
 
     fn on_mark_price(&mut self, m: &MarkPriceUpdate) -> anyhow::Result<()> {
-        self.record(MarkPriceEncoder::TEMPLATE_ID, |buf| {
+        self.persist.record(MarkPriceEncoder::TEMPLATE_ID, |buf| {
             Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&MarkPriceFixedFields {
                     ts_event: m.ts_event.as_u64(),
@@ -166,7 +164,7 @@ impl DataActor for Recorder {
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
-        self.record(FundingRateEncoder::TEMPLATE_ID, |buf| {
+        self.persist.record(FundingRateEncoder::TEMPLATE_ID, |buf| {
             Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&FundingRateFixedFields {
                     ts_event: f.ts_event.as_u64(),
@@ -179,21 +177,6 @@ impl DataActor for Recorder {
                 .venue(f.instrument_id.venue.as_str().as_bytes())?
                 .encoded_length_with_header())
         })
-    }
-}
-
-impl Recorder {
-    /// Encode into the reused buffer and queue it — only if the table is on.
-    fn record(
-        &mut self,
-        template: u16,
-        encode: impl FnOnce(&mut [u8]) -> Result<usize, EncodeError>,
-    ) -> anyhow::Result<()> {
-        if self.persist.enabled(template) {
-            let len = encode(&mut self.buf)?;
-            self.persist.record(&self.buf[..len]);
-        }
-        Ok(())
     }
 }
 
@@ -221,11 +204,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
-    let (persist, writer) = Persist::start(SCHEMA, Settings::from_env(), Duration::from_secs(1))?;
+    let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         persist,
-        buf: vec![0; 64 * 1024],
     })?;
     node.run().await?;
     writer.stop();

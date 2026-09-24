@@ -83,6 +83,11 @@ test:
     fi
     cargo test --workspace
 
+# Time persist.record() on the app thread, beside a timing-only control.
+latency:
+    cargo run -q --release -p persist --example record_latency -- control
+    cargo run -q --release -p persist --example record_latency
+
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --check

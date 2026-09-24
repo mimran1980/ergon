@@ -21,6 +21,8 @@ mod v2 {
 
 const V1: &str = include_str!("schemas/shapes_v1.xml");
 const V2: &str = include_str!("schemas/shapes_v2.xml");
+/// `Shapes` has the same template id in both schema versions.
+const SHAPES: u16 = v1::ShapesEncoder::TEMPLATE_ID;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -57,6 +59,7 @@ impl Lab {
             clickhouse: self.ch.clone(),
             config_path: self.config.clone(),
             max_buffered_bytes: 1 << 20,
+            flush_interval: Duration::ZERO,
             recheck: Duration::ZERO,
         };
         Ok(Persist::new(schema, settings)?)
@@ -154,9 +157,7 @@ fn v2_message(buf: &mut [u8]) -> Result<usize, v2::sbe_rt::EncodeError> {
 fn every_field_shape_round_trips() -> TestResult {
     let lab = Lab::new("shapes", "tables:\n  shapes: { kind: dynamic }\n")?;
     let (persist, mut writer) = lab.persist(V1)?;
-    let mut buf = [0u8; 256];
-    let len = v1_message(&mut buf)?;
-    assert!(persist.record(&buf[..len]));
+    persist.record(SHAPES, v1_message)?;
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.inserted.get("shapes"), Some(&1));
@@ -200,17 +201,14 @@ fn every_field_shape_round_trips() -> TestResult {
 #[test]
 fn dynamic_table_gains_new_schema_columns() -> TestResult {
     let lab = Lab::new("dynamic", "tables:\n  shapes: { kind: dynamic }\n")?;
-    let mut buf = [0u8; 256];
     {
         let (persist, mut writer) = lab.persist(V1)?;
-        let len = v1_message(&mut buf)?;
-        persist.record(&buf[..len]);
+        persist.record(SHAPES, v1_message)?;
         clean(&writer.tick())?;
     }
     // The recorder restarts with a schema that has two more fields.
     let (persist, mut writer) = lab.persist(V2)?;
-    let len = v2_message(&mut buf)?;
-    persist.record(&buf[..len]);
+    persist.record(SHAPES, v2_message)?;
     let report = writer.tick();
     clean(&report)?;
     assert!(report.problems.is_empty(), "{:?}", report.problems);
@@ -233,11 +231,9 @@ fn dynamic_table_gains_new_schema_columns() -> TestResult {
 #[test]
 fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
     let lab = Lab::new("static", "tables:\n  shapes: { kind: static }\n")?;
-    let mut buf = [0u8; 256];
     {
         let (persist, mut writer) = lab.persist(V1)?;
-        let len = v1_message(&mut buf)?;
-        persist.record(&buf[..len]);
+        persist.record(SHAPES, v1_message)?;
         clean(&writer.tick())?;
     }
     let before = lab.query(
@@ -245,8 +241,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
     )?;
 
     let (persist, mut writer) = lab.persist(V2)?;
-    let len = v2_message(&mut buf)?;
-    persist.record(&buf[..len]);
+    persist.record(SHAPES, v2_message)?;
     let report = writer.tick();
     clean(&report)?;
     assert!(
@@ -273,7 +268,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
 
     // Running the suggested SQL is picked up by the next re-check.
     lab.query("ALTER TABLE DB.shapes ADD COLUMN IF NOT EXISTS `extra` UInt32")?;
-    persist.record(&buf[..len]);
+    persist.record(SHAPES, v2_message)?;
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
@@ -291,18 +286,15 @@ fn removed_schema_fields_keep_their_columns() -> TestResult {
             &format!("removed_{kind}"),
             &format!("tables:\n  shapes: {{ kind: {kind} }}\n"),
         )?;
-        let mut buf = [0u8; 256];
         {
             let (persist, mut writer) = lab.persist(V2)?;
-            let len = v2_message(&mut buf)?;
-            persist.record(&buf[..len]);
+            persist.record(SHAPES, v2_message)?;
             clean(&writer.tick())?;
         }
         // The schema loses `extra` and the group field `entries.fee`; the
         // insert then omits `entries.fee` beside the `entries.*` it still sends.
         let (persist, mut writer) = lab.persist(V1)?;
-        let len = v1_message(&mut buf)?;
-        persist.record(&buf[..len]);
+        persist.record(SHAPES, v1_message)?;
         let report = writer.tick();
         clean(&report)?;
         assert!(report.problems.is_empty(), "{kind}: {:?}", report.problems);
@@ -329,9 +321,7 @@ fn changed_column_type_is_reported_not_altered() -> TestResult {
         lab.query("CREATE DATABASE DB")?;
         lab.query("CREATE TABLE DB.shapes (ts DateTime64(9, 'UTC'), i16 Int32, note String) ENGINE = MergeTree ORDER BY ts")?;
         let (persist, mut writer) = lab.persist(V1)?;
-        let mut buf = [0u8; 256];
-        let len = v1_message(&mut buf)?;
-        persist.record(&buf[..len]);
+        persist.record(SHAPES, v1_message)?;
         let report = writer.tick();
         clean(&report)?;
         let modify = format!(
@@ -359,12 +349,9 @@ fn enabled_follows_the_config_file() -> TestResult {
         "tables:\n  shapes: { kind: dynamic, enabled: false }\n",
     )?;
     let (persist, mut writer) = lab.persist(V1)?;
-    let mut buf = [0u8; 256];
-    let len = v1_message(&mut buf)?;
-    let msg = &buf[..len];
-
-    assert!(!persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
-    assert!(!persist.record(msg));
+    assert!(!persist.enabled(SHAPES));
+    // A disabled table never runs the encoder.
+    persist.record(SHAPES, |_| Err("encoded a message for a disabled table"))?;
     let report = writer.tick();
     clean(&report)?;
     assert!(report.inserted.is_empty());
@@ -374,8 +361,8 @@ fn enabled_follows_the_config_file() -> TestResult {
     lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: true }\n")?;
     let report = writer.tick();
     assert_eq!(report.toggled, [("shapes".to_string(), true)]);
-    assert!(persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
-    assert!(persist.record(msg));
+    assert!(persist.enabled(SHAPES));
+    persist.record(SHAPES, v1_message)?;
     assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
 
     // An invalid edit is rejected and the last good configuration stays.
@@ -389,11 +376,11 @@ fn enabled_follows_the_config_file() -> TestResult {
         "{:?}",
         report.errors
     );
-    assert!(persist.enabled(v1::ShapesEncoder::TEMPLATE_ID));
+    assert!(persist.enabled(SHAPES));
 
     lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: false }\n")?;
     assert_eq!(writer.tick().toggled, [("shapes".to_string(), false)]);
-    assert!(!persist.record(msg));
+    persist.record(SHAPES, v1_message)?;
     writer.tick();
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
     Ok(())
@@ -410,23 +397,23 @@ fn unreachable_clickhouse_keeps_records_until_the_buffer_is_full() -> TestResult
     let settings = Settings {
         clickhouse: ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere"),
         config_path: dir.join("tables.yaml"),
-        max_buffered_bytes: 1000,
+        max_buffered_bytes: persist::MAX_MESSAGE + 1000,
+        flush_interval: Duration::ZERO,
         recheck: Duration::ZERO,
     };
     let (persist, mut writer) = Persist::new(V1, settings)?;
-    let mut buf = [0u8; 256];
-    let len = v1_message(&mut buf)?;
-    let mut queued = 0;
-    while persist.record(&buf[..len]) {
-        queued += 1;
+    // Room is kept for a whole MAX_MESSAGE, so 1000 bytes of slack take
+    // 1000 / (len + 4) + 1 of these small messages; the next is dropped.
+    let fit = 1000 / (v1_message(&mut [0; 256])? + 4) + 1;
+    for _ in 0..=fit {
+        persist.record(SHAPES, v1_message)?;
     }
-    assert_eq!(queued, 1000 / (len + 4));
     assert_eq!(persist.dropped(), 1);
     let report = writer.tick();
     assert!(!report.errors.is_empty());
     assert!(report.inserted.is_empty());
     // Still queued: the writer did not drain while ClickHouse was unreachable.
-    assert!(!persist.record(&buf[..len]));
+    persist.record(SHAPES, v1_message)?;
     assert_eq!(persist.dropped(), 2);
     Ok(())
 }
@@ -445,12 +432,11 @@ fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
         clickhouse: ClickHouse::new(&url, user, "x", &lab.ch.database),
         config_path: lab.config.clone(),
         max_buffered_bytes: 1 << 20,
+        flush_interval: Duration::ZERO,
         recheck: Duration::ZERO,
     };
     let (persist, mut writer) = Persist::new(V1, settings)?;
-    let mut buf = [0u8; 256];
-    let len = v1_message(&mut buf)?;
-    assert!(persist.record(&buf[..len]));
+    persist.record(SHAPES, v1_message)?;
     // The first tick fails to create the table; the second falls inside the
     // retry back-off. Neither may throw the queued record away.
     assert!(!writer.tick().errors.is_empty());
@@ -472,6 +458,14 @@ fn unsupported_field_shapes_are_rejected_up_front() {
     assert_eq!(
         err.as_deref(),
         Some("schema: Shapes.code: a composite is not supported")
+    );
+    let big = V1.replace(r#"byteOrder="littleEndian""#, r#"byteOrder="bigEndian""#);
+    let err = persist::tables_from_schema(&big)
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        err.as_deref(),
+        Some("schema: only littleEndian schemas are supported")
     );
 }
 

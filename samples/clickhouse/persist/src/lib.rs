@@ -1,9 +1,25 @@
 //! Record SBE messages into ClickHouse.
 //!
 //! The SBE schema is the table definition: every message is a table and every
-//! field a column (see [`table`]). An application encodes a message with its
-//! generated SBE encoder and hands the bytes to [`Persist::record`]; a writer
-//! thread batches them into `INSERT … FORMAT RowBinary`.
+//! field a column (see `table.rs`). The application records a message by
+//! encoding it with its generated SBE encoder straight into persist's buffer;
+//! a writer thread batches the buffer into `INSERT … FORMAT RowBinary`
+//! (`recorder/src/main.rs` is the full example):
+//!
+//! ```text
+//! let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
+//! persist.record(TradeEncoder::TEMPLATE_ID, |buf| {
+//!     Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
+//!         .fixed(&fields)
+//!         .symbol(b"BTCUSDT")?
+//!         .encoded_length_with_header())
+//! })?;
+//! writer.stop(); // flushes what is queued
+//! ```
+//!
+//! Recording never allocates, never copies, and never waits on ClickHouse: a
+//! disabled table costs one atomic load, an enabled one an uncontended lock
+//! plus the encode itself.
 //!
 //! `config/tables.yaml` decides what is recorded, and is re-read while running:
 //!
@@ -25,7 +41,7 @@
 //! is no disk spool.
 
 mod clickhouse;
-pub mod table;
+mod table;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,8 +52,8 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-pub use clickhouse::{ClickHouse, INSERTED_AT, Sync};
-pub use table::{Column, Table, tables_from_schema};
+pub use clickhouse::ClickHouse;
+pub use table::{Table, tables_from_schema};
 
 /// Everything that can go wrong outside the recording hot path.
 #[derive(Debug)]
@@ -88,7 +104,7 @@ const fn yes() -> bool {
 }
 
 /// Parse `tables.yaml`.
-pub fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> {
+fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct File {
@@ -106,8 +122,12 @@ pub struct Settings {
     pub clickhouse: ClickHouse,
     /// `tables.yaml`, re-read while running.
     pub config_path: PathBuf,
-    /// Memory for records not yet inserted; beyond it records are dropped.
+    /// Size of each of the two record buffers, allocated once up front.
+    /// Records that do not fit are dropped and counted.
     pub max_buffered_bytes: usize,
+    /// How often the writer inserts. ClickHouse wants about one insert per
+    /// table per second; more often only makes more parts to merge.
+    pub flush_interval: Duration,
     /// How often a table with unfixed problems is compared again, so running
     /// the logged `ALTER` takes effect without a restart.
     pub recheck: Duration,
@@ -129,19 +149,41 @@ impl Settings {
             ),
             config_path: var("PERSIST_CONFIG", "config/tables.yaml").into(),
             max_buffered_bytes: 256 << 20,
+            flush_interval: Duration::from_secs(1),
             recheck: Duration::from_secs(30),
         }
     }
 }
 
+/// Largest message [`Persist::record`] guarantees room for. Recording is
+/// refused (and counted as dropped) once less than this is free, so an
+/// encoder is never handed a buffer too short for its fixed block.
+pub const MAX_MESSAGE: usize = 64 * 1024;
+
 #[derive(Debug)]
 struct Shared {
     /// Indexed by SBE template id.
     enabled: Vec<AtomicBool>,
-    /// Frames waiting for the writer: `u32` LE length, then the message.
-    pending: Mutex<Vec<u8>>,
-    max_pending: usize,
+    /// Records waiting for the writer, which swaps it for an empty one.
+    pending: Mutex<Frames>,
     dropped: AtomicU64,
+}
+
+/// Encoded messages, each a `u32` LE length then the message. Allocated once
+/// at full size, so recording never allocates.
+#[derive(Debug)]
+struct Frames {
+    data: Box<[u8]>,
+    len: usize,
+}
+
+impl Frames {
+    fn new(capacity: usize) -> Self {
+        Self {
+            data: vec![0; capacity].into_boxed_slice(),
+            len: 0,
+        }
+    }
 }
 
 /// The recording handle. Cheap to clone; share it with every callback.
@@ -163,8 +205,7 @@ impl Persist {
             .unwrap_or(0);
         let shared = Arc::new(Shared {
             enabled: (0..slots).map(|_| AtomicBool::new(false)).collect(),
-            pending: Mutex::new(Vec::with_capacity(1 << 20)),
-            max_pending: settings.max_buffered_bytes,
+            pending: Mutex::new(Frames::new(settings.max_buffered_bytes)),
             dropped: AtomicU64::new(0),
         });
         let mut writer = Writer {
@@ -174,7 +215,7 @@ impl Persist {
             tables: tables.into_iter().map(TableState::new).collect(),
             config_path: settings.config_path,
             config_text: String::new(),
-            spare: Vec::with_capacity(1 << 20),
+            spare: Frames::new(settings.max_buffered_bytes),
             max_retained: settings.max_buffered_bytes,
             recheck: settings.recheck,
             totals: BTreeMap::new(),
@@ -189,12 +230,10 @@ impl Persist {
         Ok((Self { shared }, writer))
     }
 
-    /// [`Persist::new`] plus a writer thread flushing every `interval`.
-    pub fn start(
-        schema_xml: &str,
-        settings: Settings,
-        interval: Duration,
-    ) -> Result<(Self, Handle), Error> {
+    /// [`Persist::new`] plus a writer thread inserting every
+    /// [`Settings::flush_interval`].
+    pub fn start(schema_xml: &str, settings: Settings) -> Result<(Self, Handle), Error> {
+        let interval = settings.flush_interval;
         let (persist, mut writer) = Self::new(schema_xml, settings)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
@@ -218,8 +257,7 @@ impl Persist {
         ))
     }
 
-    /// Is `template_id` recorded right now? One relaxed atomic load: check it
-    /// before encoding so a disabled table costs nothing.
+    /// Is `template_id` recorded right now? One relaxed atomic load.
     #[inline]
     #[must_use]
     pub fn enabled(&self, template_id: u16) -> bool {
@@ -229,29 +267,48 @@ impl Persist {
             .is_some_and(|e| e.load(Ordering::Relaxed))
     }
 
-    /// Queue one SBE message (header included). Returns `false` when its table
-    /// is disabled or the buffer is full (the record is dropped and counted).
-    pub fn record(&self, message: &[u8]) -> bool {
-        let Some(template) = message.get(2..4).map(|b| u16::from_le_bytes([b[0], b[1]])) else {
-            return false;
-        };
-        if !self.enabled(template) {
-            return false;
+    /// Record one message of `template_id`. If its table is enabled, `encode`
+    /// writes the message (header included) straight into persist's buffer
+    /// and returns its length; otherwise `encode` is never called.
+    ///
+    /// A full buffer drops the record and counts it in [`Persist::dropped`].
+    /// An error from `encode` is returned as is, and nothing is queued.
+    #[inline]
+    pub fn record<E>(
+        &self,
+        template_id: u16,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
+    ) -> Result<(), E> {
+        if !self.enabled(template_id) {
+            return Ok(());
         }
+        // ponytail: one mutex, held for the encode. Uncontended it is one
+        // atomic swap each way, and the writer only holds it to swap buffers.
+        // Many hot threads recording at once would want a buffer each.
         let mut pending = self
             .shared
             .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if pending.len() + 4 + message.len() > self.shared.max_pending {
+        let start = pending.len + 4;
+        let free = pending.data.len().saturating_sub(start);
+        if free < MAX_MESSAGE {
             drop(pending);
             self.shared.dropped.fetch_add(1, Ordering::Relaxed);
-            return false;
+            return Ok(());
         }
-        let len = u32::try_from(message.len()).unwrap_or(u32::MAX);
-        pending.extend_from_slice(&len.to_le_bytes());
-        pending.extend_from_slice(message);
-        true
+        let len = encode(&mut pending.data[start..])?;
+        debug_assert!(len <= free, "encode returned a length past its buffer");
+        let len = len.min(free);
+        let at = pending.len;
+        pending.data[at..start].copy_from_slice(&(len as u32).to_le_bytes());
+        pending.len = start + len;
+        debug_assert_eq!(
+            pending.data[start + 2..start + 4],
+            template_id.to_le_bytes(),
+            "recorded a message under another template id"
+        );
+        Ok(())
     }
 
     /// Records dropped so far because the buffer was full.
@@ -341,7 +398,7 @@ pub struct Writer {
     tables: Vec<TableState>,
     config_path: PathBuf,
     config_text: String,
-    spare: Vec<u8>,
+    spare: Frames,
     max_retained: usize,
     recheck: Duration,
     totals: BTreeMap<String, u64>,
@@ -480,14 +537,14 @@ impl Writer {
                 .unwrap_or_else(PoisonError::into_inner);
             std::mem::swap(&mut *pending, &mut self.spare);
         }
+        let frames = &self.spare.data[..self.spare.len];
         let mut at = 0;
-        while let Some(len) = self
-            .spare
+        while let Some(len) = frames
             .get(at..at + 4)
             .and_then(|b| b.try_into().ok())
             .map(u32::from_le_bytes)
         {
-            let msg = &self.spare[at + 4..at + 4 + len as usize];
+            let msg = &frames[at + 4..at + 4 + len as usize];
             at += 4 + len as usize;
             let template = u16::from_le_bytes([msg[2], msg[3]]);
             let Some(state) = self
@@ -511,7 +568,7 @@ impl Writer {
                 )),
             }
         }
-        self.spare.clear();
+        self.spare.len = 0;
     }
 
     fn flush(&mut self, report: &mut Report) {

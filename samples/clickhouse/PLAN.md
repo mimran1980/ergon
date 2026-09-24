@@ -19,7 +19,7 @@ machinery as possible:
 |---|---|---|
 | D1 | Rewrite rather than repair the 2026-09-23 sample (24k lines: Python recorder + PyO3 bridge, SQLite catalogs, Aeron Archive + Java driver, archive-agent, ingester, Prometheus, SeaweedFS, 14 scripts). | On 2026-09-24 its recorder pods had crash-looped 93 times (`aeron_archive_async_connect … connect timeout`). The goal asks for something small and easy to use; almost all of that code was transport and bookkeeping, not persistence. |
 | D2 | The recorder is Rust NautilusTrader 0.64 (`LiveNode` + one `DataActor`). Binance spot uses public JSON streams (`BinanceSpotMarketDataMode::Json`) and Bybit linear public streams. No API keys. | That was the stated point of using Nautilus: the app only hands over data. Verified keyless on 2026-09-24. |
-| D3 | Persistence is **in-process**: `record()` copies SBE bytes into a buffer, and a writer thread inserts `RowBinary` every second. No Aeron, no Archive, no separate ingester. | This is the smallest thing that exercises SBE-to-ClickHouse. **Cost:** no durable spool. If ClickHouse is down, records are held in memory up to 256 MiB, then dropped and counted. If replay or durability is ever needed, put an Aeron Archive between `record()` and the writer; the writer's input is already whole SBE messages. |
+| D3 | Persistence is **in-process**: `record()` has the app encode SBE straight into one of two preallocated buffers, and a writer thread inserts `RowBinary` every second. No Aeron, no Archive, no separate ingester. | This is the smallest thing that exercises SBE-to-ClickHouse. **Cost:** no durable spool. If ClickHouse is down, records are held in memory up to 256 MiB, then dropped and counted. If replay or durability is ever needed, put an Aeron Archive between `record()` and the writer; the writer's input is already whole SBE messages. |
 | D4 | Tables come from the **SBE schema IR at runtime** (`ergo_sbe::parse` + `resolve_schema`), not from codegen hooks or derives. | One place decides columns. A field added to `market.xml` is a column, with no second definition to keep in sync. |
 | D5 | Timestamps with `semanticType="UTCTimestamp"` become `DateTime64(9, 'UTC')`. | Grafana's `$__timeFilter` works directly. The old UInt64 nanosecond columns needed conversion macros that silently matched nothing when wrong. |
 | D6 | `tables.yaml` holds `kind: static\|dynamic` and `enabled`. Every listed table exists; `enabled` only gates writes. Static tables are created if missing and never altered: mismatches log an ERROR with the exact `ALTER` and skip only those columns. Type changes are never applied automatically for either kind. | This is the requested static/dynamic behaviour. Creating disabled tables up front keeps dashboards and notebooks from failing on "unknown table". |
@@ -95,6 +95,26 @@ The status above was re-verified rather than trusted:
   pins the ~380 Nautilus dependencies.
 - `just test` (2 unit + 10 integration), `just lint`, `just verify` and
   `scripts/check-test-policy.sh` all pass.
+
+## API pass (2026-09-24)
+
+- **`record(template_id, |buf| encode…)`:** one call per message. The app
+  encodes straight into persist's buffer, so it needs no buffer or helper of
+  its own. A disabled table never runs the closure; the toggle test asserts
+  that.
+- **Buffers:** two, allocated once at `max_buffered_bytes` and swapped by the
+  writer. Previously one `Vec` grew from 1 MiB to 256 MiB under the lock,
+  so a reallocation could copy hundreds of MB in the middle of a record.
+- **`just latency`**, with the writer inserting concurrently, 3 s warm-up
+  skipped:
+  - record: p50 42 ns, p99 250 ns, p99.9 7.8 µs;
+  - timing-only control: p50 41 ns, p99 42 ns.
+- **The tail is not persist.** A temporary counter showed the lock was never
+  contended in 450k records; the host was busy running the kind cluster
+  and two ClickHouse servers.
+- **Dead code removed:** big-endian decoding, handling for fields outside
+  the acting block (the writer always uses the same schema), an IR
+  fallback ergo-sbe never produces, and persist's unused public surface.
 
 ## Open / possible next steps
 

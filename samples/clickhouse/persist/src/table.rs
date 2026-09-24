@@ -33,12 +33,11 @@ pub struct Table {
     fields: Vec<Field>,
     groups: Vec<Group>,
     var_data: Vec<VarData>,
-    big_endian: bool,
 }
 
 /// A ClickHouse column derived from the schema.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Column {
+pub(crate) struct Column {
     /// Column name (`snake_case`, groups as `group.field`).
     pub name: String,
     /// ClickHouse type, spelled the way `system.columns` reports it.
@@ -82,16 +81,20 @@ struct VarData {
 
 /// A decode failure for one message; the row is skipped, never half-written.
 #[derive(Debug, PartialEq, Eq)]
-pub struct DecodeError(pub &'static str);
+pub(crate) struct DecodeError(pub &'static str);
 
 /// Build every table in a schema.
 pub fn tables_from_schema(xml: &str) -> Result<Vec<Table>, Error> {
     let mut ir = ergo_sbe::parse(xml).map_err(|e| Error::Schema(e.to_string()))?;
     ergo_sbe::resolve_schema(&mut ir, Some(xml)).map_err(|e| Error::Schema(e.to_string()))?;
-    let big_endian = ir.byte_order == ByteOrder::BigEndian;
+    if ir.byte_order == ByteOrder::BigEndian {
+        return Err(Error::Schema(
+            "only littleEndian schemas are supported".into(),
+        ));
+    }
     message_ranges(&ir)
         .into_iter()
-        .map(|tokens| Table::from_tokens(tokens, big_endian))
+        .map(Table::from_tokens)
         .collect()
 }
 
@@ -113,7 +116,7 @@ fn message_ranges(ir: &Ir) -> Vec<&[Token]> {
 }
 
 impl Table {
-    fn from_tokens(tokens: &[Token], big_endian: bool) -> Result<Self, Error> {
+    fn from_tokens(tokens: &[Token]) -> Result<Self, Error> {
         let msg = &tokens[0];
         let unsupported = |what: &str, name: &str| {
             Error::Schema(format!("{}.{name}: {what} is not supported", msg.name))
@@ -126,7 +129,6 @@ impl Table {
             fields: Vec::new(),
             groups: Vec::new(),
             var_data: Vec::new(),
-            big_endian,
         };
         let mut i = 1;
         while i < tokens.len() - 1 {
@@ -157,7 +159,7 @@ impl Table {
 
     /// Columns in wire order: fixed fields, group fields, var-data.
     #[must_use]
-    pub fn columns(&self) -> Vec<Column> {
+    pub(crate) fn columns(&self) -> Vec<Column> {
         let scalar = self.fields.iter().map(|f| Column {
             name: f.column.clone(),
             ch_type: f.ch_type(),
@@ -177,7 +179,7 @@ impl Table {
 
     /// Sort key: every var-data column (symbol, venue, …) then the first timestamp.
     #[must_use]
-    pub fn order_by(&self) -> Vec<String> {
+    pub(crate) fn order_by(&self) -> Vec<String> {
         let mut key: Vec<String> = self.var_data.iter().map(|v| v.column.clone()).collect();
         key.extend(self.first_timestamp());
         key
@@ -185,7 +187,7 @@ impl Table {
 
     /// First required timestamp column, used for partitioning.
     #[must_use]
-    pub fn first_timestamp(&self) -> Option<String> {
+    pub(crate) fn first_timestamp(&self) -> Option<String> {
         self.fields
             .iter()
             .find(|f| matches!(f.kind, Kind::Timestamp) && f.null.is_none())
@@ -194,7 +196,7 @@ impl Table {
 
     /// Append `msg` (header included) as one RowBinary row, writing only the
     /// columns whose `include` flag is set. On error `out` is left unchanged.
-    pub fn write_row(
+    pub(crate) fn write_row(
         &self,
         msg: &[u8],
         include: &[bool],
@@ -219,14 +221,14 @@ impl Table {
         let mut col = 0;
         for f in &self.fields {
             if include[col] {
-                f.write(msg, body, body + acting_block, self.big_endian, out)?;
+                f.write(msg, body, body + acting_block, out)?;
             }
             col += 1;
         }
         let mut pos = body + acting_block;
         for g in &self.groups {
-            let count = read_uint(msg, pos + g.count.0, g.count.1, self.big_endian)?;
-            let block = read_uint(msg, pos + g.block.0, g.block.1, self.big_endian)?;
+            let count = read_uint(msg, pos + g.count.0, g.count.1)?;
+            let block = read_uint(msg, pos + g.block.0, g.block.1)?;
             let count = usize::try_from(count).map_err(|_| DecodeError("group count"))?;
             let block = usize::try_from(block).map_err(|_| DecodeError("group block length"))?;
             let first = pos + g.header_len;
@@ -242,7 +244,7 @@ impl Table {
                     write_varint(count as u64, out);
                     for e in 0..count {
                         let entry = first + e * block;
-                        f.write(msg, entry, entry + block, self.big_endian, out)?;
+                        f.write(msg, entry, entry + block, out)?;
                     }
                 }
                 col += 1;
@@ -250,7 +252,7 @@ impl Table {
             pos = end;
         }
         for v in &self.var_data {
-            let len = read_uint(msg, pos + v.length.0, v.length.1, self.big_endian)?;
+            let len = read_uint(msg, pos + v.length.0, v.length.1)?;
             let len = usize::try_from(len).map_err(|_| DecodeError("var-data length"))?;
             let start = pos + v.header_len;
             let data = msg
@@ -281,14 +283,12 @@ impl Field {
         }
     }
 
-    /// Write this field from the block `[start, end)`. A field past the
-    /// acting block (an older writer) is written as NULL / default.
+    /// Write this field from the block `[start, end)`.
     fn write(
         &self,
         msg: &[u8],
         start: usize,
         end: usize,
-        big: bool,
         out: &mut Vec<u8>,
     ) -> Result<(), DecodeError> {
         let at = start + self.offset;
@@ -296,53 +296,41 @@ impl Field {
             Kind::Chars(n) => n,
             _ => self.prim.size(),
         };
-        let raw = if at + width <= end {
-            Some(
-                msg.get(at..at + width)
-                    .ok_or(DecodeError("field past end of message"))?,
-            )
-        } else {
-            None
-        };
-        if let Kind::Enum(values) = &self.kind {
-            let name = match raw {
-                Some(r) => {
-                    let v = uint(r, big);
-                    values
-                        .iter()
-                        .find(|(k, _)| *k == v)
-                        .map_or_else(|| v.to_string(), |(_, n)| n.clone())
-                }
-                None => String::new(),
-            };
-            write_string(name.as_bytes(), out);
-            return Ok(());
+        // The writer encodes with the same schema, so every field is inside
+        // its block; anything else is a message from another schema version.
+        if at + width > end {
+            return Err(DecodeError("field outside its block"));
         }
-        if let Kind::Chars(_) = self.kind {
-            let text = raw.unwrap_or_default();
-            let cut = text.iter().position(|&b| b == 0).unwrap_or(text.len());
-            write_string(&text[..cut], out);
-            return Ok(());
-        }
-        if let Some(null) = self.null {
-            let is_null = raw.is_none_or(|r| self.is_null(r, null, big));
-            out.push(u8::from(is_null));
-            if is_null {
-                return Ok(());
+        let raw = msg
+            .get(at..at + width)
+            .ok_or(DecodeError("field past end of message"))?;
+        match &self.kind {
+            Kind::Enum(values) => match values.iter().find(|(k, _)| *k == uint(raw)) {
+                Some((_, name)) => write_string(name.as_bytes(), out),
+                None => write_string(uint(raw).to_string().as_bytes(), out),
+            },
+            Kind::Chars(_) => {
+                let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+                write_string(&raw[..cut], out);
             }
-        }
-        match raw {
-            Some(r) if big => out.extend(r.iter().rev()),
-            Some(r) => out.extend_from_slice(r),
-            None => out.extend(std::iter::repeat_n(0, width)),
+            Kind::Number | Kind::Timestamp => {
+                if let Some(null) = self.null {
+                    let is_null = self.is_null(raw, null);
+                    out.push(u8::from(is_null));
+                    if is_null {
+                        return Ok(());
+                    }
+                }
+                out.extend_from_slice(raw);
+            }
         }
         Ok(())
     }
 
-    fn is_null(&self, raw: &[u8], null: u64, big: bool) -> bool {
+    fn is_null(&self, raw: &[u8], null: u64) -> bool {
         match self.prim {
-            PrimitiveType::Float => f32::from_bits(uint(raw, big) as u32).is_nan(),
-            PrimitiveType::Double => f64::from_bits(uint(raw, big)).is_nan(),
+            PrimitiveType::Float => f32::from_bits(uint(raw) as u32).is_nan(),
+            PrimitiveType::Double => f64::from_bits(uint(raw)).is_nan(),
             _ => {
                 let bits = raw.len() * 8;
                 let mask = if bits == 64 {
@@ -350,7 +338,7 @@ impl Field {
                 } else {
                     (1 << bits) - 1
                 };
-                uint(raw, big) == null & mask
+                uint(raw) == null & mask
             }
         }
     }
@@ -429,8 +417,6 @@ fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
                     .filter(|d| d.signal == Signal::BeginField)
                     .collect();
             }
-            // Some IRs list the dimension members directly.
-            Signal::BeginField if t.id.is_none() && fields.is_empty() => dimension.push(t),
             Signal::BeginField => {
                 if let Some(f) = field(&tokens[i..=end], "", message)? {
                     fields.push(f);
@@ -534,19 +520,17 @@ fn bytes<const N: usize>(msg: &[u8], at: usize) -> Result<[u8; N], DecodeError> 
         .ok_or(DecodeError("message shorter than its header"))
 }
 
-fn read_uint(msg: &[u8], at: usize, prim: PrimitiveType, big: bool) -> Result<u64, DecodeError> {
+fn read_uint(msg: &[u8], at: usize, prim: PrimitiveType) -> Result<u64, DecodeError> {
     msg.get(at..at + prim.size())
-        .map(|r| uint(r, big))
+        .map(uint)
         .ok_or(DecodeError("dimension past end of message"))
 }
 
-fn uint(raw: &[u8], big: bool) -> u64 {
-    let mut v = 0u64;
-    for (i, &b) in raw.iter().enumerate() {
-        let shift = if big { (raw.len() - 1 - i) * 8 } else { i * 8 };
-        v |= u64::from(b) << shift;
-    }
-    v
+/// Little-endian unsigned value of up to 8 bytes.
+fn uint(raw: &[u8]) -> u64 {
+    let mut le = [0u8; 8];
+    le[..raw.len()].copy_from_slice(raw);
+    u64::from_le_bytes(le)
 }
 
 fn write_varint(mut v: u64, out: &mut Vec<u8>) {
@@ -564,7 +548,7 @@ fn write_string(data: &[u8], out: &mut Vec<u8>) {
 
 /// `bidPrice` -> `bid_price`, `BookSnapshot` -> `book_snapshot`.
 #[must_use]
-pub fn snake_case(name: &str) -> String {
+pub(crate) fn snake_case(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 4);
     for (i, c) in name.chars().enumerate() {
         if c.is_ascii_uppercase() {

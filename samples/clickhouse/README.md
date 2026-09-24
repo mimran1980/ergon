@@ -115,9 +115,33 @@ by the var-data columns (`symbol`, `venue`) then that timestamp. Every table
 also gets `inserted_at DEFAULT now64(3)`. Composites, sets, non-`char` arrays
 and nested groups are rejected when the schema loads.
 
-On the hot path, `persist.enabled(template)` is one atomic load, so a
-disabled table costs nothing and is never encoded. `persist.record(bytes)`
-copies the encoded message into a shared buffer. Every second the writer thread:
+### The API
+
+```rust
+let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
+
+// On the hot path: encode straight into persist's buffer.
+persist.record(TradeEncoder::TEMPLATE_ID, |buf| {
+    Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
+        .fixed(&fields)
+        .symbol(b"BTCUSDT")?
+        .encoded_length_with_header())
+})?;
+
+writer.stop(); // on shutdown: flushes what is queued
+```
+
+`record` never allocates, copies or waits on ClickHouse:
+
+- **Disabled table:** one atomic load; the closure never runs.
+- **Enabled table:** an uncontended lock plus the encode, into a buffer
+  allocated once at start-up.
+
+`just latency` measures it on the calling thread while the writer inserts
+concurrently. On an M-series Mac under load: p50 42 ns including the encode,
+which is also the timer's floor, and p99 250 ns.
+
+Every second the writer thread:
 
 1. re-reads `tables.yaml`;
 2. creates or compares the tables listed there;
@@ -126,7 +150,7 @@ copies the encoded message into a shared buffer. Every second the writer thread:
    one insert per table per second; more often just makes parts to merge).
 
 If ClickHouse is unreachable, records stay queued (256 MiB), then are dropped
-and counted. There is no disk spool: see [PLAN.md](PLAN.md) for what was left
+and counted in `persist.dropped()`. There is no disk spool: see [PLAN.md](PLAN.md) for what was left
 out and why.
 
 ## Layout
@@ -147,6 +171,7 @@ scripts/verify.sh       end-to-end check of the running lab
 ```sh
 just test     # unit + integration tests; starts a throwaway ClickHouse on :18123
 just lint     # clippy -D warnings + rustfmt
+just latency  # persist.record() timing on the app thread, beside a control
 just verify   # against the running lab: UI, live data, every Grafana panel,
               # the notebook, and a live on/off toggle of book_snapshot
 ```

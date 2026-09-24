@@ -18,11 +18,11 @@ pub struct ClickHouse {
 
 /// Column `inserted_at DEFAULT now64(3)`: added to every table persistence
 /// creates; never written by the recorder.
-pub const INSERTED_AT: &str = "inserted_at";
+pub(crate) const INSERTED_AT: &str = "inserted_at";
 
 /// Outcome of comparing a table with the schema.
 #[derive(Debug, Default)]
-pub struct Sync {
+pub(crate) struct Sync {
     /// Per schema column: `true` when it is written on insert.
     pub include: Vec<bool>,
     /// DDL persistence ran (CREATE / ALTER ADD COLUMN).
@@ -88,7 +88,7 @@ impl ClickHouse {
     }
 
     /// `(name, type)` of every column, or `None` when the table does not exist.
-    pub fn describe(&self, table: &str) -> Result<Option<Vec<(String, String)>>, Error> {
+    fn describe(&self, table: &str) -> Result<Option<Vec<(String, String)>>, Error> {
         let sql = format!(
             "SELECT name, type FROM system.columns WHERE database = '{}' AND table = '{}' ORDER BY position FORMAT TabSeparatedRaw",
             self.database.replace('\'', "\\'"),
@@ -112,7 +112,7 @@ impl ClickHouse {
     ///   `ALTER … MODIFY COLUMN` to run (both kinds; changing a type can
     ///   rewrite data, so persistence never does it by itself).
     /// * column no longer in the schema: left alone; new rows get its default.
-    pub fn sync(&self, table: &Table, kind: TableKind) -> Result<Sync, Error> {
+    pub(crate) fn sync(&self, table: &Table, kind: TableKind) -> Result<Sync, Error> {
         let wanted = table.columns();
         let Some(existing) = self.describe(&table.name)? else {
             let ddl = self.create_sql(table);
