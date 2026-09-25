@@ -834,3 +834,74 @@ fn decoder_iterator_surface_matrix() -> Result<(), Box<dyn std::error::Error>> {
     compile_and_run_with_deps("cm_iterators", &src, &iterator_surface_body(true), "");
     Ok(())
 }
+
+/// Generated code must not emit Markdown block doc comments.
+///
+/// `prettyplease` renders a single `#[doc]` carrying a blank line as a
+/// `/** … */` block whose continuation lines take the item's indentation.
+/// Markdown then reads a 4-space-indented paragraph after a blank line as an
+/// **indented code block**, so a consumer that checks the generated module
+/// into `src/` gets a rustdoc-collected doctest of prose that cannot compile.
+/// Emitting one `#[doc]` per line (`runtime::doc_lines_tokens`) renders as
+/// `///`, which cannot form an indented block.
+///
+/// The module still *compiles*, so every `compile_and_run*` case stays green
+/// while `cargo test --doc` fails. This test therefore runs the generated
+/// modules' doctests, proves that runner fails on a block doc comment, and
+/// keeps the source scan to name the offending line.
+///
+/// The schema must contain a message with **no groups and no var-data** —
+/// that is the branch carrying the two-paragraph doc. A schema whose messages
+/// all have tails renders the single-paragraph form and never exercises it.
+#[test]
+fn generated_code_has_no_block_doc_comments() -> Result<(), Box<dyn std::error::Error>> {
+    let plain = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/bool-semantic-schema.xml"
+    ));
+    let modules = [
+        (
+            "cm_docs_fixed",
+            generate_domain_with(&plain, "cm_docs_fixed", |c| c).1,
+        ),
+        (
+            "cm_docs_matrix",
+            generate_domain_with(&matrix_schema(), "cm_docs_matrix", with_matrix_domain_types).1,
+        ),
+    ];
+    let mut offenders = Vec::new();
+    let mut fixed_block_messages = 0usize;
+    for (name, src) in &modules {
+        fixed_block_messages += src
+            .matches("This message is fixed-block, so there is no memoized lane")
+            .count();
+        for (i, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("/**") {
+                offenders.push(format!("  {name}:{}: {}", i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        fixed_block_messages > 0,
+        "no fixed-block message reached the two-paragraph doc branch; this \
+         check would pass vacuously"
+    );
+    assert!(
+        offenders.is_empty(),
+        "generated code contains a block doc comment, which rustdoc may harvest \
+         as a doctest of prose:\n{}",
+        offenders.join("\n")
+    );
+
+    let as_refs: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, s.as_str())).collect();
+    let domain_impls = format!("const _: () = {{ use cm_docs_matrix::*; {DOMAIN_IMPLS} }};");
+    common::run_doctests("cm_docs", &as_refs, &domain_impls, "rust_decimal = \"1\"\n")
+        .map_err(|out| format!("generated modules' doctests fail:\n{out}"))?;
+    let prose = "/**\nFirst paragraph.\n\n    indented prose that rustdoc reads as code\n*/\npub struct Prose;\n";
+    assert!(
+        common::run_doctests("cm_docs_negative", &[("prose", prose)], "", "").is_err(),
+        "the doctest runner must fail on a block doc comment with indented prose, \
+         or the check above proves nothing"
+    );
+    Ok(())
+}

@@ -222,7 +222,7 @@ pub(crate) fn generate_converter_impls(
                          yourself (starting point, copy-paste and adjust):\n\n\
                          ```text\n{snippet}```"
                     );
-                    quote::quote! { #[doc = #doc] }
+                    super::runtime::doc_lines_tokens(&doc)
                 })
                 .unwrap_or_default();
             let DomainBodies {

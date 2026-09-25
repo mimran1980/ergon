@@ -267,9 +267,9 @@ pub(crate) fn generate_message_decoder(
                  `*EncodedLength` builder when the message has groups or var-data; \
                  a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
                  constant is a true fixed upper bound you intend to use.";
-            let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
+            let max_doc = super::runtime::doc_lines_tokens(max_doc);
             quote::quote! {
-                #[doc = #max_doc_lit]
+                #max_doc
                 pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             }
@@ -1912,7 +1912,7 @@ pub(crate) fn vardata_text_helpers(
     } else {
         "The wire bytes must be valid UTF-8."
     };
-    let safety_lit = syn::LitStr::new(safety_note, span);
+    let safety_note = super::runtime::doc_lines_tokens(safety_note);
     let unchecked = str_unchecked.map(|str_unchecked| {
         quote::quote! {
             /// View this text var-data field as `&str` without character encoding
@@ -1920,7 +1920,7 @@ pub(crate) fn vardata_text_helpers(
             ///
             /// # Safety
             ///
-            #[doc = #safety_lit]
+            #safety_note
             #[inline]
             pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_ident()?;

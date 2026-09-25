@@ -705,6 +705,7 @@ pub(crate) fn generate_owner_consuming_stages(
                  so the rest of the message cannot be dropped by a loop.",
                 iter = iter_type
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             ts.extend(quote::quote! {
                 /// Fixed-stride group iterator — this type *is* the decoder
                 /// stage for the group. Call [`Self::finish`] or a following
@@ -746,7 +747,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
                 impl<'a> core::iter::FusedIterator for &mut #iter_type<'a> {}
                 impl<'a> #current_stage<'a> {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_ident(self) -> Result<#iter_type<'a>, sbe_rt::DecodeError> {
                         let group_start = #se;
@@ -868,16 +869,18 @@ pub(crate) fn generate_owner_consuming_stages(
                 " Skip any unread `{}` entries and consume `{}`.",
                 tg.accessor_snake, ng.accessor_snake
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             let skip_doc = format!(
                 " Skip any unread `{}` entries and skip `{}`.",
                 tg.accessor_snake, ng.accessor_snake
             );
+            let skip_doc = super::runtime::doc_lines_tokens(&skip_doc);
             if ng.entries_have_tails {
                 let next_entry = syn::Ident::new(&ng.entry_decoder_ident, span);
                 let next_complete =
                     syn::Ident::new(&format!("{}Complete", ng.entry_decoder_ident), span);
                 next_tail.extend(quote::quote! {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_next<E, F>(self, visit: F) -> Result<#after_next<'a>, E>
                     where
@@ -890,7 +893,7 @@ pub(crate) fn generate_owner_consuming_stages(
             } else {
                 let next_iter = quote::format_ident!("{}Iter", ng.group_decoder_ident);
                 next_tail.extend(quote::quote! {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_next(self) -> Result<#next_iter<'a>, sbe_rt::DecodeError> {
                         self.finish()?.#into_next()
@@ -898,7 +901,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 });
             }
             next_tail.extend(quote::quote! {
-                #[doc = #skip_doc]
+                #skip_doc
                 #[inline]
                 pub fn #skip_next(self) -> Result<#after_next<'a>, sbe_rt::DecodeError> {
                     self.finish()?.#skip_next()
@@ -911,8 +914,9 @@ pub(crate) fn generate_owner_consuming_stages(
                 " Skip any unread `{}` entries and read `{}`.",
                 tg.accessor_snake, vd.accessor_snake
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             next_tail.extend(quote::quote! {
-                #[doc = #into_doc]
+                #into_doc
                 #[inline]
                 pub fn #into_vd(self) -> Result<(&'a [u8], #after_vd<'a>), sbe_rt::DecodeError> {
                     self.finish()?.#into_vd()
@@ -924,8 +928,9 @@ pub(crate) fn generate_owner_consuming_stages(
                     " Skip any unread `{}` entries and read `{}` as `&str`.",
                     tg.accessor_snake, vd.accessor_snake
                 );
+                let as_str_doc = super::runtime::doc_lines_tokens(&as_str_doc);
                 next_tail.extend(quote::quote! {
-                    #[doc = #as_str_doc]
+                    #as_str_doc
                     #[inline]
                     pub fn #as_str(self) -> Result<(&'a str, #after_vd<'a>), sbe_rt::DecodeError> {
                         self.finish()?.#as_str()

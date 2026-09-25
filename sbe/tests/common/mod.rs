@@ -346,6 +346,53 @@ pub fn compile_fails_with_diagnostics(
     }
 }
 
+/// Build `modules` into a library crate and run `cargo test --doc` on it.
+///
+/// `root_items` is appended to `lib.rs` (e.g. trait impls a module needs).
+/// Returns the combined output on failure, so a caller can assert either way.
+pub fn run_doctests(
+    crate_name: &str,
+    modules: &[(&str, &str)],
+    root_items: &str,
+    deps: &str,
+) -> Result<(), String> {
+    let dir = scratch_dir("ergo_doctest", crate_name);
+    let _ = fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    fs::create_dir_all(&src).map_err(|e| e.to_string())?;
+    let mut lib = String::from("#![allow(dead_code, unused_imports, unused_variables)]\n");
+    for (name, source) in modules {
+        fs::write(src.join(format!("{name}.rs")), source).map_err(|e| e.to_string())?;
+        lib.push_str(&format!("pub mod {name};\n"));
+    }
+    lib.push_str(root_items);
+    fs::write(src.join("lib.rs"), lib).map_err(|e| e.to_string())?;
+    let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cargo = format!(
+        "[package]\nname=\"{crate_name}_doctest\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n{deps}",
+        sbe_path.display(),
+    );
+    fs::write(dir.join("Cargo.toml"), cargo).map_err(|e| e.to_string())?;
+    let out = scratch_cargo()
+        .args(["test", "--doc"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let _ = fs::remove_dir_all(&dir);
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
 /// Like `compile_and_run` but adds the given feature to `[features]` in the
 /// temp crate's `Cargo.toml` and passes `--features <feature>` at build time.
 pub fn compile_and_run_with_feature(module_name: &str, source: &str, code: &str, feature: &str) {

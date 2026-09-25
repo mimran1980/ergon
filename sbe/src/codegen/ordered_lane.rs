@@ -85,9 +85,10 @@ pub(crate) fn generate_ordered_lane(
     } else {
         "Walk this entry's own tails in wire order with one callback each. `done()` returns the entry completion the parent's visit closure must hand back, so an entry can be walked in the ordered spelling without breaking the parent's one-pass traversal."
     };
+    let ordered_doc = super::runtime::doc_lines_tokens(ordered_doc);
     ts.extend(quote::quote! {
         impl<'a> #initial_ident<'a> {
-            #[doc = #ordered_doc]
+            #ordered_doc
             ///
             /// A façade over the staged `into_*` / `skip_*` stages: same single
             /// traversal, same compile-time ordering, one uniform spelling.
@@ -252,6 +253,7 @@ pub(crate) fn generate_ordered_lane(
     } else {
         "The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete."
     };
+    let done_doc = super::runtime::doc_lines_tokens(done_doc);
     let extent = is_message.then(|| {
         quote::quote! {
             /// Body bytes (excluding the message header).
@@ -291,7 +293,7 @@ pub(crate) fn generate_ordered_lane(
     ts.extend(quote::quote! {
         impl<'a> #last_ty {
             #last_acting
-            #[doc = #done_doc]
+            #done_doc
             #[inline]
             pub fn done(self) -> #last<'a> {
                 self.inner
@@ -409,15 +411,15 @@ fn emit_group_methods(
     let entry_ident = syn::Ident::new(&tg.entry_decoder_ident, span);
     let doc = format!(
         " Visit every `{}` entry in wire order, then advance to the next tail.\n\n\
-         The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying\n\
-         its index, the wire-declared count, and the acting block length.\n\
-         Empty groups invoke it zero times.",
+         The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, \
+         the wire-declared count and the acting block length. Empty groups invoke it zero times.",
         tg.accessor_snake
     );
+    let doc = super::runtime::doc_lines_tokens(&doc);
     if tg.entries_have_tails {
         let complete_ident = syn::Ident::new(&format!("{}Complete", tg.entry_decoder_ident), span);
         quote::quote! {
-            #[doc = #doc]
+            #doc
             ///
             /// These entries carry tails of their own, so the callback
             /// returns the entry's completion — that is where the next
@@ -435,7 +437,7 @@ fn emit_group_methods(
             {
                 self.#try_method(f)
             }
-            #[doc = #doc]
+            #doc
             #[inline]
             pub fn #try_method<E, F, R>(self, mut f: F) -> Result<#next_ty, E>
             where
@@ -454,7 +456,7 @@ fn emit_group_methods(
         }
     } else {
         quote::quote! {
-            #[doc = #doc]
+            #doc
             ///
             /// These entries have a fixed stride, so the callback returns
             /// `()` — there is no tail to complete.
@@ -465,7 +467,7 @@ fn emit_group_methods(
             {
                 self.#try_method(f)
             }
-            #[doc = #doc]
+            #doc
             #[inline]
             pub fn #try_method<E, F>(self, mut f: F) -> Result<#next_ty, E>
             where
@@ -500,8 +502,9 @@ fn emit_vardata_methods(
         " Read `{}` as bytes, then advance to the next tail.",
         vd.accessor_snake
     );
+    let doc = super::runtime::doc_lines_tokens(&doc);
     let mut ts = quote::quote! {
-        #[doc = #doc]
+        #doc
         #[inline]
         pub fn #method<F>(self, f: F) -> Result<#next_ty, sbe_rt::DecodeError>
         where
@@ -509,7 +512,7 @@ fn emit_vardata_methods(
         {
             self.#try_method(f)
         }
-        #[doc = #doc]
+        #doc
         #[inline]
         pub fn #try_method<E, F>(self, f: F) -> Result<#next_ty, E>
         where
@@ -525,14 +528,13 @@ fn emit_vardata_methods(
         let str_method = syn::Ident::new(&format!("{}_as_str", vd.accessor_snake), span);
         let try_str = syn::Ident::new(&format!("try_{}_as_str", vd.accessor_snake), span);
         let into_str = syn::Ident::new(&format!("into_{}_as_str", vd.accessor_snake), span);
-        let str_doc = format!(
+        let str_doc = super::runtime::doc_lines_tokens(&format!(
             " Read `{}` as `&str`, then advance to the next tail.\n\n\
-             Validation covers this field only — there is no whole-message\n\
-             text pass. Invalid text is an error, never a sentinel.",
+             Only this field is validated; invalid text is an error, never a sentinel.",
             vd.accessor_snake
-        );
+        ));
         ts.extend(quote::quote! {
-            #[doc = #str_doc]
+            #str_doc
             #[inline]
             pub fn #str_method<F>(self, f: F) -> Result<#next_ty, sbe_rt::DecodeError>
             where
@@ -540,7 +542,7 @@ fn emit_vardata_methods(
             {
                 self.#try_str(f)
             }
-            #[doc = #str_doc]
+            #str_doc
             #[inline]
             pub fn #try_str<E, F>(self, f: F) -> Result<#next_ty, E>
             where

@@ -4371,10 +4371,9 @@ impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoder<'a>> {
         f(bytes)?;
         Ok(sbe_rt::Ordered { inner })
     }
-    /** Read `usage_description` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `usage_description` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn usage_description_as_str<F>(
         self,
@@ -4388,10 +4387,9 @@ text pass. Invalid text is an error, never a sentinel.*/
     {
         self.try_usage_description_as_str(f)
     }
-    /** Read `usage_description` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `usage_description` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn try_usage_description_as_str<E, F>(
         self,
@@ -5897,11 +5895,9 @@ impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoder<'a>> {
     pub fn acceleration_count(&self) -> Result<usize, sbe_rt::DecodeError> {
         self.inner.acceleration_count()
     }
-    /** Visit every `acceleration` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `acceleration` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     ///
     /// These entries have a fixed stride, so the callback returns
     /// `()` — there is no tail to complete.
@@ -5921,11 +5917,9 @@ Empty groups invoke it zero times.*/
     {
         self.try_acceleration(f)
     }
-    /** Visit every `acceleration` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `acceleration` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     #[inline]
     pub fn try_acceleration<E, F>(
         self,
@@ -7112,11 +7106,9 @@ impl<'a> sbe_rt::Ordered<CarDecoder<'a>> {
     pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
         self.inner.fuel_figures_count()
     }
-    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
@@ -7137,11 +7129,9 @@ Empty groups invoke it zero times.*/
     {
         self.try_fuel_figures(f)
     }
-    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     #[inline]
     pub fn try_fuel_figures<E, F, R>(
         self,
@@ -7179,11 +7169,9 @@ impl<'a> sbe_rt::Ordered<sbe_rt::OrderedFixed<CarDecoder<'a>>> {
     pub fn fuel_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
         self.inner.inner.fuel_figures_count()
     }
-    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
@@ -7204,11 +7192,9 @@ Empty groups invoke it zero times.*/
     {
         self.try_fuel_figures(f)
     }
-    /** Visit every `fuel_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `fuel_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     #[inline]
     pub fn try_fuel_figures<E, F, R>(
         self,
@@ -7247,11 +7233,9 @@ impl<'a> sbe_rt::Ordered<CarDecoderAfterFuelFigures<'a>> {
     pub fn performance_figures_count(&self) -> Result<usize, sbe_rt::DecodeError> {
         self.inner.performance_figures_count()
     }
-    /** Visit every `performance_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `performance_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     ///
     /// These entries carry tails of their own, so the callback
     /// returns the entry's completion — that is where the next
@@ -7275,11 +7259,9 @@ Empty groups invoke it zero times.*/
     {
         self.try_performance_figures(f)
     }
-    /** Visit every `performance_figures` entry in wire order, then advance to the next tail.
-
-The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying
-its index, the wire-declared count, and the acting block length.
-Empty groups invoke it zero times.*/
+    /// Visit every `performance_figures` entry in wire order, then advance to the next tail.
+    ///
+    /// The callback receives the entry and an [`sbe_rt::EntryInfo`] carrying its index, the wire-declared count and the acting block length. Empty groups invoke it zero times.
     #[inline]
     pub fn try_performance_figures<E, F, R>(
         self,
@@ -7342,10 +7324,9 @@ impl<'a> sbe_rt::Ordered<CarDecoderAfterPerformanceFigures<'a>> {
         f(bytes)?;
         Ok(sbe_rt::Ordered { inner })
     }
-    /** Read `manufacturer` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `manufacturer` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn manufacturer_as_str<F>(
         self,
@@ -7356,10 +7337,9 @@ text pass. Invalid text is an error, never a sentinel.*/
     {
         self.try_manufacturer_as_str(f)
     }
-    /** Read `manufacturer` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `manufacturer` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn try_manufacturer_as_str<E, F>(
         self,
@@ -7418,10 +7398,9 @@ impl<'a> sbe_rt::Ordered<CarDecoderAfterManufacturer<'a>> {
         f(bytes)?;
         Ok(sbe_rt::Ordered { inner })
     }
-    /** Read `model` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `model` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn model_as_str<F>(
         self,
@@ -7432,10 +7411,9 @@ text pass. Invalid text is an error, never a sentinel.*/
     {
         self.try_model_as_str(f)
     }
-    /** Read `model` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `model` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn try_model_as_str<E, F>(
         self,
@@ -7494,10 +7472,9 @@ impl<'a> sbe_rt::Ordered<CarDecoderAfterModel<'a>> {
         f(bytes)?;
         Ok(sbe_rt::Ordered { inner })
     }
-    /** Read `activation_code` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `activation_code` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn activation_code_as_str<F>(
         self,
@@ -7508,10 +7485,9 @@ text pass. Invalid text is an error, never a sentinel.*/
     {
         self.try_activation_code_as_str(f)
     }
-    /** Read `activation_code` as `&str`, then advance to the next tail.
-
-Validation covers this field only — there is no whole-message
-text pass. Invalid text is an error, never a sentinel.*/
+    /// Read `activation_code` as `&str`, then advance to the next tail.
+    ///
+    /// Only this field is validated; invalid text is an error, never a sentinel.
     #[inline]
     pub fn try_activation_code_as_str<E, F>(
         self,

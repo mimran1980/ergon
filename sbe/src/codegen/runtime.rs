@@ -2533,8 +2533,9 @@ pub(crate) fn generate_any_message(
                     "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized lane to take: every field is random-access off the block and this decoder reads them all."
                 )
             };
+            let doc_base = doc_lines_tokens(&doc_base);
             lane_accessors.extend(quote::quote! {
-                #[doc = #doc_base]
+                #doc_base
                 #[inline]
                 #[must_use]
                 pub fn #into_base(self) -> Option<#decoder<'a>> {
@@ -2550,8 +2551,9 @@ pub(crate) fn generate_any_message(
                 let doc_memo = format!(
                     "Take the `{pascal}` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template."
                 );
+                let doc_memo = doc_lines_tokens(&doc_memo);
                 lane_accessors.extend(quote::quote! {
-                    #[doc = #doc_memo]
+                    #doc_memo
                     #[inline]
                     #[must_use]
                     pub fn #into_memo(self) -> Option<#memo<'a>> {
@@ -3138,11 +3140,7 @@ fn escape_doc_html(s: &str) -> String {
 
 /// `#[doc = "..."]` token for a schema description (doctest-safe).
 pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
-    let lit = syn::LitStr::new(
-        &sanitize_description_for_doc(desc),
-        proc_macro2::Span::call_site(),
-    );
-    quote::quote! { #[doc = #lit] }
+    doc_lines_tokens(&sanitize_description_for_doc(desc))
 }
 
 /// One `#[doc]` attribute per line of `text`.
@@ -3153,10 +3151,20 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
 /// an indented **code block**, so rustdoc then tries to compile the prose as a
 /// doctest and fails. Emitting one attribute per line renders as `///`, which
 /// cannot form an indented code block.
+///
+/// When the first line starts with a space (`/// Text`), continuation lines
+/// get one too, so every rendered line reads alike; rustdoc strips the common
+/// indent either way.
 pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
+    let pad = text.starts_with(' ');
     let mut out = proc_macro2::TokenStream::new();
-    for line in text.split('\n') {
-        let lit = syn::LitStr::new(line, proc_macro2::Span::call_site());
+    for (i, line) in text.split('\n').enumerate() {
+        let line = if pad && i > 0 && !line.is_empty() && !line.starts_with(' ') {
+            std::borrow::Cow::Owned(format!(" {line}"))
+        } else {
+            std::borrow::Cow::Borrowed(line)
+        };
+        let lit = syn::LitStr::new(&line, proc_macro2::Span::call_site());
         out.extend(quote::quote! { #[doc = #lit] });
     }
     out
