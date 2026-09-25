@@ -3441,6 +3441,114 @@ fn constant_exponent_decimal_domain_type_rescales_exactly() -> Result<(), Box<dy
     Ok(())
 }
 
+/// The built-in `chrono::DateTime<Utc>` conversion works in nanoseconds, so a
+/// `UTCTimestamp` field with a coarser `timeUnit` must be rescaled around it.
+/// It once was not: a seconds field was written in nanoseconds. Covers every
+/// unit, the default (nanoseconds), an optional field, a group entry, a nested
+/// group entry, the domain DTO built from the decoder, and a value more
+/// precise than its field, which is an error, never truncated.
+#[test]
+fn chrono_timestamp_domain_type_honours_time_unit() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/timestamp-units.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "ts_units_domain", |c| {
+        c.with_domain_objects(ergo_sbe::DomainVarData::Bytes)
+            .with_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("UTCTimestamp"),
+                "chrono::DateTime<chrono::Utc>",
+            )
+    });
+    compile_and_run_with_deps(
+        "ts_units_domain",
+        &src,
+        r#"
+        use chrono::{DateTime, Utc};
+
+        let secs = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let millis = DateTime::from_timestamp(1_700_000_000, 123_000_000).unwrap();
+        let micros = DateTime::from_timestamp(1_700_000_000, 123_456_000).unwrap();
+        let nanos = DateTime::from_timestamp(1_700_000_000, 123_456_789).unwrap();
+
+        let mut buf = [0u8; 256];
+        // `try_*` setters return `&mut Self`; `fills` consumes the encoder.
+        let mut enc = StampsEncoder::wrap_and_apply_header(&mut buf, 0).fixed(&StampsFixedFields {
+            ts_sec: 0, ts_ms: 0, ts_us: 0, ts_ns: 0, ts_default: 0, opt_ms: None,
+        });
+        enc.try_ts_sec(secs)?
+            .try_ts_ms(millis)?
+            .try_ts_us(micros)?
+            .try_ts_ns(nanos)?
+            .try_ts_default(nanos)?
+            .try_opt_ms(millis)?;
+        let len = enc
+            .fills(1, |g| {
+                g.add(|mut e| {
+                    e.try_at(micros).map_err(|_| {
+                        sbe_rt::EncodeError::DomainConversionFailed { field: "at", reason: "conversion" }
+                    })?;
+                    // The last tail closes the entry, so its result is the entry's.
+                    e.legs(1, |lg| {
+                        lg.add(|l| {
+                            l.try_when(millis).map_err(|_| {
+                                sbe_rt::EncodeError::DomainConversionFailed { field: "when", reason: "conversion" }
+                            })?;
+                            Ok(())
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+
+        let dec = StampsDecoder::try_from(&buf[..len])?;
+        // The wire counts each field's own unit...
+        assert_eq!(dec.ts_sec_wire(), 1_700_000_000);
+        assert_eq!(dec.ts_ms_wire(), 1_700_000_000_123);
+        assert_eq!(dec.ts_us_wire(), 1_700_000_000_123_456);
+        assert_eq!(dec.ts_ns_wire(), 1_700_000_000_123_456_789);
+        assert_eq!(dec.ts_default_wire(), 1_700_000_000_123_456_789);
+        assert_eq!(dec.opt_ms_wire(), Some(1_700_000_000_123));
+        // ...and every field decodes back to the same instant.
+        assert_eq!(dec.try_ts_sec()?, secs);
+        assert_eq!(dec.try_ts_ms()?, millis);
+        assert_eq!(dec.try_ts_us()?, micros);
+        assert_eq!(dec.try_ts_ns()?, nanos);
+        assert_eq!(dec.try_ts_default()?, nanos);
+        assert_eq!(dec.try_opt_ms()?, Some(millis));
+        for fill in dec.fills()? {
+            let fill = fill?;
+            assert_eq!(fill.at_wire(), 1_700_000_000_123_456);
+            assert_eq!(fill.try_at()?, micros);
+            for leg in fill.legs()? {
+                assert_eq!(leg.when_wire(), 1_700_000_000_123);
+                assert_eq!(leg.try_when()?, millis);
+            }
+        }
+        // The domain DTO decodes through the same accessors.
+        let dto = StampsDomain::try_from_decoder(StampsDecoder::try_from(&buf[..len])?)?;
+        assert_eq!((dto.ts_sec, dto.ts_ms, dto.ts_us), (secs, millis, micros));
+        // An optional primitive keeps its wire type in the DTO: raw milliseconds.
+        assert_eq!(dto.opt_ms, Some(1_700_000_000_123));
+        assert_eq!(dto.fills[0].at, micros);
+        assert_eq!(dto.fills[0].legs[0].when, millis);
+
+        // More precise than the field holds: an error, never truncated.
+        let mut scratch = [0u8; 256];
+        let mut enc = StampsEncoder::wrap_and_apply_header(&mut scratch, 0).fixed(&StampsFixedFields {
+            ts_sec: 0, ts_ms: 0, ts_us: 0, ts_ns: 0, ts_default: 0, opt_ms: None,
+        });
+        assert!(enc.try_ts_ms(nanos).is_err());
+        assert!(enc.try_ts_sec(millis).is_err());
+        assert!(enc.try_ts_us(micros).is_ok());
+        "#,
+        "chrono = \"0.4\"\n",
+    );
+    Ok(())
+}
+
 /// **Optional** domain-typed fields under `DomainImpl::Manual` — the
 /// combination `optional_decimal_and_timestamp_domain_types_roundtrip`
 /// (generated impls, optional fields) and

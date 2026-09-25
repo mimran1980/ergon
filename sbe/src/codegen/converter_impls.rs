@@ -7,6 +7,86 @@ use super::conversion_helpers::{
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::structured_ir::{FieldType, MessageField, MessageGroup, MessageStructure, rust_type};
 
+/// Nanoseconds per wire tick of a `UTCTimestamp` field whose `timeUnit` is
+/// coarser than the nanoseconds the generated `chrono::DateTime<Utc>`
+/// conversion works in. `None` passes the wire value through unchanged: any
+/// other field or domain type, a nanosecond (or unit-less) field, and
+/// `DomainImpl::Manual`, whose impl the caller writes and which therefore
+/// receives the field's own unit. Shared by the message-level and group-entry
+/// paths so the rescale decision cannot drift between them.
+fn chrono_ns_per_tick(
+    f: &MessageField,
+    domain_type: &str,
+    domain_types: &[(crate::ConversionSelector, String)],
+    manual_impl_snippets: &[(crate::ConversionSelector, String)],
+) -> Option<u64> {
+    let manual = find_domain_selector(f, domain_types)
+        .is_some_and(|sel| manual_impl_snippets.iter().any(|(s, _)| s == sel));
+    if manual
+        || !domain_type.starts_with("chrono::DateTime")
+        || f.semantic_type.as_deref() != Some("UTCTimestamp")
+    {
+        return None;
+    }
+    match f.time_unit.as_deref()? {
+        "second" => Some(1_000_000_000),
+        "millisecond" => Some(1_000_000),
+        "microsecond" => Some(1_000),
+        _ => None,
+    }
+}
+
+/// The token pieces of a domain accessor pair around `TryFromSbe` /
+/// `TryToSbe`: for a rescaled timestamp, wire → nanoseconds before decoding,
+/// and nanoseconds → wire (exactly, or an error) after encoding. Without a
+/// rescale the pieces reproduce the plain accessors token for token.
+struct DomainBodies {
+    /// Body of the non-`Option` decoder accessor.
+    decode: proc_macro2::TokenStream,
+    /// Expression for the `Some(wire)` arm of the `Option` decoder accessor.
+    decode_some: proc_macro2::TokenStream,
+    /// Statements between `try_to_sbe` and the wire setter.
+    encode_rescale: proc_macro2::TokenStream,
+}
+
+fn domain_bodies(
+    dt_ty: &syn::Type,
+    wire_ty: &syn::Type,
+    raw_decoder_getter: &syn::Ident,
+    ns_per_tick: Option<u64>,
+) -> DomainBodies {
+    let convert = quote::quote! { <#dt_ty as TryFromSbe<#wire_ty>>::try_from_sbe };
+    let Some(ns) = ns_per_tick else {
+        return DomainBodies {
+            decode: quote::quote! { #convert(self.#raw_decoder_getter()) },
+            decode_some: quote::quote! { #convert(wire).map(Some) },
+            encode_rescale: proc_macro2::TokenStream::new(),
+        };
+    };
+    let to_ns = quote::quote! {
+        let wire = wire
+            .checked_mul(#ns)
+            .ok_or("timestamp out of range in nanoseconds")?;
+    };
+    DomainBodies {
+        decode: quote::quote! {
+            let wire = self.#raw_decoder_getter();
+            #to_ns
+            #convert(wire)
+        },
+        decode_some: quote::quote! {{
+            #to_ns
+            #convert(wire).map(Some)
+        }},
+        encode_rescale: quote::quote! {
+            if wire % #ns != 0 {
+                return Err("timestamp is more precise than the field's timeUnit");
+            }
+            let wire = wire / #ns;
+        },
+    }
+}
+
 /// A domain accessor is `Option`-wrapped exactly when the raw accessor it
 /// delegates to is: a field gated by `sinceVersion` returns `Option` (absent
 /// before its version), and a primitive/enum with `presence="optional"`
@@ -145,6 +225,16 @@ pub(crate) fn generate_converter_impls(
                     quote::quote! { #[doc = #doc] }
                 })
                 .unwrap_or_default();
+            let DomainBodies {
+                decode,
+                decode_some,
+                encode_rescale,
+            } = domain_bodies(
+                &dt_ty,
+                &wire_type_ident,
+                &raw_decoder_getter,
+                chrono_ns_per_tick(f, dt, domain_types, manual_impl_snippets),
+            );
             if is_optional {
                 decoder_methods.extend(quote::quote! {
                     #manual_impl_doc
@@ -153,7 +243,7 @@ pub(crate) fn generate_converter_impls(
                         &self,
                     ) -> Result<Option<#dt_ty>, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
                         match self.#raw_decoder_getter() {
-                            Some(wire) => <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(wire).map(Some),
+                            Some(wire) => #decode_some,
                             None => Ok(None),
                         }
                     }
@@ -165,9 +255,7 @@ pub(crate) fn generate_converter_impls(
                     pub fn #try_ident(
                         &self,
                     ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
-                        <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
-                            self.#raw_decoder_getter()
-                        )
+                        #decode
                     }
                 });
             }
@@ -187,6 +275,7 @@ pub(crate) fn generate_converter_impls(
                     value: #dt_ty,
                 ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
                     let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                    #encode_rescale
                     self.#wire_setter(wire);
                     Ok(self)
                 }
@@ -238,6 +327,7 @@ pub(crate) fn generate_converter_impls(
         g: &MessageGroup,
         conversions: &[crate::ConversionSelector],
         domain_types: &[(crate::ConversionSelector, String)],
+        manual_impl_snippets: &[(crate::ConversionSelector, String)],
         null_as_option: &[crate::ConversionSelector],
         all_enums_as_option: bool,
         out: &mut String,
@@ -279,6 +369,16 @@ pub(crate) fn generate_converter_impls(
                 let domain_ident = syn::Ident::new(&field_snake, span);
                 let try_ident = syn::Ident::new(&format!("try_{field_snake}"), span);
                 let is_optional = is_optional_domain_field(f, null_as_option, all_enums_as_option);
+                let DomainBodies {
+                    decode,
+                    decode_some,
+                    encode_rescale,
+                } = domain_bodies(
+                    &dt_ty,
+                    &wire_type_ident,
+                    &raw_decoder_getter,
+                    chrono_ns_per_tick(f, dt, domain_types, manual_impl_snippets),
+                );
                 if is_optional {
                     dec_methods.extend(quote::quote! {
                         #[inline]
@@ -286,7 +386,7 @@ pub(crate) fn generate_converter_impls(
                             &self,
                         ) -> Result<Option<#dt_ty>, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
                             match self.#raw_decoder_getter() {
-                                Some(wire) => <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(wire).map(Some),
+                                Some(wire) => #decode_some,
                                 None => Ok(None),
                             }
                         }
@@ -297,9 +397,7 @@ pub(crate) fn generate_converter_impls(
                         pub fn #try_ident(
                             &self,
                         ) -> Result<#dt_ty, <#dt_ty as TryFromSbe<#wire_type_ident>>::Error> {
-                            <#dt_ty as TryFromSbe<#wire_type_ident>>::try_from_sbe(
-                                self.#raw_decoder_getter()
-                            )
+                            #decode
                         }
                     });
                 }
@@ -310,6 +408,7 @@ pub(crate) fn generate_converter_impls(
                         value: #dt_ty,
                     ) -> Result<&mut Self, <#dt_ty as TryToSbe<#wire_type_ident>>::Error> {
                         let wire = <#dt_ty as TryToSbe<#wire_type_ident>>::try_to_sbe(&value)?;
+                        #encode_rescale
                         self.#wire_setter(wire);
                         Ok(self)
                     }
@@ -365,6 +464,7 @@ pub(crate) fn generate_converter_impls(
                 ng,
                 &conversions,
                 domain_types,
+                manual_impl_snippets,
                 null_as_option,
                 all_enums_as_option,
                 out,
@@ -384,6 +484,7 @@ pub(crate) fn generate_converter_impls(
             g,
             &conversions,
             domain_types,
+            manual_impl_snippets,
             null_as_option,
             all_enums_as_option,
             &mut entry_impls,

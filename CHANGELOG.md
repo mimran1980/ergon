@@ -13,6 +13,14 @@
   setter of such a field under
   `with_domain_type(…, "rust_decimal::Decimal")`, and the impl the
   `DomainImpl::Manual` doc snippet suggests.
+- **A `UTCTimestamp` field's `timeUnit` was ignored by the built-in
+  `chrono::DateTime<Utc>` conversion.** It always assumed nanoseconds, so a
+  `timeUnit="second"` field was written as nanoseconds and a millisecond field
+  decoded 10⁶× too early. The `try_*` accessors now convert between the
+  field's unit and the nanoseconds the conversion works in, at message level,
+  in group and nested group entries, and in domain DTOs. A value more precise
+  than the field holds is an error, never truncated. Under
+  `DomainImpl::Manual` the impl still receives the field's own unit.
 
 ## [0.1.29] — 2026-09-19
 

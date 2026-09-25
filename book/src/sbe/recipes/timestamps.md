@@ -54,6 +54,23 @@ enc.try_updated_at(
 )?;
 ```
 
+## `timeUnit` on a `UTCTimestamp` field
+
+A `uint64` `UTCTimestamp` field may say what it counts with `timeUnit`
+(`second`, `millisecond`, `microsecond` or `nanosecond`; nanoseconds when
+absent). The built-in `DateTime<Utc>` conversion honours it: the `try_*`
+accessors read and write the field in its own unit, so one
+`semantic_type("UTCTimestamp")` mapping serves fields of every precision.
+
+```xml
+<field name="sentAt" id="1" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond"/>
+```
+
+Writing a `DateTime` more precise than the field — sub-millisecond digits into
+a millisecond field — is an error rather than a truncation; truncate it first
+(`chrono::DurationRound::duration_trunc`) when that is what you mean. Under
+`DomainImpl::Manual` your impl receives the field's own unit.
+
 ## One selector, many fields
 
 `ConversionSelector::semantic_type(..)` matches **every** field in the
