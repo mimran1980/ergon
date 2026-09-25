@@ -117,8 +117,9 @@ A changed column type is never altered automatically, for either kind.
 
 Decimals and timestamps travel as their integer, and ClickHouse stores that
 integer, so nothing is rounded. Prices and sizes in `market.xml` are
-`Decimal9` (mantissa × 10⁻⁹). The recorder's `d9()` converts a
-`rust_decimal::Decimal` exactly, and returns an error rather than rounding.
+`Decimal9` (mantissa × 10⁻⁹). The recorder's `d9()` is ergo-sbe's generated
+`rust_decimal` conversion (`with_domain_type` in `recorder/build.rs`): it
+converts exactly, and returns an error rather than rounding.
 
 Other composites, sets, non-`char` arrays, nested groups and big-endian
 schemas are rejected when the schema loads.

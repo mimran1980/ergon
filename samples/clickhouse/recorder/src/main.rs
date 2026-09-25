@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use market::{
     BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder, BookSnapshotFixedFields,
     Decimal9, FundingRateEncoder, FundingRateFixedFields, MarkPriceEncoder, MarkPriceFixedFields,
-    QuoteEncoder, QuoteFixedFields, Side, TradeEncoder, TradeFixedFields,
+    QuoteEncoder, QuoteFixedFields, Side, TradeEncoder, TradeFixedFields, TryToSbe,
 };
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
@@ -209,20 +209,10 @@ impl DataActor for Recorder {
 }
 
 /// `d` exactly, as the schema's `Decimal9` (mantissa x 10^-9, stored as
-/// ClickHouse `Decimal(18, 9)`). More than nine decimals, or more than
-/// +-9.2 billion, is an error, never a rounded value.
+/// ClickHouse `Decimal(18, 9)`), by the generated conversion. More than nine
+/// decimals, or more than +-9.2 billion, is an error, never a rounded value.
 fn d9(d: Decimal) -> anyhow::Result<Decimal9> {
-    let (mantissa, scale) = (d.mantissa(), d.scale());
-    let exact = if scale <= 9 {
-        mantissa.checked_mul(10i128.pow(9 - scale))
-    } else {
-        let divisor = 10i128.pow(scale - 9);
-        (mantissa % divisor == 0).then(|| mantissa / divisor)
-    };
-    let mantissa = exact
-        .and_then(|m| i64::try_from(m).ok())
-        .ok_or_else(|| anyhow::anyhow!("{d} does not fit Decimal9"))?;
-    Ok(Decimal9::new(mantissa))
+    d.try_to_sbe().map_err(anyhow::Error::msg)
 }
 
 /// The best [`BOOK_LEVELS`] levels of one side as `(price, size)`, on the stack.
