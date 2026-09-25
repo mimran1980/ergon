@@ -1,10 +1,11 @@
 # ClickHouse persistence lab. Run from samples/clickhouse/.
 #
 #   just up         create the kind cluster and run everything
-#   just recorder   rebuild + redeploy the recorder after a code/schema change
-#   just logs       follow the recorder log
+#   just recorder   rebuild + redeploy the recorder and ingester after a code/schema change
+#   just logs       follow the recorder, ingester and Aeron logs
 #   just verify     check the running lab end to end
-#   just test       unit + ClickHouse integration tests
+#   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
+#   just latency    time recording on the app thread
 #   just stop / just start   pause the cluster, keeping data
 #   just destroy    delete the cluster and its data
 
@@ -35,7 +36,9 @@ _cluster:
 
 images: build-recorder
     docker build -q -t lab/jupyter:local -f deploy/jupyter.Dockerfile deploy
+    docker build -q -t lab/aeron:local -f deploy/aeron.Dockerfile deploy
     just _load lab/jupyter:local
+    just _load lab/aeron:local
     just _load lab/recorder:local
 
 # `kind load docker-image` fails on Docker's containerd image store
@@ -44,34 +47,34 @@ _load image:
     docker save --platform linux/$(docker version -f '{{{{.Server.Arch}}') {{image}} \
         | docker exec -i {{cluster}}-control-plane ctr -n k8s.io images import --all-platforms -
 
-# Compile the recorder for Linux (cached volumes) and build its image.
+# Compile the recorder and ingester for Linux; build their image with the schema.
 build-recorder:
+    docker build -q -t lab/builder:local -f deploy/builder.Dockerfile deploy
     docker run --rm -v "$PWD/../..":/src -w /src/samples/clickhouse \
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
-        -e CARGO_TARGET_DIR=/target rust:1.98.1-bookworm \
-        sh -c 'cargo build --release -p recorder && mkdir -p target/linux && cp /target/release/recorder target/linux/'
+        -e CARGO_TARGET_DIR=/target lab/builder:local \
+        sh -c 'cargo build --release -p recorder -p persist-server --bins && mkdir -p target/linux \
+            && cp /target/release/recorder /target/release/ingester schema/market.xml target/linux/'
     docker build -q -t lab/recorder:local -f deploy/recorder.Dockerfile target/linux
 
-# Rebuild and restart the recorder (after changing schema/market.xml or code).
+# Rebuild and restart the recorder pod (after changing schema/market.xml or code).
 recorder: build-recorder
     just _load lab/recorder:local
     kubectl --context kind-{{cluster}} -n lab rollout restart deploy/recorder
     kubectl --context kind-{{cluster}} -n lab rollout status deploy/recorder --timeout=120s
 
 logs:
-    kubectl --context kind-{{cluster}} -n lab logs -f deploy/recorder
-
-# Run the recorder on this machine instead (writes to the lab's ClickHouse).
-run:
-    kubectl --context kind-{{cluster}} -n lab scale deploy/recorder --replicas=0
-    cargo run --release -p recorder
+    kubectl --context kind-{{cluster}} -n lab logs -f deploy/recorder --all-containers --prefix
 
 # End-to-end checks against the running lab.
 verify:
     ./scripts/verify.sh
 
-# Unit tests plus integration tests against a throwaway ClickHouse container.
-test:
+# Unit + integration tests; starts a throwaway ClickHouse and Aeron archive driver.
+test: _test-clickhouse _test-aeron
+    cargo test --workspace
+
+_test-clickhouse:
     #!/usr/bin/env bash
     set -euo pipefail
     if ! docker ps --format '{{{{.Names}}' | grep -qx persist-test-clickhouse; then
@@ -81,12 +84,36 @@ test:
             clickhouse/clickhouse-server:25.8 >/dev/null
         until curl -sf http://localhost:18123/ping >/dev/null; do sleep 1; done
     fi
-    cargo test --workspace
 
-# Time persist.record() on the app thread, beside a timing-only control.
-latency:
-    cargo run -q --release -p persist --example record_latency -- control
-    cargo run -q --release -p persist --example record_latency
+# Media driver + archive in one JVM. The tests use /tmp/persist-test-aeron;
+# 1 MiB segments so they see purges.
+_test-aeron: _aeron-jar
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! pgrep -f 'aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
+        touch target/aeron-test.started
+        sleep 1 # `-nt` compares whole seconds
+        nohup java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \
+            -Daeron.dir=/tmp/persist-test-aeron -Daeron.dir.delete.on.start=true \
+            -Daeron.archive.dir=target/aeron-test-archive -Daeron.archive.segment.file.length=1m \
+            -Daeron.archive.control.channel='aeron:udp?endpoint=localhost:18010' \
+            -Daeron.archive.replication.channel='aeron:udp?endpoint=localhost:0' \
+            io.aeron.archive.ArchivingMediaDriver > target/aeron-test.log 2>&1 &
+        until [[ /tmp/persist-test-aeron/cnc.dat -nt target/aeron-test.started ]]; do sleep 0.2; done
+    fi
+
+aeron_version := "1.52.2"
+aeron_jar := "target/aeron-all-" + aeron_version + ".jar"
+
+_aeron-jar:
+    @mkdir -p target
+    @[ -f {{aeron_jar}} ] || curl -sfLo {{aeron_jar}} \
+        https://repo1.maven.org/maven2/io/aeron/aeron-all/{{aeron_version}}/aeron-all-{{aeron_version}}.jar
+
+# Time recording on the app thread: SBE, tracing on and off, and a control.
+latency: _test-clickhouse _test-aeron
+    for arm in control sbe event event-off no-table; do \
+        cargo run -q --release -p persist-server --example record_latency -- $arm; done
 
 lint:
     cargo clippy --workspace --all-targets -- -D warnings

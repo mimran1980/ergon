@@ -2,8 +2,10 @@
 //!
 //! NautilusTrader connects to the exchanges (public streams, no API keys) and
 //! calls this actor; each callback encodes one SBE message from
-//! `schema/market.xml` and hands it to `persist`. Which tables are recorded is
-//! decided by `config/tables.yaml`, re-read while this runs.
+//! `schema/market.xml` straight into an Aeron publication (`persist-client`).
+//! The ingester (`persist-server`) takes it from the Aeron Archive into
+//! ClickHouse. Which tables are recorded is decided by `config/tables.yaml`,
+//! re-read while this runs.
 
 #[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
 #[rustfmt::skip]
@@ -12,9 +14,11 @@ mod market;
 
 use std::num::NonZeroUsize;
 
+use arrayvec::ArrayVec;
+
 use market::{
     BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder, BookSnapshotFixedFields,
-    FundingRateEncoder, FundingRateFixedFields, MarkPriceEncoder, MarkPriceFixedFields,
+    Decimal9, FundingRateEncoder, FundingRateFixedFields, MarkPriceEncoder, MarkPriceFixedFields,
     QuoteEncoder, QuoteFixedFields, Side, TradeEncoder, TradeFixedFields,
 };
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
@@ -29,9 +33,10 @@ use nautilus_live::node::LiveNode;
 use nautilus_model::data::{FundingRateUpdate, MarkPriceUpdate, QuoteTick, TradeTick};
 use nautilus_model::enums::{AggressorSide, BookType};
 use nautilus_model::identifiers::{InstrumentId, TraderId};
-use nautilus_model::orderbook::OrderBook;
-use persist::{Persist, Settings};
-use rust_decimal::prelude::ToPrimitive;
+use nautilus_model::orderbook::{BookLevel, OrderBook};
+use persist_client::{Persist, Settings};
+use rust_decimal::Decimal;
+use tracing_subscriber::layer::SubscriberExt;
 
 const SCHEMA: &str = include_str!("../../schema/market.xml");
 const INSTRUMENTS: [&str; 4] = [
@@ -86,8 +91,8 @@ impl DataActor for Recorder {
                 .fixed(&TradeFixedFields {
                     ts_event: t.ts_event.as_u64(),
                     ts_init: t.ts_init.as_u64(),
-                    price: t.price.as_f64(),
-                    size: t.size.as_f64(),
+                    price: d9(t.price.as_decimal())?,
+                    size: d9(t.size.as_decimal())?,
                     aggressor: match t.aggressor_side {
                         AggressorSide::Buy => Side::Buy,
                         AggressorSide::Sell => Side::Sell,
@@ -104,33 +109,42 @@ impl DataActor for Recorder {
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.persist.record(QuoteEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&QuoteFixedFields {
-                    ts_event: q.ts_event.as_u64(),
-                    ts_init: q.ts_init.as_u64(),
-                    bid_price: q.bid_price.as_f64(),
-                    ask_price: q.ask_price.as_f64(),
-                    bid_size: q.bid_size.as_f64(),
-                    ask_size: q.ask_size.as_f64(),
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })
+        self.persist
+            .record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+                Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&QuoteFixedFields {
+                        ts_event: q.ts_event.as_u64(),
+                        ts_init: q.ts_init.as_u64(),
+                        bid_price: d9(q.bid_price.as_decimal())?,
+                        ask_price: d9(q.ask_price.as_decimal())?,
+                        bid_size: d9(q.bid_size.as_decimal())?,
+                        ask_size: d9(q.ask_size.as_decimal())?,
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })?;
+        // A derived signal needs no schema: one event, and `spread` in
+        // tables.yaml, make a table whose columns are these fields.
+        let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
+        tracing::info!(table = "spread", instrument = %q.instrument_id, bps = (ask - bid) / (ask + bid) * 2e4);
+        Ok(())
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
-        // Sizing a snapshot walks the book: skip all of it when the table is off.
+        // Reading a snapshot walks the book: skip all of it when the table is off.
         if !self.persist.enabled(BookSnapshotEncoder::TEMPLATE_ID) {
             return Ok(());
         }
         let now = self.core.timestamp_ns().as_u64();
         let (symbol, venue) = names(&book.instrument_id);
-        let bids = book.bids(Some(BOOK_LEVELS)).count();
-        let asks = book.asks(Some(BOOK_LEVELS)).count();
-        let len =
-            BookSnapshotEncoder::compute_length_with_header(bids, asks, symbol.len(), venue.len());
+        let (bids, asks) = (levels(book.bids(None))?, levels(book.asks(None))?);
+        let len = BookSnapshotEncoder::compute_length_with_header(
+            bids.len(),
+            asks.len(),
+            symbol.len(),
+            venue.len(),
+        );
         self.persist
             .record(BookSnapshotEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
@@ -139,21 +153,15 @@ impl DataActor for Recorder {
                         ts_init: now,
                         sequence: book.sequence,
                     })
-                    .bids(bids as u16, |g| {
-                        for l in book.bids(Some(BOOK_LEVELS)) {
-                            g.add_struct(&BookSnapshotBidsEntry {
-                                price: l.price.value.as_f64(),
-                                size: l.size(),
-                            })?;
+                    .bids(bids.len() as u16, |g| {
+                        for &(price, size) in &bids {
+                            g.add_struct(&BookSnapshotBidsEntry { price, size })?;
                         }
                         Ok(())
                     })?
-                    .asks(asks as u16, |g| {
-                        for l in book.asks(Some(BOOK_LEVELS)) {
-                            g.add_struct(&BookSnapshotAsksEntry {
-                                price: l.price.value.as_f64(),
-                                size: l.size(),
-                            })?;
+                    .asks(asks.len() as u16, |g| {
+                        for &(price, size) in &asks {
+                            g.add_struct(&BookSnapshotAsksEntry { price, size })?;
                         }
                         Ok(())
                     })?
@@ -172,7 +180,7 @@ impl DataActor for Recorder {
                     .fixed(&MarkPriceFixedFields {
                         ts_event: m.ts_event.as_u64(),
                         ts_init: m.ts_init.as_u64(),
-                        price: m.value.as_f64(),
+                        price: d9(m.value.as_decimal())?,
                     })
                     .symbol(symbol)?
                     .venue(venue)?
@@ -189,7 +197,7 @@ impl DataActor for Recorder {
                     .fixed(&FundingRateFixedFields {
                         ts_event: f.ts_event.as_u64(),
                         ts_init: f.ts_init.as_u64(),
-                        rate: f.rate.to_f64().unwrap_or(f64::NAN),
+                        rate: d9(f.rate)?,
                         interval_minutes: f.interval,
                         next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
                     })
@@ -198,6 +206,32 @@ impl DataActor for Recorder {
                     .encoded_length_with_header())
             })
     }
+}
+
+/// `d` exactly, as the schema's `Decimal9` (mantissa x 10^-9, stored as
+/// ClickHouse `Decimal(18, 9)`). More than nine decimals, or more than
+/// +-9.2 billion, is an error, never a rounded value.
+fn d9(d: Decimal) -> anyhow::Result<Decimal9> {
+    let (mantissa, scale) = (d.mantissa(), d.scale());
+    let exact = if scale <= 9 {
+        mantissa.checked_mul(10i128.pow(9 - scale))
+    } else {
+        let divisor = 10i128.pow(scale - 9);
+        (mantissa % divisor == 0).then(|| mantissa / divisor)
+    };
+    let mantissa = exact
+        .and_then(|m| i64::try_from(m).ok())
+        .ok_or_else(|| anyhow::anyhow!("{d} does not fit Decimal9"))?;
+    Ok(Decimal9::new(mantissa))
+}
+
+/// The best [`BOOK_LEVELS`] levels of one side as `(price, size)`, on the stack.
+fn levels<'a>(
+    side: impl Iterator<Item = &'a BookLevel>,
+) -> anyhow::Result<ArrayVec<(Decimal9, Decimal9), BOOK_LEVELS>> {
+    side.take(BOOK_LEVELS)
+        .map(|l| Ok((d9(l.price.value.as_decimal())?, d9(l.size_decimal())?)))
+        .collect()
 }
 
 /// An instrument's symbol and venue: the var-data every message ends with.
@@ -229,12 +263,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
-    let (persist, writer) = Persist::start(SCHEMA, Settings::from_env())?;
+    let persist = Persist::connect(SCHEMA, Settings::from_env())?;
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         persist,
     })?;
     node.run().await?;
-    writer.stop();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d9_is_exact_or_an_error() -> anyhow::Result<()> {
+        assert_eq!(d9(Decimal::new(15, 1))?.mantissa(), 1_500_000_000);
+        // Nautilus' 16-digit fixed point with trailing zeros.
+        assert_eq!(
+            d9(Decimal::from_i128_with_scale(
+                650_001_200_000_000_000_000,
+                16
+            ))?
+            .mantissa(),
+            65_000_120_000_000
+        );
+        assert!(
+            d9(Decimal::new(1, 10)).is_err(),
+            "a tenth decimal is not rounded away"
+        );
+        assert!(
+            d9(Decimal::new(10_000_000_000, 0)).is_err(),
+            "too large for Decimal(18, 9)"
+        );
+        Ok(())
+    }
 }

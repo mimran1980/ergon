@@ -20,5 +20,7 @@ samples/l3-book/tests/*.rs	samples	cd samples/l3-book && cargo test
 samples/l3-book/benches/*.rs	benchmark	cd samples/l3-book && cargo bench --no-run
 samples/sbe-feature-tour/src/*.rs	samples	cd samples/sbe-feature-tour && cargo test
 samples/sbe-feature-tour/tests/*.rs	samples	cd samples/sbe-feature-tour && cargo test
-samples/clickhouse/persist/src/*.rs	samples	cd samples/clickhouse && just test
-samples/clickhouse/persist/tests/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/persist-client/src/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/persist-server/src/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/persist-server/tests/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/recorder/src/*.rs	samples	cd samples/clickhouse && just test

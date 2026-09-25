@@ -46,7 +46,21 @@ spec:
   selector: { app: clickhouse }
   ports: [{ port: 8123, targetPort: 8123, nodePort: 30123 }]
 ---
-# The recorder: NautilusTrader + persist. Reads /lab/config/tables.yaml live.
+# The recorder pod. Its two native sidecars start first, in order: the Aeron
+# media driver + archive (ready once its cnc.dat exists), then the ingester,
+# which has the archive record the stream. Then the recorder itself
+# (NautilusTrader + persist-client). They share the Aeron directory in
+# memory; the recordings and the ingester's checkpoint are on a volume, so a
+# restart loses nothing. Both read /lab/config/tables.yaml live.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: archive
+  namespace: lab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,15 +73,58 @@ spec:
   template:
     metadata: { labels: { app: recorder } }
     spec:
+      initContainers:
+        - name: aeron
+          image: lab/aeron:local
+          imagePullPolicy: Never
+          restartPolicy: Always
+          env:
+            # 16 MiB segments, so the purge behind the ingester shows within minutes.
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Daeron.dir=/aeron/driver -Daeron.dir.delete.on.start=true
+                -Daeron.ipc.term.buffer.length=16m
+                -Daeron.archive.dir=/archive/recordings
+                -Daeron.archive.segment.file.length=16m
+                -Daeron.archive.control.channel=aeron:udp?endpoint=localhost:8010
+                -Daeron.archive.replication.channel=aeron:udp?endpoint=localhost:0
+          startupProbe:
+            exec: { command: [test, -f, /aeron/driver/cnc.dat] }
+            periodSeconds: 1
+            failureThreshold: 120
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: archive, mountPath: /archive }
+        - name: ingester
+          image: lab/recorder:local
+          imagePullPolicy: Never
+          restartPolicy: Always
+          command: [/usr/local/bin/ingester]
+          env:
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            - { name: PERSIST_SCHEMA, value: /lab/schema/market.xml }
+            - { name: PERSIST_CHECKPOINT, value: /archive/persist.checkpoint }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: archive, mountPath: /archive }
+            - { name: config, mountPath: /lab/config, readOnly: true }
       containers:
         - name: recorder
           image: lab/recorder:local
           imagePullPolicy: Never
           env:
-            - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: AERON_DIR, value: /aeron/driver }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
-          volumeMounts: [{ name: config, mountPath: /lab/config, readOnly: true }]
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
       volumes:
+        - name: aeron
+          emptyDir: { medium: Memory }
+        - name: archive
+          persistentVolumeClaim: { claimName: archive }
         - name: config
           hostPath: { path: /lab/config, type: Directory }
 ---

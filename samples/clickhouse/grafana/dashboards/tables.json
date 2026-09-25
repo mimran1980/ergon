@@ -152,7 +152,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT * FROM market.${table} WHERE $__timeFilter(ts_event) ORDER BY ts_event DESC LIMIT 100",
+          "rawSql": "SELECT * FROM market.${table} WHERE $__timeFilter(inserted_at) ORDER BY inserted_at DESC LIMIT 100",
           "format": 1,
           "queryType": "table"
         }

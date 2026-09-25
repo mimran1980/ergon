@@ -3,20 +3,31 @@
 //! Each SBE message is one table. The column list comes from the schema IR,
 //! so a field added to the XML is a column added to the table:
 //!
-//! | SBE                                   | ClickHouse                      |
-//! |---------------------------------------|---------------------------------|
-//! | integer / float / double              | `Int8`..`UInt64`, `Float32/64`  |
-//! | `semanticType="UTCTimestamp"` (ns)    | `DateTime64(9, 'UTC')`          |
-//! | enum                                  | `LowCardinality(String)` (name) |
-//! | `char` array                          | `String` (trailing NULs cut)    |
-//! | `presence="optional"`                 | `Nullable(T)`                   |
-//! | group `bids { price }`                | `bids.price Array(T)`           |
-//! | var-data                              | `String`                        |
+//! | SBE                                        | ClickHouse                      |
+//! |--------------------------------------------|---------------------------------|
+//! | integer / float / double                   | `Int8`..`UInt64`, `Float32/64`  |
+//! | decimal: `mantissa` + constant `exponent`  | `Decimal(18, S)` (exact)        |
+//! | `semanticType="UTCTimestamp"` integer      | `DateTime64(9, 'UTC')`          |
+//! | timestamp: `time` + constant `unit`        | `DateTime64(0/3/6/9, 'UTC')`    |
+//! | enum                                       | `LowCardinality(String)` (name) |
+//! | `char` array                               | `String` (trailing NULs cut)    |
+//! | `presence="optional"`                      | `Nullable(T)`                   |
+//! | group `bids { price }`                     | `bids.price Array(T)`           |
+//! | var-data                                   | `String`                        |
 //!
-//! Composites, sets, non-`char` arrays and nested groups are rejected when
-//! the schema is loaded, so a message that uses them is never half-recorded.
+//! Decimals and timestamps keep their wire integer: the row carries the
+//! mantissa or tick count as is, so nothing is rounded.
+//!
+//! Other composites, sets, non-`char` arrays and nested groups are rejected
+//! when the schema is loaded, so a message that uses them is never
+//! half-recorded.
+//!
+//! Messages are decoded the SBE way for their own version: a field past the
+//! message's block, or a group or var-data newer than the message, is written
+//! as its default, so records made before a schema change still load.
 
 use ergo_sbe::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
+use persist_client::snake_case;
 
 use crate::Error;
 
@@ -35,13 +46,24 @@ pub struct Table {
     var_data: Vec<VarData>,
 }
 
-/// A ClickHouse column derived from the schema.
+/// A ClickHouse column.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Column {
+pub struct Column {
     /// Column name (`snake_case`, groups as `group.field`).
     pub name: String,
     /// ClickHouse type, spelled the way `system.columns` reports it.
     pub ch_type: String,
+}
+
+/// What ClickHouse needs to create and compare a table.
+#[derive(Clone, Debug)]
+pub struct Shape {
+    pub name: String,
+    /// In insert order.
+    pub columns: Vec<Column>,
+    pub order_by: Vec<String>,
+    /// The timestamp column partitioned by day.
+    pub partition: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +79,10 @@ struct Field {
 #[derive(Clone, Debug)]
 enum Kind {
     Number,
-    Timestamp,
+    /// Ticks of 10^-precision seconds since the UNIX epoch.
+    Timestamp(u8),
+    /// A mantissa with this many decimals.
+    Decimal(u8),
     Enum(Vec<(u64, String)>),
     Chars(usize),
 }
@@ -68,6 +93,7 @@ struct Group {
     count: Uint,
     block: Uint,
     header_len: usize,
+    since_version: u16,
     fields: Vec<Field>,
 }
 
@@ -76,6 +102,7 @@ struct VarData {
     column: String,
     length: Uint,
     header_len: usize,
+    since_version: u16,
 }
 
 /// An unsigned integer inside a group or var-data header: `numInGroup`,
@@ -162,6 +189,7 @@ impl Table {
                         column: snake_case(&t.name),
                         length,
                         header_len,
+                        since_version: t.encoding.since_version,
                     });
                 }
                 _ => return Err(unsupported(&msg.name, &t.name, "this token")),
@@ -171,9 +199,23 @@ impl Table {
         Ok(table)
     }
 
-    /// Columns in wire order: fixed fields, group fields, var-data.
+    /// The table: columns in wire order, ordered by the var-data columns
+    /// (symbol, venue, …) then the first timestamp, partitioned by day of it.
     #[must_use]
-    pub(crate) fn columns(&self) -> Vec<Column> {
+    pub fn shape(&self) -> Shape {
+        let partition = self.first_timestamp();
+        let mut order_by: Vec<String> = self.var_data.iter().map(|v| v.column.clone()).collect();
+        order_by.extend(partition.clone());
+        Shape {
+            name: self.name.clone(),
+            columns: self.columns(),
+            order_by,
+            partition,
+        }
+    }
+
+    /// Columns in wire order: fixed fields, group fields, var-data.
+    fn columns(&self) -> Vec<Column> {
         let scalar = self.fields.iter().map(|f| Column {
             name: f.column.clone(),
             ch_type: f.ch_type(),
@@ -191,20 +233,11 @@ impl Table {
         scalar.chain(groups).chain(var).collect()
     }
 
-    /// Sort key: every var-data column (symbol, venue, …) then the first timestamp.
-    #[must_use]
-    pub(crate) fn order_by(&self) -> Vec<String> {
-        let mut key: Vec<String> = self.var_data.iter().map(|v| v.column.clone()).collect();
-        key.extend(self.first_timestamp());
-        key
-    }
-
-    /// First required timestamp column, used for partitioning.
-    #[must_use]
-    pub(crate) fn first_timestamp(&self) -> Option<String> {
+    /// First required timestamp column.
+    fn first_timestamp(&self) -> Option<String> {
         self.fields
             .iter()
-            .find(|f| matches!(f.kind, Kind::Timestamp) && f.null.is_none())
+            .find(|f| matches!(f.kind, Kind::Timestamp(_)) && f.null.is_none())
             .map(|f| f.column.clone())
     }
 
@@ -231,6 +264,7 @@ impl Table {
         out: &mut Vec<u8>,
     ) -> Result<(), DecodeError> {
         let acting_block = usize::from(u16::from_le_bytes(bytes::<2>(msg, 0)?));
+        let version = u16::from_le_bytes(bytes::<2>(msg, 6)?);
         let body = HEADER_LEN;
         let mut col = 0;
         for f in &self.fields {
@@ -241,9 +275,16 @@ impl Table {
         }
         let mut pos = body + acting_block;
         for g in &self.groups {
-            let count = g.count.read(msg, pos)?;
-            let block = g.block.read(msg, pos)?;
-            let first = pos + g.header_len;
+            // A group newer than the message is not on the wire: no entries.
+            let (count, block, first) = if version < g.since_version {
+                (0, 0, pos)
+            } else {
+                (
+                    g.count.read(msg, pos)?,
+                    g.block.read(msg, pos)?,
+                    pos + g.header_len,
+                )
+            };
             let end = count
                 .checked_mul(block)
                 .and_then(|n| n.checked_add(first))
@@ -264,6 +305,13 @@ impl Table {
             pos = end;
         }
         for v in &self.var_data {
+            if version < v.since_version {
+                if include[col] {
+                    write_string(b"", out);
+                }
+                col += 1;
+                continue;
+            }
             let len = v.length.read(msg, pos)?;
             let start = pos + v.header_len;
             let data = msg
@@ -283,7 +331,8 @@ impl Field {
     fn ch_type(&self) -> String {
         let base = match &self.kind {
             Kind::Number => number_type(self.prim).to_string(),
-            Kind::Timestamp => "DateTime64(9, 'UTC')".to_string(),
+            Kind::Timestamp(digits) => format!("DateTime64({digits}, 'UTC')"),
+            Kind::Decimal(digits) => format!("Decimal({}, {digits})", precision(self.prim)),
             Kind::Enum(_) => return "LowCardinality(String)".to_string(),
             Kind::Chars(_) => "String".to_string(),
         };
@@ -307,10 +356,10 @@ impl Field {
             Kind::Chars(n) => n,
             _ => self.prim.size(),
         };
-        // The writer encodes with the same schema, so every field is inside
-        // its block; anything else is a message from another schema version.
+        // Past the message's own block: the field is newer than the message.
         if at + width > end {
-            return Err(DecodeError("field outside its block"));
+            self.write_absent(out);
+            return Ok(());
         }
         let raw = msg
             .get(at..at + width)
@@ -324,7 +373,7 @@ impl Field {
                 let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
                 write_string(&raw[..cut], out);
             }
-            Kind::Number | Kind::Timestamp => {
+            Kind::Number | Kind::Timestamp(_) | Kind::Decimal(_) => {
                 if let Some(null) = self.null {
                     let is_null = self.is_null(raw, null);
                     out.push(u8::from(is_null));
@@ -336,6 +385,15 @@ impl Field {
             }
         }
         Ok(())
+    }
+
+    /// A field the message does not carry: null, or else zero / empty.
+    fn write_absent(&self, out: &mut Vec<u8>) {
+        match self.kind {
+            Kind::Enum(_) | Kind::Chars(_) => write_string(b"", out),
+            _ if self.null.is_some() => out.push(1),
+            _ => out.resize(out.len() + self.prim.size(), 0),
+        }
     }
 
     fn is_null(&self, raw: &[u8], null: u64) -> bool {
@@ -366,19 +424,41 @@ fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
         .encoding
         .offset
         .ok_or_else(|| fail("a field without offset"))?;
-    let null =
+    let mut null =
         (t.encoding.presence == Presence::Optional).then_some(t.encoding.null_value.unwrap_or(0));
     let inner = tokens.get(1).ok_or_else(|| fail("an empty field"))?;
     let (prim, kind) = match (t.encoding.primitive_type, inner.signal) {
         (Some(prim), _) => match (prim, t.encoding.length) {
             (PrimitiveType::Char, Some(n)) if n > 1 => (prim, Kind::Chars(n)),
             (_, Some(n)) if n > 1 => return Err(fail("a non-char array")),
-            _ if t.encoding.semantic_type.as_deref() == Some("UTCTimestamp") => match prim {
-                PrimitiveType::Int64 | PrimitiveType::UInt64 => (prim, Kind::Timestamp),
-                _ => return Err(fail("a UTCTimestamp that is not 64-bit")),
-            },
+            _ if t.encoding.semantic_type.as_deref() == Some("UTCTimestamp") => {
+                let unit = t.encoding.time_unit.as_deref().unwrap_or("nanosecond");
+                match (prim, unit_digits(unit)) {
+                    (PrimitiveType::Int64 | PrimitiveType::UInt64, Some(digits)) => {
+                        (prim, Kind::Timestamp(digits))
+                    }
+                    _ => {
+                        return Err(fail(
+                            "a UTCTimestamp that is not a 64-bit count of s/ms/us/ns",
+                        ));
+                    }
+                }
+            }
             _ => (prim, Kind::Number),
         },
+        (None, Signal::BeginComposite) => {
+            let (value, kind) = scaled_value(tokens).ok_or_else(|| {
+                fail("a composite other than a decimal (mantissa + constant exponent) or a timestamp (time + constant unit)")
+            })?;
+            let prim = value
+                .encoding
+                .primitive_type
+                .ok_or_else(|| fail("a composite member without a type"))?;
+            if value.encoding.presence == Presence::Optional {
+                null = Some(value.encoding.null_value.unwrap_or(0));
+            }
+            (prim, kind)
+        }
         (None, Signal::BeginEnum) => {
             let prim = inner
                 .encoding
@@ -398,7 +478,6 @@ fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
                 .collect();
             (prim, Kind::Enum(values))
         }
-        (None, Signal::BeginComposite) => return Err(fail("a composite")),
         (None, Signal::BeginSet) => return Err(fail("a set")),
         _ => return Err(fail("this field type")),
     };
@@ -409,6 +488,62 @@ fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
         kind,
         null,
     }))
+}
+
+/// A decimal (`mantissa` + constant `exponent`) or a timestamp (`time` +
+/// constant `unit`): the one member on the wire, and how it is scaled.
+fn scaled_value(tokens: &[Token]) -> Option<(&Token, Kind)> {
+    // tokens[0] is the field itself; the constant member takes no wire bytes,
+    // so the value starts the composite.
+    let members: Vec<&Token> = tokens[1..]
+        .iter()
+        .filter(|m| m.signal == Signal::BeginField)
+        .collect();
+    let [value, scale] = members[..] else {
+        return None;
+    };
+    if scale.encoding.presence != Presence::Constant
+        || value.encoding.presence == Presence::Constant
+    {
+        return None;
+    }
+    let constant = scale.encoding.constant_value.as_deref()?.trim();
+    let kind = match (
+        value.name.as_str(),
+        scale.name.as_str(),
+        value.encoding.primitive_type?,
+    ) {
+        ("mantissa", "exponent", prim @ (PrimitiveType::Int32 | PrimitiveType::Int64)) => {
+            let digits = u8::try_from(-constant.parse::<i32>().ok()?).ok()?;
+            (digits <= precision(prim)).then_some(Kind::Decimal(digits))?
+        }
+        ("time", "unit", PrimitiveType::Int64 | PrimitiveType::UInt64) => {
+            Kind::Timestamp(unit_digits(constant)?)
+        }
+        _ => return None,
+    };
+    Some((value, kind))
+}
+
+/// The decimal digits a mantissa holds: 18 for `int64`, 9 for `int32`.
+fn precision(mantissa: PrimitiveType) -> u8 {
+    if mantissa == PrimitiveType::Int64 {
+        18
+    } else {
+        9
+    }
+}
+
+/// Decimal digits of an SBE time unit: a name (`nanosecond`) or its FIX
+/// `TimeUnit` value (9).
+fn unit_digits(unit: &str) -> Option<u8> {
+    match unit {
+        "second" | "0" => Some(0),
+        "millisecond" | "3" => Some(3),
+        "microsecond" | "6" => Some(6),
+        "nanosecond" | "9" => Some(9),
+        _ => None,
+    }
 }
 
 fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
@@ -452,6 +587,7 @@ fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
         count,
         block,
         header_len,
+        since_version: tokens[0].encoding.since_version,
         fields,
     })
 }
@@ -540,7 +676,7 @@ fn uint(raw: &[u8]) -> u64 {
     u64::from_le_bytes(le)
 }
 
-fn write_varint(mut v: u64, out: &mut Vec<u8>) {
+pub(crate) fn write_varint(mut v: u64, out: &mut Vec<u8>) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);
         v >>= 7;
@@ -548,26 +684,9 @@ fn write_varint(mut v: u64, out: &mut Vec<u8>) {
     out.push(v as u8);
 }
 
-fn write_string(data: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn write_string(data: &[u8], out: &mut Vec<u8>) {
     write_varint(data.len() as u64, out);
     out.extend_from_slice(data);
-}
-
-/// `bidPrice` -> `bid_price`, `BookSnapshot` -> `book_snapshot`.
-#[must_use]
-pub(crate) fn snake_case(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, c) in name.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if i > 0 && !out.ends_with('_') && !out.ends_with('.') {
-                out.push('_');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -575,15 +694,6 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[test]
-    fn snake_case_names() -> TestResult {
-        assert_eq!(snake_case("BookSnapshot"), "book_snapshot");
-        assert_eq!(snake_case("bidPrice"), "bid_price");
-        assert_eq!(snake_case("tsEvent"), "ts_event");
-        assert_eq!(snake_case("price"), "price");
-        Ok(())
-    }
 
     #[test]
     fn varint_matches_leb128() -> TestResult {

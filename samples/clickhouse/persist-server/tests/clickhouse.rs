@@ -5,13 +5,16 @@
 //! when it is unreachable. Each test works in its own database.
 
 use std::error::Error;
-use std::path::PathBuf;
 use std::time::Duration;
 
-use persist::{ClickHouse, Persist, Report, Settings, Writer};
+use persist_server::{ClickHouse, Writer};
 
+#[path = "support/lab.rs"]
+mod lab;
 #[path = "support/v1.rs"]
 mod v1;
+
+use lab::{Lab, clean, test_url};
 
 /// `shapes_v2`: `shapes_v1` plus the fields `extra` and `entries.fee`.
 mod v2 {
@@ -20,7 +23,10 @@ mod v2 {
         include!(concat!(env!("OUT_DIR"), "/shapes_v2.rs"));
     }
 
-    use codec::{Colour, EntriesEntry, ShapesEncoder, ShapesFixedFields, sbe_rt::EncodeError};
+    use codec::{
+        Colour, Decimal9, EntriesEntry, ShapesEncoder, ShapesFixedFields, TimestampMs,
+        sbe_rt::EncodeError,
+    };
 
     pub const SCHEMA: &str = include_str!("schemas/shapes_v2.xml");
     const NOTE: &[u8] = b"v2";
@@ -45,6 +51,8 @@ mod v2 {
                 opt_f64: None,
                 colour: Colour::Red,
                 code: *b"XYZXYZ",
+                price: Decimal9::new(1),
+                ts_ms: TimestampMs::new(1_700_000_001_000),
                 extra: 42,
             })
             .entries(1, |e| {
@@ -52,6 +60,7 @@ mod v2 {
                     qty: 1,
                     side: Colour::Red,
                     maybe: 1.5,
+                    px: Decimal9::new(2),
                     fee: 0.75,
                 })?;
                 Ok(())
@@ -59,78 +68,21 @@ mod v2 {
             .note(NOTE)?
             .encoded_length_with_header())
     }
-}
 
-/// `Shapes` has the same template id in both schema versions.
-const SHAPES: u16 = v1::TEMPLATE_ID;
+    pub fn message() -> Result<[u8; LEN], EncodeError> {
+        let mut buf = [0; LEN];
+        encode(&mut buf)?;
+        Ok(buf)
+    }
+}
 
 type TestResult = Result<(), Box<dyn Error>>;
-
-fn test_url() -> String {
-    std::env::var("CLICKHOUSE_TEST_URL").unwrap_or_else(|_| "http://localhost:18123".into())
-}
-
-/// A private database plus a `tables.yaml` in a temp directory.
-struct Lab {
-    ch: ClickHouse,
-    config: PathBuf,
-}
-
-impl Lab {
-    fn new(test: &str, tables_yaml: &str) -> Result<Self, Box<dyn Error>> {
-        let url = test_url();
-        let db = format!("persist_test_{test}");
-        let ch = ClickHouse::new(&url, "lab", "lab", &db);
-        ch.query(&format!("DROP DATABASE IF EXISTS {db}"))
-            .map_err(|e| format!("ClickHouse at {url} is required (run `just test`): {e}"))?;
-        let dir = std::env::temp_dir().join(format!("persist-test-{test}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir)?;
-        let lab = Self {
-            ch,
-            config: dir.join("tables.yaml"),
-        };
-        lab.write_config(tables_yaml)?;
-        Ok(lab)
-    }
-
-    fn write_config(&self, text: &str) -> std::io::Result<()> {
-        std::fs::write(&self.config, text)
-    }
-
-    /// Settings for this lab, re-checking tables on every tick.
-    fn settings(&self, ch: ClickHouse) -> Settings {
-        Settings {
-            recheck: Duration::ZERO,
-            ..Settings::new(ch, &self.config)
-        }
-    }
-
-    fn persist(&self, schema: &str) -> Result<(Persist, Writer), Box<dyn Error>> {
-        Ok(Persist::new(schema, self.settings(self.ch.clone()))?)
-    }
-
-    fn query(&self, sql: &str) -> Result<String, Box<dyn Error>> {
-        Ok(self
-            .ch
-            .query(&sql.replace("DB", &self.ch.database))?
-            .trim_end()
-            .to_string())
-    }
-}
-
-fn clean(report: &Report) -> Result<(), String> {
-    if report.errors.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("unexpected errors: {:?}", report.errors))
-    }
-}
 
 #[test]
 fn every_field_shape_round_trips() -> TestResult {
     let lab = Lab::new("shapes", "tables:\n  shapes: { kind: dynamic }\n")?;
-    let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    writer.push(&v1::message()?);
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.inserted.get("shapes"), Some(&1));
@@ -155,9 +107,12 @@ fn every_field_shape_round_trips() -> TestResult {
             "opt_f64\tNullable(Float64)",
             "colour\tLowCardinality(String)",
             "code\tString",
+            "price\tDecimal(18, 9)",
+            "ts_ms\tDateTime64(3, \\'UTC\\')",
             "entries.qty\tArray(Int64)",
             "entries.side\tArray(LowCardinality(String))",
             "entries.maybe\tArray(Nullable(Float64))",
+            "entries.px\tArray(Decimal(18, 9))",
             "note\tString",
             "inserted_at\tDateTime64(3, \\'UTC\\')",
         ]
@@ -166,7 +121,24 @@ fn every_field_shape_round_trips() -> TestResult {
     let row = lab.query("SELECT * EXCEPT inserted_at FROM DB.shapes FORMAT TSV")?;
     assert_eq!(
         row,
-        "2023-11-14 22:13:20.123456789\t-8\t-16\t-32\t-64\t8\t16\t32\t18446744073709551615\t1.5\t2.25\t-7\t\\N\t3.5\tGreen\tABC\t[10,-20]\t['Red','Green']\t[NULL,0.5]\thello"
+        "2023-11-14 22:13:20.123456789\t-8\t-16\t-32\t-64\t8\t16\t32\t18446744073709551615\t1.5\t2.25\t-7\t\\N\t3.5\tGreen\tABC\t12345.678901234\t2023-11-14 22:13:20.123\t[10,-20]\t['Red','Green']\t[NULL,0.5]\t[-0.000000001,100]\thello"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_record_made_before_a_schema_change_still_loads() -> TestResult {
+    // The archive can still hold v1 records when the ingester restarts with
+    // the v2 schema: the fields they do not carry read as their defaults.
+    let lab = Lab::new("older", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let mut writer = lab.writer(v2::SCHEMA)?;
+    writer.push(&v1::message()?);
+    let report = writer.tick();
+    clean(&report)?;
+    assert_eq!(report.inserted.get("shapes"), Some(&1));
+    assert_eq!(
+        lab.query("SELECT note, price, extra, entries.fee, entries.px FROM DB.shapes FORMAT TSV")?,
+        "hello\t12345.678901234\t0\t[0,0]\t[-0.000000001,100]"
     );
     Ok(())
 }
@@ -175,13 +147,13 @@ fn every_field_shape_round_trips() -> TestResult {
 fn dynamic_table_gains_new_schema_columns() -> TestResult {
     let lab = Lab::new("dynamic", "tables:\n  shapes: { kind: dynamic }\n")?;
     {
-        let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-        persist.record(SHAPES, v1::LEN, v1::encode)?;
+        let mut writer = lab.writer(v1::SCHEMA)?;
+        writer.push(&v1::message()?);
         clean(&writer.tick())?;
     }
     // The recorder restarts with a schema that has two more fields.
-    let (persist, mut writer) = lab.persist(v2::SCHEMA)?;
-    persist.record(SHAPES, v2::LEN, v2::encode)?;
+    let mut writer = lab.writer(v2::SCHEMA)?;
+    writer.push(&v2::message()?);
     let report = writer.tick();
     clean(&report)?;
     assert!(report.problems.is_empty(), "{:?}", report.problems);
@@ -205,16 +177,16 @@ fn dynamic_table_gains_new_schema_columns() -> TestResult {
 fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
     let lab = Lab::new("static", "tables:\n  shapes: { kind: static }\n")?;
     {
-        let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-        persist.record(SHAPES, v1::LEN, v1::encode)?;
+        let mut writer = lab.writer(v1::SCHEMA)?;
+        writer.push(&v1::message()?);
         clean(&writer.tick())?;
     }
     let before = lab.query(
         "SELECT name FROM system.columns WHERE database = 'DB' AND table = 'shapes' FORMAT TSV",
     )?;
 
-    let (persist, mut writer) = lab.persist(v2::SCHEMA)?;
-    persist.record(SHAPES, v2::LEN, v2::encode)?;
+    let mut writer = lab.writer(v2::SCHEMA)?;
+    writer.push(&v2::message()?);
     let report = writer.tick();
     clean(&report)?;
     assert!(
@@ -241,7 +213,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
 
     // Running the suggested SQL is picked up by the next re-check.
     lab.query("ALTER TABLE DB.shapes ADD COLUMN IF NOT EXISTS `extra` UInt32")?;
-    persist.record(SHAPES, v2::LEN, v2::encode)?;
+    writer.push(&v2::message()?);
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
@@ -260,14 +232,14 @@ fn removed_schema_fields_keep_their_columns() -> TestResult {
             &format!("tables:\n  shapes: {{ kind: {kind} }}\n"),
         )?;
         {
-            let (persist, mut writer) = lab.persist(v2::SCHEMA)?;
-            persist.record(SHAPES, v2::LEN, v2::encode)?;
+            let mut writer = lab.writer(v2::SCHEMA)?;
+            writer.push(&v2::message()?);
             clean(&writer.tick())?;
         }
         // The schema loses `extra` and the group field `entries.fee`; the
         // insert then omits `entries.fee` beside the `entries.*` it still sends.
-        let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-        persist.record(SHAPES, v1::LEN, v1::encode)?;
+        let mut writer = lab.writer(v1::SCHEMA)?;
+        writer.push(&v1::message()?);
         let report = writer.tick();
         clean(&report)?;
         assert!(report.problems.is_empty(), "{kind}: {:?}", report.problems);
@@ -292,13 +264,13 @@ fn changed_column_type_is_reported_not_altered() -> TestResult {
             &format!("tables:\n  shapes: {{ kind: {kind} }}\n"),
         )?;
         {
-            let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-            persist.record(SHAPES, v1::LEN, v1::encode)?;
+            let mut writer = lab.writer(v1::SCHEMA)?;
+            writer.push(&v1::message()?);
             clean(&writer.tick())?;
         }
         lab.query("ALTER TABLE DB.shapes MODIFY COLUMN i16 Int32")?;
-        let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-        persist.record(SHAPES, v1::LEN, v1::encode)?;
+        let mut writer = lab.writer(v1::SCHEMA)?;
+        writer.push(&v1::message()?);
         let report = writer.tick();
         clean(&report)?;
         assert_eq!(
@@ -323,15 +295,15 @@ fn changed_column_type_is_reported_not_altered() -> TestResult {
 #[test]
 fn table_changed_while_recording_is_rechecked() -> TestResult {
     let lab = Lab::new("changed", "tables:\n  shapes: { kind: static }\n")?;
-    let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    writer.push(&v1::message()?);
     clean(&writer.tick())?;
 
     // A column of the static table is dropped under the running recorder:
     // the insert fails, the table is compared again, the ERROR names the fix,
     // and the same record is written without that column.
     lab.query("ALTER TABLE DB.shapes DROP COLUMN i8")?;
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    writer.push(&v1::message()?);
     let failed = writer.tick();
     assert!(failed.inserted.is_empty(), "{failed:?}");
     assert_eq!(failed.errors.len(), 1, "{:?}", failed.errors);
@@ -347,40 +319,29 @@ fn table_changed_while_recording_is_rechecked() -> TestResult {
 
     // The whole database is dropped: it and the table are created again.
     lab.query("DROP DATABASE DB")?;
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    writer.push(&v1::message()?);
     assert!(writer.tick().inserted.is_empty());
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.applied.len(), 1, "{:?}", report.applied);
     assert_eq!(report.inserted.get("shapes"), Some(&1));
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
-    assert_eq!(persist.dropped(), 0);
+    assert_eq!(writer.queued_bytes(), 0);
     Ok(())
 }
 
 #[test]
-fn enabled_follows_the_config_file() -> TestResult {
+fn every_listed_table_exists_and_a_bad_edit_keeps_the_config() -> TestResult {
     let lab = Lab::new(
-        "toggle",
+        "listed",
         "tables:\n  shapes: { kind: dynamic, enabled: false }\n",
     )?;
-    let (persist, mut writer) = lab.persist(v1::SCHEMA)?;
-    assert!(!persist.enabled(SHAPES));
-    // A disabled table never runs the encoder.
-    persist.record(SHAPES, v1::LEN, |_| {
-        Err("encoded a message for a disabled table")
-    })?;
-    let report = writer.tick();
-    clean(&report)?;
-    assert!(report.inserted.is_empty());
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    clean(&writer.tick())?;
     // Listed but disabled: the table exists, empty, so queries against it work.
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "0");
-
-    lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: true }\n")?;
-    let report = writer.tick();
-    assert_eq!(report.toggled, [("shapes".to_string(), true)]);
-    assert!(persist.enabled(SHAPES));
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    // Records made while it was still enabled are written all the same.
+    writer.push(&v1::message()?);
     assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
 
     // An invalid edit is rejected and the last good configuration stays.
@@ -392,44 +353,39 @@ fn enabled_follows_the_config_file() -> TestResult {
             "tables.yaml: tables.shapes.kind: unknown variant `sometimes`, expected `static` or `dynamic` at line 2 column 19; keeping the previous configuration"
         ]
     );
-    assert!(persist.enabled(SHAPES));
+    writer.push(&v1::message()?);
+    assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
 
-    lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: false }\n")?;
-    assert_eq!(writer.tick().toggled, [("shapes".to_string(), false)]);
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
-    writer.tick();
-    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
+    // A table removed from tables.yaml: its records are skipped and counted.
+    lab.write_config("tables: {}\n")?;
+    clean(&writer.tick())?;
+    assert!(!writer.push(&v1::message()?));
+    assert_eq!(
+        writer.tick().errors,
+        ["1 records skipped: their table is not in tables.yaml"]
+    );
     Ok(())
 }
 
 #[test]
-fn unreachable_clickhouse_keeps_records_until_the_buffer_is_full() -> TestResult {
+fn unreachable_clickhouse_keeps_every_record_queued() -> TestResult {
     let dir = std::env::temp_dir().join(format!("persist-test-down-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     std::fs::write(
         dir.join("tables.yaml"),
         "tables:\n  shapes: { kind: static }\n",
     )?;
-    // Room for exactly ten records (each is a 4-byte length plus the message).
-    let settings = Settings {
-        max_buffered_bytes: 10 * (4 + v1::LEN),
-        recheck: Duration::ZERO,
-        ..Settings::new(
-            ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere"),
-            dir.join("tables.yaml"),
-        )
-    };
-    let (persist, mut writer) = Persist::new(v1::SCHEMA, settings)?;
+    let ch = ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere");
+    let mut writer = Writer::new(v1::SCHEMA, ch, dir.join("tables.yaml"), Duration::ZERO)?;
     for _ in 0..11 {
-        persist.record(SHAPES, v1::LEN, v1::encode)?;
+        assert!(writer.push(&v1::message()?));
     }
-    assert_eq!(persist.dropped(), 1);
     let report = writer.tick();
     assert!(!report.errors.is_empty());
     assert!(report.inserted.is_empty());
-    // Still queued: the writer did not drain while ClickHouse was unreachable.
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
-    assert_eq!(persist.dropped(), 2);
+    // Nothing is dropped. The ingester stops replaying past its limit
+    // instead, and the rest waits in the archive.
+    assert_eq!(writer.queued_bytes(), 11 * (4 + v1::LEN));
     Ok(())
 }
 
@@ -442,31 +398,15 @@ fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
     lab.query(&format!("CREATE USER {user} IDENTIFIED BY 'x'"))?;
     lab.query(&format!("GRANT CREATE DATABASE ON DB.* TO {user}"))?;
     let ch = ClickHouse::new(&test_url(), user, "x", &lab.ch.database);
-    let (persist, mut writer) = Persist::new(v1::SCHEMA, lab.settings(ch))?;
-    persist.record(SHAPES, v1::LEN, v1::encode)?;
+    let mut writer = Writer::new(v1::SCHEMA, ch, &lab.config, Duration::ZERO)?;
+    writer.push(&v1::message()?);
     // The first tick fails to create the table; the second falls inside the
     // retry back-off. Neither may throw the queued record away.
     assert!(!writer.tick().errors.is_empty());
     writer.tick();
-    assert_eq!(persist.dropped(), 0);
+    assert_eq!(writer.queued_bytes(), 4 + v1::LEN);
     lab.query(&format!("DROP USER {user}"))?;
     Ok(())
-}
-
-#[test]
-#[should_panic(expected = "encode wrote 132 bytes of template 1, but claimed 133 bytes of 1")]
-fn a_mis_sized_encode_is_caught() {
-    let dir = std::env::temp_dir().join(format!("persist-test-size-{}", std::process::id()));
-    let config = dir.join("tables.yaml");
-    let setup = std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&config, "tables:\n  shapes: { kind: dynamic }\n"));
-    assert!(setup.is_ok(), "{setup:?}");
-    let ch = ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere");
-    let Ok((persist, _writer)) = Persist::new(v1::SCHEMA, Settings::new(ch, config)) else {
-        return;
-    };
-    // Claims one byte more than the message has.
-    let _ = persist.record(SHAPES, v1::LEN + 1, v1::encode);
 }
 
 #[test]
@@ -475,15 +415,23 @@ fn unsupported_field_shapes_are_rejected_up_front() -> TestResult {
         r#"<field name="code" id="16" type="Code"/>"#,
         r#"<field name="code" id="16" type="groupSizeEncoding"/>"#,
     );
-    let err = persist::tables_from_schema(&composite)
+    let err = persist_server::tables_from_schema(&composite)
         .err()
         .map(|e| e.to_string());
     assert_eq!(
         err.as_deref(),
-        Some("schema: Shapes.code: a composite is not supported")
+        Some(
+            "schema: Shapes.code: a composite other than a decimal (mantissa + constant exponent) or a timestamp (time + constant unit) is not supported"
+        )
     );
+    // A decimal whose exponent travels with each value has no one column scale.
+    let floating = v1::SCHEMA.replace(
+        r#"<type name="exponent" primitiveType="int8" presence="constant">-9</type>"#,
+        r#"<type name="exponent" primitiveType="int8"/>"#,
+    );
+    assert!(persist_server::tables_from_schema(&floating).is_err());
     let big = v1::SCHEMA.replace(r#"byteOrder="littleEndian""#, r#"byteOrder="bigEndian""#);
-    let err = persist::tables_from_schema(&big)
+    let err = persist_server::tables_from_schema(&big)
         .err()
         .map(|e| e.to_string());
     assert_eq!(
@@ -495,7 +443,7 @@ fn unsupported_field_shapes_are_rejected_up_front() -> TestResult {
 
 #[test]
 fn market_schema_tables() -> TestResult {
-    let tables = persist::tables_from_schema(include_str!("../../schema/market.xml"))?;
+    let tables = persist_server::tables_from_schema(include_str!("../../schema/market.xml"))?;
     let names: Vec<&str> = tables.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
@@ -513,8 +461,8 @@ fn market_schema_tables() -> TestResult {
         .find(|t| t.name == "book_snapshot")
         .ok_or("book_snapshot")?;
     assert_eq!(
-        ch.create_sql(book),
-        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Float64),\n    `bids.size` Array(Float64),\n    `asks.price` Array(Float64),\n    `asks.size` Array(Float64),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
+        ch.create_sql(&book.shape()),
+        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
     );
     Ok(())
 }

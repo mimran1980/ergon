@@ -1,0 +1,20 @@
+[package]
+name = "persist-client"
+description = "Record SBE messages and tracing events for ClickHouse: the application side."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ergo-sbe.workspace = true
+log.workspace = true
+rusteron-client.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+
+[lints]
+workspace = true

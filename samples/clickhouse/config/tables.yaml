@@ -1,11 +1,15 @@
-# What the recorder writes to ClickHouse. Edit and save: changes apply within
-# a second, no restart. Each table is a message in schema/market.xml.
+# What gets recorded into ClickHouse. Edit and save: `enabled` applies within
+# a second, no restart.
 #
-# kind: static   Created if missing, then never altered. If the schema and the
-#                table disagree, the recorder logs an ERROR with the ALTER to
+# A table named after a message in schema/market.xml takes its columns from
+# that message. Any other table is recorded from `tracing` events that name
+# it (`tracing::info!(table = "spread", ...)`); its columns are their fields.
+#
+# kind: static   Created if missing, then never altered. If the table and the
+#                data disagree, the ingester logs an ERROR with the ALTER to
 #                run and keeps writing every column that still matches.
-# kind: dynamic  Follows the schema: a field added to market.xml becomes a new
-#                column the next time the recorder starts.
+# kind: dynamic  Follows the data: a field added to market.xml becomes a new
+#                column when the recorder restarts; a new event field, at once.
 # enabled:       Record it now (default true). Set false to stop recording.
 tables:
   trade:         { kind: static }
@@ -13,3 +17,4 @@ tables:
   mark_price:    { kind: dynamic, enabled: true }
   funding_rate:  { kind: dynamic, enabled: true }
   book_snapshot: { kind: dynamic, enabled: false }
+  spread:        { kind: dynamic, enabled: true }

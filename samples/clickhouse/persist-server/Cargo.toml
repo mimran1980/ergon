@@ -1,0 +1,30 @@
+[package]
+name = "persist-server"
+description = "Ingest recorded SBE messages from the Aeron Archive into ClickHouse tables derived from the SBE schema."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ingester"
+path = "src/main.rs"
+
+[dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+ergo-sbe.workspace = true
+log.workspace = true
+persist-client.workspace = true
+rusteron-archive.workspace = true
+ureq = { version = "2", default-features = false }
+
+[dev-dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
+
+[build-dependencies]
+ergo-sbe.workspace = true
+
+[lints]
+workspace = true

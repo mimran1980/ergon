@@ -29,6 +29,12 @@
             <type name="length" primitiveType="uint32" maxValue="1024"/>
             <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
         </composite>
+        <!-- An exact decimal: mantissa x 10^-9. Stored as Decimal(18, 9), so
+             prices and sizes keep every digit (up to +-9.2 billion). -->
+        <composite name="Decimal9">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8" presence="constant">-9</type>
+        </composite>
         <!-- UNIX epoch nanoseconds; stored as DateTime64(9, 'UTC'). -->
         <type name="Timestamp" primitiveType="uint64" semanticType="UTCTimestamp"/>
         <enum name="Side" encodingType="uint8">
@@ -41,8 +47,8 @@
     <sbe:message name="Trade" id="1">
         <field name="tsEvent" id="1" type="Timestamp"/>
         <field name="tsInit" id="2" type="Timestamp"/>
-        <field name="price" id="3" type="double"/>
-        <field name="size" id="4" type="double"/>
+        <field name="price" id="3" type="Decimal9"/>
+        <field name="size" id="4" type="Decimal9"/>
         <field name="aggressor" id="5" type="Side"/>
         <data name="symbol" id="6" type="varString"/>
         <data name="venue" id="7" type="varString"/>
@@ -52,10 +58,10 @@
     <sbe:message name="Quote" id="2">
         <field name="tsEvent" id="1" type="Timestamp"/>
         <field name="tsInit" id="2" type="Timestamp"/>
-        <field name="bidPrice" id="3" type="double"/>
-        <field name="askPrice" id="4" type="double"/>
-        <field name="bidSize" id="5" type="double"/>
-        <field name="askSize" id="6" type="double"/>
+        <field name="bidPrice" id="3" type="Decimal9"/>
+        <field name="askPrice" id="4" type="Decimal9"/>
+        <field name="bidSize" id="5" type="Decimal9"/>
+        <field name="askSize" id="6" type="Decimal9"/>
         <data name="symbol" id="7" type="varString"/>
         <data name="venue" id="8" type="varString"/>
     </sbe:message>
@@ -65,12 +71,12 @@
         <field name="tsInit" id="2" type="Timestamp"/>
         <field name="sequence" id="3" type="uint64"/>
         <group name="bids" id="4" dimensionType="groupSizeEncoding">
-            <field name="price" id="5" type="double"/>
-            <field name="size" id="6" type="double"/>
+            <field name="price" id="5" type="Decimal9"/>
+            <field name="size" id="6" type="Decimal9"/>
         </group>
         <group name="asks" id="7" dimensionType="groupSizeEncoding">
-            <field name="price" id="8" type="double"/>
-            <field name="size" id="9" type="double"/>
+            <field name="price" id="8" type="Decimal9"/>
+            <field name="size" id="9" type="Decimal9"/>
         </group>
         <data name="symbol" id="10" type="varString"/>
         <data name="venue" id="11" type="varString"/>
@@ -79,7 +85,7 @@
     <sbe:message name="MarkPrice" id="4">
         <field name="tsEvent" id="1" type="Timestamp"/>
         <field name="tsInit" id="2" type="Timestamp"/>
-        <field name="price" id="3" type="double"/>
+        <field name="price" id="3" type="Decimal9"/>
         <data name="symbol" id="4" type="varString"/>
         <data name="venue" id="5" type="varString"/>
     </sbe:message>
@@ -87,7 +93,7 @@
     <sbe:message name="FundingRate" id="5">
         <field name="tsEvent" id="1" type="Timestamp"/>
         <field name="tsInit" id="2" type="Timestamp"/>
-        <field name="rate" id="3" type="double"/>
+        <field name="rate" id="3" type="Decimal9"/>
         <field name="intervalMinutes" id="4" type="uint16" presence="optional"/>
         <field name="nextFundingTs" id="5" type="Timestamp" presence="optional"/>
         <data name="symbol" id="6" type="varString"/>

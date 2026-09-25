@@ -2,8 +2,10 @@
 
 use std::time::Duration;
 
-use crate::table::{Column, Table};
-use crate::{Error, TableKind};
+use persist_client::TableKind;
+
+use crate::Error;
+use crate::table::{Column, Shape};
 
 /// Where and as whom to connect.
 #[derive(Clone, Debug)]
@@ -15,10 +17,6 @@ pub struct ClickHouse {
     pub database: String,
     agent: ureq::Agent,
 }
-
-/// Column `inserted_at DEFAULT now64(3)`: added to every table persistence
-/// creates; never written by the recorder.
-pub(crate) const INSERTED_AT: &str = "inserted_at";
 
 /// Outcome of comparing a table with the schema.
 #[derive(Debug, Default)]
@@ -118,8 +116,8 @@ impl ClickHouse {
     ///   `ALTER … MODIFY COLUMN` to run (both kinds; changing a type can
     ///   rewrite data, so persistence never does it by itself).
     /// * column no longer in the schema: left alone; new rows get its default.
-    pub(crate) fn sync(&self, table: &Table, kind: TableKind) -> Result<Sync, Error> {
-        let wanted = table.columns();
+    pub(crate) fn sync(&self, table: &Shape, kind: TableKind) -> Result<Sync, Error> {
+        let wanted = &table.columns;
         let Some(existing) = self.describe(&table.name)? else {
             let ddl = self.create_sql(table);
             self.query(&ddl)?;
@@ -130,7 +128,7 @@ impl ClickHouse {
             });
         };
         let mut sync = Sync::default();
-        for Column { name, ch_type } in &wanted {
+        for Column { name, ch_type } in wanted {
             let target = format!("{}.{}", quote(&self.database), quote(&table.name));
             match existing.iter().find(|(n, _)| n == name) {
                 Some((_, have)) if same_type(have, ch_type) => sync.include.push(true),
@@ -163,22 +161,21 @@ impl ClickHouse {
         Ok(sync)
     }
 
-    /// `CREATE TABLE` for a schema table: MergeTree, partitioned by day of the
-    /// first timestamp, ordered by the var-data columns then that timestamp.
+    /// `CREATE TABLE`: MergeTree, partitioned by day, plus an `inserted_at`
+    /// column that ClickHouse fills.
     #[must_use]
-    pub fn create_sql(&self, table: &Table) -> String {
+    pub fn create_sql(&self, table: &Shape) -> String {
         let mut cols: Vec<String> = table
-            .columns()
+            .columns
             .iter()
             .map(|c| format!("    {} {}", quote(&c.name), c.ch_type))
             .collect();
-        cols.push(format!(
-            "    {INSERTED_AT} DateTime64(3, 'UTC') DEFAULT now64(3)"
-        ));
-        let order: Vec<String> = table.order_by().iter().map(|c| quote(c)).collect();
+        cols.push("    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)".into());
+        let order: Vec<String> = table.order_by.iter().map(|c| quote(c)).collect();
         let partition = table
-            .first_timestamp()
-            .map(|ts| format!("\nPARTITION BY toDate({})", quote(&ts)))
+            .partition
+            .as_ref()
+            .map(|ts| format!("\nPARTITION BY toDate({})", quote(ts)))
             .unwrap_or_default();
         format!(
             "CREATE TABLE IF NOT EXISTS {}.{} (\n{}\n)\nENGINE = MergeTree{partition}\nORDER BY ({})",

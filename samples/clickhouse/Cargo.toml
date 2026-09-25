@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["persist", "recorder"]
+members = ["persist-client", "persist-server", "recorder"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,10 @@ publish = false
 
 [workspace.dependencies]
 ergo-sbe = { path = "../../sbe" }
+persist-client = { path = "persist-client" }
+log = "0.4"
+rusteron-client = { version = "0.2.7", features = ["static", "multi-threaded"] }
+rusteron-archive = { version = "0.2.7", features = ["static"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
