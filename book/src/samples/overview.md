@@ -8,13 +8,14 @@ implementations — they move with experimental APIs on purpose.
 
 | Step | Sample | Why |
 |------|--------|-----|
-| **1** | [SBE Feature Tour](sbe-feature-tour.md) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, both conversion styles |
+| **1** | [SBE Feature Tour](sbe-feature-tour.md) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, all three conversion styles |
 | **2a** | [L3 Order Book](l3-book.md) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
 | **2b** | [Exchange Example](exchange-example.md) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [Codegen as Library](codegen-library.md) | Generator **as a library** (no `build.rs`) |
 | Later | [Cluster Tutorial](cluster-tutorial.md) | Connect, offer, poll, keep-alive, close |
 | Later | [Cluster HA Orderbook](cluster-ha-orderbook.md) | Claim-based Cluster publishing + HA-shaped book |
 | Later | [Cluster RFQ](cluster-rfq.md) | RFQ / auction codecs over Cluster |
+| Lab | [ClickHouse](https://github.com/mimran1980/ergon/tree/main/samples/clickhouse) | Record SBE messages and `tracing` events into ClickHouse via Aeron; see `samples/clickhouse/README.md` |
 
 ```sh
 # 1 — always start here
@@ -34,7 +35,7 @@ cargo test --manifest-path samples/exchange-example/Cargo.toml
 |--------|--------|-------------------------|
 | [L3 Order Book](l3-book.md) | **`with_domain_type` only** | `dec.try_price()?` → `Decimal`; `enc.try_price(d)?` |
 | [Exchange Example](exchange-example.md) | **`with_conversion` only** | `dec.price_as::<T>()?`; `enc.price_from(&t)?` (+ app `TryFromSbe`) |
-| [SBE Feature Tour](sbe-feature-tour.md) | **Both** (different selectors) | bool/timestamp concrete; Decimal generic (`demo_conversion_only`) |
+| [SBE Feature Tour](sbe-feature-tour.md) | **All three** (different selectors) | bool/timestamp concrete (`Generated`); Decimal generic (`demo_conversion_only`); ManualDecimal concrete + app impl (`demo_domain_type_manual_impl`) |
 
 Rule: **one style per selector**. `with_domain_type` already enables conversion;
 do not stack `with_conversion` on the same selector.

@@ -86,7 +86,7 @@ mod messages;
 
 ## Buffer sizing (samples & tests)
 
-- **Const-sized messages:** stack `[0u8; MsgEncoder::compute_length()]`
+- **Const-sized messages:** stack `[0u8; MsgEncoder::compute_length_with_header()]`
 - **Dynamic / ragged:** size with `*EncodedLength` / `compute_length_with_header(…)`,
   then encode into a claim/slot of that exact length — avoid oversize
   `vec![0u8; 4096]` “guess” buffers

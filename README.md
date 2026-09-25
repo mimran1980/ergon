@@ -29,7 +29,7 @@ deployments. Criteria for lifting that disclaimer:
 | [`sbe/`](sbe/) | `ergo-sbe` | SBE schema parser and Rust codec generator |
 | [`sbe/benchmarks/`](sbe/benchmarks/) | `ergo-sbe-benchmarks` | Unpublished parity benchmarks |
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
-| [`samples/`](samples/) | seven standalone crates | Unpublished integration playgrounds |
+| [`samples/`](samples/) | seven teaching crates, plus the ClickHouse lab | Unpublished integration playgrounds |
 
 The workspace requires Rust 1.88 or newer. The sample crates are intentionally
 excluded from the Cargo workspace and remain `publish = false`.

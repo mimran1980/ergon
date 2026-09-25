@@ -58,7 +58,7 @@ Quote a bench result by run id, not a number copied here. See
 | `sbe/` | `ergo-sbe` | Schema parser and codec generator |
 | `sbe/benchmarks/` | `ergo-sbe-benchmarks` | Unpublished parity benches |
 | `cluster/` | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
-| `samples/` | seven crates | Unpublished playgrounds (`publish = false`) |
+| `samples/` | seven teaching crates, plus the ClickHouse lab | Unpublished playgrounds (`publish = false`) |
 
 Rust 1.88+. Clone setup, `just` recipes, and project boundaries:
 [repository README](https://github.com/mimran1980/ergon/blob/main/README.md).

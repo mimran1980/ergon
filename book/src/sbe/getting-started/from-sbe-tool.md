@@ -65,7 +65,7 @@ has no `asks` method. See
 |---------|----------|----------|
 | Body length after encode | `encoded_length()` | body region only via stage `encoded_length` where exposed |
 | Header + body | compute yourself (`8 + …`) | `encoded_length_with_header()` / `as_bytes_with_header()` |
-| Pre-size buffer | often oversize scratch | **Exact:** `Encoder::compute_length()` / staged `*EncodedLength` builder; stack `[0u8; N]` when `N` is const |
+| Pre-size buffer | often oversize scratch | **Exact:** const `Encoder::compute_length_with_header()` (stack `[0u8; N]`), or `Encoder::compute_length()` / staged `*EncodedLength` when the length depends on groups or var-data |
 
 Do **not** default to `vec![0u8; 4096]` or `Vec::with_capacity(MAX)` then
 truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
