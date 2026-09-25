@@ -14,7 +14,7 @@ Ratios are ergon / sbe-tool. Target is **`1.00`**.
 
 | Comparison | no-LTO | LTO |
 |---|---:|---:|
-| SBE `optional_enum_nullify` | 1.01 | 1.00 |
+| SBE `optional_enum_nullify` | 1.01 | 1.01 |
 | Cluster session-message-header decode | 1.01 | 1.01 |
 | Cluster session-event decode | 1.05 | 1.01 |
 | All other maintained comparisons | 1.00 | 1.00 |

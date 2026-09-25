@@ -350,10 +350,10 @@ const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
     "cluster_decode_session_message_header",
     // also carries a no-LTO-only override; see PROFILE_SCOPED_OVERRIDE_MAX
     "cluster_decode_session_event",
-    // no-LTO profile only; the pairs table still declares 1.00, so
-    // `no_maintained_ceiling_exceeds_one` sees 1.00 for this label and
-    // `profile_scoped_ceiling_overrides_are_allowlisted_and_bounded` audits
-    // the override itself.
+    // Both profiles since 2026-09-25: the pairs table declares 1.01, which
+    // `no_maintained_ceiling_exceeds_one` bounds at 1.01. LTO measured
+    // 1.0032 / 0.9976 / 1.0002 / 1.0018 that day; no-LTO carried the same
+    // allowance before (observed 1.0011-1.0062).
     "extended_optional_enum_nullify",
 ];
 
@@ -361,18 +361,6 @@ const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
 /// records a measured tie, so the bound is per-label rather than global — one
 /// allowance must never widen the bound the others are held to.
 const PROFILE_SCOPED_OVERRIDE_MAX: &[(&str, f64)] = &[
-    // Memory-bound enum/composite load; observed 1.0011-1.0062.
-    //
-    // 2026-09-13: an attempt to tighten this to a literal 1.00 was made and
-    // reverted. The scenario measures ~0.77 no-LTO, so the allowance looks like
-    // dead weight — but the *sbe-tool* arm is not stable across build sessions.
-    // With byte-identical benchmark source it measured 1002.48 ns during the
-    // 0.1.27 release and 776.88 ns twice three days later, a 22% swing, while
-    // ergon's arm held 777-784 ns throughout. At ~0.76 ns/op this pair is
-    // decided by code placement, so a tightening cannot be validated without a
-    // quiet machine and a characterised reference arm. Do not retry it from a
-    // single green run.
-    ("extended_optional_enum_nullify", 1.01),
     // A genuine tie: both arms read the same five scalars plus `detail_slice`,
     // already batched 10k, so there is no unread member to amplify with. Five
     // isolated runs on an idle machine measured 1.0038 / 0.9997 / 0.9994 /
@@ -488,16 +476,14 @@ fn tree_with_ratio(
 
 const NULLIFY: &str = "parity_extended_optional_enum_nullify";
 
-/// `extended_optional_enum_nullify` carries a documented **no-LTO only**
-/// allowance dating from when the scenario decoded only two 1-byte enums from
-/// a static fixture and the two codecs landed at parity without cross-unit
-/// inlining. The scenario now also reads the optional composite's counter and
-/// measures ~0.78, so the allowance is no longer exercised and could be
-/// tightened to a literal 1.00 in its own change. It is retained here because
-/// it still bounds the case safely. See the rationale block in
-/// `scripts/check-bench-gate.sh`.
+/// `extended_optional_enum_nullify` carries a documented 1.01 allowance in
+/// both profiles: the pair is decided by code placement at ~0.8 ns/op, and
+/// measured a tie (1.0011-1.0062 no-LTO; 0.9976-1.0032 LTO on 2026-09-25).
+/// The sbe-tool arm is not stable across build sessions (1002 ns vs 777 ns
+/// with byte-identical source), so do not tighten it from a single green run.
+/// See the rationale block in `scripts/check-bench-gate.sh`.
 #[test]
-fn nullify_within_the_no_lto_allowance_passes() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_within_the_allowance_passes_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.005)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
@@ -510,7 +496,7 @@ fn nullify_within_the_no_lto_allowance_passes() -> Result<(), Box<dyn std::error
 
 /// The allowance is bounded — it admits a tie, not a regression.
 #[test]
-fn nullify_beyond_the_no_lto_allowance_fails() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_beyond_the_allowance_fails_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.02)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
@@ -521,15 +507,27 @@ fn nullify_beyond_the_no_lto_allowance_fails() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// The allowance is for one profile only: LTO keeps the literal 1.00 ceiling,
-/// where ergon measures ~0.76.
+/// The allowance holds under LTO too, where the pair measured the same tie.
 #[test]
-fn nullify_barely_above_one_still_fails_under_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_within_the_allowance_passes_under_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("lto", NULLIFY, 1.005)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
+        output.status.success(),
+        "nullify at 1.005 is inside the documented 1.01 allowance under LTO:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// Under LTO it is bounded the same way: a tie passes, a regression fails.
+#[test]
+fn nullify_beyond_the_allowance_fails_under_lto() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = tree_with_ratio("lto", NULLIFY, 1.02)?;
+    let output = run_gate(&criterion.0, &[])?;
+    assert!(
         !output.status.success(),
-        "the no-LTO allowance must not leak into the LTO profile:\n{}",
+        "nullify at 1.02 exceeds the 1.01 allowance and must fail under LTO:\n{}",
         describe(&output)
     );
     Ok(())

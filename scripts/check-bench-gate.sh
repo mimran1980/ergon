@@ -174,15 +174,21 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
         # ergon's offset (2026-09-15), LTO measured 0.764 / 0.987 / 0.779
         # across three layouts, 0.987 in sbe-tool's fast layout. A flip is a
         # harness-symmetry question first (tests/fairness_policy_test.rs); the
-        # mechanism check is the matching instruction/branch probe. Only the
-        # no-LTO profile carries the documented allowance below.
-        "extended_optional_enum_nullify|extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.00"
+        # mechanism check is the matching instruction/branch probe.
+        #
+        # 2026-09-25: LTO now sits on the tie too. The strict gate measured
+        # 1.0032 (b20260925T025500Z-1147-e53a0b9ee20a); three immediate LTO
+        # re-runs of the pair measured 0.9976 / 1.0002 / 1.0018, ergon's arm
+        # 795-798 ns throughout. The owner set 1.01 for both profiles, the same
+        # allowance no-LTO carried (see the rationale block below).
+        "extended_optional_enum_nullify|extended/optional_enum_nullify|ergo-sbe|sbe-tool|1.01"
         "extended_group_with_data|extended/group_with_data|ergo-sbe|sbe-tool|1.00"
     )
 
-    # ── no-LTO noise-floor exceptions (documented, one profile only) ────────
+    # ── noise-floor exceptions (documented) ─────────────────────────────────
     #
-    # extended_optional_enum_nullify decodes two 1-byte enums from a static
+    # extended_optional_enum_nullify (1.01 in the pairs table, both profiles
+    # since 2026-09-25; before that no-LTO only) decodes two 1-byte enums from a static
     # fixture: a memory-bound load with almost no work to hide, so without
     # cross-unit inlining the two codecs land at parity. Measured on this host
     # across three runs, one on a genuinely idle machine:
@@ -191,21 +197,18 @@ if [[ "$SUITE" == "sbe" || "$SUITE" == "all" ]]; then
     # ergon's own time is stable across profiles (773-776 ns); what moves is
     # sbe-tool, which is ~24% faster without LTO. This is a tie, not an ergon
     # loss — LTO measures 0.7593 — so a 1.01 no-LTO allowance admits it while
-    # still catching any real regression above 1%. LTO stays literal 1.00.
-    # See tests/bench_gate_test.rs for the matching explicit allowlist.
+    # still catching any real regression above 1%. See
+    # tests/bench_gate_test.rs for the matching explicit allowlist.
     #
     # 2026-09-12: the scenario now also reads the optional composite's counter.
     # The enum-only form was not gateable — both codecs emit the same two-byte
     # loads, so the true ratio was ~1.00 and the measured one was decided by
     # code placement (a 2.6% change in unrelated generated code moved ergon's
     # arm 37% with the decoder source byte-identical). With the composite read
-    # the ratio is ~0.78 in both profiles, so this allowance is no longer
-    # exercised and is a candidate for tightening to a literal 1.00.
+    # the ratio was ~0.78 in both profiles until 2026-09-25, when LTO measured
+    # the tie again (see the pairs table), so the allowance is exercised.
     for pair in "${pairs[@]}"; do
         IFS='|' read -r label group ergo_fn ref_fn ceiling <<< "$pair"
-        if [ "$profile" = "no-lto" ] && [ "$label" = "extended_optional_enum_nullify" ]; then
-            ceiling="1.01"
-        fi
         # Criterion converts '/' to '_' in directory names
         dir_group="${group//\//_}"
         ergo_key="parity_${dir_group}/${ergo_fn}"
