@@ -3362,6 +3362,85 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// A decimal composite with a **constant** exponent carries only the mantissa
+/// on the wire, so the built-in `TryToSbe` must rescale a `rust_decimal` to
+/// that exponent. It once copied the unscaled mantissa: 1.5 (mantissa 15,
+/// scale 1) encoded as 15 × 10⁻⁹. Only the case scale == −exponent survived,
+/// which is the one the benchmarks use. Covers a negative and a positive
+/// exponent, a message field and a group entry, and the values that cannot
+/// be represented: they are errors, never rounded.
+#[test]
+fn constant_exponent_decimal_domain_type_rescales_exactly() -> Result<(), Box<dyn std::error::Error>>
+{
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/constant-exponent-decimal.xml"
+    ));
+    let (_schema, src) = generate_domain_with(&path, "const_exp_domain", |c| {
+        c.with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Decimal9"),
+            "rust_decimal::Decimal",
+        )
+        .with_domain_type(
+            ergo_sbe::ConversionSelector::named_type("Hundreds"),
+            "rust_decimal::Decimal",
+        )
+    });
+    compile_and_run_with_deps(
+        "const_exp_domain",
+        &src,
+        r#"
+        use rust_decimal::Decimal;
+
+        let mut buf = [0u8; FillEncoder::compute_length_with_header(1)];
+        // `try_*` setters return `&mut Self`; `legs` consumes the encoder.
+        let mut enc = FillEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&FillFixedFields { price: Decimal9::new(0), notional: Hundreds::new(0) });
+        enc.try_price(Decimal::new(15, 1))?.try_notional(Decimal::new(12300, 0))?;
+        let len = enc
+            .legs(1, |g| {
+                g.add(|e| {
+                    e.try_px(Decimal::new(-25, 2)).map_err(|_| {
+                        sbe_rt::EncodeError::DomainConversionFailed { field: "px", reason: "conversion" }
+                    })?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+
+        let dec = FillDecoder::try_from(&buf[..len])?;
+        // The wire holds the mantissa at the schema's exponent...
+        assert_eq!(dec.price_value().mantissa(), 1_500_000_000);
+        assert_eq!(dec.notional_value().mantissa(), 123);
+        // ...and it decodes back to the same value.
+        assert_eq!(dec.try_price()?, Decimal::new(15, 1));
+        assert_eq!(dec.try_notional()?, Decimal::new(12300, 0));
+        for leg in dec.legs()? {
+            assert_eq!(leg.px_value().mantissa(), -250_000_000);
+            assert_eq!(leg.try_px()?, Decimal::new(-25, 2));
+        }
+
+        // Scale already equal to -exponent: the mantissa is taken as is.
+        let same: Decimal9 = Decimal::new(123_456_789, 9).try_to_sbe()?;
+        assert_eq!(same.mantissa(), 123_456_789);
+        // 1.5 carried at scale 13: the digits past the exponent are zeros, so
+        // it is exact and accepted.
+        let zeros: Decimal9 = Decimal::new(15_000_000_000_000, 13).try_to_sbe()?;
+        assert_eq!(zeros.mantissa(), 1_500_000_000);
+        // Not representable at the exponent: an error, never a rounded value.
+        let tenth_decimal: Result<Decimal9, _> = Decimal::new(1, 10).try_to_sbe();
+        assert!(tenth_decimal.is_err());
+        let not_hundreds: Result<Hundreds, _> = Decimal::new(12345, 0).try_to_sbe();
+        assert!(not_hundreds.is_err());
+        let too_large: Result<Decimal9, _> = Decimal::new(i64::MAX, 0).try_to_sbe();
+        assert!(too_large.is_err());
+        "#,
+        "rust_decimal = \"1\"\n",
+    );
+    Ok(())
+}
+
 /// **Optional** domain-typed fields under `DomainImpl::Manual` — the
 /// combination `optional_decimal_and_timestamp_domain_types_roundtrip`
 /// (generated impls, optional fields) and

@@ -69,10 +69,40 @@ fn decimal_impl_tokens(
     exponent_is_constant: bool,
     mantissa_is_optional: bool,
 ) -> proc_macro2::TokenStream {
-    let dec_new_call: proc_macro2::TokenStream = if exponent_is_constant {
-        quote::quote! { #dec_ident::new(mantissa) }
+    // A constant exponent is not on the wire, so the mantissa must be
+    // rescaled to it: value = m × 10^-scale = M × 10^exponent. Exact or an
+    // error, never rounded. scale == -exponent (the usual case) is a no-op.
+    // Kept inline: moving the rescale out of line measured slower.
+    let to_sbe_body: proc_macro2::TokenStream = if exponent_is_constant {
+        quote::quote! {
+            let shift = -(self.scale() as i32) - i32::from(#dec_ident::new(0).exponent());
+            let mantissa = self.mantissa();
+            let mantissa = if shift == 0 {
+                mantissa
+            } else if shift > 0 {
+                10i128.checked_pow(shift as u32)
+                    .and_then(|pow| mantissa.checked_mul(pow))
+                    .ok_or("Decimal mantissa overflow")?
+            } else {
+                let pow = 10i128.checked_pow(shift.unsigned_abs())
+                    .ok_or("Decimal exponent overflow")?;
+                if mantissa % pow != 0 {
+                    return Err("Decimal has more digits than the constant exponent allows");
+                }
+                mantissa / pow
+            };
+            let mantissa: i64 = mantissa
+                .try_into()
+                .map_err(|_| "Decimal mantissa overflow i64")?;
+            Ok(#dec_ident::new(mantissa))
+        }
     } else {
-        quote::quote! { #dec_ident::new(mantissa, -(self.scale() as i8)) }
+        quote::quote! {
+            let mantissa: i64 = self.mantissa()
+                .try_into()
+                .map_err(|_| "Decimal mantissa overflow i64")?;
+            Ok(#dec_ident::new(mantissa, -(self.scale() as i8)))
+        }
     };
     // A mantissa with presence="optional" (and a schema nullValue) has a
     // genuine null image — `mantissa()` decodes it as `Option<i64>`. The
@@ -112,10 +142,7 @@ fn decimal_impl_tokens(
             type Error = &'static str;
             #[inline]
             fn try_to_sbe(&self) -> Result<#dec_ident, Self::Error> {
-                let mantissa: i64 = self.mantissa()
-                    .try_into()
-                    .map_err(|_| "Decimal mantissa overflow i64")?;
-                Ok(#dec_new_call)
+                #to_sbe_body
             }
         }
     }

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- **A `rust_decimal::Decimal` encoded into a decimal composite with a
+  constant exponent kept its own scale.** The built-in `TryToSbe` passed the
+  unscaled mantissa through, so `1.5` into a `mantissa × 10⁻⁹` composite
+  encoded as `0.000000015`; only values whose scale already matched the
+  exponent came out right. It now rescales to the exponent, and a value that
+  cannot be represented exactly (more digits than the exponent allows, or out
+  of `i64` range) is an error, never rounded. This affects every `try_*`
+  setter of such a field under
+  `with_domain_type(…, "rust_decimal::Decimal")`, and the impl the
+  `DomainImpl::Manual` doc snippet suggests.
+
 ## [0.1.29] — 2026-09-19
 
 ### Fixed
