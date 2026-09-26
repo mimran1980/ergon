@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ingester::connect(v1::SCHEMA, settings).map_err(|e| e.to_string())?;
             let _ = ready_tx.send(());
             while !stop.load(Ordering::Relaxed) {
-                ingester.tick();
+                ingester.tick().map_err(|e| e.to_string())?;
                 std::thread::sleep(Duration::from_secs(1));
             }
             Ok(())

@@ -113,17 +113,75 @@ impl<S: Subscriber> Layer<S> for PersistLayer {
             return;
         }
         ROW.with_borrow_mut(|row| {
-            row.clear();
-            row.extend_from_slice(&[8, 0, 0, 0]); // block length 8 (the timestamp), template 0
-            row.extend_from_slice(&SCHEMA_ID.to_le_bytes());
-            row.extend_from_slice(&[0, 0]); // version 0
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos() as u64);
-            row.extend_from_slice(&ts.to_le_bytes());
+            start(row);
             event.record(&mut RowWriter(row));
             self.persist.publish(row);
         });
+    }
+}
+
+impl Persist {
+    /// Record one row of an event table from fields known only at run time,
+    /// such as data that arrives as JSON: the row a `tracing` event with
+    /// these fields would make. Nothing is built when the table is off.
+    pub fn record_row<'a>(
+        &self,
+        table: &str,
+        fields: impl IntoIterator<Item = (&'a str, Value<'a>)>,
+    ) {
+        if !self.event_enabled(table) {
+            return;
+        }
+        ROW.with_borrow_mut(|row| {
+            start(row);
+            push(row, TABLE, Value::Str(table));
+            for (name, value) in fields {
+                push(row, name, value);
+            }
+            self.publish(row);
+        });
+    }
+}
+
+/// The header and timestamp every event row starts with.
+fn start(row: &mut Vec<u8>) {
+    row.clear();
+    row.extend_from_slice(&[8, 0, 0, 0]); // block length 8 (the timestamp), template 0
+    row.extend_from_slice(&SCHEMA_ID.to_le_bytes());
+    row.extend_from_slice(&[0, 0]); // version 0
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    row.extend_from_slice(&ts.to_le_bytes());
+}
+
+/// Append one field: its name, kind byte and value.
+fn push(row: &mut Vec<u8>, name: &str, value: Value<'_>) {
+    let name = &name.as_bytes()[..name.len().min(255)];
+    row.push(name.len() as u8);
+    row.extend_from_slice(name);
+    match value {
+        Value::I64(v) => {
+            row.push(0);
+            row.extend_from_slice(&v.to_le_bytes());
+        }
+        Value::U64(v) => {
+            row.push(1);
+            row.extend_from_slice(&v.to_le_bytes());
+        }
+        Value::F64(v) => {
+            row.push(2);
+            row.extend_from_slice(&v.to_bits().to_le_bytes());
+        }
+        Value::Bool(v) => {
+            row.push(3);
+            row.push(u8::from(v));
+        }
+        Value::Str(v) => {
+            row.push(4);
+            row.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            row.extend_from_slice(v.as_bytes());
+        }
     }
 }
 
@@ -151,49 +209,31 @@ impl Visit for TableName<'_> {
 /// Appends each field to the row.
 struct RowWriter<'a>(&'a mut Vec<u8>);
 
-impl RowWriter<'_> {
-    fn name(&mut self, field: &Field, kind: u8) {
-        let name = field.name().as_bytes();
-        let name = &name[..name.len().min(255)];
-        self.0.push(name.len() as u8);
-        self.0.extend_from_slice(name);
-        self.0.push(kind);
-    }
-}
-
 impl Visit for RowWriter<'_> {
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.name(field, 0);
-        self.0.extend_from_slice(&value.to_le_bytes());
+        push(self.0, field.name(), Value::I64(value));
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.name(field, 1);
-        self.0.extend_from_slice(&value.to_le_bytes());
+        push(self.0, field.name(), Value::U64(value));
     }
 
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.name(field, 2);
-        self.0.extend_from_slice(&value.to_bits().to_le_bytes());
+        push(self.0, field.name(), Value::F64(value));
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.name(field, 3);
-        self.0.push(u8::from(value));
+        push(self.0, field.name(), Value::Bool(value));
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.name(field, 4);
-        self.0
-            .extend_from_slice(&(value.len() as u32).to_le_bytes());
-        self.0.extend_from_slice(value.as_bytes());
+        push(self.0, field.name(), Value::Str(value));
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         // Formatted straight into the row; the length is patched after.
-        self.name(field, 4);
-        let at = self.0.len();
-        self.0.extend_from_slice(&[0; 4]);
+        push(self.0, field.name(), Value::Str(""));
+        let at = self.0.len() - 4;
         let mut text = Text(self.0);
         let _ = write!(text, "{value:?}");
         let len = (self.0.len() - at - 4) as u32;

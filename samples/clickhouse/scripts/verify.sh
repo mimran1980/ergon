@@ -2,7 +2,7 @@
 # End-to-end checks against the running lab (`just up` first).
 #
 #  1. ClickHouse answers, and its /play UI is served.
-#  2. The recorder is writing trades and quotes from both venues.
+#  2. Every deployed exchange's recorder is writing trades and quotes.
 #  3. Every Grafana panel's query runs through Grafana without error.
 #  4. The verification notebook runs clean inside JupyterLab's pod.
 #  5. Toggling a dynamic table in config/tables.yaml starts and stops it live.
@@ -23,9 +23,11 @@ sql() { curl -sf -u lab:lab "$CH/" --data-binary "$1"; }
 play=$(curl -sf "$CH/play") && [[ $play == *"<title>ClickHouse Query</title>"* ]] || fail "$CH/play did not serve the query UI"
 ok "ClickHouse answers; query UI at $CH/play"
 
-# 2. Live data from both venues
+# 2. Live data from every deployed exchange
+expected=$("${KUBE[@]}" get deploy -l app=recorder -o jsonpath='{range .items[*]}{.metadata.labels.exchange}{"\n"}{end}' | tr a-z A-Z | sort | paste -sd, -)
+[[ -n $expected ]] || fail "no recorder is deployed (just exchange binance)"
 venues=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(venue)), ',') FROM market.trade WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
-[[ $venues == "BINANCE,BYBIT" ]] || fail "trades in the last minute came from '$venues', expected BINANCE,BYBIT"
+[[ $venues == "$expected" ]] || fail "trades in the last minute came from '$venues', expected $expected"
 quotes=$(sql "SELECT count() FROM market.quote WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 (( quotes > 0 )) || fail "no quotes in the last minute"
 ok "trades from $venues and $quotes quotes in the last minute"
@@ -90,8 +92,8 @@ after=$(sql "SELECT count() FROM market.book_snapshot")
 ok "book_snapshot off: row count stayed at $after"
 printf "%s\n" "$saved" > "$config"
 trap - EXIT
-restarts=$("${KUBE[@]}" get pod -l app=recorder -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
-[[ $restarts == 0 ]] || fail "recorder restarted $restarts times"
-ok "recorder never restarted"
+restarts=$("${KUBE[@]}" get pod -l 'app in (aeron,ingester,recorder)' -o jsonpath='{range .items[*]}{.metadata.name}={.status.containerStatuses[0].restartCount} {end}')
+[[ $restarts != *=[1-9]* ]] || fail "restarted: $restarts"
+ok "Aeron, the ingester and the recorders never restarted"
 
 echo "all checks passed"

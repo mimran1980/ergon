@@ -5,7 +5,7 @@ kind: Namespace
 metadata:
   name: lab
 ---
-# ClickHouse. Query UI: http://localhost:8123/play (user lab, password lab).
+# ClickHouse. Query UI: http://<host>:8123/play (user lab, password lab).
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -27,6 +27,9 @@ spec:
             - { name: CLICKHOUSE_DB, value: market }
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
           ports: [{ containerPort: 8123 }]
+          # ClickHouse sizes its caches to what it may use: without a limit,
+          # that is most of Docker's memory.
+          resources: { limits: { memory: 2Gi } }
           readinessProbe:
             httpGet: { path: /ping, port: 8123 }
           volumeMounts: [{ name: data, mountPath: /var/lib/clickhouse }]
@@ -46,44 +49,38 @@ spec:
   selector: { app: clickhouse }
   ports: [{ port: 8123, targetPort: 8123, nodePort: 30123 }]
 ---
-# The recorder pod. Its two native sidecars start first, in order: the Aeron
-# media driver + archive (ready once its cnc.dat exists), then the ingester,
-# which has the archive record the stream. Then the recorder itself
-# (NautilusTrader + persist-client). They share the Aeron directory in
-# memory; the recordings and the ingester's checkpoint are on a volume, so a
-# restart loses nothing. Both read /lab/config/tables.yaml live.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: archive
-  namespace: lab
-spec:
-  accessModes: [ReadWriteOnce]
-  resources: { requests: { storage: 20Gi } }
----
+# Aeron, one per node (a DaemonSet): the media driver and the archive in one
+# JVM. Recorders and the ingester on the node share its directory, which is
+# on the node's tmpfs, so every pod there talks to it over shared memory. The
+# recordings are on the node's disk, so a restart loses nothing. If the
+# archive dies (see deploy/LabDriver.java) the pod exits and is restarted,
+# and the clients, whose driver is gone, exit and reconnect too.
+#
+# Timeouts are 30 s rather than Aeron's 10 s, so a laptop that sleeps
+# briefly does not take everything down; AERON_DRIVER_TIMEOUT matches it on
+# the Rust clients.
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
-  name: recorder
+  name: aeron
   namespace: lab
 spec:
-  replicas: 1
-  strategy: { type: Recreate }
-  selector: { matchLabels: { app: recorder } }
+  selector: { matchLabels: { app: aeron } }
   template:
-    metadata: { labels: { app: recorder } }
+    metadata: { labels: { app: aeron } }
     spec:
-      initContainers:
+      containers:
         - name: aeron
           image: lab/aeron:local
           imagePullPolicy: Never
-          restartPolicy: Always
           env:
             # 16 MiB segments, so the purge behind the ingester shows within minutes.
             - name: JAVA_TOOL_OPTIONS
               value: >-
                 -Daeron.dir=/aeron/driver -Daeron.dir.delete.on.start=true
                 -Daeron.ipc.term.buffer.length=16m
+                -Daeron.client.liveness.timeout=30s -Daeron.publication.unblock.timeout=45s
+                -Daeron.driver.timeout=30000 -Daeron.archive.connect.timeout=30s
                 -Daeron.archive.dir=/archive/recordings
                 -Daeron.archive.segment.file.length=16m
                 -Daeron.archive.control.channel=aeron:udp?endpoint=localhost:8010
@@ -95,40 +92,59 @@ spec:
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: archive, mountPath: /archive }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: archive
+          hostPath: { path: /var/lib/lab/archive, type: DirectoryOrCreate }
+---
+# The ingester, one per node beside its Aeron: has the archive record the
+# stream, replays it into ClickHouse, checkpoints, purges. Any archive error
+# ends it; it restarts and resumes from its checkpoint.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ingester
+  namespace: lab
+spec:
+  selector: { matchLabels: { app: ingester } }
+  template:
+    metadata: { labels: { app: ingester } }
+    spec:
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/recorder:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
         - name: ingester
           image: lab/recorder:local
           imagePullPolicy: Never
-          restartPolicy: Always
           command: [/usr/local/bin/ingester]
           env:
             - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_SCHEMA, value: /lab/schema/market.xml }
-            - { name: PERSIST_CHECKPOINT, value: /archive/persist.checkpoint }
+            - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
-            - { name: archive, mountPath: /archive }
-            - { name: config, mountPath: /lab/config, readOnly: true }
-      containers:
-        - name: recorder
-          image: lab/recorder:local
-          imagePullPolicy: Never
-          env:
-            - { name: AERON_DIR, value: /aeron/driver }
-            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
-          volumeMounts:
-            - { name: aeron, mountPath: /aeron }
+            - { name: state, mountPath: /state }
             - { name: config, mountPath: /lab/config, readOnly: true }
       volumes:
         - name: aeron
-          emptyDir: { medium: Memory }
-        - name: archive
-          persistentVolumeClaim: { claimName: archive }
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: state
+          hostPath: { path: /var/lib/lab/ingester, type: DirectoryOrCreate }
         - name: config
           hostPath: { path: /lab/config, type: Directory }
 ---
-# Grafana: http://localhost:3000. Datasource and dashboards come from grafana/.
+# The recorders, one Deployment per exchange, are in recorder.yaml:
+# `just exchange okx` deploys one.
+---
+# Grafana: http://<host>:3000. Datasource and dashboards come from grafana/.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -168,7 +184,7 @@ spec:
   selector: { app: grafana }
   ports: [{ port: 3000, targetPort: 3000, nodePort: 30300 }]
 ---
-# JupyterLab: http://localhost:8888, notebooks/ from this checkout (read-write).
+# JupyterLab: http://<host>:8888, notebooks/ from this checkout (read-write).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

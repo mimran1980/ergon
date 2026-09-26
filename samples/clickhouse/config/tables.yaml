@@ -11,10 +11,26 @@
 # kind: dynamic  Follows the data: a field added to market.xml becomes a new
 #                column when the recorder restarts; a new event field, at once.
 # enabled:       Record it now (default true). Set false to stop recording.
+#
+# One exchange only: config/exchanges/<exchange>.yaml overrides `enabled` for
+# that exchange's recorder, live. It may only name tables listed here:
+#   tables:
+#     book_deltas: { enabled: false }
 tables:
   trade:         { kind: static }
   quote:         { kind: static }
   mark_price:    { kind: dynamic, enabled: true }
   funding_rate:  { kind: dynamic, enabled: true }
   book_snapshot: { kind: dynamic, enabled: false }
+  index_price:   { kind: dynamic }
+  bar:           { kind: dynamic }                 # one-minute bars from the venue
+  book_deltas:   { kind: dynamic }                 # every order book change
   spread:        { kind: dynamic, enabled: true }
+  # Event tables: their columns are whatever the rows bring.
+  ticker:        { kind: dynamic }  # one row per instrument a second; each venue adds the columns it has
+  instrument:    { kind: dynamic }  # instrument definitions: tick size, fees, ...
+  instrument_status: { kind: dynamic }
+  # Data only one venue offers, named after its Nautilus type.
+  deribit_volatility_index:  { kind: dynamic }  # DVOL
+  hyperliquid_open_interest: { kind: dynamic }
+  hyperliquid_public_trade:  { kind: dynamic }  # trades with buyer and seller addresses

@@ -1,6 +1,6 @@
 [package]
 name = "recorder"
-description = "Public Binance/Bybit market data via NautilusTrader, persisted with SBE."
+description = "Public market data from one exchange via NautilusTrader, persisted with SBE."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,10 +11,15 @@ publish.workspace = true
 arrayvec = "0.7"
 persist-client.workspace = true
 rust_decimal = "1"
+serde_json = "1"
 anyhow = "1"
 nautilus-binance = "0.64"
 nautilus-bybit = "0.64"
 nautilus-common = "0.64"
+nautilus-core = "0.64"
+nautilus-deribit = "0.64"
+nautilus-hyperliquid = "0.64"
+nautilus-okx = "0.64"
 nautilus-live = "0.64"
 nautilus-model = "0.64"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

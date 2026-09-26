@@ -452,8 +452,28 @@ fn market_schema_tables() -> TestResult {
             "quote",
             "book_snapshot",
             "mark_price",
-            "funding_rate"
+            "funding_rate",
+            "index_price",
+            "bar",
+            "book_deltas"
         ]
+    );
+    let column = |table: &str, column: &str| {
+        tables
+            .iter()
+            .find(|t| t.name == table)
+            .and_then(|t| t.shape().columns.into_iter().find(|c| c.name == column))
+            .map(|c| c.ch_type)
+    };
+    // Funding rates need more than nine decimals (Hyperliquid's have ten).
+    assert_eq!(
+        column("funding_rate", "rate").as_deref(),
+        Some("Decimal(18, 18)")
+    );
+    // An enum inside a group: an array of its names.
+    assert_eq!(
+        column("book_deltas", "deltas.action").as_deref(),
+        Some("Array(LowCardinality(String))")
     );
     let ch = ClickHouse::new("http://unused", "", "", "market");
     let book = tables

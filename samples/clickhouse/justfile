@@ -1,15 +1,20 @@
 # ClickHouse persistence lab. Run from samples/clickhouse/.
 #
-#   just up         create the kind cluster and run everything
-#   just recorder   rebuild + redeploy the recorder and ingester after a code/schema change
+#   just up         create the kind cluster and run everything (Binance and Bybit recorders)
+#   just exchange okx deribit   add recorders: binance bybit okx deribit hyperliquid
+#   just unexchange okx         remove one
+#   just recorder   rebuild + redeploy the recorders and ingester after a code/schema change
+#   just aeron      rebuild + redeploy Aeron (LabDriver.java, aeron.Dockerfile), then its clients
 #   just logs       follow the recorder, ingester and Aeron logs
 #   just verify     check the running lab end to end
 #   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
+#   just test-stop  stop that throwaway ClickHouse and driver (2 GB+ of memory)
 #   just latency    time recording on the app thread
 #   just stop / just start   pause the cluster, keeping data
 #   just destroy    delete the cluster and its data
 
 cluster := "clickhouse-lab"
+kube := "kubectl --context kind-" + cluster + " -n lab"
 
 default:
     @just --list
@@ -17,15 +22,30 @@ default:
 # Create the cluster (if needed), build images, deploy, wait, print URLs.
 up: _cluster images
     kubectl --context kind-{{cluster}} apply -f deploy/lab.yaml
-    kubectl --context kind-{{cluster}} -n lab rollout status statefulset/clickhouse --timeout=300s
-    kubectl --context kind-{{cluster}} -n lab rollout status deploy/grafana deploy/jupyter deploy/recorder --timeout=300s
+    just exchange binance bybit
+    {{kube}} rollout status statefulset/clickhouse --timeout=300s
+    {{kube}} rollout status deploy/grafana deploy/jupyter daemonset/aeron daemonset/ingester --timeout=300s
     @just urls
 
+# Deploy a recorder for each named exchange: binance bybit okx deribit hyperliquid.
+exchange +names:
+    for x in {{names}}; do sed "s/__EXCHANGE__/$x/g" deploy/recorder.yaml | kubectl --context kind-{{cluster}} apply -f -; done
+    for x in {{names}}; do {{kube}} rollout status deploy/recorder-$x --timeout=300s; done
+
+# Remove the named exchanges' recorders. Their recorded data stays.
+unexchange +names:
+    for x in {{names}}; do {{kube}} delete deploy/recorder-$x; done
+
+# Reachable from other machines too: every port listens on 0.0.0.0.
 urls:
-    @echo "ClickHouse UI  http://localhost:8123/play   (user lab / password lab)"
-    @echo "Grafana        http://localhost:3000"
-    @echo "JupyterLab     http://localhost:8888/lab/tree/verify.ipynb"
-    @echo "Config         $PWD/config/tables.yaml  (edits apply live)"
+    #!/usr/bin/env bash
+    host=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
+    host=${host:-localhost}
+    echo "ClickHouse UI  http://$host:8123/play   (user lab / password lab)"
+    echo "Grafana        http://$host:3000"
+    echo "JupyterLab     http://$host:8888/lab/tree/verify.ipynb"
+    echo "Recorders      $({{kube}} get deploy -l app=recorder -o jsonpath='{.items[*].metadata.labels.exchange}')"
+    echo "Config         $PWD/config/tables.yaml  (edits apply live)"
 
 _cluster:
     #!/usr/bin/env bash
@@ -57,14 +77,29 @@ build-recorder:
             && cp /target/release/recorder /target/release/ingester schema/market.xml target/linux/'
     docker build -q -t lab/recorder:local -f deploy/recorder.Dockerfile target/linux
 
-# Rebuild and restart the recorder pod (after changing schema/market.xml or code).
+# Rebuild and restart the recorders and the ingester (after changing schema/market.xml or code).
 recorder: build-recorder
     just _load lab/recorder:local
-    kubectl --context kind-{{cluster}} -n lab rollout restart deploy/recorder
-    kubectl --context kind-{{cluster}} -n lab rollout status deploy/recorder --timeout=120s
+    {{kube}} rollout restart daemonset/ingester
+    {{kube}} rollout restart deploy -l app=recorder
+    {{kube}} rollout status daemonset/ingester --timeout=120s
+    for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
+
+# The clients are restarted too, so they join the new driver at once rather
+# than after their 30 s timeout.
+# Rebuild and restart Aeron and its clients (after changing LabDriver.java or aeron.Dockerfile).
+aeron:
+    docker build -q -t lab/aeron:local -f deploy/aeron.Dockerfile deploy
+    just _load lab/aeron:local
+    {{kube}} rollout restart daemonset/aeron
+    {{kube}} rollout status daemonset/aeron --timeout=120s
+    {{kube}} rollout restart daemonset/ingester
+    {{kube}} rollout restart deploy -l app=recorder
+    {{kube}} rollout status daemonset/ingester --timeout=120s
+    for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
 
 logs:
-    kubectl --context kind-{{cluster}} -n lab logs -f deploy/recorder --all-containers --prefix
+    {{kube}} logs -f -l 'app in (recorder,ingester,aeron)' --prefix --max-log-requests 20 --tail 20
 
 # End-to-end checks against the running lab.
 verify:
@@ -85,12 +120,19 @@ _test-clickhouse:
         until curl -sf http://localhost:18123/ping >/dev/null; do sleep 1; done
     fi
 
+# Stop the throwaway ClickHouse and Aeron driver that `just test` leaves running.
+test-stop:
+    docker rm -f persist-test-clickhouse
+    pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
+
 # Media driver + archive in one JVM. The tests use /tmp/persist-test-aeron;
 # 1 MiB segments so they see purges.
 _test-aeron: _aeron-jar
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! pgrep -f 'aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
+    # A driver whose directory is gone (macOS cleans /tmp) is no driver.
+    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f 'aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
+        pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
         touch target/aeron-test.started
         sleep 1 # `-nt` compares whole seconds
         nohup java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \

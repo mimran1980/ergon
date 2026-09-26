@@ -35,12 +35,24 @@
             <type name="mantissa" primitiveType="int64"/>
             <type name="exponent" primitiveType="int8" presence="constant">-9</type>
         </composite>
+        <!-- A rate: mantissa x 10^-18, stored as Decimal(18, 18). Funding
+             rates have ten or more decimals on some venues (Hyperliquid). -->
+        <composite name="Rate">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8" presence="constant">-18</type>
+        </composite>
         <!-- UNIX epoch nanoseconds; stored as DateTime64(9, 'UTC'). -->
         <type name="Timestamp" primitiveType="uint64" semanticType="UTCTimestamp"/>
         <enum name="Side" encodingType="uint8">
             <validValue name="NoSide">0</validValue>
             <validValue name="Buy">1</validValue>
             <validValue name="Sell">2</validValue>
+        </enum>
+        <enum name="BookAction" encodingType="uint8">
+            <validValue name="Add">1</validValue>
+            <validValue name="Update">2</validValue>
+            <validValue name="Delete">3</validValue>
+            <validValue name="Clear">4</validValue>
         </enum>
     </types>
 
@@ -93,10 +105,47 @@
     <sbe:message name="FundingRate" id="5">
         <field name="tsEvent" id="1" type="Timestamp"/>
         <field name="tsInit" id="2" type="Timestamp"/>
-        <field name="rate" id="3" type="Decimal9"/>
+        <field name="rate" id="3" type="Rate"/>
         <field name="intervalMinutes" id="4" type="uint16" presence="optional"/>
         <field name="nextFundingTs" id="5" type="Timestamp" presence="optional"/>
         <data name="symbol" id="6" type="varString"/>
         <data name="venue" id="7" type="varString"/>
+    </sbe:message>
+
+    <sbe:message name="IndexPrice" id="6">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="price" id="3" type="Decimal9"/>
+        <data name="symbol" id="4" type="varString"/>
+        <data name="venue" id="5" type="varString"/>
+    </sbe:message>
+
+    <!-- One-minute bars as the venue publishes them. -->
+    <sbe:message name="Bar" id="7">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="open" id="3" type="Decimal9"/>
+        <field name="high" id="4" type="Decimal9"/>
+        <field name="low" id="5" type="Decimal9"/>
+        <field name="close" id="6" type="Decimal9"/>
+        <field name="volume" id="7" type="Decimal9"/>
+        <data name="symbol" id="8" type="varString"/>
+        <data name="venue" id="9" type="varString"/>
+        <data name="barType" id="10" type="varString"/>
+    </sbe:message>
+
+    <!-- Every order book change, one row per batch the venue sends. -->
+    <sbe:message name="BookDeltas" id="8">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="tsInit" id="2" type="Timestamp"/>
+        <field name="sequence" id="3" type="uint64"/>
+        <group name="deltas" id="4" dimensionType="groupSizeEncoding">
+            <field name="action" id="5" type="BookAction"/>
+            <field name="side" id="6" type="Side"/>
+            <field name="price" id="7" type="Decimal9"/>
+            <field name="size" id="8" type="Decimal9"/>
+        </group>
+        <data name="symbol" id="9" type="varString"/>
+        <data name="venue" id="10" type="varString"/>
     </sbe:message>
 </sbe:messageSchema>

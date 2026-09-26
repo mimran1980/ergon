@@ -94,7 +94,7 @@ fn ingest(
 ) -> Result<Vec<Report>, Box<dyn Error>> {
     let mut reports = Vec::new();
     wait_until(&format!("{rows} rows in {table}"), || {
-        let report = ingester.tick();
+        let report = ingester.tick()?;
         if !report.errors.is_empty() {
             return Err(format!("unexpected errors: {:?}", report.errors).into());
         }
@@ -128,7 +128,7 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
     })?;
     record(&persist, 10_000)?;
     for _ in 0..3 {
-        let report = ingester_a.tick();
+        let report = ingester_a.tick()?;
         assert!(!report.errors.is_empty());
         assert!(
             report.inserted.is_empty() && report.purged.is_empty(),
@@ -162,7 +162,7 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
     drop(persist);
     let mut reports = Vec::new();
     wait_until("the stopped recording to be deleted", || {
-        let report = ingester_c.tick();
+        let report = ingester_c.tick()?;
         let done = report
             .purged
             .iter()
@@ -171,6 +171,42 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
         Ok(done)
     })?;
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "20000");
+    Ok(())
+}
+
+#[test]
+fn rows_built_at_run_time_become_tables() -> TestResult {
+    use persist_client::event::Value;
+
+    let lab = Lab::new(
+        "aeron_rows",
+        "tables:\n  venue_stats: { kind: dynamic }\n  off: { kind: dynamic, enabled: false }\n",
+    )?;
+    let stream_id = stream(6);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    persist.record_row(
+        "venue_stats",
+        [("venue", Value::Str("DERIBIT")), ("dvol", Value::F64(41.5))],
+    );
+    // Another venue brings a column the first one did not have.
+    persist.record_row(
+        "venue_stats",
+        [
+            ("venue", Value::Str("HYPERLIQUID")),
+            ("open_interest", Value::U64(7)),
+        ],
+    );
+    persist.record_row("off", [("x", Value::I64(1))]);
+    ingest(&mut ingester, &lab, "venue_stats", 2)?;
+    assert_eq!(
+        lab.query("SELECT venue, dvol, open_interest FROM DB.venue_stats ORDER BY ts FORMAT TSV")?,
+        "DERIBIT\t41.5\t0\nHYPERLIQUID\t0\t7"
+    );
+    assert_eq!(lab.query("EXISTS TABLE DB.off")?, "0");
     Ok(())
 }
 
@@ -220,7 +256,7 @@ fn tracing_events_become_tables() -> TestResult {
     });
     let mut problems = Vec::new();
     wait_until("a row with a new field in a static table", || {
-        let report = ingester.tick();
+        let report = ingester.tick()?;
         problems.extend(report.problems);
         Ok(lab.query("SELECT count() FROM DB.fixed")? == "2")
     })?;
@@ -238,7 +274,7 @@ fn tracing_events_become_tables() -> TestResult {
     });
     let mut errors = Vec::new();
     wait_until("the row with a mistyped value", || {
-        errors.extend(ingester.tick().errors);
+        errors.extend(ingester.tick()?.errors);
         Ok(lab.query("SELECT count() FROM DB.signal")? == "3")
     })?;
     assert_eq!(
@@ -273,6 +309,42 @@ fn enabled_follows_the_config_file() -> TestResult {
 
     lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: false }\n")?;
     wait_until("recording off", || Ok(!persist.enabled(v1::TEMPLATE_ID)))?;
+    Ok(())
+}
+
+#[test]
+fn an_override_file_switches_tables_for_one_application() -> TestResult {
+    let lab = Lab::new("aeron_override", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let overrides = lab.dir.join("app.yaml");
+    let settings = persist_client::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id: stream(7),
+        overrides_path: Some(overrides.clone()),
+        ..persist_client::Settings::new(&lab.config)
+    };
+    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    assert!(
+        persist.enabled(v1::TEMPLATE_ID),
+        "no override file: tables.yaml decides"
+    );
+
+    std::fs::write(&overrides, "tables:\n  shapes: { enabled: false }\n")?;
+    wait_until("the override to switch it off", || {
+        Ok(!persist.enabled(v1::TEMPLATE_ID))
+    })?;
+    // An override naming a table tables.yaml lacks is rejected whole.
+    std::fs::write(
+        &overrides,
+        "tables:\n  shapes: { enabled: true }\n  nope: { enabled: true }\n",
+    )?;
+    std::thread::sleep(Duration::from_millis(2500));
+    assert!(!persist.enabled(v1::TEMPLATE_ID));
+
+    std::fs::remove_file(&overrides)?;
+    wait_until("tables.yaml to decide again", || {
+        Ok(persist.enabled(v1::TEMPLATE_ID))
+    })?;
     Ok(())
 }
 

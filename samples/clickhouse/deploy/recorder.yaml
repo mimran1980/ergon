@@ -1,0 +1,41 @@
+# One exchange's recorder: NautilusTrader + persist-client, publishing to the
+# node's Aeron. `just exchange <name>` fills in __EXCHANGE__ and applies it,
+# so each exchange is its own Deployment and can come and go on its own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recorder-__EXCHANGE__
+  namespace: lab
+  labels: { app: recorder, exchange: __EXCHANGE__ }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: recorder, exchange: __EXCHANGE__ } }
+  template:
+    metadata: { labels: { app: recorder, exchange: __EXCHANGE__ } }
+    spec:
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/recorder:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
+        - name: recorder
+          image: lab/recorder:local
+          imagePullPolicy: Never
+          env:
+            - { name: EXCHANGE, value: __EXCHANGE__ }
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            # This exchange's own `enabled` values, if the file exists.
+            - { name: PERSIST_OVERRIDES, value: /lab/config/exchanges/__EXCHANGE__.yaml }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }

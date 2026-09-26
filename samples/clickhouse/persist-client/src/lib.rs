@@ -114,6 +114,37 @@ pub fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> 
         .map_err(|e| Error::Config(e.to_string()))
 }
 
+/// Apply an override file to a parsed `tables.yaml`: it switches tables on
+/// or off for one application, and names no table `tables.yaml` lacks.
+///
+/// ```yaml
+/// tables:
+///   book_deltas: { enabled: false }
+/// ```
+pub fn apply_overrides(
+    config: &mut BTreeMap<String, TableConfig>,
+    text: &str,
+) -> Result<(), Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Override {
+        enabled: bool,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct File {
+        tables: BTreeMap<String, Override>,
+    }
+    let file: File = serde_yaml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
+    for (name, o) in file.tables {
+        config
+            .get_mut(&name)
+            .ok_or_else(|| Error::Config(format!("{name} is not in tables.yaml")))?
+            .enabled = o.enabled;
+    }
+    Ok(())
+}
+
 /// `(table name, template id)` of every message in an SBE schema.
 fn schema_tables(xml: &str) -> Result<Vec<(String, u16)>, Error> {
     let ir = ergo_sbe::parse(xml).map_err(|e| Error::Schema(e.to_string()))?;
@@ -149,6 +180,9 @@ pub fn snake_case(name: &str) -> String {
 pub struct Settings {
     /// `tables.yaml`, re-read every second.
     pub config_path: PathBuf,
+    /// This application's own `enabled` values (see [`apply_overrides`]),
+    /// re-read every second. A missing file overrides nothing.
+    pub overrides_path: Option<PathBuf>,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
     /// Defaults to [`CHANNEL`].
@@ -163,16 +197,23 @@ impl Settings {
     pub fn new(config_path: impl Into<PathBuf>) -> Self {
         Self {
             config_path: config_path.into(),
+            overrides_path: None,
             aeron_dir: None,
             channel: CHANNEL.to_string(),
             stream_id: STREAM_ID,
         }
     }
 
-    /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`).
+    /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`) and,
+    /// if set, `PERSIST_OVERRIDES`.
     #[must_use]
     pub fn from_env() -> Self {
-        Self::new(std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()))
+        Self {
+            overrides_path: std::env::var_os("PERSIST_OVERRIDES").map(PathBuf::from),
+            ..Self::new(
+                std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
+            )
+        }
     }
 }
 
@@ -215,7 +256,8 @@ impl Persist {
         });
         let mut watcher = Watcher {
             path: settings.config_path.clone(),
-            text: String::new(),
+            overrides_path: settings.overrides_path.clone(),
+            text: (String::new(), None),
             error: None,
             dropped: 0,
             schema,
@@ -323,7 +365,10 @@ impl Persist {
         }))
     }
 
-    pub(crate) fn event_enabled(&self, table: &str) -> bool {
+    /// Is the event table `table` recorded right now? Check it before
+    /// building a row that is costly to make.
+    #[must_use]
+    pub fn event_enabled(&self, table: &str) -> bool {
         let events = self
             .inner
             .shared
@@ -409,7 +454,9 @@ fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_cl
 /// Applies `tables.yaml` to [`Shared::enabled`]; runs on its own thread.
 struct Watcher {
     path: PathBuf,
-    text: String,
+    overrides_path: Option<PathBuf>,
+    /// The last applied `tables.yaml` and override file.
+    text: (String, Option<String>),
     /// The last error logged, so a broken file is reported once.
     error: Option<String>,
     dropped: u64,
@@ -439,15 +486,29 @@ impl Watcher {
         }
     }
 
-    /// Apply `tables.yaml` if it changed since the last call.
+    /// Apply `tables.yaml` and the override file if either changed since
+    /// the last call.
     fn reload(&mut self) -> Result<(), Error> {
         let text = std::fs::read_to_string(&self.path)
             .map_err(|e| Error::Config(format!("{}: {e}", self.path.display())))?;
+        let overrides = match &self.overrides_path {
+            Some(path) => match std::fs::read_to_string(path) {
+                Ok(text) => Some(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(Error::Config(format!("{}: {e}", path.display()))),
+            },
+            None => None,
+        };
+        let text = (text, overrides);
         if text == self.text {
             return Ok(());
         }
-        let config = parse_config(&text)?;
-        let first = self.text.is_empty();
+        let mut config = parse_config(&text.0)?;
+        if let (Some(overrides), Some(path)) = (&text.1, &self.overrides_path) {
+            apply_overrides(&mut config, overrides)
+                .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
+        }
+        let first = self.text.0.is_empty();
         let toggled = |name: &str, was: bool, on: bool| {
             if was != on || (first && on) {
                 log::info!("recording {name}: {}", if on { "on" } else { "off" });
@@ -487,6 +548,36 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn overrides_switch_tables_for_one_application() -> TestResult {
+        let mut config = parse_config(
+            "tables:\n  trade: { kind: static }\n  book: { kind: dynamic, enabled: false }\n",
+        )?;
+        apply_overrides(
+            &mut config,
+            "tables:\n  trade: { enabled: false }\n  book: { enabled: true }\n",
+        )?;
+        assert!(!config["trade"].enabled && config["book"].enabled);
+        assert_eq!(
+            config["trade"].kind,
+            TableKind::Static,
+            "kind is not overridden"
+        );
+        assert!(
+            apply_overrides(&mut config, "tables:\n  nope: { enabled: true }\n").is_err(),
+            "a table tables.yaml lacks is an error, not a new table"
+        );
+        assert!(
+            apply_overrides(
+                &mut config,
+                "tables:\n  trade: { kind: dynamic, enabled: true }\n"
+            )
+            .is_err(),
+            "kind belongs to tables.yaml"
+        );
+        Ok(())
+    }
 
     #[test]
     fn snake_case_names() -> TestResult {

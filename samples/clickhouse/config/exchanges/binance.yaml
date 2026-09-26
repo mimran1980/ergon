@@ -1,0 +1,3 @@
+# Binance only: overrides `enabled` from ../tables.yaml, live.
+tables:
+  book_deltas: { enabled: true }

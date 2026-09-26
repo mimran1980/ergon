@@ -1,7 +1,9 @@
 //! The ingester: Aeron Archive -> ClickHouse, once a second.
 //!
-//! `PERSIST_SCHEMA` (`schema/market.xml`) is the SBE schema the application
-//! records with; the rest of the settings come from [`Settings::from_env`].
+//! `PERSIST_SCHEMA` (`schema/market.xml`) is the SBE schema the applications
+//! record with; the rest of the settings come from [`Settings::from_env`].
+//! An archive failure ends the process with an error: whatever restarts it
+//! (Kubernetes, here) reconnects, and it resumes from its checkpoints.
 
 use std::time::{Duration, Instant};
 
@@ -16,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ingester = Ingester::connect(&schema, Settings::from_env())?;
     loop {
         let started = Instant::now();
-        ingester.tick();
+        ingester.tick()?;
         std::thread::sleep(Duration::from_secs(1).saturating_sub(started.elapsed()));
     }
 }

@@ -13,18 +13,27 @@ recorder app ──try_claim──▶ Aeron IPC ──▶ Aeron Archive (disk) �
 |---|---|
 | `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else. |
 | `persist-server` | The ingester, as a library and the `ingester` binary: replays the archive into ClickHouse tables, checkpoints, purges. |
-| `recorder` | The sample application: public Binance and Bybit data from NautilusTrader, no API keys. |
+| `recorder` | The sample application: public market data from one exchange (Binance, Bybit, OKX, Deribit or Hyperliquid) via NautilusTrader, no API keys. |
 
 ## Run it
 
 ```sh
 cd samples/clickhouse
-just up        # kind cluster: ClickHouse, Grafana, JupyterLab, and the recorder pod
-just verify    # end-to-end check of the running lab
-just logs      # recorder, ingester and Aeron logs
+just up                # kind cluster: ClickHouse, Grafana, JupyterLab, Aeron, the ingester, Binance and Bybit
+just exchange deribit  # add an exchange: binance bybit okx deribit hyperliquid
+just unexchange okx    # remove one; its data stays
+just recorder          # rebuild + redeploy the recorders and ingester after a code or schema change
+just aeron             # rebuild + redeploy Aeron, then its clients
+just verify            # end-to-end check of the running lab
+just logs              # recorder, ingester and Aeron logs
 ```
 
 You need Docker, kind, kubectl, just and jq.
+
+Every port listens on all interfaces, so the lab is reachable from other
+machines on your network as well as from `localhost` (`just urls` prints the
+addresses). That includes Grafana (anonymous admin) and JupyterLab (no token,
+this checkout mounted read-write): run it only on a network you trust.
 
 | What | Where |
 |---|---|
@@ -33,10 +42,24 @@ You need Docker, kind, kubectl, just and jq.
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb>, then Run All |
 | What is recorded | `config/tables.yaml`: edits apply within a second |
 
-The recorder pod runs three containers: the Aeron driver and archive, the
-ingester, and the recorder. The recordings and the ingester's checkpoint are
-on a volume. `just stop` / `just start` pause the cluster and keep the data;
-`just destroy` deletes it.
+| Pod | Kind | What it runs |
+|---|---|---|
+| `aeron` | DaemonSet, one per node | The Aeron media driver and archive. Its directory is on the node's tmpfs, so every pod on the node shares it; the recordings are on the node's disk. |
+| `ingester` | DaemonSet, beside each Aeron | Archive -> ClickHouse. Its checkpoint is on the node's disk. |
+| `recorder-<exchange>` | Deployment per exchange | NautilusTrader + persist-client for one exchange (`deploy/recorder.yaml`). |
+
+The recorders on a node publish on one Aeron stream. Aeron shares one IPC
+publication between them, so they make one recording, and adding or removing
+an exchange touches nothing else.
+
+If a pause (a laptop sleeping, say) outlasts Aeron's 30 s timeouts, the
+archive dies. The `aeron` pod then exits and is restarted, and the ingester
+and recorders exit and reconnect to the new driver. The ingester also exits
+on any failed archive request, and resumes from its checkpoint.
+
+`just stop` / `just start` pause the cluster and keep the data;
+`just destroy` deletes it. `just test` leaves a ClickHouse and an Aeron
+driver running for the next run; `just test-stop` frees their memory.
 
 ## Record a table
 
@@ -101,6 +124,18 @@ tables:
 
 A changed column type is never altered automatically, for either kind.
 
+**One exchange only.** `config/exchanges/<exchange>.yaml` overrides `enabled`
+for that exchange's recorder, and applies within a second, like `tables.yaml`.
+It may name only tables that `tables.yaml` lists. `kind` is not overridable:
+every exchange writes the same ClickHouse table. Delete the file and
+`tables.yaml` decides again.
+
+```yaml
+# config/exchanges/binance.yaml: Binance stops recording book changes
+tables:
+  book_deltas: { enabled: false }
+```
+
 ## Types
 
 | SBE | ClickHouse |
@@ -135,12 +170,13 @@ so fields it doesn't carry are written as their defaults.
   stops replaying and the archive holds the data on disk. Nothing is dropped.
 - **Checkpoint and purge.** After each insert the ingester saves its position
   (`recording position`), then deletes the archive segments behind it. When
-  the application exits, its recording stops. Once all of it is in ClickHouse,
-  the recording is deleted.
+  the last recorder on the node exits, the recording stops. Once all of it is
+  in ClickHouse, the recording is deleted.
 - **At least once.** A crash between an insert and the checkpoint write
   replays those records, so they can appear twice.
-- **Sessions.** Every run of the application is its own recording, and the
-  ingester takes them oldest first.
+- **Sessions.** The recorders on a node share one publication, so they make
+  one recording. It stops only when none is left; the next recorder starts a
+  new one. The ingester takes recordings oldest first.
 
 ## Latency
 
@@ -160,7 +196,35 @@ The last row shows that the layer's own filter leaves the rest of the
 application's `tracing` calls disabled. It was measured on a second run, with
 the lab running beside it.
 
+## What each exchange records
+
+Everything NautilusTrader offers for two instruments (BTC and ETH) per venue:
+
+| Table | From | Binance (spot) | Bybit, OKX | Deribit | Hyperliquid |
+|---|---|---|---|---|---|
+| `trade`, `quote`, `book_snapshot`, `book_deltas`, `bar` | SBE | yes | yes | yes | yes |
+| `mark_price`, `index_price`, `funding_rate` | SBE | | yes | yes | yes |
+| `ticker`, `instrument`, `instrument_status`, `spread` | events | yes | yes | yes | yes |
+| `deribit_volatility_index` (DVOL) | events | | | yes | |
+| `hyperliquid_open_interest`, `hyperliquid_public_trade` (with buyer and seller addresses) | events | | | | yes |
+
+`ticker` is one row per instrument a second, with the columns the venue has.
+Binance spot has no mark or index price, so its rows leave those columns at
+their defaults. Deribit adds `volatility_index` and Hyperliquid
+`open_interest`.
+
+Venue-specific data is recorded field for field as the venue sends it.
+Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
+
 ## Things to try
+
+- **Deploy an exchange with different columns.** `just exchange deribit`,
+  then in ClickHouse:
+  `SELECT name, type FROM system.columns WHERE table = 'ticker'`. Within a
+  few seconds of Deribit's first row, the ingester logs
+  ``applied: ALTER TABLE `market`.`ticker` ADD COLUMN IF NOT EXISTS `volatility_index` Float64``,
+  and `deribit_volatility_index` appears as a new table. `just exchange hyperliquid`
+  does the same for `open_interest`. Nothing else is redeployed.
 
 - **Turn recording on.** Set `book_snapshot: { kind: dynamic, enabled: true }`
   and save. Within a second the recorder logs `recording book_snapshot: on`,
@@ -198,8 +262,9 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - One table that never inserts (say, a static table ClickHouse refuses) holds
   the checkpoint back. The archive then grows until it is fixed. Nothing is
   lost, but it uses disk.
-- If the Aeron driver container restarts on its own, restart the pod: the
-  recorder and ingester do not reconnect.
+- The recorders and the ingester reconnect by exiting and being restarted,
+  so a restarted `aeron` pod costs every client a restart and the records
+  published in between. A client notices within the 30 s driver timeout.
 - An event table's column types are learned from the rows, so they are learned
   again after the ingester restarts. If the first value it sees after a
   restart has a different type, that is reported like a changed column type.
@@ -207,5 +272,9 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
   error and written as the default.
 - `just verify` counts container restarts, so after `just stop` / `just start`
   its last check fails: the node restart restarts every container.
-- One application per stream. Two publishing at once would make two live
-  recordings, and the ingester would follow only the older one.
+- Applications that publish on one stream must use the same channel.
+  Aeron refuses a second IPC publication whose parameters (a `session-id`, say)
+  differ from the one already open.
+- Only venue data NautilusTrader subscribes to is recorded. Options (greeks,
+  chains) need live option instruments picked by expiry, and are not
+  recorded.

@@ -8,6 +8,10 @@
 //!
 //! Delivery is at least once: a crash between an insert and the checkpoint
 //! write replays those records, so ClickHouse can hold them twice.
+//!
+//! A failed archive request is returned from [`Ingester::tick`]: the archive,
+//! or this client's session with it, is gone, and only a new connection
+//! recovers. The checkpoint makes exiting and starting again safe.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -121,21 +125,20 @@ impl Ingester {
     }
 
     /// Replay what was recorded since the last tick, insert it, then save the
-    /// checkpoint and purge the archive behind it.
-    pub fn tick(&mut self) -> Report {
+    /// checkpoint and purge the archive behind it. An error means the archive
+    /// can no longer be used: drop this ingester and connect again.
+    pub fn tick(&mut self) -> Result<Report, Error> {
         let mut report = Report::default();
-        if self.replay.is_none()
-            && let Err(e) = self.open_replay(&mut report)
-        {
-            report.errors.push(e.to_string());
+        if self.replay.is_none() {
+            self.open_replay(&mut report)?;
         }
-        self.poll(&mut report);
+        self.poll()?;
         self.writer.run(&mut report);
         if self.writer.queued_bytes() == 0 {
-            self.commit(&mut report);
+            self.commit(&mut report)?;
         }
         self.writer.log(&report);
-        report
+        Ok(report)
     }
 
     /// Replay the oldest recording that still holds records not in
@@ -220,9 +223,9 @@ impl Ingester {
 
     /// Hand replayed messages to the writer until it holds `max_queued`
     /// bytes; the rest waits in the archive.
-    fn poll(&mut self, report: &mut Report) {
+    fn poll(&mut self) -> Result<(), Error> {
         let Some(replay) = &mut self.replay else {
-            return;
+            return Ok(());
         };
         let writer = &mut self.writer;
         let mut last = None;
@@ -234,13 +237,8 @@ impl Ingester {
                 },
                 1024,
             );
-            match polled {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(e) => {
-                    report.errors.push(format!("archive replay: {e}"));
-                    break;
-                }
+            if polled.map_err(|e| Error::Aeron(format!("archive replay: {e}")))? == 0 {
+                break;
             }
         }
         if let Some(position) = last {
@@ -258,17 +256,18 @@ impl Ingester {
                 let _ = self.archive.stop_replay(replay.session);
             }
         }
+        Ok(())
     }
 
     /// Everything polled is in ClickHouse: save the checkpoint and purge the
     /// archive segments before it.
-    fn commit(&mut self, report: &mut Report) {
+    fn commit(&mut self, report: &mut Report) -> Result<(), Error> {
         let Some(polled) = self.polled.filter(|p| Some(*p) != self.checkpoint) else {
-            return;
+            return Ok(());
         };
         if let Err(e) = save(&self.checkpoint_path, polled) {
             report.errors.push(e.to_string());
-            return;
+            return Ok(());
         }
         self.checkpoint = Some(polled);
         let Some(replay) = self
@@ -276,7 +275,7 @@ impl Ingester {
             .as_mut()
             .filter(|r| r.recording == polled.recording)
         else {
-            return;
+            return Ok(());
         };
         let base = AeronArchive::segment_file_base_position(
             replay.start,
@@ -285,21 +284,22 @@ impl Ingester {
             replay.segment_length,
         );
         if base <= replay.start {
-            return;
+            return Ok(());
         }
-        match self.archive.purge_segments(replay.recording, base) {
-            Ok(_) => {
-                report.purged.push(format!(
-                    "recording {}: deleted the segments before position {base}",
+        self.archive
+            .purge_segments(replay.recording, base)
+            .map_err(|e| {
+                Error::Aeron(format!(
+                    "archive: purging recording {}: {e}",
                     replay.recording
-                ));
-                replay.start = base;
-            }
-            Err(e) => report.errors.push(format!(
-                "archive: purging recording {}: {e}",
-                replay.recording
-            )),
-        }
+                ))
+            })?;
+        report.purged.push(format!(
+            "recording {}: deleted the segments before position {base}",
+            replay.recording
+        ));
+        replay.start = base;
+        Ok(())
     }
 }
 
