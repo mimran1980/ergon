@@ -5,6 +5,8 @@
 //!
 //! * `control`   an empty loop: the floor this machine can measure
 //! * `sbe`       `Persist::record` of one SBE message
+//! * `installed` the same through `persist_client::record`, the installed handle
+//! * `uninstalled` `persist_client::record` with no handle installed: a no-op
 //! * `event`     `tracing::info!(table = "signal", …)`, table enabled
 //! * `event-off` the same event for a disabled table
 //! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
@@ -70,6 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(Duration::from_millis(10));
     }
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
+    if arm == "installed" {
+        persist.install();
+    }
 
     // One record every 5 µs (200k/s, far above the lab's live rate) for 8 s.
     // The first 3 s are skipped: pages are touched for the first time then,
@@ -80,6 +85,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let t = Instant::now();
         match arm.as_str() {
             "sbe" => persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?,
+            "installed" | "uninstalled" => {
+                persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?
+            }
             "event" => tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3),
             "no-table" => tracing::trace!(x = 1),
             "event-off" => {
@@ -98,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     samples.sort();
     let at = |q: f64| samples[((samples.len() - 1) as f64 * q) as usize];
     println!(
-        "{arm:9} {} records, dropped {}: p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}",
+        "{arm:11} {} records, dropped {}: p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}",
         samples.len(),
         persist.dropped(),
         at(0.5),

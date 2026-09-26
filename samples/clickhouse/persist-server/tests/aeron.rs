@@ -348,6 +348,35 @@ fn an_override_file_switches_tables_for_one_application() -> TestResult {
     Ok(())
 }
 
+/// The only test that installs a handle: it stays installed for the rest of
+/// this test binary, and no other test here uses the free functions.
+#[test]
+fn an_installed_handle_records_from_anywhere() -> TestResult {
+    let lab = Lab::new(
+        "aeron_installed",
+        "tables:\n  shapes: { kind: dynamic }\n  signal: { kind: dynamic }\n",
+    )?;
+    let stream_id = stream(8);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    assert!(persist.install());
+    assert!(!persist.install(), "only the first install counts");
+    drop(persist); // the installed handle lives on
+
+    // Code with no handle in reach: a callback, a library.
+    assert!(persist_client::enabled(v1::TEMPLATE_ID));
+    for _ in 0..100 {
+        persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+    }
+    persist_client::record_row("signal", [("edge", persist_client::event::Value::F64(0.5))]);
+    ingest(&mut ingester, &lab, "shapes", 100)?;
+    ingest(&mut ingester, &lab, "signal", 1)?;
+    Ok(())
+}
+
 #[test]
 fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
     let lab = Lab::new("aeron_dropped", "tables:\n  shapes: { kind: dynamic }\n")?;

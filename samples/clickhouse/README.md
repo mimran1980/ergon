@@ -68,7 +68,7 @@ driver running for the next run; `just test-stop` frees their memory.
 
 ```rust
 let len = TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
+persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
     Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
         .fixed(&TradeFixedFields { ts_event, ts_init, price: d9(price)?, size: d9(size)?, aggressor })
         .symbol(symbol)?
@@ -77,6 +77,12 @@ persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
         .encoded_length_with_header())
 })?;
 ```
+
+`persist_client::record` uses the handle installed once at start-up
+(`Persist::connect(schema, settings)?.install()`), so any code can record
+without being passed one. With none installed (a unit test, a tool) it does
+nothing and never calls the closure. Holding the `Persist` and calling
+`persist.record` is the same, minus one load.
 
 The table is the message in snake_case (`Trade` → `trade`), and every field
 is a column. `record` encodes straight into the Aeron term buffer. It skips
@@ -188,6 +194,12 @@ with the ingester running beside it (Apple M-series; the timer's resolution is
 |---|---|---|---|
 | empty loop (the floor) | 0 ns | 42 ns | 42 ns |
 | `record()`, one SBE message | 83 ns | 167 ns | 291 ns |
+| `persist_client::record()`, installed handle | 42 ns | 167 ns | 334–667 ns |
+| `persist_client::record()`, none installed | 0 ns | 42 ns | 42 ns |
+
+The installed-handle rows are from a later run (2026-09-26), in which
+`record()` on a held handle measured 42 / 167 / 417 ns: the one extra load
+is below the timer's resolution.
 | `tracing` event, table on | 125 ns | 250 ns | 666 ns |
 | `tracing` event, table off | 42 ns | 42 ns | 125 ns |
 | `trace!` without a `table` field | 0 ns | 42 ns | 42 ns |
@@ -226,9 +238,10 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
   and `deribit_volatility_index` appears as a new table. `just exchange hyperliquid`
   does the same for `open_interest`. Nothing else is redeployed.
 
-- **Turn recording on.** Set `book_snapshot: { kind: dynamic, enabled: true }`
-  and save. Within a second the recorder logs `recording book_snapshot: on`,
-  and Grafana's *Order book* panels fill in.
+- **Turn recording off and on.** Set `book_snapshot: { kind: dynamic, enabled: false }`
+  and save. Within a second every recorder logs `recording book_snapshot: off`
+  and Grafana's *Order book* panels stop moving; set it back to `true` and
+  they resume. For one exchange only, use `config/exchanges/<exchange>.yaml`.
 - **Add a column to a dynamic table.** Add
   `<field name="bidLevels" id="12" type="uint8"/>` to `BookSnapshot` after
   `sequence`. Set `bid_levels: bids.len() as u8` in `on_book`, then run

@@ -21,7 +21,7 @@ tables:
   quote:         { kind: static }
   mark_price:    { kind: dynamic, enabled: true }
   funding_rate:  { kind: dynamic, enabled: true }
-  book_snapshot: { kind: dynamic, enabled: false }
+  book_snapshot: { kind: dynamic, enabled: true }  # top 10 L2 levels a side, once a second
   index_price:   { kind: dynamic }
   bar:           { kind: dynamic }                 # one-minute bars from the venue
   book_deltas:   { kind: dynamic }                 # every order book change

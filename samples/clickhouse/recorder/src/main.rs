@@ -2,12 +2,23 @@
 //!
 //! `EXCHANGE` picks the venue (see [`VENUES`]); each runs as its own pod.
 //! NautilusTrader connects to it (public streams, no API keys) and calls this
-//! actor with everything the venue publishes for two instruments. Market data
-//! with a message in `schema/market.xml` is encoded straight into an Aeron
-//! publication (`persist-client`). The rest is recorded as event rows, whose
-//! tables take their columns from the rows: `ticker`, `instrument`,
-//! `instrument_status`, and each kind of venue-specific data the adapter
-//! offers, in a table named after its type.
+//! actor with everything the venue publishes for two instruments. All three
+//! ways of recording appear here:
+//!
+//! * **SBE, static table** (`trade`, `quote`): a message in
+//!   `schema/market.xml`, encoded straight into the Aeron term buffer by
+//!   `persist_client::record`. The table is created once and never altered.
+//! * **SBE, dynamic table** (`book_deltas`, `book_snapshot`, `bar`,
+//!   `mark_price`, `index_price`, `funding_rate`): the same, but the table
+//!   gains a column when the message gains a field.
+//! * **Events** (`spread`, `ticker`, `instrument`, `instrument_status`, and
+//!   each kind of venue-specific data, in a table named after its type): a
+//!   `tracing::info!(table = …)` or `persist_client::record_row`, whose
+//!   fields are the columns.
+//!
+//! Static or dynamic is `kind` in `config/tables.yaml`, not code. The
+//! handle is installed once in `main`; the free functions do nothing where
+//! none is installed, as in this file's tests.
 //!
 //! The ingester (`persist-server`) takes it from the Aeron Archive into
 //! ClickHouse. Which tables are recorded is decided by `config/tables.yaml`,
@@ -162,7 +173,6 @@ struct Ticker {
 #[derive(Debug)]
 struct Recorder {
     core: DataActorCore,
-    persist: Persist,
     venue: &'static Venue,
     tickers: HashMap<InstrumentId, Ticker>,
     /// Deribit's volatility index (DVOL) by index name, e.g. `btc_usd`.
@@ -262,7 +272,7 @@ impl DataActor for Recorder {
         let trade_id = t.trade_id.as_str().as_bytes();
         let len =
             TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-        self.persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
+        persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
             Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&TradeFixedFields {
                     ts_event: t.ts_event.as_u64(),
@@ -285,21 +295,20 @@ impl DataActor for Recorder {
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.persist
-            .record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
-                Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
-                    .fixed(&QuoteFixedFields {
-                        ts_event: q.ts_event.as_u64(),
-                        ts_init: q.ts_init.as_u64(),
-                        bid_price: d9(q.bid_price.as_decimal())?,
-                        ask_price: d9(q.ask_price.as_decimal())?,
-                        bid_size: d9(q.bid_size.as_decimal())?,
-                        ask_size: d9(q.ask_size.as_decimal())?,
-                    })
-                    .symbol(symbol)?
-                    .venue(venue)?
-                    .encoded_length_with_header())
-            })?;
+        persist_client::record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+            Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
+                .fixed(&QuoteFixedFields {
+                    ts_event: q.ts_event.as_u64(),
+                    ts_init: q.ts_init.as_u64(),
+                    bid_price: d9(q.bid_price.as_decimal())?,
+                    ask_price: d9(q.ask_price.as_decimal())?,
+                    bid_size: d9(q.bid_size.as_decimal())?,
+                    ask_size: d9(q.ask_size.as_decimal())?,
+                })
+                .symbol(symbol)?
+                .venue(venue)?
+                .encoded_length_with_header())
+        })?;
         // A derived signal needs no schema: one event, and `spread` in
         // tables.yaml, make a table whose columns are these fields.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
@@ -310,7 +319,7 @@ impl DataActor for Recorder {
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
         self.ticker(book);
         // Reading a snapshot walks the book: skip all of it when the table is off.
-        if !self.persist.enabled(BookSnapshotEncoder::TEMPLATE_ID) {
+        if !persist_client::enabled(BookSnapshotEncoder::TEMPLATE_ID) {
             return Ok(());
         }
         let now = self.core.timestamp_ns().as_u64();
@@ -322,34 +331,33 @@ impl DataActor for Recorder {
             symbol.len(),
             venue.len(),
         );
-        self.persist
-            .record(BookSnapshotEncoder::TEMPLATE_ID, len, |buf| {
-                Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
-                    .fixed(&BookSnapshotFixedFields {
-                        ts_event: book.ts_last.as_u64(),
-                        ts_init: now,
-                        sequence: book.sequence,
-                    })
-                    .bids(bids.len() as u16, |g| {
-                        for &(price, size) in &bids {
-                            g.add_struct(&BookSnapshotBidsEntry { price, size })?;
-                        }
-                        Ok(())
-                    })?
-                    .asks(asks.len() as u16, |g| {
-                        for &(price, size) in &asks {
-                            g.add_struct(&BookSnapshotAsksEntry { price, size })?;
-                        }
-                        Ok(())
-                    })?
-                    .symbol(symbol)?
-                    .venue(venue)?
-                    .encoded_length_with_header())
-            })
+        persist_client::record(BookSnapshotEncoder::TEMPLATE_ID, len, |buf| {
+            Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
+                .fixed(&BookSnapshotFixedFields {
+                    ts_event: book.ts_last.as_u64(),
+                    ts_init: now,
+                    sequence: book.sequence,
+                })
+                .bids(bids.len() as u16, |g| {
+                    for &(price, size) in &bids {
+                        g.add_struct(&BookSnapshotBidsEntry { price, size })?;
+                    }
+                    Ok(())
+                })?
+                .asks(asks.len() as u16, |g| {
+                    for &(price, size) in &asks {
+                        g.add_struct(&BookSnapshotAsksEntry { price, size })?;
+                    }
+                    Ok(())
+                })?
+                .symbol(symbol)?
+                .venue(venue)?
+                .encoded_length_with_header())
+        })
     }
 
     fn on_book_deltas(&mut self, d: &OrderBookDeltas) -> anyhow::Result<()> {
-        if !self.persist.enabled(BookDeltasEncoder::TEMPLATE_ID) {
+        if !persist_client::enabled(BookDeltasEncoder::TEMPLATE_ID) {
             return Ok(());
         }
         let (symbol, venue) = names(&d.instrument_id);
@@ -378,7 +386,7 @@ impl DataActor for Recorder {
                 symbol.len(),
                 venue.len(),
             );
-            self.persist.record(
+            persist_client::record(
                 BookDeltasEncoder::TEMPLATE_ID,
                 len,
                 |buf| -> anyhow::Result<_> {
@@ -408,7 +416,7 @@ impl DataActor for Recorder {
         let (symbol, venue) = names(&id);
         let spec = b.bar_type.to_string();
         let len = BarEncoder::compute_length_with_header(symbol.len(), venue.len(), spec.len());
-        self.persist.record(BarEncoder::TEMPLATE_ID, len, |buf| {
+        persist_client::record(BarEncoder::TEMPLATE_ID, len, |buf| {
             Ok(BarEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&BarFixedFields {
                     ts_event: b.ts_event.as_u64(),
@@ -430,56 +438,53 @@ impl DataActor for Recorder {
         self.tickers.entry(m.instrument_id).or_default().mark = Some(m.value.as_f64());
         let (symbol, venue) = names(&m.instrument_id);
         let len = MarkPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.persist
-            .record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
-                Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
-                    .fixed(&MarkPriceFixedFields {
-                        ts_event: m.ts_event.as_u64(),
-                        ts_init: m.ts_init.as_u64(),
-                        price: d9(m.value.as_decimal())?,
-                    })
-                    .symbol(symbol)?
-                    .venue(venue)?
-                    .encoded_length_with_header())
-            })
+        persist_client::record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
+            Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
+                .fixed(&MarkPriceFixedFields {
+                    ts_event: m.ts_event.as_u64(),
+                    ts_init: m.ts_init.as_u64(),
+                    price: d9(m.value.as_decimal())?,
+                })
+                .symbol(symbol)?
+                .venue(venue)?
+                .encoded_length_with_header())
+        })
     }
 
     fn on_index_price(&mut self, x: &IndexPriceUpdate) -> anyhow::Result<()> {
         self.tickers.entry(x.instrument_id).or_default().index = Some(x.value.as_f64());
         let (symbol, venue) = names(&x.instrument_id);
         let len = IndexPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.persist
-            .record(IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
-                Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
-                    .fixed(&IndexPriceFixedFields {
-                        ts_event: x.ts_event.as_u64(),
-                        ts_init: x.ts_init.as_u64(),
-                        price: d9(x.value.as_decimal())?,
-                    })
-                    .symbol(symbol)?
-                    .venue(venue)?
-                    .encoded_length_with_header())
-            })
+        persist_client::record(IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
+            Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
+                .fixed(&IndexPriceFixedFields {
+                    ts_event: x.ts_event.as_u64(),
+                    ts_init: x.ts_init.as_u64(),
+                    price: d9(x.value.as_decimal())?,
+                })
+                .symbol(symbol)?
+                .venue(venue)?
+                .encoded_length_with_header())
+        })
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
         self.tickers.entry(f.instrument_id).or_default().funding = f.rate.to_f64();
         let (symbol, venue) = names(&f.instrument_id);
         let len = FundingRateEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.persist
-            .record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
-                Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
-                    .fixed(&FundingRateFixedFields {
-                        ts_event: f.ts_event.as_u64(),
-                        ts_init: f.ts_init.as_u64(),
-                        rate: rate(f.rate)?,
-                        interval_minutes: f.interval,
-                        next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
-                    })
-                    .symbol(symbol)?
-                    .venue(venue)?
-                    .encoded_length_with_header())
-            })
+        persist_client::record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
+            Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
+                .fixed(&FundingRateFixedFields {
+                    ts_event: f.ts_event.as_u64(),
+                    ts_init: f.ts_init.as_u64(),
+                    rate: rate(f.rate)?,
+                    interval_minutes: f.interval,
+                    next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
+                })
+                .symbol(symbol)?
+                .venue(venue)?
+                .encoded_length_with_header())
+        })
     }
 
     /// Venue-specific data: into `ticker` where it fits, and every field, as
@@ -496,7 +501,7 @@ impl DataActor for Recorder {
             self.volatility.insert(v.index_name.clone(), v.volatility);
         }
         let table = persist_client::snake_case(data.data.type_name());
-        if !self.persist.event_enabled(&table) {
+        if !persist_client::event_enabled(&table) {
             return Ok(());
         }
         // ponytail: a JSON round trip per row; these arrive a few a second.
@@ -524,7 +529,7 @@ impl DataActor for Recorder {
             (k != "type").then_some((k.as_str(), value))
         });
         let venue = self.venue.name.to_uppercase();
-        self.persist.record_row(
+        persist_client::record_row(
             &table,
             scalars
                 .chain(nested.iter().map(|(k, v)| (*k, Value::Str(v))))
@@ -539,7 +544,7 @@ impl Recorder {
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
     fn ticker(&mut self, book: &OrderBook) {
-        if !self.persist.event_enabled("ticker") {
+        if !persist_client::event_enabled("ticker") {
             return;
         }
         let id = book.instrument_id;
@@ -644,11 +649,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut node = builder.build()?;
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
+    // Installed for the process: every callback records through
+    // `persist_client::record` and friends, with no handle to pass around.
     let persist = Persist::connect(SCHEMA, Settings::from_env())?;
+    persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
-        persist,
         venue,
         tickers: HashMap::new(),
         volatility: HashMap::new(),

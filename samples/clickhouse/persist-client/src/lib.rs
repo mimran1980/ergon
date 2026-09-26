@@ -13,6 +13,13 @@
 //! message defines, and purges the recording behind it. The application never
 //! talks to ClickHouse and never waits for it.
 //!
+//! Hold a [`Persist`], or [`install`](Persist::install) one for the process
+//! and record from anywhere with the free functions [`record`], [`enabled`],
+//! [`record_row`] and [`event_enabled`], without passing a handle around.
+//! Before one is installed, or when none ever is (a test, a tool), they do
+//! nothing: `encode` is never called. Each costs one load more than holding
+//! the handle.
+//!
 //! A disabled SBE table costs one relaxed atomic load; an enabled one a
 //! `try_claim`, the encode and a commit. No lock, no allocation, no copy. A
 //! disabled event table costs a read lock and a lookup, with no formatting.
@@ -32,7 +39,7 @@ pub mod event;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -217,7 +224,54 @@ impl Settings {
     }
 }
 
-/// The recording handle. Cheap to clone; share it with every callback.
+/// The handle the free functions use; see [`Persist::install`].
+static INSTALLED: OnceLock<Persist> = OnceLock::new();
+
+/// The handle [`Persist::install`] installed, if any.
+#[inline]
+#[must_use]
+pub fn installed() -> Option<&'static Persist> {
+    INSTALLED.get()
+}
+
+/// [`Persist::record`] with the installed handle. With none installed it
+/// does nothing and never calls `encode`.
+#[inline]
+pub fn record<E>(
+    template_id: u16,
+    len: usize,
+    encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
+) -> Result<(), E> {
+    match INSTALLED.get() {
+        Some(persist) => persist.record(template_id, len, encode),
+        None => Ok(()),
+    }
+}
+
+/// [`Persist::enabled`] with the installed handle; `false` with none.
+#[inline]
+#[must_use]
+pub fn enabled(template_id: u16) -> bool {
+    INSTALLED.get().is_some_and(|p| p.enabled(template_id))
+}
+
+/// [`Persist::event_enabled`] with the installed handle; `false` with none.
+#[inline]
+#[must_use]
+pub fn event_enabled(table: &str) -> bool {
+    INSTALLED.get().is_some_and(|p| p.event_enabled(table))
+}
+
+/// [`Persist::record_row`] with the installed handle. With none installed it
+/// does nothing.
+pub fn record_row<'a>(table: &str, fields: impl IntoIterator<Item = (&'a str, event::Value<'a>)>) {
+    if let Some(persist) = INSTALLED.get() {
+        persist.record_row(table, fields);
+    }
+}
+
+/// The recording handle. Cheap to clone; share it with every callback, or
+/// [`install`](Persist::install) it once and use the free functions.
 #[derive(Clone)]
 pub struct Persist {
     inner: Arc<Inner>,
@@ -286,6 +340,14 @@ impl Persist {
                 watcher: Some(thread),
             }),
         })
+    }
+
+    /// Make this the process's handle, for [`record`], [`enabled`],
+    /// [`record_row`] and [`event_enabled`] to use from anywhere. It stays
+    /// installed until the process exits. Only the first call installs; a
+    /// later one returns `false` and changes nothing.
+    pub fn install(&self) -> bool {
+        INSTALLED.set(self.clone()).is_ok()
     }
 
     /// Is `template_id` recorded right now? One relaxed atomic load. Check it
@@ -548,6 +610,16 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Nothing in this test binary installs a handle.
+    #[test]
+    fn without_an_installed_handle_recording_does_nothing() -> TestResult {
+        assert!(installed().is_none());
+        record(1, 64, |_| Err("encoded with nothing installed"))?;
+        assert!(!enabled(1) && !event_enabled("spread"));
+        record_row("spread", [("bps", event::Value::F64(1.0))]);
+        Ok(())
+    }
 
     #[test]
     fn overrides_switch_tables_for_one_application() -> TestResult {
