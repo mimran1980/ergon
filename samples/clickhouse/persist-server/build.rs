@@ -8,5 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ergo_sbe::GenerationConfig::new(format!("shapes_{v}")),
         )?;
     }
+    ergo_sbe::generate_to_out_dir(
+        "tests/schemas/tick.xml",
+        ergo_sbe::GenerationConfig::new("tick"),
+    )?;
     Ok(())
 }

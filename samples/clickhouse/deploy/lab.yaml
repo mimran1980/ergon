@@ -100,7 +100,9 @@ spec:
 ---
 # The ingester, one per node beside its Aeron: has the archive record the
 # stream, replays it into ClickHouse, checkpoints, purges. Any archive error
-# ends it; it restarts and resumes from its checkpoint.
+# ends it; it restarts and resumes from its checkpoint. It ingests every SBE
+# schema in schema/ of this checkout, read at start-up: after adding or
+# changing one, `just ingester` restarts it.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -127,17 +129,20 @@ spec:
             - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
-            - { name: PERSIST_SCHEMA, value: /lab/schema/market.xml }
+            - { name: PERSIST_SCHEMAS, value: /lab/schema }
             - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: state, mountPath: /state }
             - { name: config, mountPath: /lab/config, readOnly: true }
+            - { name: schema, mountPath: /lab/schema, readOnly: true }
       volumes:
         - name: aeron
           hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
         - name: state
           hostPath: { path: /var/lib/lab/ingester, type: DirectoryOrCreate }
+        - name: schema
+          hostPath: { path: /lab/schema, type: Directory }
         - name: config
           hostPath: { path: /lab/config, type: Directory }
 ---

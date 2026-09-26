@@ -8,6 +8,8 @@
 //! * `installed` the same through `persist_client::record`, the installed handle
 //! * `uninstalled` `persist_client::record` with no handle installed: a no-op
 //! * `event`     `tracing::info!(table = "signal", …)`, table enabled
+//! * `value`     `Persist::record_value` of a struct with the event's three fields
+//! * `value-nested` `record_value` of a struct with a nested struct and five levels
 //! * `event-off` the same event for a disabled table
 //! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
 
@@ -32,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = dir.join("tables.yaml");
     std::fs::write(
         &config,
-        "tables:\n  shapes: { kind: dynamic }\n  signal: { kind: dynamic }\n  quiet: { kind: dynamic, enabled: false }\n",
+        "tables:\n  shapes: { kind: dynamic }\n  signal: { kind: dynamic }\n  book: { kind: dynamic }\n  quiet: { kind: dynamic, enabled: false }\n",
     )?;
     let arm = std::env::args().nth(1).unwrap_or_else(|| "sbe".into());
 
@@ -49,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (ready_tx, ready) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || -> Result<(), String> {
             let mut ingester =
-                Ingester::connect(v1::SCHEMA, settings).map_err(|e| e.to_string())?;
+                Ingester::connect(&[v1::SCHEMA], settings).map_err(|e| e.to_string())?;
             let _ = ready_tx.send(());
             while !stop.load(Ordering::Relaxed) {
                 ingester.tick().map_err(|e| e.to_string())?;
@@ -76,6 +78,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         persist.install();
     }
 
+    let signal = Signal {
+        instrument: "BTCUSDT",
+        edge: 0.25,
+        n: 3,
+    };
+    let book = Book {
+        instrument: "BTCUSDT",
+        spread: Spread { bps: 1.5, ticks: 2 },
+        bids: [100.0, 99.5, 99.0, 98.5, 98.0]
+            .map(|price| Level { price, size: 1.25 })
+            .to_vec(),
+    };
+
     // One record every 5 µs (200k/s, far above the lab's live rate) for 8 s.
     // The first 3 s are skipped: pages are touched for the first time then,
     // which is a one-off cost.
@@ -89,6 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?
             }
             "event" => tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3),
+            "value" => persist.record_value("signal", &signal),
+            "value-nested" => persist.record_value("book", &book),
             "no-table" => tracing::trace!(x = 1),
             "event-off" => {
                 tracing::info!(table = "quiet", instrument = "BTCUSDT", edge = 0.25, n = 3)
@@ -115,4 +132,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(1.0)
     );
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct Signal {
+    instrument: &'static str,
+    edge: f64,
+    n: i64,
+}
+
+#[derive(serde::Serialize)]
+struct Book {
+    instrument: &'static str,
+    spread: Spread,
+    bids: Vec<Level>,
+}
+
+#[derive(serde::Serialize)]
+struct Spread {
+    bps: f64,
+    ticks: u32,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct Level {
+    price: f64,
+    size: f64,
 }

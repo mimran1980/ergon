@@ -35,11 +35,12 @@
 //! ```
 
 pub mod event;
+mod value;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -270,6 +271,15 @@ pub fn record_row<'a>(table: &str, fields: impl IntoIterator<Item = (&'a str, ev
     }
 }
 
+/// [`Persist::record_value`] with the installed handle. With none installed
+/// it does nothing.
+#[inline]
+pub fn record_value<T: ?Sized + serde::Serialize>(table: &str, value: &T) {
+    if let Some(persist) = INSTALLED.get() {
+        persist.record_value(table, value);
+    }
+}
+
 /// The recording handle. Cheap to clone; share it with every callback, or
 /// [`install`](Persist::install) it once and use the free functions.
 #[derive(Clone)]
@@ -278,6 +288,9 @@ pub struct Persist {
 }
 
 struct Inner {
+    /// Unique per `Persist` ever made: keys the per-thread call-site cache,
+    /// which an address could not (a new `Persist` may reuse an old one's).
+    id: u64,
     publication: AeronPublication,
     _aeron: Aeron,
     shared: Arc<Shared>,
@@ -289,9 +302,12 @@ struct Inner {
 struct Shared {
     /// Indexed by SBE template id.
     enabled: Vec<AtomicBool>,
-    /// Tables in `tables.yaml` that are not SBE messages: event tables.
-    // ponytail: one lock read per event; swap for a lock-free map if it shows.
-    events: RwLock<HashMap<String, bool>>,
+    /// Event tables' switches by name, including tables `tables.yaml` does
+    /// not list (off). Call sites cache theirs, so the lock is taken when a
+    /// call site first names a table, not per event.
+    events: RwLock<HashMap<String, Arc<AtomicBool>>>,
+    /// Every event shape made so far, by id: sent again every 5 s.
+    shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
     dropped: AtomicU64,
 }
 
@@ -306,9 +322,14 @@ impl Persist {
                 .map(|_| AtomicBool::new(false))
                 .collect(),
             events: RwLock::new(HashMap::new()),
+            shapes: Mutex::new(HashMap::new()),
             dropped: AtomicU64::new(0),
         });
+        let (aeron, publication) =
+            publish(&settings).map_err(|e| Error::Aeron(format!("{}: {e}", settings.channel)))?;
         let mut watcher = Watcher {
+            publication: publication.clone(),
+            ticks: 0,
             path: settings.config_path.clone(),
             overrides_path: settings.overrides_path.clone(),
             text: (String::new(), None),
@@ -318,8 +339,6 @@ impl Persist {
             shared: Arc::clone(&shared),
         };
         watcher.reload()?;
-        let (aeron, publication) =
-            publish(&settings).map_err(|e| Error::Aeron(format!("{}: {e}", settings.channel)))?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
@@ -333,6 +352,10 @@ impl Persist {
             .map_err(|e| Error::Thread(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(Inner {
+                id: {
+                    static NEXT: AtomicU64 = AtomicU64::new(0);
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                },
                 publication,
                 _aeron: aeron,
                 shared,
@@ -437,20 +460,44 @@ impl Persist {
             .events
             .read()
             .unwrap_or_else(PoisonError::into_inner);
-        events.get(table).copied().unwrap_or(false)
+        events
+            .get(table)
+            .is_some_and(|on| on.load(Ordering::Relaxed))
     }
 
-    /// Publish a record that is already built, or drop and count it.
-    pub(crate) fn publish(&self, bytes: &[u8]) {
+    /// The switch of event table `table`, made (off) if `tables.yaml` does
+    /// not list it; the config watcher flips it.
+    pub(crate) fn event_switch(&self, table: &str) -> Arc<AtomicBool> {
+        let events = &self.inner.shared.events;
+        if let Some(on) = events
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(table)
+        {
+            return Arc::clone(on);
+        }
+        let mut events = events.write().unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(events.entry(table.to_owned()).or_default())
+    }
+
+    /// Publish a message that is already built; `false` when Aeron could
+    /// not take it. Not counted as dropped: that is the caller's decision.
+    pub(crate) fn publish(&self, bytes: &[u8]) -> bool {
+        publish_bytes(&self.inner.publication, bytes)
+    }
+
+    /// Claim exactly `len` bytes, let `write` fill them, and commit; or drop
+    /// and count the record.
+    pub(crate) fn claim(&self, len: usize, write: impl FnOnce(&mut [u8])) {
         let claimed = loop {
-            match self.inner.publication.try_claim_owned(bytes.len()) {
+            match self.inner.publication.try_claim_owned(len) {
                 Err(AeronOfferError::AdminAction) => {}
                 other => break other,
             }
         };
         match claimed {
             Ok(mut claim) => {
-                claim.data().copy_from_slice(bytes);
+                write(claim.data());
                 if claim.commit().is_err() {
                     self.drop_one();
                 }
@@ -497,6 +544,19 @@ impl Drop for Inner {
     }
 }
 
+fn publish_bytes(publication: &AeronPublication, bytes: &[u8]) -> bool {
+    let claimed = loop {
+        match publication.try_claim_owned(bytes.len()) {
+            Err(AeronOfferError::AdminAction) => {}
+            other => break other,
+        }
+    };
+    claimed.is_ok_and(|mut claim| {
+        claim.data().copy_from_slice(bytes);
+        claim.commit().is_ok()
+    })
+}
+
 fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_client::AeronCError> {
     let ctx = AeronContext::new()?;
     if let Some(dir) = &settings.aeron_dir {
@@ -515,6 +575,9 @@ fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_cl
 
 /// Applies `tables.yaml` to [`Shared::enabled`]; runs on its own thread.
 struct Watcher {
+    /// For sending the event shapes again.
+    publication: AeronPublication,
+    ticks: u64,
     path: PathBuf,
     overrides_path: Option<PathBuf>,
     /// The last applied `tables.yaml` and override file.
@@ -528,6 +591,22 @@ struct Watcher {
 
 impl Watcher {
     fn tick(&mut self) {
+        // Every 5 s, every event shape again: an ingester that starts after
+        // the first one, with none saved, learns them from the stream.
+        self.ticks += 1;
+        if self.ticks.is_multiple_of(5) {
+            let shapes: Vec<_> = self
+                .shared
+                .shapes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .values()
+                .cloned()
+                .collect();
+            for shape in shapes {
+                publish_bytes(&self.publication, shape.message());
+            }
+        }
         match self.reload() {
             Ok(()) => self.error = None,
             Err(e) => {
@@ -585,21 +664,27 @@ impl Watcher {
             );
         }
         // Every other table is recorded from `tracing` events.
-        let events: HashMap<String, bool> = config
-            .into_iter()
-            .filter(|(name, _)| !self.schema.iter().any(|(n, _)| n == name))
-            .map(|(name, c)| (name, c.enabled))
-            .collect();
-        let mut current = self
+        let mut switches = self
             .shared
             .events
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        for (name, on) in &events {
-            toggled(name, current.get(name).copied().unwrap_or(false), *on);
+        for (name, switch) in switches.iter() {
+            if !config.contains_key(name) && switch.swap(false, Ordering::Relaxed) {
+                toggled(name, true, false);
+            }
         }
-        *current = events;
-        drop(current);
+        for (name, c) in config
+            .into_iter()
+            .filter(|(name, _)| !self.schema.iter().any(|(n, _)| n == name))
+        {
+            let was = switches
+                .entry(name.clone())
+                .or_default()
+                .swap(c.enabled, Ordering::Relaxed);
+            toggled(&name, was, c.enabled);
+        }
+        drop(switches);
         self.text = text;
         Ok(())
     }

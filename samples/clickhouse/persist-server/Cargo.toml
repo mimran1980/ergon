@@ -20,6 +20,7 @@ rusteron-archive.workspace = true
 ureq = { version = "2", default-features = false }
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
 

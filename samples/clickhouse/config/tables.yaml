@@ -27,7 +27,8 @@ tables:
   book_deltas:   { kind: dynamic }                 # every order book change
   spread:        { kind: dynamic, enabled: true }
   # Event tables: their columns are whatever the rows bring.
-  ticker:        { kind: dynamic }  # one row per instrument a second; each venue adds the columns it has
+  ticker:        { kind: dynamic }
+  book_view:     { kind: dynamic }  # a nested struct (record_value): spread.bps, bids.price arrays, an enum  # one row per instrument a second; each venue adds the columns it has
   instrument:    { kind: dynamic }  # instrument definitions: tick size, fees, ...
   instrument_status: { kind: dynamic }
   # Data only one venue offers, named after its Nautilus type.

@@ -70,15 +70,16 @@ fn aeron(e: impl std::fmt::Display) -> Error {
 }
 
 impl Ingester {
-    /// Load the schema and `tables.yaml`, connect to the archive, and make
+    /// Load the schemas and `tables.yaml`, connect to the archive, and make
     /// sure it records the stream.
-    pub fn connect(schema_xml: &str, settings: Settings) -> Result<Self, Error> {
-        let writer = Writer::new(
-            schema_xml,
+    pub fn connect(schemas: &[&str], settings: Settings) -> Result<Self, Error> {
+        let mut writer = Writer::new(
+            schemas,
             settings.clickhouse,
             &settings.config_path,
             settings.recheck,
         )?;
+        writer.keep_shapes(settings.checkpoint_path.with_extension("shapes"))?;
         let ctx = AeronContext::new().map_err(aeron)?;
         if let Some(dir) = &settings.aeron_dir {
             ctx.set_dir(&dir.as_str().into_c_string()).map_err(aeron)?;

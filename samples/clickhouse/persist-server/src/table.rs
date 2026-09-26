@@ -39,6 +39,8 @@ pub(crate) const HEADER_LEN: usize = 8;
 pub struct Table {
     /// Table name: the message name in snake_case.
     pub name: String,
+    /// The schema's id: with the template id, what identifies the message.
+    pub schema_id: u16,
     /// SBE template id.
     pub template_id: u16,
     fields: Vec<Field>,
@@ -138,7 +140,7 @@ pub fn tables_from_schema(xml: &str) -> Result<Vec<Table>, Error> {
     }
     message_ranges(&ir)
         .into_iter()
-        .map(Table::from_tokens)
+        .map(|tokens| Table::from_tokens(tokens, ir.id))
         .collect()
 }
 
@@ -160,10 +162,11 @@ fn message_ranges(ir: &Ir) -> Vec<&[Token]> {
 }
 
 impl Table {
-    fn from_tokens(tokens: &[Token]) -> Result<Self, Error> {
+    fn from_tokens(tokens: &[Token], schema_id: u16) -> Result<Self, Error> {
         let msg = &tokens[0];
         let mut table = Self {
             name: snake_case(&msg.name),
+            schema_id,
             template_id: msg
                 .id
                 .ok_or_else(|| unsupported(&msg.name, "", "a message without id"))?,

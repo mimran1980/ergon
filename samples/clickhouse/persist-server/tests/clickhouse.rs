@@ -78,6 +78,135 @@ mod v2 {
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
+mod tick {
+    include!(concat!(env!("OUT_DIR"), "/tick.rs"));
+}
+const TICK: &str = include_str!("schemas/tick.xml");
+
+#[test]
+fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
+    let lab = Lab::new(
+        "schemas",
+        "tables:\n  shapes: { kind: dynamic }\n  tick: { kind: static }\n",
+    )?;
+    let mut writer = Writer::new(
+        &[v1::SCHEMA, TICK],
+        lab.ch.clone(),
+        &lab.config,
+        Duration::ZERO,
+    )?;
+    let mut buf = [0u8; tick::TickEncoder::compute_length_with_header()];
+    let len = tick::TickEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&tick::TickFixedFields { seq: 42 })
+        .encoded_length_with_header();
+    // Both are template 1; only the schema id tells them apart.
+    assert_eq!(tick::TickEncoder::TEMPLATE_ID, v1::TEMPLATE_ID);
+    assert!(writer.push(&buf[..len]));
+    assert!(writer.push(&v1::message()?));
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT seq FROM DB.tick")?, "42");
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
+
+    // Two versions of one schema, or two schemas with a same-named message,
+    // are refused: which would decode what is ambiguous.
+    let two_versions = Writer::new(
+        &[v1::SCHEMA, v2::SCHEMA],
+        lab.ch.clone(),
+        &lab.config,
+        Duration::ZERO,
+    );
+    assert!(
+        matches!(two_versions, Err(persist_server::Error::Schema(m)) if m.contains("two schemas have id 7"))
+    );
+    let renamed = TICK.replace("id=\"9\"", "id=\"10\"");
+    let clash = Writer::new(
+        &[TICK, &renamed],
+        lab.ch.clone(),
+        &lab.config,
+        Duration::ZERO,
+    );
+    assert!(matches!(clash, Err(persist_server::Error::Schema(m)) if m.contains("table tick")));
+    // The event rows' schema id is taken.
+    let reserved = TICK.replace("id=\"9\"", "id=\"65534\"");
+    let reserved = Writer::new(&[&reserved], lab.ch.clone(), &lab.config, Duration::ZERO);
+    assert!(
+        matches!(reserved, Err(persist_server::Error::Schema(m)) if m.contains("reserved for event rows"))
+    );
+    Ok(())
+}
+
+/// A `signal` row of `shape` with `edge` (field 0) set.
+fn signal_row(shape: &persist_client::event::Shape, edge: f64) -> Vec<u8> {
+    let mut row = vec![0; shape.row_len(0)];
+    shape.write_row(&mut row, 1_700_000_000_000_000_000, |_| {
+        Some(persist_client::event::Value::F64(edge))
+    });
+    row
+}
+
+#[test]
+fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
+    use persist_client::event::{FieldDef, Kind, Shape};
+
+    let lab = Lab::new("event_shapes", "tables:\n  signal: { kind: dynamic }\n")?;
+    let saved = lab.dir.join("shapes");
+    let shape = Shape::new("signal", vec![FieldDef::new("edge", Kind::F64, None)])?;
+
+    // A row before its shape waits for it, and is written when it comes.
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    writer.keep_shapes(&saved)?;
+    assert!(writer.push(&signal_row(&shape, 1.0)));
+    clean(&writer.tick())?;
+    assert!(writer.push(shape.message()));
+    assert!(writer.push(&signal_row(&shape, 2.0)));
+    clean(&writer.tick())?;
+    drop(writer);
+
+    // Restarted past the Shape message (it was checkpointed and purged): the
+    // saved shape still decodes the rows.
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    writer.keep_shapes(&saved)?;
+    assert!(writer.push(&signal_row(&shape, 3.0)));
+    clean(&writer.tick())?;
+    assert_eq!(
+        lab.query("SELECT edge FROM DB.signal ORDER BY edge FORMAT TSV")?,
+        "1\n2\n3"
+    );
+
+    // A row whose shape never comes is reported when its wait is over.
+    let never = Shape::new("signal", vec![FieldDef::new("other", Kind::I64, None)])?;
+    writer.wait_for_shapes(Duration::ZERO);
+    assert!(writer.push(&signal_row(&never, 4.0)));
+    let report = writer.tick();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("1 event rows skipped: their shape did not arrive")),
+        "{report:?}"
+    );
+
+    // Two shapes with one id (these table names collide in FNV-1a) are
+    // reported, and the first is kept.
+    let (a, b) = (
+        Shape::new("t439599", vec![])?,
+        Shape::new("t622382", vec![])?,
+    );
+    assert_eq!(a.id, b.id);
+    writer.push(a.message());
+    writer.push(b.message());
+    let report = writer.tick();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("is both t439599 and t622382")),
+        "{report:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn every_field_shape_round_trips() -> TestResult {
     let lab = Lab::new("shapes", "tables:\n  shapes: { kind: dynamic }\n")?;
@@ -376,7 +505,7 @@ fn unreachable_clickhouse_keeps_every_record_queued() -> TestResult {
         "tables:\n  shapes: { kind: static }\n",
     )?;
     let ch = ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere");
-    let mut writer = Writer::new(v1::SCHEMA, ch, dir.join("tables.yaml"), Duration::ZERO)?;
+    let mut writer = Writer::new(&[v1::SCHEMA], ch, dir.join("tables.yaml"), Duration::ZERO)?;
     for _ in 0..11 {
         assert!(writer.push(&v1::message()?));
     }
@@ -398,7 +527,7 @@ fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
     lab.query(&format!("CREATE USER {user} IDENTIFIED BY 'x'"))?;
     lab.query(&format!("GRANT CREATE DATABASE ON DB.* TO {user}"))?;
     let ch = ClickHouse::new(&test_url(), user, "x", &lab.ch.database);
-    let mut writer = Writer::new(v1::SCHEMA, ch, &lab.config, Duration::ZERO)?;
+    let mut writer = Writer::new(&[v1::SCHEMA], ch, &lab.config, Duration::ZERO)?;
     writer.push(&v1::message()?);
     // The first tick fails to create the table; the second falls inside the
     // retry back-off. Neither may throw the queued record away.

@@ -99,7 +99,8 @@ tracing::info!(table = "spread", instrument = %q.instrument_id, bps = spread_bps
 
 The table's columns are the events' fields, typed by the first value seen:
 integers are `Int64`/`UInt64`, floats `Float64`, bools `Bool`, and strings,
-`%display` and `?debug` values `String`. Every row also gets
+`%display` and `?debug` values `String`, all `Nullable`: a field an event
+does not carry (an `Option` that is `None`, say) is NULL. Every row also gets
 `ts DateTime64(9)`. Install the layer once, beside your own log layer:
 
 ```rust
@@ -108,6 +109,67 @@ tracing::subscriber::set_global_default(tracing_subscriber::registry().with(pers
 
 Give your log output its own per-layer filter (`fmt::layer().with_filter(...)`).
 A global level filter would hide these events from persist too.
+
+Data whose fields are known only at run time, such as JSON from a venue, goes
+through `persist_client::record_row(table, fields)`, into the same kind of
+table.
+
+**From any Rust value.** `persist_client::record_value(table, &value)` records
+a `Serialize` value, nested as deep as it goes, with no schema to write:
+
+```rust
+#[derive(Serialize)]
+struct BookView<'a> { instrument: &'a str, spread: Spread, bids: &'a [Level], imbalance: Option<f64>, regime: Regime }
+persist_client::record_value("book_view", &view);
+```
+
+| Rust | ClickHouse column |
+|---|---|
+| `bool`, integers, floats | `Nullable(Bool)`, `Nullable(Int64)` / `Nullable(UInt64)`, `Nullable(Float64)` |
+| `str`, `String`, `char`, `i128`, `u128` | `Nullable(String)` |
+| `Option<T>`: `None` | NULL |
+| nested struct, tuple | its fields, dotted: `spread.bps`, `pair.0` |
+| `Vec`, slice, set | a group: `bids.price Array(Nullable(Float64))` |
+| a list in a list | `bids.orders Array(Array(Nullable(UInt64)))`, to any depth |
+| map | `tags.key`, `tags.value` arrays |
+| enum | the variant's name in `regime`, its fields in `regime.Wide.bps` |
+
+A list inside a struct or enum field is named with underscores up to it
+(`stats.bids` → `stats_bids`, `side.Busy.trades` → `side_Busy_trades`).
+ClickHouse treats array columns sharing a first name segment as one Nested
+structure, whose arrays must be equally long, and only one list's own fields
+always are. `#[serde(flatten)]` fields sit beside the others, and an
+internally tagged enum (`#[serde(tag = "type")]`) is its tag and its fields.
+A fixed-size array serializes as a tuple (`x.0`, `x.1`, …); use a slice or
+`Vec` for an `Array` column. Raw bytes are not recorded, and a value nested
+deeper than 8 lists or 32 structs (a recursive type) is refused, with an
+error naming the field.
+
+The first value of a type makes its shape. Each later one is written in
+one pass, compiled for the type, into a reused buffer, then copied into
+Aeron. A value the shape does not cover (an `Option` now `Some`, another
+enum variant) grows the shape, keeping its fields in declaration order, and
+the table gains the columns.
+
+**How event rows travel.** Like an SBE message, a row carries values only.
+The first time a call site records, its layout (the table, and its fields'
+names, kinds and nesting in order) is published once as a `Shape` message
+(`persist-client/schema/events.xml`), and again every 5 s. Each `Row` then
+holds the shape's id, the timestamp, a presence bit per field, and the
+values, and no names. A shape's id is a hash of the shape, so every
+application on the stream agrees on it without coordinating. The ingester
+saves the shapes it has seen next to its checkpoint, so rows whose `Shape`
+message was purged before a restart still decode. A row whose shape has not
+arrived yet (an ingester that starts with none saved) waits up to 30 s for
+it, and nothing is checkpointed past it meanwhile; one that still has none
+is reported and dropped.
+
+**More SBE schemas.** The ingester loads every `.xml` schema in `schema/` at
+start-up and tells messages apart by schema id and template id. To persist
+another application's messages, put its schema there, list its tables in
+`tables.yaml`, and run `just ingester`. It restarts and resumes from its
+checkpoint. Keep one version of each schema: the newest decodes records made
+with older versions.
 
 ## `tables.yaml`
 
@@ -169,6 +231,8 @@ schemas are rejected when the schema loads.
 groups or var-data with `sinceVersion`. The archive may still hold records
 from before the change. The ingester decodes each record for its own version,
 so fields it doesn't carry are written as their defaults.
+Change a schema in `schema/` and run `just ingester` (and `just recorder`
+for the recorder's own `market.xml`).
 
 ## Durability
 
@@ -196,17 +260,20 @@ with the ingester running beside it (Apple M-series; the timer's resolution is
 | `record()`, one SBE message | 83 ns | 167 ns | 291 ns |
 | `persist_client::record()`, installed handle | 42 ns | 167 ns | 334–667 ns |
 | `persist_client::record()`, none installed | 0 ns | 42 ns | 42 ns |
+| `tracing` event, table on | 84 ns | 250–333 ns | 1.3–3.1 µs |
+| `tracing` event, table off | 41 ns | 83 ns | 375–542 ns |
+| `record_value`, a struct of the event's three fields | 125 ns | 375 ns | 1.8–2.8 µs |
+| `record_value`, a nested struct and five levels in a `Vec` | 333 ns | 875 ns | 5.3–7.8 µs |
+| `trace!` without a `table` field | 0 ns | 42 ns | 42–83 ns |
 
-The installed-handle rows are from a later run (2026-09-26), in which
-`record()` on a held handle measured 42 / 167 / 417 ns: the one extra load
-is below the timer's resolution.
-| `tracing` event, table on | 125 ns | 250 ns | 666 ns |
-| `tracing` event, table off | 42 ns | 42 ns | 125 ns |
-| `trace!` without a `table` field | 0 ns | 42 ns | 42 ns |
-
-The last row shows that the layer's own filter leaves the rest of the
-application's `tracing` calls disabled. It was measured on a second run, with
-the lab running beside it.
+The installed-handle and `tracing` rows are from later runs (2026-09-26). In
+the first, `record()` on a held handle measured 42 / 167 / 417 ns: the one
+extra load is below the timer's resolution. The `tracing` rows are for the
+shape-and-row format above, over three runs. The format before it, which
+wrote every field's name into every row, measured 125 / 375–417 ns / 2.9–3.3 µs
+with the table on and 42 / 125 ns / 0.9–1.1 µs with it off. The last row shows
+that the layer's own filter leaves the rest of the application's `tracing`
+calls disabled.
 
 ## What each exchange records
 
@@ -221,8 +288,8 @@ Everything NautilusTrader offers for two instruments (BTC and ETH) per venue:
 | `hyperliquid_open_interest`, `hyperliquid_public_trade` (with buyer and seller addresses) | events | | | | yes |
 
 `ticker` is one row per instrument a second, with the columns the venue has.
-Binance spot has no mark or index price, so its rows leave those columns at
-their defaults. Deribit adds `volatility_index` and Hyperliquid
+Binance spot has no mark or index price, so those columns are NULL in its
+rows. Deribit adds `volatility_index` and Hyperliquid
 `open_interest`.
 
 Venue-specific data is recorded field for field as the venue sends it.
@@ -278,11 +345,17 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - The recorders and the ingester reconnect by exiting and being restarted,
   so a restarted `aeron` pod costs every client a restart and the records
   published in between. A client notices within the 30 s driver timeout.
-- An event table's column types are learned from the rows, so they are learned
-  again after the ingester restarts. If the first value it sees after a
-  restart has a different type, that is reported like a changed column type.
-  A value that does not fit its column's type at any time is reported as an
-  error and written as the default.
+- An event table's column types come from the first shape that has the
+  column. A later shape with another type for it (a field that is sometimes
+  an integer, sometimes text) has its values converted when that loses
+  nothing, and otherwise written as NULL and reported.
+- A nested struct recorded through `tracing` is its `?debug` text; record
+  it with `record_value` to get its fields as columns.
+- `record_value` is slower than a `tracing` event of the same fields (125
+  against 84 ns): serde walks the value generically. For the hottest data,
+  an SBE message and `record()` stay the fastest.
+- In `record_row`, a JSON null leaves the field out, so each pattern of
+  nulls in the data is its own shape.
 - `just verify` counts container restarts, so after `just stop` / `just start`
   its last check fails: the node restart restarts every container.
 - Applications that publish on one stream must use the same channel.

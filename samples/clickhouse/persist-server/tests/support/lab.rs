@@ -46,7 +46,7 @@ impl Lab {
     /// A writer for this lab that re-checks its tables on every tick.
     pub fn writer(&self, schema: &str) -> Result<Writer, Box<dyn Error>> {
         Ok(Writer::new(
-            schema,
+            &[schema],
             self.ch.clone(),
             &self.config,
             Duration::ZERO,

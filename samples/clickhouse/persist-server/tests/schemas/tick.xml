@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A second schema whose message has the same template id (1) as shapes_v1:
+     the ingester tells them apart by schema id. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="tick" id="9" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <sbe:message name="Tick" id="1">
+        <field name="seq" id="1" type="uint64"/>
+    </sbe:message>
+</sbe:messageSchema>

@@ -16,5 +16,8 @@ serde_yaml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
+[build-dependencies]
+ergo-sbe.workspace = true
+
 [lints]
 workspace = true

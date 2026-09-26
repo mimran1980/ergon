@@ -53,7 +53,7 @@ fn ingester(lab: &Lab, ch: ClickHouse, stream_id: i32) -> Result<Ingester, Box<d
         recheck: Duration::ZERO,
         ..persist_server::Settings::new(ch, &lab.config, lab.dir.join("checkpoint"))
     };
-    Ok(Ingester::connect(v1::SCHEMA, settings).map_err(|e| {
+    Ok(Ingester::connect(&[v1::SCHEMA], settings).map_err(|e| {
         format!(
             "an ArchivingMediaDriver on {} is required (run `just test`): {e}",
             aeron_dir()
@@ -174,6 +174,182 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
     Ok(())
 }
 
+/// One call site, used twice.
+fn emit_signal(edge: f64) {
+    tracing::info!(table = "signal", edge);
+}
+
+#[test]
+fn a_shape_aeron_could_not_take_is_sent_with_the_next_row() -> TestResult {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let lab = Lab::new(
+        "aeron_shape_retry",
+        "tables:\n  signal: { kind: dynamic }\n",
+    )?;
+    let stream_id = stream(9);
+    // No ingester has the archive record this stream yet: the shape, and so
+    // the row, cannot be published.
+    let persist = client(&lab, stream_id)?;
+    let subscriber = tracing_subscriber::registry().with(persist.layer());
+    tracing::subscriber::with_default(subscriber, || emit_signal(1.0));
+    assert_eq!(persist.dropped(), 1);
+
+    // Recording now: the shape was never marked sent, so it goes first.
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    let subscriber = tracing_subscriber::registry().with(persist.layer());
+    tracing::subscriber::with_default(subscriber, || emit_signal(2.0));
+    ingest(&mut ingester, &lab, "signal", 1)?;
+    assert_eq!(lab.query("SELECT edge FROM DB.signal")?, "2");
+    Ok(())
+}
+
+#[test]
+fn nested_values_become_array_columns() -> TestResult {
+    #[derive(serde::Serialize)]
+    struct Level {
+        price: f64,
+        orders: Vec<u64>,
+    }
+    #[derive(serde::Serialize)]
+    enum Regime {
+        Calm,
+        Volatile { vol: f64 },
+    }
+    #[derive(serde::Serialize)]
+    struct Book {
+        symbol: &'static str,
+        spread: Spread,
+        bids: Vec<Level>,
+        regime: Regime,
+        note: Option<&'static str>,
+    }
+    #[derive(serde::Serialize)]
+    struct Spread {
+        bps: f64,
+    }
+
+    let lab = Lab::new("aeron_nested", "tables:\n  book: { kind: dynamic }\n")?;
+    let stream_id = stream(10);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    persist.record_value(
+        "book",
+        &Book {
+            symbol: "BTCUSDT",
+            spread: Spread { bps: 1.5 },
+            bids: vec![
+                Level {
+                    price: 100.5,
+                    orders: vec![7, 8],
+                },
+                Level {
+                    price: 100.0,
+                    orders: vec![],
+                },
+            ],
+            regime: Regime::Calm,
+            note: None,
+        },
+    );
+    // Another variant, and a note: the shape grows, and the table with it.
+    persist.record_value(
+        "book",
+        &Book {
+            symbol: "ETHUSDT",
+            spread: Spread { bps: 2.0 },
+            bids: vec![],
+            regime: Regime::Volatile { vol: 0.4 },
+            note: Some("wide"),
+        },
+    );
+    ingest(&mut ingester, &lab, "book", 2)?;
+    assert_eq!(persist.dropped(), 0);
+    assert_eq!(
+        lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'book' ORDER BY name FORMAT TSV")?,
+        [
+            "bids.orders\tArray(Array(Nullable(UInt64)))",
+            "bids.price\tArray(Nullable(Float64))",
+            "inserted_at\tDateTime64(3, \\'UTC\\')",
+            "note\tNullable(String)",
+            "regime\tNullable(String)",
+            "regime.Volatile.vol\tNullable(Float64)",
+            "spread.bps\tNullable(Float64)",
+            "symbol\tNullable(String)",
+            "ts\tDateTime64(9, \\'UTC\\')",
+        ]
+        .join("\n")
+    );
+    assert_eq!(
+        lab.query("SELECT symbol, spread.bps, bids.price, bids.orders, regime, regime.Volatile.vol, note FROM DB.book ORDER BY symbol FORMAT TSV")?,
+        "BTCUSDT\t1.5\t[100.5,100]\t[[7,8],[]]\tCalm\t\\N\t\\N\nETHUSDT\t2\t[]\t[]\tVolatile\t0.4\twide"
+    );
+    Ok(())
+}
+
+#[test]
+fn lists_of_different_lengths_in_one_struct_are_inserted() -> TestResult {
+    #[derive(serde::Serialize)]
+    struct Stats {
+        bids: Vec<f64>,
+        asks: Vec<f64>,
+    }
+    #[derive(serde::Serialize)]
+    enum Side {
+        Quiet { levels: Vec<u32> },
+        Busy { levels: Vec<u32>, trades: Vec<u32> },
+    }
+    #[derive(serde::Serialize)]
+    struct Snap {
+        stats: Stats,
+        side: Side,
+    }
+
+    let lab = Lab::new("aeron_lists", "tables:\n  snap: { kind: dynamic }\n")?;
+    let stream_id = stream(11);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    persist.record_value(
+        "snap",
+        &Snap {
+            stats: Stats {
+                bids: vec![1.0],
+                asks: vec![2.0, 3.0, 4.0],
+            },
+            side: Side::Quiet { levels: vec![1, 2] },
+        },
+    );
+    persist.record_value(
+        "snap",
+        &Snap {
+            stats: Stats {
+                bids: vec![],
+                asks: vec![5.0],
+            },
+            side: Side::Busy {
+                levels: vec![3],
+                trades: vec![4, 5, 6],
+            },
+        },
+    );
+    // Rejected by ClickHouse, these would stay queued and fail `ingest`.
+    ingest(&mut ingester, &lab, "snap", 2)?;
+    assert_eq!(
+        lab.query("SELECT stats_bids, stats_asks, side, side_Quiet_levels, side_Busy_trades FROM DB.snap ORDER BY length(stats_asks) DESC FORMAT TSV")?,
+        "[1]\t[2,3,4]\tQuiet\t[1,2]\t[]\n[]\t[5]\tBusy\t[]\t[4,5,6]"
+    );
+    Ok(())
+}
+
 #[test]
 fn rows_built_at_run_time_become_tables() -> TestResult {
     use persist_client::event::Value;
@@ -204,7 +380,7 @@ fn rows_built_at_run_time_become_tables() -> TestResult {
     ingest(&mut ingester, &lab, "venue_stats", 2)?;
     assert_eq!(
         lab.query("SELECT venue, dvol, open_interest FROM DB.venue_stats ORDER BY ts FORMAT TSV")?,
-        "DERIBIT\t41.5\t0\nHYPERLIQUID\t0\t7"
+        "DERIBIT\t41.5\t\\N\nHYPERLIQUID\t\\N\t7"
     );
     assert_eq!(lab.query("EXISTS TABLE DB.off")?, "0");
     Ok(())
@@ -232,7 +408,7 @@ fn tracing_events_become_tables() -> TestResult {
         .with(tracing_subscriber::fmt::layer().with_filter(LevelFilter::WARN));
     tracing::subscriber::with_default(subscriber, || {
         tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3);
-        // A new field is a new column; a missing one reads its default.
+        // A new field is a new column; a missing one is NULL.
         tracing::info!(table = "signal", instrument = %"ETHUSDT", edge = 0.5, flag = true);
         tracing::info!(table = "fixed", a = 1);
         tracing::info!(table = "quiet", x = 1); // disabled
@@ -241,11 +417,11 @@ fn tracing_events_become_tables() -> TestResult {
     ingest(&mut ingester, &lab, "signal", 2)?;
     assert_eq!(
         lab.query("SELECT instrument, edge, n, flag FROM DB.signal ORDER BY ts FORMAT TSV")?,
-        "BTCUSDT\t0.25\t3\tfalse\nETHUSDT\t0.5\t0\ttrue"
+        "BTCUSDT\t0.25\t3\t\\N\nETHUSDT\t0.5\t\\N\ttrue"
     );
     assert_eq!(
         lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'signal' ORDER BY position FORMAT TSV")?,
-        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tString\nedge\tFloat64\nn\tInt64\nflag\tBool\ninserted_at\tDateTime64(3, \\'UTC\\')"
+        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tNullable(String)\nedge\tNullable(Float64)\nn\tNullable(Int64)\nflag\tNullable(Bool)\ninserted_at\tDateTime64(3, \\'UTC\\')"
     );
     assert_eq!(lab.query("SELECT count() FROM DB.fixed")?, "1");
     assert_eq!(lab.query("EXISTS TABLE DB.quiet")?, "0");
@@ -263,7 +439,7 @@ fn tracing_events_become_tables() -> TestResult {
     assert_eq!(
         problems,
         [
-            "fixed: static table is missing column b; not writing it. Fix: ALTER TABLE `persist_test_aeron_events`.`fixed` ADD COLUMN IF NOT EXISTS `b` Int64"
+            "fixed: static table is missing column b; not writing it. Fix: ALTER TABLE `persist_test_aeron_events`.`fixed` ADD COLUMN IF NOT EXISTS `b` Nullable(Int64)"
         ]
     );
 
@@ -280,7 +456,7 @@ fn tracing_events_become_tables() -> TestResult {
     assert_eq!(
         errors,
         [
-            "signal: 1 value(s) did not match their column's type (set by the first value seen); wrote the default"
+            "signal: 1 value(s) did not match their column's type (set by the first shape seen); wrote NULL"
         ]
     );
     Ok(())

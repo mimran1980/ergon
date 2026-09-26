@@ -5,6 +5,7 @@
 #   just unexchange okx         remove one
 #   just recorder   rebuild + redeploy the recorders and ingester after a code/schema change
 #   just aeron      rebuild + redeploy Aeron (LabDriver.java, aeron.Dockerfile), then its clients
+#   just ingester   restart the ingester: it reloads every schema in schema/
 #   just logs       follow the recorder, ingester and Aeron logs
 #   just verify     check the running lab end to end
 #   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
@@ -80,9 +81,10 @@ build-recorder:
 # Rebuild and restart the recorders and the ingester (after changing schema/market.xml or code).
 recorder: build-recorder
     just _load lab/recorder:local
+    # The ingester first: a new one understands what new recorders send.
     {{kube}} rollout restart daemonset/ingester
-    {{kube}} rollout restart deploy -l app=recorder
     {{kube}} rollout status daemonset/ingester --timeout=120s
+    {{kube}} rollout restart deploy -l app=recorder
     for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
 
 # The clients are restarted too, so they join the new driver at once rather
@@ -97,6 +99,11 @@ aeron:
     {{kube}} rollout restart deploy -l app=recorder
     {{kube}} rollout status daemonset/ingester --timeout=120s
     for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
+
+# Restart the ingester so it loads every schema in schema/ again; it resumes from its checkpoint.
+ingester:
+    {{kube}} rollout restart daemonset/ingester
+    {{kube}} rollout status daemonset/ingester --timeout=120s
 
 logs:
     {{kube}} logs -f -l 'app in (recorder,ingester,aeron)' --prefix --max-log-requests 20 --tail 20
@@ -154,7 +161,7 @@ _aeron-jar:
 
 # Time recording on the app thread: SBE, tracing on and off, and a control.
 latency: _test-clickhouse _test-aeron
-    for arm in control sbe installed uninstalled event event-off no-table; do \
+    for arm in control sbe installed uninstalled event value value-nested event-off no-table; do \
         cargo run -q --release -p persist-server --example record_latency -- $arm; done
 
 lint:

@@ -15,6 +15,9 @@
 //!   each kind of venue-specific data, in a table named after its type): a
 //!   `tracing::info!(table = …)` or `persist_client::record_row`, whose
 //!   fields are the columns.
+//! * **Any Rust value** (`book_view`): `persist_client::record_value` of a
+//!   `Serialize` struct, nested as deep as it goes: its nested struct,
+//!   slices of structs (arrays), `Option` and enum become columns.
 //!
 //! Static or dynamic is `kind` in `config/tables.yaml`, not code. The
 //! handle is installed once in `main`; the free functions do nothing where
@@ -318,6 +321,7 @@ impl DataActor for Recorder {
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
         self.ticker(book);
+        book_view(book);
         // Reading a snapshot walks the book: skip all of it when the table is off.
         if !persist_client::enabled(BookSnapshotEncoder::TEMPLATE_ID) {
             return Ok(());
@@ -572,6 +576,88 @@ impl Recorder {
             volatility_index = volatility,
         );
     }
+}
+
+/// A nested Rust value recorded as it is, with no schema: `record_value`
+/// makes `book_view` from the struct. `spread.bps`, `bids.price` as
+/// `Array(Nullable(Float64))`, `regime` and `regime.Wide.bps`, and a NULL
+/// `imbalance` when a side is empty.
+#[derive(serde::Serialize)]
+struct BookView<'a> {
+    instrument: &'a str,
+    mid: f64,
+    spread: Spread,
+    bids: &'a [Level],
+    asks: &'a [Level],
+    /// Bid size over total size at the top 5 levels; `None` if both are empty.
+    imbalance: Option<f64>,
+    regime: Regime,
+}
+
+#[derive(serde::Serialize)]
+struct Spread {
+    bps: f64,
+    ticks: f64,
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+struct Level {
+    price: f64,
+    size: f64,
+}
+
+#[derive(serde::Serialize)]
+enum Regime {
+    Tight,
+    Wide { bps: f64 },
+}
+
+/// One `book_view` row: the book's top 5 levels a side, and what they say.
+fn book_view(book: &OrderBook) {
+    if !persist_client::event_enabled("book_view") {
+        return;
+    }
+    let top = |side: &mut dyn Iterator<Item = &BookLevel>| -> ArrayVec<Level, 5> {
+        side.take(5)
+            .map(|l| Level {
+                price: l.price.value.as_f64(),
+                size: l.size(),
+            })
+            .collect()
+    };
+    let (bids, asks) = (top(&mut book.bids(None)), top(&mut book.asks(None)));
+    let (Some(bid), Some(ask)) = (bids.first(), asks.first()) else {
+        return;
+    };
+    let mid = (bid.price + ask.price) / 2.0;
+    let bps = (ask.price - bid.price) / mid * 1e4;
+    let bid_size: f64 = bids.iter().map(|l| l.size).sum();
+    let total = bid_size + asks.iter().map(|l| l.size).sum::<f64>();
+    // The price precision is the tick size here: the best bid's.
+    let precision = book
+        .bids(None)
+        .next()
+        .map_or(0, |l| l.price.value.precision);
+    let tick = 10f64.powi(-i32::from(precision));
+    persist_client::record_value(
+        "book_view",
+        &BookView {
+            instrument: book.instrument_id.symbol.as_str(),
+            mid,
+            spread: Spread {
+                bps,
+                ticks: (ask.price - bid.price) / tick,
+            },
+            bids: &bids,
+            asks: &asks,
+            imbalance: (total > 0.0).then(|| bid_size / total),
+            regime: if bps < 1.0 {
+                Regime::Tight
+            } else {
+                Regime::Wide { bps }
+            },
+        },
+    );
 }
 
 /// `d` exactly, as the schema's `Decimal9` (mantissa x 10^-9, stored as

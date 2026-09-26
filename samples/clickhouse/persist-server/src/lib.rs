@@ -40,7 +40,7 @@ mod events;
 mod ingest;
 mod table;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -197,10 +197,11 @@ impl Source {
         message: &[u8],
         include: &[bool],
         out: &mut Vec<u8>,
+        shapes: &HashMap<u32, event::Shape>,
     ) -> Result<usize, table::DecodeError> {
         match self {
             Self::Sbe(t) => t.write_row(message, include, out).map(|()| 0),
-            Self::Events(t) => t.write_row(message, include, out),
+            Self::Events(t) => t.write_row(message, include, out, shapes),
         }
     }
 }
@@ -234,6 +235,46 @@ impl TableState {
     }
 }
 
+/// Every message of every schema. A message is identified by its schema id
+/// and template id, and a table by its name, so two schemas may not share
+/// either: keep one version of each schema, the newest (it decodes records
+/// made with the older ones).
+fn load_schemas(schemas: &[&str]) -> Result<Vec<Table>, Error> {
+    let mut tables: Vec<Table> = Vec::new();
+    for xml in schemas {
+        let loaded = tables_from_schema(xml)?;
+        if loaded
+            .first()
+            .is_some_and(|t| t.schema_id == event::SCHEMA_ID)
+        {
+            return Err(Error::Schema(format!(
+                "schema id {} is reserved for event rows (persist-client/schema/events.xml)",
+                event::SCHEMA_ID
+            )));
+        }
+        if let Some(t) = loaded
+            .first()
+            .filter(|t| tables.iter().any(|o| o.schema_id == t.schema_id))
+        {
+            return Err(Error::Schema(format!(
+                "two schemas have id {}: keep only the newest version",
+                t.schema_id
+            )));
+        }
+        if let Some(t) = loaded
+            .iter()
+            .find(|t| tables.iter().any(|o| o.name == t.name))
+        {
+            return Err(Error::Schema(format!(
+                "two schemas have a message named for table {}",
+                t.name
+            )));
+        }
+        tables.extend(loaded);
+    }
+    Ok(tables)
+}
+
 /// The messages in a buffer of `u32` LE length-prefixed messages.
 fn messages(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
     std::iter::from_fn(move || {
@@ -260,13 +301,24 @@ pub struct Writer {
     totals: BTreeMap<String, u64>,
     last_summary: Instant,
     recent_errors: BTreeMap<String, Instant>,
+    /// Event row layouts by id, from `Shape` messages (and the saved file).
+    shapes: HashMap<u32, event::Shape>,
+    /// Where new shapes are saved, so rows after a restart still decode.
+    shapes_path: Option<PathBuf>,
+    unknown_shapes: usize,
+    shape_errors: Vec<String>,
+    /// Event rows whose shape has not arrived, and when they did. They are
+    /// queued, so nothing is checkpointed past them, and wait up to
+    /// `shape_wait` for it: the application sends every shape every 5 s.
+    pending: Vec<(Instant, Vec<u8>)>,
+    shape_wait: Duration,
 }
 
 impl Writer {
-    /// Load the schema and `tables.yaml`. Nothing is sent to ClickHouse
+    /// Load the schemas and `tables.yaml`. Nothing is sent to ClickHouse
     /// until the first [`Writer::tick`].
     pub fn new(
-        schema_xml: &str,
+        schemas: &[&str],
         clickhouse: ClickHouse,
         config_path: impl Into<PathBuf>,
         recheck: Duration,
@@ -274,7 +326,7 @@ impl Writer {
         let mut writer = Self {
             ch: clickhouse,
             database_ready: false,
-            tables: tables_from_schema(schema_xml)?
+            tables: load_schemas(schemas)?
                 .into_iter()
                 .map(|t| TableState::new(Source::Sbe(t)))
                 .collect(),
@@ -287,6 +339,12 @@ impl Writer {
             totals: BTreeMap::new(),
             last_summary: Instant::now(),
             recent_errors: BTreeMap::new(),
+            shapes: HashMap::new(),
+            shapes_path: None,
+            unknown_shapes: 0,
+            shape_errors: Vec::new(),
+            pending: Vec::new(),
+            shape_wait: Duration::from_secs(30),
         };
         let text = std::fs::read_to_string(&writer.config_path)
             .map_err(|e| Error::Config(format!("{}: {e}", writer.config_path.display())))?;
@@ -304,23 +362,37 @@ impl Writer {
                 .map(|b| u16::from_le_bytes([b[0], b[1]]))
         };
         let state = if id(4) == Some(event::SCHEMA_ID) {
-            let row = event::decode(message);
-            self.tables
-                .iter_mut()
-                .find_map(|s| match (&mut s.source, &row) {
-                    (Source::Events(t), Some(row)) if t.name == row.table && s.config.is_some() => {
-                        if t.learn(row) {
-                            s.include = None; // new columns: compare with ClickHouse again
-                            s.retry_at = Instant::now();
-                        }
-                        Some(s)
+            if id(2) == Some(event::SHAPE_TEMPLATE_ID) {
+                self.add_shape(message);
+                return true;
+            }
+            let shape = message
+                .get(8..12)
+                .and_then(|b| self.shapes.get(&u32::from_le_bytes(b.try_into().ok()?)));
+            let Some(shape) = shape.filter(|_| id(2) == Some(event::ROW_TEMPLATE_ID)) else {
+                if id(2) != Some(event::ROW_TEMPLATE_ID) {
+                    self.skipped += 1;
+                    return false;
+                }
+                self.queued_bytes += message.len();
+                self.pending.push((Instant::now(), message.to_vec()));
+                return true;
+            };
+            self.tables.iter_mut().find_map(|s| match &mut s.source {
+                Source::Events(t) if t.name == shape.table && s.config.is_some() => {
+                    if t.learn(shape) {
+                        s.include = None; // new columns: compare with ClickHouse again
+                        s.retry_at = Instant::now();
                     }
-                    _ => None,
-                })
+                    Some(s)
+                }
+                _ => None,
+            })
         } else {
-            let template = id(2);
+            let (template, schema) = (id(2), id(4));
             self.tables.iter_mut().find(|s| {
-                matches!(&s.source, Source::Sbe(t) if Some(t.template_id) == template)
+                matches!(&s.source, Source::Sbe(t)
+                    if Some(t.template_id) == template && Some(t.schema_id) == schema)
                     && s.config.is_some()
             })
         };
@@ -333,6 +405,75 @@ impl Writer {
         state.queued_count += 1;
         self.queued_bytes += 4 + message.len();
         true
+    }
+
+    /// Keep every event shape in `path` (each a `u32` LE length, then its
+    /// `Shape` message), and load those already there. A row whose `Shape`
+    /// message was purged before a restart still decodes.
+    pub fn keep_shapes(&mut self, path: impl Into<PathBuf>) -> Result<(), Error> {
+        let path = path.into();
+        let fail =
+            |e: &dyn std::fmt::Display| Error::Checkpoint(format!("{}: {e}", path.display()));
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                for message in messages(&bytes) {
+                    let shape =
+                        event::Shape::decode(message).ok_or_else(|| fail(&"a malformed shape"))?;
+                    self.shapes.insert(shape.id, shape);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(fail(&e)),
+        }
+        self.shapes_path = Some(path);
+        Ok(())
+    }
+
+    /// Learn a shape from its `Shape` message, and save it if it is new.
+    fn add_shape(&mut self, message: &[u8]) {
+        let Some(shape) = event::Shape::decode(message) else {
+            self.shape_errors
+                .push("a malformed Shape message, skipped".into());
+            return;
+        };
+        match self.shapes.get(&shape.id) {
+            Some(known) if known.table == shape.table && known.fields == shape.fields => {}
+            Some(known) => self.shape_errors.push(format!(
+                "event shape id {} is both {} and {}: keeping the first",
+                shape.id, known.table, shape.table
+            )),
+            None => {
+                if let Some(path) = &self.shapes_path {
+                    let mut entry = (message.len() as u32).to_le_bytes().to_vec();
+                    entry.extend_from_slice(message);
+                    let saved = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .and_then(|mut f| std::io::Write::write_all(&mut f, &entry));
+                    if let Err(e) = saved {
+                        self.shape_errors.push(format!("{}: {e}", path.display()));
+                    }
+                }
+                let id = shape.id;
+                self.shapes.insert(id, shape);
+                // The rows that were waiting for it.
+                let waiting: Vec<_> = self
+                    .pending
+                    .extract_if(.., |(_, row)| row.get(8..12) == Some(&id.to_le_bytes()[..]))
+                    .collect();
+                for (_, row) in waiting {
+                    self.queued_bytes -= row.len();
+                    self.push(&row);
+                }
+            }
+        }
+    }
+
+    /// How long an event row waits for its shape before it is reported and
+    /// dropped (default 30 s).
+    pub fn wait_for_shapes(&mut self, wait: Duration) {
+        self.shape_wait = wait;
     }
 
     /// Bytes of messages waiting to be inserted.
@@ -370,6 +511,23 @@ impl Writer {
                 std::mem::take(&mut self.skipped)
             ));
         }
+        let now = Instant::now();
+        let wait = self.shape_wait;
+        let expired: Vec<_> = self
+            .pending
+            .extract_if(.., |(at, _)| now.duration_since(*at) >= wait)
+            .collect();
+        for (_, row) in expired {
+            self.queued_bytes -= row.len();
+            self.unknown_shapes += 1;
+        }
+        if self.unknown_shapes > 0 {
+            report.errors.push(format!(
+                "{} event rows skipped: their shape did not arrive within {wait:?} (no Shape message, and none saved)",
+                std::mem::take(&mut self.unknown_shapes)
+            ));
+        }
+        report.errors.append(&mut self.shape_errors);
         self.sync_tables(report);
         self.flush(report);
     }
@@ -464,7 +622,10 @@ impl Writer {
             self.rows.clear();
             let (mut rows, mut misfits) = (0, 0);
             for message in messages(&state.queued) {
-                match state.source.write_row(message, include, &mut self.rows) {
+                match state
+                    .source
+                    .write_row(message, include, &mut self.rows, &self.shapes)
+                {
                     Ok(n) => {
                         rows += 1;
                         misfits += n;
@@ -478,7 +639,7 @@ impl Writer {
             }
             if misfits > 0 {
                 report.errors.push(format!(
-                    "{}: {misfits} value(s) did not match their column's type (set by the first value seen); wrote the default",
+                    "{}: {misfits} value(s) did not match their column's type (set by the first shape seen); wrote NULL",
                     state.source.name()
                 ));
             }

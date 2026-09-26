@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Event rows: tables with no SBE message of their own (`tracing` events and
+  `record_row`). Their columns are known only at run time, so the layout of
+  each kind of row, a shape, is published once as a `Shape` message and every
+  `Row` carries values only, in that layout. See persist-client/src/event.rs.
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="persist_events"
+                   id="65534"
+                   version="1"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varString8">
+            <type name="length" primitiveType="uint8"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+        <enum name="Kind" encodingType="uint8">
+            <validValue name="I64">0</validValue>
+            <validValue name="U64">1</validValue>
+            <validValue name="F64">2</validValue>
+            <validValue name="Bool">3</validValue>
+            <validValue name="Str">4</validValue>
+            <!-- A list: its entries follow, each laid out like a row by the
+                 fields whose parent is this one. -->
+            <validValue name="Group" sinceVersion="1">5</validValue>
+        </enum>
+    </types>
+
+    <!-- The dictionary: a shape's id (a hash of everything below), its table,
+         and its fields in row order. Sent before the first row that uses it,
+         and again every 5 s. -->
+    <sbe:message name="Shape" id="1">
+        <field name="shape" id="1" type="uint32"/>
+        <group name="fields" id="2" dimensionType="groupSizeEncoding">
+            <field name="kind" id="3" type="Kind"/>
+            <!-- The Group field this one belongs to; 65535 (null) for the row itself. -->
+            <field name="parent" id="6" type="uint16" presence="optional" sinceVersion="1"/>
+            <data name="name" id="4" type="varString8"/>
+        </group>
+        <data name="table" id="5" type="varString8"/>
+    </sbe:message>
+
+    <!-- One row. Only its start is fixed; its shape gives the rest, and the
+         header's blockLength covers all of the block:
+           shape u32 | ts u64 (UNIX ns) | presence: one bit per field, in
+           u64 words | each I64/U64/F64 field 8 bytes, each Bool 1, in shape
+           order (0 when absent)
+         then, after the block, each Str field in shape order as a u32 length
+         and its bytes (length 0 when absent). -->
+    <sbe:message name="Row" id="2">
+        <field name="shape" id="1" type="uint32"/>
+        <field name="ts" id="2" type="uint64"/>
+    </sbe:message>
+</sbe:messageSchema>
