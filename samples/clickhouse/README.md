@@ -11,7 +11,7 @@ recorder app ──try_claim──▶ Aeron IPC ──▶ Aeron Archive (disk) �
 
 | Crate | What it is |
 |---|---|
-| `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else. |
+| `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else, metrics, traces and a low-latency clock. |
 | `persist-server` | The ingester, as a library and the `ingester` binary: replays the archive into ClickHouse tables, checkpoints, purges. |
 | `recorder` | The sample application: public market data from one exchange (Binance, Bybit, OKX, Deribit or Hyperliquid) via NautilusTrader, no API keys. |
 
@@ -38,7 +38,7 @@ this checkout mounted read-write): run it only on a network you trust.
 | What | Where |
 |---|---|
 | ClickHouse query UI | <http://localhost:8123/play> (user `lab`, password `lab`) |
-| Grafana | <http://localhost:3000>: *Market data* and *ClickHouse tables* (every table, plus ad-hoc SQL) |
+| Grafana | <http://localhost:3000>: *Market data*, *ClickHouse tables* (every table, plus ad-hoc SQL), *Metrics*, *Traces* (with the trace view) and *Aeron* |
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb>, then Run All |
 | What is recorded | `config/tables.yaml`: edits apply within a second |
 
@@ -80,9 +80,11 @@ persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
 
 `persist_client::record` uses the handle installed once at start-up
 (`Persist::connect(schema, settings)?.install()`), so any code can record
-without being passed one. With none installed (a unit test, a tool) it does
-nothing and never calls the closure. Holding the `Persist` and calling
-`persist.record` is the same, minus one load.
+without being passed one. `connect` waits up to 10 seconds for a subscriber
+to be recording the stream (`subscriber_timeout`); until one is, or with a
+zero timeout, a record Aeron cannot take is dropped. With none installed (a
+unit test, a tool) `record` does nothing and never calls the closure.
+Holding the `Persist` and calling `persist.record` is the same, minus one load.
 
 The table is the message in snake_case (`Trade` → `trade`), and every field
 is a column. `record` encodes straight into the Aeron term buffer. It skips
@@ -154,15 +156,17 @@ the table gains the columns.
 **How event rows travel.** Like an SBE message, a row carries values only.
 The first time a call site records, its layout (the table, and its fields'
 names, kinds and nesting in order) is published once as a `Shape` message
-(`persist-client/schema/events.xml`), and again every 5 s. Each `Row` then
+(`persist-client/schema/events.xml`). Each `Row` then
 holds the shape's id, the timestamp, a presence bit per field, and the
 values, and no names. A shape's id is a hash of the shape, so every
-application on the stream agrees on it without coordinating. The ingester
-saves the shapes it has seen next to its checkpoint, so rows whose `Shape`
-message was purged before a restart still decode. A row whose shape has not
-arrived yet (an ingester that starts with none saved) waits up to 30 s for
-it, and nothing is checkpointed past it meanwhile; one that still has none
-is reported and dropped.
+application on the stream agrees on it without coordinating. Every 5 s the
+next record publishes each shape again, on the same publication as the rows.
+The ingester saves the shapes it has seen next to its checkpoint, so rows
+whose `Shape` message was purged before a restart still decode. A row whose
+shape has not arrived yet (an ingester that starts with none saved) waits
+up to 30 s for it, and nothing is checkpointed past it meanwhile; one that
+still has none is reported and dropped. An application that records nothing
+does not publish those repeats until its next record.
 
 **More SBE schemas.** The ingester loads every `.xml` schema in `schema/` at
 start-up and tells messages apart by schema id and template id. To persist
@@ -170,6 +174,157 @@ another application's messages, put its schema there, list its tables in
 `tables.yaml`, and run `just ingester`. It restarts and resumes from its
 checkpoint. Keep one version of each schema: the newest decodes records made
 with older versions.
+
+**Who recorded it.** Every row of every table ends with `host`, `pod` and
+`app` (`LowCardinality(String)`). They cost the application nothing per
+record: each Aeron frame carries its application's source id in the frame
+header's 64-bit reserved value, which the archive keeps through replay, and
+a `Source` message names the id once (and every 5 s). The names come from
+`Settings`: `from_env` reads `PERSIST_APP`, `NODE_NAME` (the node, from
+Kubernetes' downward API; else the machine's name) and `HOSTNAME` (the pod).
+A static table created before these columns existed logs the `ALTER` that
+adds them, like any other missing column.
+
+## Metrics
+
+Counters, gauges and histograms with labels, made once and updated from the
+hot path with plain loads and stores: no lock, no allocation, no system call.
+
+```rust
+let metrics = persist_client::metrics(); // or persist.metrics()
+let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
+let depth = metrics.gauge("book_depth", &[("side", "bid")]);
+let t2t = metrics.histogram("tick_to_trade_ns", &[]);
+let clock = Clock::new();
+loop {
+    let now = clock.now();       // the loop's one clock read
+    sent.inc();                  // a load and a store
+    depth.set(12.0);             // a store
+    t2t.record(850);             // a bucket index, three load/stores, two compares
+    metrics.poll(now);           // one compare until the interval ends
+}
+```
+
+- A **counter** or **histogram** handle has one writer at a time: it is
+  `Send`, not `Sync`, so an update needs no locked instruction. Ask for the
+  same series on another thread and you get another cell; `poll` adds them
+  up. A **gauge** is shared: every handle of a series is one cell, and the
+  last value set wins. `counter_fn` samples an atomic kept elsewhere at each
+  poll (persist's own `persist_dropped{reason}` counters are these).
+- A **histogram** keeps log-linear buckets, as HdrHistogram does: each power
+  of two is split into 32, so every value is known to within 3.1%, from 0 to
+  `u64::MAX`. Buckets add up exactly across intervals, threads and
+  applications; percentiles never do. That is why histograms are not
+  per-millisecond min/max/sum/count summaries: from those, a p99 cannot be
+  recovered (1000 values of 1 µs and 10 of 500 µs in one millisecond give
+  min 1 µs, max 500 µs, mean 6 µs, and no way to tell whether the tail was
+  one value or ten).
+- **`poll(now)`** publishes every interval (`PERSIST_METRICS_INTERVAL`,
+  default `5s`), at whole multiples of it in UNIX time, so applications line
+  up. Each series' name and labels go out once per interval as a
+  `MetricDef`, keyed by a hash of them; the values carry only that key. A
+  call publishes at most one message and the next call continues, so no
+  call costs more than one publish, and polling allocates nothing once every
+  series has been seen. Call it from the thread's loop with the time it
+  already has; any thread may call it.
+
+Two tables, created by the ingester:
+
+| Table | A row |
+|---|---|
+| `metrics` | `ts`, `name`, `kind`, `series`, `labels Map(…)`, `value` (a counter's total, a gauge's value), `delta` (what the interval added to a counter) |
+| `metrics_histogram` | `ts`, `name`, `labels`, `count`, `sum`, `min`, `max`, `p50` … `p9999`, and the non-empty buckets `buckets.le` / `buckets.count` |
+
+The row's percentiles are its own interval's. Over any other span, merge
+the buckets:
+
+```sql
+SELECT quantileExactWeighted(0.99)(le, c) / 1e3 AS p99_us
+FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c
+WHERE name = 'record_ns' AND ts > now() - INTERVAL 1 HOUR
+```
+
+## Traces
+
+**Checkpoint traces**, for hot paths: a trace names its stages once, and
+each event stamps a timestamp per stage into a record on the stack.
+
+```rust
+let t2t = persist_client::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
+const ORDERS: u64 = TraceId::namespace("order"); // hashed at compile time
+
+let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(ORDERS, order_id));
+t.mark(clock.now()); // wire: the venue's timestamp to ours
+t.mark(clock.now()); // decode
+t.mark(clock.now()); // decide
+t.attr(0, levels);
+t.mark(clock.now()); // send
+t.finish();
+```
+
+`finish` always records each stage, and the whole, into the histogram
+`trace_ns{trace, stage}`, so every event is counted. It publishes the trace
+itself only when `otel_traces` is on for this app and the trace is one in
+`sample`, or slower than `slower_than`:
+
+```yaml
+otel_traces:
+  kind: static
+  enabled: false                                  # off for every app
+  apps: { binance: { until: 2026-09-27T18:00:00Z } }  # Binance, for an hour
+  traces:
+    tick_to_trade: { sample: 1000, slower_than: 50us }  # 1 in 1000, and every one over 50 µs
+```
+
+Changes apply within a second. The ingester writes each trace to
+`otel_traces`, the OpenTelemetry ClickHouse exporter's table, as a span for
+the whole and one per stage, which Grafana's trace view shows as they are
+(*Traces* dashboard). A business id as the trace id (an order id in the
+`"order"` namespace) puts every application's trace of that order into one
+trace, with nothing passed between them; `tracer.next_id()` makes one when
+there is none. A stage that ends before it began (a venue's clock ahead of
+ours) is recorded as 0 in its histogram and counted in `trace_clamped`.
+
+**`tracing` spans** (`#[instrument]`, `info_span!`) at INFO and above are
+recorded too while `otel_traces` is on, for code off the hot path: each
+costs what the `tracing` registry costs (see *Latency*). While it is off,
+the registry never stores them. Their fields are the span's attributes and
+their parent the span they were entered in.
+
+## Clock
+
+```rust
+let clock = Clock::new();   // one per thread
+let now = clock.now();      // read the clock, and cache it
+let t = clock.cached();     // the last read: a plain load
+let wall = now.epoch_ns();  // UNIX ns: the process's anchor plus the offset, no system call
+let venue = Nanos::from_epoch(ts_event); // comparable with `now`
+```
+
+Times are `Nanos`, signed nanoseconds since one anchor per process (so a
+venue's timestamp before it, or ahead of us, never wraps). Where the CPU's
+time-stamp counter is invariant (x86-64 Linux), a read is `rdtsc` through
+`minstant`; elsewhere `minstant` would read the wall clock, which can step
+backwards, so the clock reads `std::time::Instant`. Read it once per
+iteration of the loop and pass the time around, as Agrona's
+`CachedNanoClock` does.
+
+## Aeron's own statistics
+
+Every 5 s the ingester samples the media driver's CnC file, as `AeronStat`,
+`ErrorStat` and `LossStat` print it:
+
+| Table | A row |
+|---|---|
+| `aeron_counters` | every counter: `value`, `delta` since the last sample, and its label taken apart: `type` (`pub-pos`, `sub-pos`, `rec-pos`, …), `session_id`, `stream_id`, `channel`, `recording_id`, and `client_name` |
+| `aeron_errors` | each distinct error the driver logged, when first seen or seen again |
+| `aeron_loss` | each stream's data loss, when it grows |
+
+Counters join on those columns rather than on text. `client_name` is a
+Java client's own name, or, for this lab's C clients, the `app` of the
+`Source` whose Aeron client owns the counter. The *Aeron* dashboard shows
+how far each subscriber and the archive are behind each publisher, and how
+much room each publisher has before back pressure.
 
 ## `tables.yaml`
 
@@ -180,8 +335,12 @@ tables:
   spread:        { kind: dynamic }                 # not in the schema: tracing events
 ```
 
-- **`enabled`** (default `true`): record it now. The application re-reads the
-  file every second, so switching a table on or off needs no restart.
+- **`enabled`** (default `true`): record it now: `true`, `false`, or
+  `{ until: 2026-09-27T18:00:00Z }`, on until that time (UTC) and off after
+  it, with no further edit. The application re-reads the file every second,
+  so switching a table needs no restart.
+- **`apps`**: the same values per app, by name (`PERSIST_APP`; each
+  recorder is its exchange). An app not listed takes `enabled`.
 - **`kind: dynamic`**: the table follows the data. A field added to the SBE
   message becomes `ALTER TABLE … ADD COLUMN` when the recorder restarts, and a
   new event field is added as soon as it arrives.
@@ -191,17 +350,17 @@ tables:
   column. Run the SQL and it is picked up within 30 seconds.
 
 A changed column type is never altered automatically, for either kind.
-
-**One exchange only.** `config/exchanges/<exchange>.yaml` overrides `enabled`
-for that exchange's recorder, and applies within a second, like `tables.yaml`.
-It may name only tables that `tables.yaml` lists. `kind` is not overridable:
-every exchange writes the same ClickHouse table. Delete the file and
-`tables.yaml` decides again.
+`kind` is the same for every app: they all write one ClickHouse table.
 
 ```yaml
-# config/exchanges/binance.yaml: Binance stops recording book changes
 tables:
-  book_deltas: { enabled: false }
+  # Book changes from Binance only, and from Deribit for the next hour.
+  book_deltas:
+    kind: dynamic
+    enabled: false
+    apps: { binance: true, deribit: { until: 2026-09-27T18:00:00Z } }
+  # Every app until 18:00, except OKX.
+  spread: { kind: dynamic, enabled: { until: 2026-09-27T18:00:00Z }, apps: { okx: false } }
 ```
 
 ## Types
@@ -250,30 +409,47 @@ for the recorder's own `market.xml`).
 
 ## Latency
 
-`just latency` times recording on the application thread at 200k records/s,
-with the ingester running beside it (Apple M-series; the timer's resolution is
-42 ns). The results below had no dropped records:
+`just latency` times each operation on the application thread, 200k times a
+second for 8 s, with an ingester replaying the archive beside it. The run
+below: 2026-09-27, Apple M4, rustc 1.98.1, with the kind lab (ClickHouse,
+the ingester, five recorders) running on the same machine, which widens the
+tails. The timer's resolution is 42 ns, so the metric and clock arms time
+100 operations per sample; their rows are divided back to one operation.
+Nothing was dropped.
 
 | Arm | p50 | p99 | p99.9 |
 |---|---|---|---|
-| empty loop (the floor) | 0 ns | 42 ns | 42 ns |
-| `record()`, one SBE message | 83 ns | 167 ns | 291 ns |
-| `persist_client::record()`, installed handle | 42 ns | 167 ns | 334–667 ns |
-| `persist_client::record()`, none installed | 0 ns | 42 ns | 42 ns |
-| `tracing` event, table on | 84 ns | 250–333 ns | 1.3–3.1 µs |
-| `tracing` event, table off | 41 ns | 83 ns | 375–542 ns |
-| `record_value`, a struct of the event's three fields | 125 ns | 375 ns | 1.8–2.8 µs |
-| `record_value`, a nested struct and five levels in a `Vec` | 333 ns | 875 ns | 5.3–7.8 µs |
-| `trace!` without a `table` field | 0 ns | 42 ns | 42–83 ns |
+| empty loop (the floor) | 41 ns | 42 ns | 125 ns |
+| `record()`, one SBE message | 83 ns | 292 ns | 1.2 µs |
+| `persist_client::record()`, installed handle | 83 ns | 292 ns | 2.4 µs |
+| `persist_client::record()`, none installed | 41 ns | 42 ns | 125 ns |
+| `tracing` event, table on | 125 ns | 792 ns | 7.6 µs |
+| `tracing` event, table off | 42 ns | 291 ns | 2.0 µs |
+| `record_value`, a struct of the event's three fields | 166 ns | 458 ns | 5.1 µs |
+| `record_value`, a nested struct and five levels in a `Vec` | 375 ns | 1.5 µs | 13 µs |
+| `trace!` without a `table` field | 41 ns | 42 ns | 84 ns |
+| counter `inc`, per operation | 1.3 ns | 2.1 ns | 4.6 ns |
+| gauge `set`, per operation | 1.3 ns | 3.3 ns | 4.2 ns |
+| histogram `record`, per operation | 1.7 ns | 5.0 ns | 7.9 ns |
+| `Clock::cached`, per operation | 1.3 ns | 2.9 ns | 5.4 ns |
+| `Clock::now`, per operation (`std::time::Instant`: no TSC here) | 21 ns | 90 ns | 1.1 µs |
+| `SystemTime::now`, per operation | 15 ns | 24 ns | 403 ns |
+| `Metrics::poll`, between intervals | 41 ns | 42 ns | 458 ns |
+| `Metrics::poll`, every 1 ms interval publishing (10 counters, a histogram) | 42 ns | 250 ns | 3.7 µs |
+| 4-stage checkpoint trace, `otel_traces` off | 42 ns | 84 ns | 625 ns |
+| the same, on but not sampled | 41 ns | 84 ns | 500 ns |
+| the same, every one published | 83 ns | 333 ns | 1.5 µs |
+| `tracing` span, `otel_traces` off | 83 ns | 209 ns | 1.8 µs |
+| `tracing` span, on | 250 ns | 667 ns | 5.9 µs |
 
-The installed-handle and `tracing` rows are from later runs (2026-09-26). In
-the first, `record()` on a held handle measured 42 / 167 / 417 ns: the one
-extra load is below the timer's resolution. The `tracing` rows are for the
-shape-and-row format above, over three runs. The format before it, which
-wrote every field's name into every row, measured 125 / 375–417 ns / 2.9–3.3 µs
-with the table on and 42 / 125 ns / 0.9–1.1 µs with it off. The last row shows
-that the layer's own filter leaves the rest of the application's `tracing`
-calls disabled.
+A checkpoint trace's cost includes its five stage histograms, and a clock
+read per mark is the caller's. Every record stamps its source id into the
+Aeron frame header: one 8-byte store, next to what the claim already
+touches. `Clock::now` on this machine is `std::time::Instant`
+(`mach_absolute_time`); on x86-64 Linux it reads the TSC through `minstant`,
+which was not measured here. Earlier runs on a quieter machine measured
+`record()` at 83 / 167 / 291 ns and a `tracing` event at 84 / 250–333 ns /
+1.3–3.1 µs.
 
 ## What each exchange records
 
@@ -308,7 +484,7 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
 - **Turn recording off and on.** Set `book_snapshot: { kind: dynamic, enabled: false }`
   and save. Within a second every recorder logs `recording book_snapshot: off`
   and Grafana's *Order book* panels stop moving; set it back to `true` and
-  they resume. For one exchange only, use `config/exchanges/<exchange>.yaml`.
+  they resume. For one exchange only, give the table `apps: { <exchange>: false }`.
 - **Add a column to a dynamic table.** Add
   `<field name="bidLevels" id="12" type="uint8"/>` to `BookSnapshot` after
   `sequence`. Set `bid_levels: bids.len() as u8` in `on_book`, then run
@@ -318,6 +494,11 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
   to `Trade` after `aggressor`, set `is_maker: 0` in `on_trade`, then run
   `just recorder`. The ingester logs the `ALTER` that `trade` needs, and every
   other column keeps flowing.
+- **Trace one exchange for ten minutes.** Give `otel_traces` in
+  `tables.yaml` `enabled: false` and `apps: { okx: { until: <ten minutes from now, UTC> } }`,
+  and save. Within a second only OKX publishes `book_update` traces (open
+  *Traces*, pick one in `trace_id`); at that time it stops by itself, while
+  the stage latency panels keep counting every update.
 - **Record a new signal.** Add `tracing::info!(table = "my_signal", value = x)`
   anywhere in the recorder, plus `my_signal: { kind: dynamic }` in
   `tables.yaml`.
@@ -336,9 +517,11 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - `Decimal9` holds ±9.2 billion with nine decimals. A value outside that is an
   error in `d9()`, and that record is not written.
 - `record()` never waits. A record Aeron cannot take is dropped and counted in
-  `persist.dropped()`, and logged every second while the count grows. That
-  covers no archive recording yet, back pressure, or a record over 64 KiB. The
-  16 MiB terms leave 8 MiB of headroom for the archive.
+  `persist.drops()` (`not_connected`, `back_pressure`, `too_large`, `other`),
+  and logged once a second while the total grows. `dropped()` is that total.
+  A term rotation is retried eight times and then counted in `other`, so the
+  call cannot spin. That covers no archive recording yet, back pressure, or a
+  record over 64 KiB. The 16 MiB terms leave 8 MiB of headroom for the archive.
 - One table that never inserts (say, a static table ClickHouse refuses) holds
   the checkpoint back. The archive then grows until it is fixed. Nothing is
   lost, but it uses disk.
@@ -352,8 +535,10 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - A nested struct recorded through `tracing` is its `?debug` text; record
   it with `record_value` to get its fields as columns.
 - `record_value` is slower than a `tracing` event of the same fields (125
-  against 84 ns): serde walks the value generically. For the hottest data,
-  an SBE message and `record()` stay the fastest.
+  against 84 ns): serde walks the value once into a reused buffer and that
+  buffer is copied into Aeron. Walking the value a second time, to write
+  straight into the claim, measured slower. For the hottest data, an SBE
+  message and `record()` stay the fastest.
 - In `record_row`, a JSON null leaves the field out, so each pattern of
   nulls in the data is its own shape.
 - `just verify` counts container restarts, so after `just stop` / `just start`
@@ -361,6 +546,24 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - Applications that publish on one stream must use the same channel.
   Aeron refuses a second IPC publication whose parameters (a `session-id`, say)
   differ from the one already open.
+- Aeron's statistics are sampled from shared memory, not recorded through
+  the archive: while the ingester is down, nothing is sampled.
+- Metrics are published every interval from `poll`: those of an
+  application that exits before its next interval are lost. A counter's
+  `delta` is exact across restarts; its `value` restarts from 0.
+- A histogram's `sum` and count can differ by the values recorded while a
+  poll on another thread was reading the cell. Polling from the recording
+  thread, as a busy-spinning application does, is exact.
+- Every 5 s the next `record` (or event, or `poll`) also publishes the
+  heartbeat: the `Source` message, every event shape and every trace
+  definition, one after another. That one call costs a publish per
+  message, which `poll`'s one-message bound does not cover. A cursor over
+  the heartbeat, one message per call, would bound it too.
+- Checkpoint traces take at most 16 stages and 8 numeric attributes;
+  `tracing` spans may carry text.
+- In this lab, the kind node's clock can lag the venues' (Docker Desktop's
+  VM drifts, by 100–400 ms here): `venue_to_local_ns` then reads 0 and
+  `trace_clamped` counts the negative stages.
 - Only venue data NautilusTrader subscribes to is recorded. Options (greeks,
   chains) need live option instruments picked by expiry, and are not
   recorded.

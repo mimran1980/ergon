@@ -102,8 +102,8 @@ fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
         .encoded_length_with_header();
     // Both are template 1; only the schema id tells them apart.
     assert_eq!(tick::TickEncoder::TEMPLATE_ID, v1::TEMPLATE_ID);
-    assert!(writer.push(&buf[..len]));
-    assert!(writer.push(&v1::message()?));
+    assert!(writer.push(&buf[..len], 0));
+    assert!(writer.push(&v1::message()?, 0));
     clean(&writer.tick())?;
     assert_eq!(lab.query("SELECT seq FROM DB.tick")?, "42");
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
@@ -156,10 +156,10 @@ fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
     // A row before its shape waits for it, and is written when it comes.
     let mut writer = lab.writer(v1::SCHEMA)?;
     writer.keep_shapes(&saved)?;
-    assert!(writer.push(&signal_row(&shape, 1.0)));
+    assert!(writer.push(&signal_row(&shape, 1.0), 0));
     clean(&writer.tick())?;
-    assert!(writer.push(shape.message()));
-    assert!(writer.push(&signal_row(&shape, 2.0)));
+    assert!(writer.push(shape.message(), 0));
+    assert!(writer.push(&signal_row(&shape, 2.0), 0));
     clean(&writer.tick())?;
     drop(writer);
 
@@ -167,7 +167,7 @@ fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
     // saved shape still decodes the rows.
     let mut writer = lab.writer(v1::SCHEMA)?;
     writer.keep_shapes(&saved)?;
-    assert!(writer.push(&signal_row(&shape, 3.0)));
+    assert!(writer.push(&signal_row(&shape, 3.0), 0));
     clean(&writer.tick())?;
     assert_eq!(
         lab.query("SELECT edge FROM DB.signal ORDER BY edge FORMAT TSV")?,
@@ -177,13 +177,13 @@ fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
     // A row whose shape never comes is reported when its wait is over.
     let never = Shape::new("signal", vec![FieldDef::new("other", Kind::I64, None)])?;
     writer.wait_for_shapes(Duration::ZERO);
-    assert!(writer.push(&signal_row(&never, 4.0)));
+    assert!(writer.push(&signal_row(&never, 4.0), 0));
     let report = writer.tick();
     assert!(
         report
             .errors
             .iter()
-            .any(|e| e.contains("1 event rows skipped: their shape did not arrive")),
+            .any(|e| e.contains("1 rows skipped: their Shape or MetricDef message did not arrive")),
         "{report:?}"
     );
 
@@ -194,8 +194,8 @@ fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
         Shape::new("t622382", vec![])?,
     );
     assert_eq!(a.id, b.id);
-    writer.push(a.message());
-    writer.push(b.message());
+    writer.push(a.message(), 0);
+    writer.push(b.message(), 0);
     let report = writer.tick();
     assert!(
         report
@@ -211,7 +211,7 @@ fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
 fn every_field_shape_round_trips() -> TestResult {
     let lab = Lab::new("shapes", "tables:\n  shapes: { kind: dynamic }\n")?;
     let mut writer = lab.writer(v1::SCHEMA)?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.inserted.get("shapes"), Some(&1));
@@ -243,6 +243,9 @@ fn every_field_shape_round_trips() -> TestResult {
             "entries.maybe\tArray(Nullable(Float64))",
             "entries.px\tArray(Decimal(18, 9))",
             "note\tString",
+            "host\tLowCardinality(String)",
+            "pod\tLowCardinality(String)",
+            "app\tLowCardinality(String)",
             "inserted_at\tDateTime64(3, \\'UTC\\')",
         ]
         .join("\n")
@@ -261,7 +264,7 @@ fn a_record_made_before_a_schema_change_still_loads() -> TestResult {
     // the v2 schema: the fields they do not carry read as their defaults.
     let lab = Lab::new("older", "tables:\n  shapes: { kind: dynamic }\n")?;
     let mut writer = lab.writer(v2::SCHEMA)?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.inserted.get("shapes"), Some(&1));
@@ -277,12 +280,12 @@ fn dynamic_table_gains_new_schema_columns() -> TestResult {
     let lab = Lab::new("dynamic", "tables:\n  shapes: { kind: dynamic }\n")?;
     {
         let mut writer = lab.writer(v1::SCHEMA)?;
-        writer.push(&v1::message()?);
+        writer.push(&v1::message()?, 0);
         clean(&writer.tick())?;
     }
     // The recorder restarts with a schema that has two more fields.
     let mut writer = lab.writer(v2::SCHEMA)?;
-    writer.push(&v2::message()?);
+    writer.push(&v2::message()?, 0);
     let report = writer.tick();
     clean(&report)?;
     assert!(report.problems.is_empty(), "{:?}", report.problems);
@@ -307,7 +310,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
     let lab = Lab::new("static", "tables:\n  shapes: { kind: static }\n")?;
     {
         let mut writer = lab.writer(v1::SCHEMA)?;
-        writer.push(&v1::message()?);
+        writer.push(&v1::message()?, 0);
         clean(&writer.tick())?;
     }
     let before = lab.query(
@@ -315,7 +318,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
     )?;
 
     let mut writer = lab.writer(v2::SCHEMA)?;
-    writer.push(&v2::message()?);
+    writer.push(&v2::message()?, 0);
     let report = writer.tick();
     clean(&report)?;
     assert!(
@@ -342,7 +345,7 @@ fn static_table_is_never_altered_and_keeps_recording() -> TestResult {
 
     // Running the suggested SQL is picked up by the next re-check.
     lab.query("ALTER TABLE DB.shapes ADD COLUMN IF NOT EXISTS `extra` UInt32")?;
-    writer.push(&v2::message()?);
+    writer.push(&v2::message()?, 0);
     let report = writer.tick();
     clean(&report)?;
     assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
@@ -362,13 +365,13 @@ fn removed_schema_fields_keep_their_columns() -> TestResult {
         )?;
         {
             let mut writer = lab.writer(v2::SCHEMA)?;
-            writer.push(&v2::message()?);
+            writer.push(&v2::message()?, 0);
             clean(&writer.tick())?;
         }
         // The schema loses `extra` and the group field `entries.fee`; the
         // insert then omits `entries.fee` beside the `entries.*` it still sends.
         let mut writer = lab.writer(v1::SCHEMA)?;
-        writer.push(&v1::message()?);
+        writer.push(&v1::message()?, 0);
         let report = writer.tick();
         clean(&report)?;
         assert!(report.problems.is_empty(), "{kind}: {:?}", report.problems);
@@ -394,12 +397,12 @@ fn changed_column_type_is_reported_not_altered() -> TestResult {
         )?;
         {
             let mut writer = lab.writer(v1::SCHEMA)?;
-            writer.push(&v1::message()?);
+            writer.push(&v1::message()?, 0);
             clean(&writer.tick())?;
         }
         lab.query("ALTER TABLE DB.shapes MODIFY COLUMN i16 Int32")?;
         let mut writer = lab.writer(v1::SCHEMA)?;
-        writer.push(&v1::message()?);
+        writer.push(&v1::message()?, 0);
         let report = writer.tick();
         clean(&report)?;
         assert_eq!(
@@ -425,14 +428,14 @@ fn changed_column_type_is_reported_not_altered() -> TestResult {
 fn table_changed_while_recording_is_rechecked() -> TestResult {
     let lab = Lab::new("changed", "tables:\n  shapes: { kind: static }\n")?;
     let mut writer = lab.writer(v1::SCHEMA)?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     clean(&writer.tick())?;
 
     // A column of the static table is dropped under the running recorder:
     // the insert fails, the table is compared again, the ERROR names the fix,
     // and the same record is written without that column.
     lab.query("ALTER TABLE DB.shapes DROP COLUMN i8")?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     let failed = writer.tick();
     assert!(failed.inserted.is_empty(), "{failed:?}");
     assert_eq!(failed.errors.len(), 1, "{:?}", failed.errors);
@@ -448,7 +451,7 @@ fn table_changed_while_recording_is_rechecked() -> TestResult {
 
     // The whole database is dropped: it and the table are created again.
     lab.query("DROP DATABASE DB")?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     assert!(writer.tick().inserted.is_empty());
     let report = writer.tick();
     clean(&report)?;
@@ -470,7 +473,7 @@ fn every_listed_table_exists_and_a_bad_edit_keeps_the_config() -> TestResult {
     // Listed but disabled: the table exists, empty, so queries against it work.
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "0");
     // Records made while it was still enabled are written all the same.
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
 
     // An invalid edit is rejected and the last good configuration stays.
@@ -482,13 +485,13 @@ fn every_listed_table_exists_and_a_bad_edit_keeps_the_config() -> TestResult {
             "tables.yaml: tables.shapes.kind: unknown variant `sometimes`, expected `static` or `dynamic` at line 2 column 19; keeping the previous configuration"
         ]
     );
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     assert_eq!(writer.tick().inserted.get("shapes"), Some(&1));
 
     // A table removed from tables.yaml: its records are skipped and counted.
     lab.write_config("tables: {}\n")?;
     clean(&writer.tick())?;
-    assert!(!writer.push(&v1::message()?));
+    assert!(!writer.push(&v1::message()?, 0));
     assert_eq!(
         writer.tick().errors,
         ["1 records skipped: their table is not in tables.yaml"]
@@ -507,14 +510,15 @@ fn unreachable_clickhouse_keeps_every_record_queued() -> TestResult {
     let ch = ClickHouse::new("http://127.0.0.1:9", "lab", "lab", "nowhere");
     let mut writer = Writer::new(&[v1::SCHEMA], ch, dir.join("tables.yaml"), Duration::ZERO)?;
     for _ in 0..11 {
-        assert!(writer.push(&v1::message()?));
+        assert!(writer.push(&v1::message()?, 0));
     }
     let report = writer.tick();
     assert!(!report.errors.is_empty());
     assert!(report.inserted.is_empty());
     // Nothing is dropped. The ingester stops replaying past its limit
     // instead, and the rest waits in the archive.
-    assert_eq!(writer.queued_bytes(), 11 * (4 + v1::LEN));
+    // Each is queued with its length and source id.
+    assert_eq!(writer.queued_bytes(), 11 * (12 + v1::LEN));
     Ok(())
 }
 
@@ -528,12 +532,12 @@ fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
     lab.query(&format!("GRANT CREATE DATABASE ON DB.* TO {user}"))?;
     let ch = ClickHouse::new(&test_url(), user, "x", &lab.ch.database);
     let mut writer = Writer::new(&[v1::SCHEMA], ch, &lab.config, Duration::ZERO)?;
-    writer.push(&v1::message()?);
+    writer.push(&v1::message()?, 0);
     // The first tick fails to create the table; the second falls inside the
     // retry back-off. Neither may throw the queued record away.
     assert!(!writer.tick().errors.is_empty());
     writer.tick();
-    assert_eq!(writer.queued_bytes(), 4 + v1::LEN);
+    assert_eq!(writer.queued_bytes(), 12 + v1::LEN);
     lab.query(&format!("DROP USER {user}"))?;
     Ok(())
 }
@@ -613,5 +617,42 @@ fn market_schema_tables() -> TestResult {
         ch.create_sql(&book.shape()),
         "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
     );
+    Ok(())
+}
+
+#[test]
+fn persistences_own_tables_are_never_event_tables_or_sbe_messages() -> TestResult {
+    use persist_client::event::{FieldDef, Kind, Shape};
+
+    // Listed in tables.yaml (otel_traces for its switch): still the fixed
+    // tables, never tables fed by event rows.
+    let lab = Lab::new(
+        "reserved",
+        "tables:\n  metrics: { kind: dynamic }\n  otel_traces: { kind: static }\n",
+    )?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    let shape = Shape::new("metrics", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(shape.message(), 0));
+    assert!(
+        !writer.push(&signal_row(&shape, 1.0), 0),
+        "an event row naming `metrics` has no table to go to"
+    );
+    let report = writer.tick();
+    assert!(
+        report.errors.iter().any(|e| e.contains("records skipped")),
+        "{report:?}"
+    );
+    assert_eq!(
+        lab.query("SELECT name FROM system.columns WHERE database = 'DB' AND table = 'metrics' AND name IN ('series', 'edge') ORDER BY name FORMAT TSV")?,
+        "series",
+        "the fixed table, not an event table's columns"
+    );
+
+    // An SBE message that would be one of them is refused.
+    let schema = include_str!("schemas/tick.xml").replace(r#"name="Tick""#, r#"name="Metrics""#);
+    match Writer::new(&[&schema], lab.ch.clone(), &lab.config, Duration::ZERO) {
+        Err(e) => assert!(e.to_string().contains("keeps for itself"), "{e}"),
+        Ok(_) => return Err("a schema with a message named Metrics was accepted".into()),
+    }
     Ok(())
 }

@@ -10,5 +10,12 @@ datasources:
       protocol: http
       username: lab
       defaultDatabase: market
+      # Grafana's trace view reads otel_traces, the OpenTelemetry exporter's
+      # layout that the ingester writes.
+      traces:
+        defaultDatabase: market
+        defaultTable: otel_traces
+        otelEnabled: true
+        otelVersion: 1.29.0
     secureJsonData:
       password: lab

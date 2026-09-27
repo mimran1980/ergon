@@ -8,21 +8,29 @@
 //!   `tracing::info!(table = "signal", instrument = %id, edge = 0.25)`. The
 //!   table's columns are the events' fields (see [`event`]).
 //!
+//! Beside them, [`mod@metrics`] (counters, gauges, histograms), [`trace`]
+//! (checkpoint traces, and `tracing` spans through the layer) and
+//! [`clock`] (a per-thread cached clock) for low-latency threads. Every
+//! frame carries the application's [`source`] id, so every row names its
+//! host, pod and app.
+//!
 //! A separate ingester (`persist-server`) reads the Aeron Archive recording of
 //! that stream, inserts every message into the ClickHouse table its SBE
 //! message defines, and purges the recording behind it. The application never
 //! talks to ClickHouse and never waits for it.
 //!
 //! Hold a [`Persist`], or [`install`](Persist::install) one for the process
-//! and record from anywhere with the free functions [`record`], [`enabled`],
+//! and record from any thread with the free functions [`record`], [`enabled`],
 //! [`record_row`] and [`event_enabled`], without passing a handle around.
-//! Before one is installed, or when none ever is (a test, a tool), they do
-//! nothing: `encode` is never called. Each costs one load more than holding
-//! the handle.
+//! Before one is installed, or when none ever is (a test, a tool), the free
+//! functions do nothing: `encode` is never called. Each costs one load more
+//! than holding the handle.
 //!
 //! A disabled SBE table costs one relaxed atomic load; an enabled one a
 //! `try_claim`, the encode and a commit. No lock, no allocation, no copy. A
 //! disabled event table costs a read lock and a lookup, with no formatting.
+//! Term rotation is retried a handful of times and then dropped, so the call
+//! cannot spin.
 //!
 //! `config/tables.yaml` is re-read every second, so recording switches on and
 //! off while the application runs. `enabled` is read here, `kind` by the
@@ -34,7 +42,12 @@
 //!   book_snapshot: { kind: dynamic, enabled: false }
 //! ```
 
+pub mod clock;
 pub mod event;
+pub mod metrics;
+pub mod source;
+mod spans;
+pub mod trace;
 mod value;
 
 use std::collections::{BTreeMap, HashMap};
@@ -42,14 +55,22 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use rusteron_client::{Aeron, AeronContext, AeronOfferError, AeronPublication, IntoCString};
+use rusteron_client::{
+    Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronOfferError, AeronPublication,
+    IntoCString,
+};
 use serde::Deserialize;
 use tracing::Subscriber;
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::registry::LookupSpan;
+
+/// How many times a term rotation (`AdminAction`) is retried before the
+/// record is dropped. Aeron asks for an immediate retry; this keeps a stuck
+/// rotation off the recording thread.
+const ADMIN_ACTION_RETRIES: u32 = 8;
 
 /// The stream applications publish on and the ingester's archive records.
 pub const STREAM_ID: i32 = 1001;
@@ -95,19 +116,119 @@ pub enum TableKind {
     Dynamic,
 }
 
-/// One entry of `tables.yaml`.
+/// Whether a table is recorded: `true`, `false`, or `{ until: <time> }`,
+/// on until that RFC 3339 time (`2026-09-27T18:00:00Z`) and off after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "RawSwitch")]
+pub enum Switch {
+    On,
+    Off,
+    Until(jiff::Timestamp),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum RawSwitch {
+    Flag(bool),
+    Until { until: String },
+}
+
+impl TryFrom<RawSwitch> for Switch {
+    type Error = String;
+
+    fn try_from(raw: RawSwitch) -> Result<Self, String> {
+        match raw {
+            RawSwitch::Flag(on) => Ok(if on { Self::On } else { Self::Off }),
+            RawSwitch::Until { until } => until
+                .parse()
+                .map(Self::Until)
+                .map_err(|e| format!("until: {until:?} is not an RFC 3339 time: {e}")),
+        }
+    }
+}
+
+impl Switch {
+    /// On at `now`?
+    #[must_use]
+    pub fn is_on(self, now: jiff::Timestamp) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::Until(end) => now < end,
+        }
+    }
+}
+
+/// One entry of `tables.yaml`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TableConfig {
     /// Static or dynamic.
     pub kind: TableKind,
-    /// Record this table now (default `true`).
-    #[serde(default = "yes")]
-    pub enabled: bool,
+    /// Record this table in every app not in [`TableConfig::apps`]
+    /// (default `true`).
+    #[serde(default = "on")]
+    pub enabled: Switch,
+    /// Apps that decide for themselves, by name (`PERSIST_APP`).
+    #[serde(default)]
+    pub apps: BTreeMap<String, Switch>,
+    /// [`OTEL_TRACES`] only: each trace's sampling, by name. A trace not
+    /// listed publishes every one while the table is on.
+    #[serde(default)]
+    pub traces: BTreeMap<String, TraceConfig>,
 }
 
-const fn yes() -> bool {
-    true
+/// The table traces are published to, and switched by.
+pub const OTEL_TRACES: &str = "otel_traces";
+
+/// Which traces of one name are published.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceConfig {
+    /// One in this many (default 1: every one; 0: none).
+    #[serde(default = "one")]
+    pub sample: u64,
+    /// Also every one slower than this: `50us`, `1ms`, `2s`.
+    #[serde(default)]
+    pub slower_than: Option<Threshold>,
+}
+
+const fn one() -> u64 {
+    1
+}
+
+/// A duration in `tables.yaml`, in nanoseconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Threshold(pub i64);
+
+impl TryFrom<String> for Threshold {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let d: jiff::SignedDuration = text
+            .parse()
+            .map_err(|e| format!("{text:?} is not a duration such as 50us or 1ms: {e}"))?;
+        i64::try_from(d.as_nanos())
+            .map(Self)
+            .map_err(|_| format!("{text:?} is too long"))
+    }
+}
+
+const fn on() -> Switch {
+    Switch::On
+}
+
+impl TableConfig {
+    /// Is the table recorded by `app` at `now`?
+    #[must_use]
+    pub fn is_on(&self, app: &str, now: jiff::Timestamp) -> bool {
+        self.apps
+            .get(app)
+            .copied()
+            .unwrap_or(self.enabled)
+            .is_on(now)
+    }
 }
 
 /// Parse `tables.yaml`.
@@ -120,37 +241,6 @@ pub fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> 
     serde_yaml::from_str::<File>(text)
         .map(|f| f.tables)
         .map_err(|e| Error::Config(e.to_string()))
-}
-
-/// Apply an override file to a parsed `tables.yaml`: it switches tables on
-/// or off for one application, and names no table `tables.yaml` lacks.
-///
-/// ```yaml
-/// tables:
-///   book_deltas: { enabled: false }
-/// ```
-pub fn apply_overrides(
-    config: &mut BTreeMap<String, TableConfig>,
-    text: &str,
-) -> Result<(), Error> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Override {
-        enabled: bool,
-    }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct File {
-        tables: BTreeMap<String, Override>,
-    }
-    let file: File = serde_yaml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
-    for (name, o) in file.tables {
-        config
-            .get_mut(&name)
-            .ok_or_else(|| Error::Config(format!("{name} is not in tables.yaml")))?
-            .enabled = o.enabled;
-    }
-    Ok(())
 }
 
 /// `(table name, template id)` of every message in an SBE schema.
@@ -183,20 +273,63 @@ pub fn snake_case(name: &str) -> String {
     out
 }
 
+/// Why a record was not published. [`Drops::other`] is a mis-sized encode, a
+/// failed commit, a second thread, or a term rotation that would not finish.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drops {
+    /// No subscriber was recording the stream.
+    pub not_connected: u64,
+    /// The term buffer was full.
+    pub back_pressure: u64,
+    /// Longer than one `try_claim` can hold.
+    pub too_large: u64,
+    /// Anything else that was not published.
+    pub other: u64,
+}
+
+impl Drops {
+    /// Every dropped record.
+    #[must_use]
+    pub fn total(self) -> u64 {
+        self.not_connected + self.back_pressure + self.too_large + self.other
+    }
+}
+
+/// Which counter [`Persist::count`] increments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DropKind {
+    NotConnected,
+    BackPressure,
+    TooLarge,
+    Other,
+}
+
 /// Where to publish and what to read.
 #[derive(Clone, Debug)]
 pub struct Settings {
     /// `tables.yaml`, re-read every second.
     pub config_path: PathBuf,
-    /// This application's own `enabled` values (see [`apply_overrides`]),
-    /// re-read every second. A missing file overrides nothing.
-    pub overrides_path: Option<PathBuf>,
+    /// This application's name: its entry under a table's `apps` switches
+    /// that table for it alone. With [`Settings::host`] and [`Settings::pod`],
+    /// it is written into every row the application records.
+    pub app: String,
+    /// The machine (in Kubernetes, the node).
+    pub host: String,
+    /// The pod, or the process's name outside Kubernetes.
+    pub pod: String,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
     /// Defaults to [`CHANNEL`].
     pub channel: String,
     /// Defaults to [`STREAM_ID`].
     pub stream_id: i32,
+    /// How often [`metrics::Metrics::poll`] publishes (default 5 s), at
+    /// multiples of it in UNIX time.
+    pub metrics_interval: Duration,
+    /// How long [`Persist::connect`] waits for a subscriber to record the
+    /// stream. [`Duration::ZERO`] returns as soon as the publication exists;
+    /// records until a subscriber arrives are dropped.
+    pub subscriber_timeout: Duration,
 }
 
 impl Settings {
@@ -205,19 +338,34 @@ impl Settings {
     pub fn new(config_path: impl Into<PathBuf>) -> Self {
         Self {
             config_path: config_path.into(),
-            overrides_path: None,
+            app: String::new(),
+            host: String::new(),
+            pod: String::new(),
             aeron_dir: None,
             channel: CHANNEL.to_string(),
             stream_id: STREAM_ID,
+            subscriber_timeout: Duration::from_secs(10),
+            metrics_interval: Duration::from_secs(5),
         }
     }
 
-    /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`) and,
-    /// if set, `PERSIST_OVERRIDES`.
+    /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`),
+    /// `PERSIST_APP` (the app's name, default none), the host from
+    /// [`source::host_name`], and the pod from `POD_NAME`, else `HOSTNAME`
+    /// (which Kubernetes sets to the pod's name).
     #[must_use]
     pub fn from_env() -> Self {
         Self {
-            overrides_path: std::env::var_os("PERSIST_OVERRIDES").map(PathBuf::from),
+            app: std::env::var("PERSIST_APP").unwrap_or_default(),
+            host: source::host_name(),
+            pod: std::env::var("POD_NAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .unwrap_or_default(),
+            metrics_interval: std::env::var("PERSIST_METRICS_INTERVAL")
+                .ok()
+                .and_then(|v| v.parse::<jiff::SignedDuration>().ok())
+                .and_then(|d| Duration::try_from(d).ok())
+                .unwrap_or(Duration::from_secs(5)),
             ..Self::new(
                 std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
             )
@@ -280,6 +428,35 @@ pub fn record_value<T: ?Sized + serde::Serialize>(table: &str, value: &T) {
     }
 }
 
+/// [`Persist::metrics`] of the installed handle. With none installed, a
+/// registry that publishes nothing: its handles still work.
+#[must_use]
+pub fn metrics() -> metrics::Metrics {
+    INSTALLED
+        .get()
+        .map_or_else(metrics::Metrics::detached, Persist::metrics)
+}
+
+/// [`Persist::tracer`] of the installed handle. With none installed, a
+/// tracer that publishes nothing: its stage histograms still count.
+#[must_use]
+pub fn tracer(name: &str, stages: &[&str], attrs: &[&str]) -> trace::Tracer {
+    match INSTALLED.get() {
+        Some(persist) => persist.tracer(name, stages, attrs),
+        None => trace::Tracer::new(
+            &trace::TraceDef::new(name, stages, attrs),
+            Arc::new(trace::DefMessage {
+                message: Vec::new(),
+                sent: AtomicBool::new(true),
+            }),
+            Arc::default(),
+            &metrics::Metrics::detached(),
+            None,
+            0,
+        ),
+    }
+}
+
 /// The recording handle. Cheap to clone; share it with every callback, or
 /// [`install`](Persist::install) it once and use the free functions.
 #[derive(Clone)]
@@ -292,6 +469,14 @@ struct Inner {
     /// which an address could not (a new `Persist` may reuse an old one's).
     id: u64,
     publication: AeronPublication,
+    /// Largest `try_claim`. Longer records are dropped.
+    max_payload: usize,
+    /// Stamped into every frame's reserved value; its `Source` message is
+    /// sent ahead of the shapes.
+    source: source::Source,
+    source_message: Vec<u8>,
+    /// Series and their publishing; see [`Persist::metrics`].
+    metrics: metrics::Metrics,
     _aeron: Aeron,
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
@@ -306,9 +491,25 @@ struct Shared {
     /// not list (off). Call sites cache theirs, so the lock is taken when a
     /// call site first names a table, not per event.
     events: RwLock<HashMap<String, Arc<AtomicBool>>>,
-    /// Every event shape made so far, by id: sent again every 5 s.
+    /// Every event shape made so far, by id. The next record sends them
+    /// again after the watcher marks them due.
     shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
-    dropped: AtomicU64,
+    shapes_due: AtomicBool,
+    /// Each trace's switch by name, set from `otel_traces` by the watcher.
+    traces: RwLock<HashMap<String, Arc<trace::TraceSwitch>>>,
+    /// Every trace definition made, re-sent with the shapes.
+    trace_defs: Mutex<Vec<Arc<trace::DefMessage>>>,
+    /// `otel_traces` is on for this app: `tracing` spans are recorded, and a
+    /// new tracer starts on.
+    spans_on: AtomicBool,
+    /// `otel_traces`' sampling by trace name, as last applied: what a new
+    /// tracer starts with.
+    trace_rules: RwLock<BTreeMap<String, TraceConfig>>,
+    span_defs: spans::SpanDefs,
+    not_connected: AtomicU64,
+    back_pressure: AtomicU64,
+    too_large: AtomicU64,
+    other: AtomicU64,
 }
 
 impl Persist {
@@ -323,22 +524,56 @@ impl Persist {
                 .collect(),
             events: RwLock::new(HashMap::new()),
             shapes: Mutex::new(HashMap::new()),
-            dropped: AtomicU64::new(0),
+            // The first record sends the `Source` message first.
+            shapes_due: AtomicBool::new(true),
+            traces: RwLock::new(HashMap::new()),
+            trace_defs: Mutex::new(Vec::new()),
+            spans_on: AtomicBool::new(false),
+            trace_rules: RwLock::new(BTreeMap::new()),
+            span_defs: spans::SpanDefs::default(),
+            not_connected: AtomicU64::new(0),
+            back_pressure: AtomicU64::new(0),
+            too_large: AtomicU64::new(0),
+            other: AtomicU64::new(0),
         });
+        let metrics = metrics::Metrics::new(settings.metrics_interval);
+        type Read = fn(&Shared) -> &AtomicU64;
+        let reasons: [(&str, Read); 4] = [
+            ("not_connected", |s: &Shared| &s.not_connected),
+            ("back_pressure", |s: &Shared| &s.back_pressure),
+            ("too_large", |s: &Shared| &s.too_large),
+            ("other", |s: &Shared| &s.other),
+        ];
+        for (reason, read) in reasons {
+            let shared = Arc::clone(&shared);
+            metrics.counter_fn("persist_dropped", &[("reason", reason)], move || {
+                read(&shared).load(Ordering::Relaxed)
+            });
+        }
+        metrics.start();
         let (aeron, publication) =
             publish(&settings).map_err(|e| Error::Aeron(format!("{}: {e}", settings.channel)))?;
+        let mut source = source::Source::new(&settings.host, &settings.pod, &settings.app);
+        source.client = aeron.client_id();
+        let source_message = source.message().map_err(Error::Config)?;
+        let max_payload = publication
+            .max_payload_length()
+            .map_err(|e| Error::Aeron(e.to_string()))?;
+        wait_for_subscriber(&publication, &settings)?;
         let mut watcher = Watcher {
-            publication: publication.clone(),
             ticks: 0,
             path: settings.config_path.clone(),
-            overrides_path: settings.overrides_path.clone(),
-            text: (String::new(), None),
+            app: settings.app.clone(),
+            text: String::new(),
+            config: BTreeMap::new(),
+            applied: false,
             error: None,
-            dropped: 0,
+            seen: Drops::default(),
             schema,
             shared: Arc::clone(&shared),
         };
         watcher.reload()?;
+        watcher.apply(jiff::Timestamp::now());
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
@@ -357,12 +592,82 @@ impl Persist {
                     NEXT.fetch_add(1, Ordering::Relaxed)
                 },
                 publication,
+                max_payload,
+                source,
+                source_message,
+                metrics,
                 _aeron: aeron,
                 shared,
                 stop,
                 watcher: Some(thread),
             }),
         })
+    }
+
+    /// A checkpoint trace (see [`trace`]): make it once, then
+    /// [`trace::Tracer::start`] one per event. At most
+    /// [`trace::MAX_STAGES`] stages and [`trace::MAX_ATTRS`] attributes.
+    #[must_use]
+    pub fn tracer(&self, name: &str, stages: &[&str], attrs: &[&str]) -> trace::Tracer {
+        static NONCE: AtomicU64 = AtomicU64::new(0);
+        let def = trace::TraceDef::new(name, stages, attrs);
+        let bytes = def.message().unwrap_or_else(|e| {
+            log::error!("trace {name}: {e}");
+            Vec::new()
+        });
+        let shared = &self.inner.shared;
+        // One definition however many threads make this tracer.
+        let message = {
+            let mut defs = shared
+                .trace_defs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match defs.iter().find(|d| d.message == bytes) {
+                Some(known) => Arc::clone(known),
+                None => {
+                    let made = Arc::new(trace::DefMessage {
+                        message: bytes,
+                        sent: AtomicBool::new(false),
+                    });
+                    defs.push(Arc::clone(&made));
+                    made
+                }
+            }
+        };
+        // A new switch starts as the watcher last decided. Made under the
+        // lock the watcher sets switches under, so it is never left behind.
+        let switch = Arc::clone(
+            shared
+                .traces
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    let rules = shared
+                        .trace_rules
+                        .read()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    let switch = trace::TraceSwitch::default();
+                    switch.set(shared.spans_on.load(Ordering::Relaxed), rules.get(name));
+                    Arc::new(switch)
+                }),
+        );
+        let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
+        trace::Tracer::new(
+            &def,
+            message,
+            switch,
+            &self.inner.metrics,
+            Some(self.clone()),
+            self.inner.source.id.rotate_left(17) ^ nonce,
+        )
+    }
+
+    /// This application's metrics: make counters, gauges and histograms
+    /// from it, and call [`metrics::Metrics::poll`] from the loop.
+    #[must_use]
+    pub fn metrics(&self) -> metrics::Metrics {
+        self.inner.metrics.published_by(self.clone())
     }
 
     /// Make this the process's handle, for [`record`], [`enabled`],
@@ -391,11 +696,12 @@ impl Persist {
     /// `len` bytes of the Aeron term buffer and returns the length it wrote;
     /// otherwise `encode` is never called.
     ///
-    /// The record is dropped and counted in [`Persist::dropped`] when Aeron
-    /// cannot take it (no archive recording yet, back pressure, larger than
-    /// the MTU), or when `encode` wrote another length or template than
-    /// claimed (debug builds panic on that). An error from `encode` is
-    /// returned as is, and nothing is published.
+    /// The record is dropped and counted in [`Persist::drops`] when Aeron
+    /// cannot take it (no subscriber yet, back pressure, larger than one
+    /// claim), when a term rotation does not finish within eight retries,
+    /// when `encode` wrote another length or
+    /// template than claimed (debug builds panic on that). An error from
+    /// `encode` is returned as is, and nothing is published.
     #[inline]
     pub fn record<E>(
         &self,
@@ -406,15 +712,16 @@ impl Persist {
         if !self.enabled(template_id) {
             return Ok(());
         }
-        let mut claim = loop {
-            match self.inner.publication.try_claim_owned(len) {
-                Ok(claim) => break claim,
-                // Term rotation: Aeron asks for an immediate retry.
-                Err(AeronOfferError::AdminAction) => {}
-                Err(_) => {
-                    self.drop_one();
-                    return Ok(());
-                }
+        self.flush_due_shapes();
+        if len > self.inner.max_payload {
+            self.count(DropKind::TooLarge);
+            return Ok(());
+        }
+        let mut claim = match self.try_claim_slot(len) {
+            Ok(claim) => claim,
+            Err(kind) => {
+                self.count(kind);
+                return Ok(());
             }
         };
         let slot = claim.data();
@@ -432,22 +739,46 @@ impl Persist {
         Ok(())
     }
 
-    /// A `tracing` layer that records events naming an enabled table:
-    /// `tracing::info!(table = "signal", instrument = %id, edge = 0.25)`.
+    /// A `tracing` layer that records events naming an enabled table
+    /// (`tracing::info!(table = "signal", instrument = %id, edge = 0.25)`),
+    /// and, while `otel_traces` is on for this app, spans at INFO and above
+    /// (below INFO: libraries' internals).
     /// Add it to the application's subscriber. Its filter is its own: it
-    /// takes only events with a `table` field, and leaves every other
-    /// callsite to the other layers (or disabled, when it is alone).
+    /// takes only those, and leaves every other callsite to the other
+    /// layers (or disabled, when it is alone).
     #[must_use]
     pub fn layer<S>(&self) -> impl Layer<S> + Send + Sync + 'static
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
+        let shared = Arc::clone(&self.inner.shared);
+        let names_table =
+            |meta: &tracing::Metadata<'_>| meta.fields().field(event::TABLE).is_some();
         event::PersistLayer {
             persist: self.clone(),
         }
-        .with_filter(filter_fn(|meta| {
-            meta.fields().field(event::TABLE).is_some()
-        }))
+        .with_filter(
+            dynamic_filter_fn(move |meta, _| {
+                if meta.is_span() {
+                    shared.spans_on.load(Ordering::Relaxed)
+                } else {
+                    names_table(meta)
+                }
+            })
+            // A span's answer changes with `tables.yaml`, so it is asked
+            // each time (one relaxed load); an event's never does.
+            .with_callsite_filter(move |meta| {
+                // Spans at INFO and above: the application's own. Libraries'
+                // internals (h2, hyper, tokio) are DEBUG and TRACE spans.
+                if meta.is_span() && *meta.level() <= tracing::Level::INFO {
+                    tracing::subscriber::Interest::sometimes()
+                } else if names_table(meta) {
+                    tracing::subscriber::Interest::always()
+                } else {
+                    tracing::subscriber::Interest::never()
+                }
+            }),
+        )
     }
 
     /// Is the event table `table` recorded right now? Check it before
@@ -480,30 +811,117 @@ impl Persist {
         Arc::clone(events.entry(table.to_owned()).or_default())
     }
 
-    /// Publish a message that is already built; `false` when Aeron could
-    /// not take it. Not counted as dropped: that is the caller's decision.
+    /// Publish a message that is already built. `false` when it was not
+    /// published; the drop is already counted.
     pub(crate) fn publish(&self, bytes: &[u8]) -> bool {
-        publish_bytes(&self.inner.publication, bytes)
+        self.flush_due_shapes();
+        self.publish_owned(bytes)
+            .map_err(|kind| self.count(kind))
+            .is_ok()
     }
 
-    /// Claim exactly `len` bytes, let `write` fill them, and commit; or drop
-    /// and count the record.
-    pub(crate) fn claim(&self, len: usize, write: impl FnOnce(&mut [u8])) {
-        let claimed = loop {
-            match self.inner.publication.try_claim_owned(len) {
-                Err(AeronOfferError::AdminAction) => {}
-                other => break other,
+    /// Claim exactly `len` bytes, let `write` fill them, and commit when
+    /// `write` returns `true`. A `false` write aborts the claim. Either
+    /// failure is counted.
+    pub(crate) fn claim(&self, len: usize, write: impl FnOnce(&mut [u8]) -> bool) {
+        self.flush_due_shapes();
+        if len > self.inner.max_payload {
+            self.count(DropKind::TooLarge);
+            return;
+        }
+        let mut claim = match self.try_claim_slot(len) {
+            Ok(claim) => claim,
+            Err(kind) => {
+                self.count(kind);
+                return;
             }
         };
-        match claimed {
-            Ok(mut claim) => {
-                write(claim.data());
-                if claim.commit().is_err() {
-                    self.drop_one();
-                }
-            }
-            Err(_) => self.drop_one(),
+        if !write(claim.data()) || claim.commit().is_err() {
+            self.drop_one();
         }
+    }
+
+    /// Shape heartbeats are due every 5 s. The next record sends them, on
+    /// this publication, so a row still follows its shape.
+    #[inline]
+    fn flush_due_shapes(&self) {
+        let due = &self.inner.shared.shapes_due;
+        if due.load(Ordering::Relaxed) && due.swap(false, Ordering::Relaxed) {
+            self.flush_shapes();
+        }
+    }
+
+    /// This application's `Source` message, then every shape. Called with
+    /// `shapes_due` already cleared. These repeat, so one Aeron cannot take
+    /// is not a dropped record: an unsent `Source` is retried by the next
+    /// record, and a shape by its next row or the next heartbeat.
+    fn flush_shapes(&self) {
+        if self.publish_owned(&self.inner.source_message).is_err() {
+            self.inner.shared.shapes_due.store(true, Ordering::Relaxed);
+            return;
+        }
+        let shapes: Vec<_> = self
+            .inner
+            .shared
+            .shapes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        for shape in shapes {
+            if self.publish_owned(shape.message()).is_ok() {
+                shape.mark_sent();
+            }
+        }
+        let defs = self
+            .inner
+            .shared
+            .trace_defs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for def in defs {
+            if self.publish_owned(&def.message).is_ok() {
+                def.sent.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Publish a built message; why not, when Aeron could not take it.
+    fn publish_owned(&self, bytes: &[u8]) -> Result<(), DropKind> {
+        if bytes.len() > self.inner.max_payload {
+            return Err(DropKind::TooLarge);
+        }
+        let mut claim = self.try_claim_slot(bytes.len())?;
+        claim.data().copy_from_slice(bytes);
+        claim.commit().map_err(|_| DropKind::Other)
+    }
+
+    /// Claim `len` bytes, stamped with this application's source id.
+    #[inline]
+    fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
+        let claim = AeronBufferClaim::new_zeroed_on_stack();
+        retry_admin(|| self.inner.publication.try_claim(len, &claim))
+            .map_err(|err| classify(&err))?;
+        claim.frame_header_mut().reserved_value = self.inner.source.id as i64;
+        Ok(Claim { claim, done: false })
+    }
+
+    fn count(&self, kind: DropKind) {
+        let shared = &self.inner.shared;
+        let counter = match kind {
+            DropKind::NotConnected => &shared.not_connected,
+            DropKind::BackPressure => &shared.back_pressure,
+            DropKind::TooLarge => &shared.too_large,
+            DropKind::Other => &shared.other,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The longest message one claim holds.
+    pub(crate) fn max_payload(&self) -> usize {
+        self.inner.max_payload
     }
 
     /// Is the archive recording this stream yet? Until it is, every record
@@ -515,14 +933,26 @@ impl Persist {
 
     #[cold]
     fn drop_one(&self) {
-        self.inner.shared.dropped.fetch_add(1, Ordering::Relaxed);
+        self.count(DropKind::Other);
     }
 
-    /// Records dropped so far (see [`Persist::record`]). Also logged, once a
-    /// second while it grows.
+    /// Records dropped so far, by reason (see [`Persist::record`]). Also
+    /// logged, once a second while the total grows.
+    #[must_use]
+    pub fn drops(&self) -> Drops {
+        let shared = &self.inner.shared;
+        Drops {
+            not_connected: shared.not_connected.load(Ordering::Relaxed),
+            back_pressure: shared.back_pressure.load(Ordering::Relaxed),
+            too_large: shared.too_large.load(Ordering::Relaxed),
+            other: shared.other.load(Ordering::Relaxed),
+        }
+    }
+
+    /// [`Drops::total`] of [`Persist::drops`].
     #[must_use]
     pub fn dropped(&self) -> u64 {
-        self.inner.shared.dropped.load(Ordering::Relaxed)
+        self.drops().total()
     }
 }
 
@@ -544,23 +974,87 @@ impl Drop for Inner {
     }
 }
 
-fn publish_bytes(publication: &AeronPublication, bytes: &[u8]) -> bool {
-    let claimed = loop {
-        match publication.try_claim_owned(bytes.len()) {
-            Err(AeronOfferError::AdminAction) => {}
-            other => break other,
+/// A claimed slot of the term buffer: aborted when dropped uncommitted, so
+/// an `encode` that fails releases it at once.
+struct Claim {
+    claim: AeronBufferClaim,
+    done: bool,
+}
+
+impl Claim {
+    #[inline]
+    fn data(&mut self) -> &mut [u8] {
+        self.claim.data()
+    }
+
+    #[inline]
+    fn commit(mut self) -> Result<(), rusteron_client::AeronCError> {
+        self.done = true;
+        self.claim.commit().map(drop)
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = self.claim.abort();
         }
-    };
-    claimed.is_ok_and(|mut claim| {
-        claim.data().copy_from_slice(bytes);
-        claim.commit().is_ok()
-    })
+    }
+}
+
+#[inline]
+fn retry_admin<T>(
+    mut once: impl FnMut() -> Result<T, AeronOfferError>,
+) -> Result<T, AeronOfferError> {
+    let mut left = ADMIN_ACTION_RETRIES;
+    loop {
+        match once() {
+            Err(AeronOfferError::AdminAction) if left > 0 => {
+                left -= 1;
+                std::hint::spin_loop();
+            }
+            result => return result,
+        }
+    }
+}
+
+fn classify(err: &AeronOfferError) -> DropKind {
+    match err {
+        AeronOfferError::NotConnected => DropKind::NotConnected,
+        AeronOfferError::BackPressured => DropKind::BackPressure,
+        // Aeron returns this when the claim is longer than `max_payload`.
+        AeronOfferError::Error(inner) if inner.kind() == AeronErrorType::PublicationError => {
+            DropKind::TooLarge
+        }
+        _ => DropKind::Other,
+    }
+}
+
+fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> Result<(), Error> {
+    if settings.subscriber_timeout.is_zero() {
+        return Ok(());
+    }
+    let deadline = Instant::now() + settings.subscriber_timeout;
+    while !publication.is_connected() {
+        if Instant::now() >= deadline {
+            return Err(Error::Aeron(format!(
+                "{}: no subscriber is recording the stream after {:?}",
+                settings.channel, settings.subscriber_timeout
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
 }
 
 fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_client::AeronCError> {
     let ctx = AeronContext::new()?;
     if let Some(dir) = &settings.aeron_dir {
         ctx.set_dir(&dir.as_str().into_c_string())?;
+    }
+    // The driver's counters name their client by this: see `aeron_counters`.
+    if !settings.app.is_empty() {
+        ctx.set_client_name(&settings.app.as_str().into_c_string())?;
     }
     let aeron = Aeron::new(&ctx)?;
     aeron.start()?;
@@ -575,37 +1069,31 @@ fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_cl
 
 /// Applies `tables.yaml` to [`Shared::enabled`]; runs on its own thread.
 struct Watcher {
-    /// For sending the event shapes again.
-    publication: AeronPublication,
     ticks: u64,
     path: PathBuf,
-    overrides_path: Option<PathBuf>,
-    /// The last applied `tables.yaml` and override file.
-    text: (String, Option<String>),
+    /// This application's name, for the tables' `apps` switches.
+    app: String,
+    /// The last `tables.yaml` read, and what it says.
+    text: String,
+    config: BTreeMap<String, TableConfig>,
+    /// The switches have been applied once: after that, only changes are logged.
+    applied: bool,
     /// The last error logged, so a broken file is reported once.
     error: Option<String>,
-    dropped: u64,
+    seen: Drops,
     schema: Vec<(String, u16)>,
     shared: Arc<Shared>,
 }
 
 impl Watcher {
     fn tick(&mut self) {
-        // Every 5 s, every event shape again: an ingester that starts after
-        // the first one, with none saved, learns them from the stream.
+        // Every 5 s, ask the next record to send every event shape again.
+        // An ingester that starts after the first one, with none saved,
+        // learns them from that record. Nothing is published here: this
+        // thread does not claim on the application's publication.
         self.ticks += 1;
         if self.ticks.is_multiple_of(5) {
-            let shapes: Vec<_> = self
-                .shared
-                .shapes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-                .cloned()
-                .collect();
-            for shape in shapes {
-                publish_bytes(&self.publication, shape.message());
-            }
+            self.shared.shapes_due.store(true, Ordering::Relaxed);
         }
         match self.reload() {
             Ok(()) => self.error = None,
@@ -617,51 +1105,85 @@ impl Watcher {
                 }
             }
         }
-        let dropped = self.shared.dropped.load(Ordering::Relaxed);
-        if dropped > self.dropped {
+        // Every second, changed or not: an `until` passes by itself.
+        self.apply(jiff::Timestamp::now());
+        let drops = Drops {
+            not_connected: self.shared.not_connected.load(Ordering::Relaxed),
+            back_pressure: self.shared.back_pressure.load(Ordering::Relaxed),
+            too_large: self.shared.too_large.load(Ordering::Relaxed),
+            other: self.shared.other.load(Ordering::Relaxed),
+        };
+        if drops.total() > self.seen.total() {
             log::warn!(
-                "{} records dropped in the last second ({dropped} in all): Aeron could not take them",
-                dropped - self.dropped
+                "{} records dropped in the last second ({} in all: {} not connected, {} back pressure, {} too large, {} other)",
+                drops.total() - self.seen.total(),
+                drops.total(),
+                drops.not_connected,
+                drops.back_pressure,
+                drops.too_large,
+                drops.other,
             );
-            self.dropped = dropped;
+            self.seen = drops;
         }
     }
 
-    /// Apply `tables.yaml` and the override file if either changed since
-    /// the last call.
+    /// Read `tables.yaml` again if it changed since the last call.
     fn reload(&mut self) -> Result<(), Error> {
         let text = std::fs::read_to_string(&self.path)
             .map_err(|e| Error::Config(format!("{}: {e}", self.path.display())))?;
-        let overrides = match &self.overrides_path {
-            Some(path) => match std::fs::read_to_string(path) {
-                Ok(text) => Some(text),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(Error::Config(format!("{}: {e}", path.display()))),
-            },
-            None => None,
-        };
-        let text = (text, overrides);
-        if text == self.text {
-            return Ok(());
+        if text != self.text {
+            self.config = parse_config(&text)?;
+            self.text = text;
         }
-        let mut config = parse_config(&text.0)?;
-        if let (Some(overrides), Some(path)) = (&text.1, &self.overrides_path) {
-            apply_overrides(&mut config, overrides)
-                .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
-        }
-        let first = self.text.0.is_empty();
+        Ok(())
+    }
+
+    /// Switch every table on or off for this app at `now`.
+    fn apply(&mut self, now: jiff::Timestamp) {
+        let first = !std::mem::replace(&mut self.applied, true);
+        let (app, config) = (&self.app, &self.config);
         let toggled = |name: &str, was: bool, on: bool| {
-            if was != on || (first && on) {
-                log::info!("recording {name}: {}", if on { "on" } else { "off" });
+            if was == on && !(first && on) {
+                return;
             }
+            let why = match config
+                .get(name)
+                .map(|c| *c.apps.get(app).unwrap_or(&c.enabled))
+            {
+                Some(Switch::Until(end)) if on => format!(" until {end}"),
+                Some(Switch::Until(end)) => format!(" ({end} passed)"),
+                _ => String::new(),
+            };
+            log::info!("recording {name}: {}{why}", if on { "on" } else { "off" });
         };
+        let is_on = |name: &str| config.get(name).is_some_and(|c| c.is_on(app, now));
         for (name, id) in &self.schema {
-            let on = config.get(name).is_some_and(|c| c.enabled);
+            let on = is_on(name);
             toggled(
                 name,
                 self.shared.enabled[usize::from(*id)].swap(on, Ordering::Relaxed),
                 on,
             );
+        }
+        // Traces: `otel_traces` switches them all, and names their sampling.
+        let traces = config.get(OTEL_TRACES);
+        let traces_on = is_on(OTEL_TRACES);
+        // First what a new tracer starts with, then every existing one.
+        self.shared.spans_on.store(traces_on, Ordering::Relaxed);
+        *self
+            .shared
+            .trace_rules
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) =
+            traces.map(|c| c.traces.clone()).unwrap_or_default();
+        for (name, switch) in self
+            .shared
+            .traces
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+        {
+            switch.set(traces_on, traces.and_then(|c| c.traces.get(name)));
         }
         // Every other table is recorded from `tracing` events.
         let mut switches = self
@@ -674,19 +1196,17 @@ impl Watcher {
                 toggled(name, true, false);
             }
         }
-        for (name, c) in config
-            .into_iter()
-            .filter(|(name, _)| !self.schema.iter().any(|(n, _)| n == name))
+        for name in config
+            .keys()
+            .filter(|name| !self.schema.iter().any(|(n, _)| n == *name))
         {
+            let on = is_on(name);
             let was = switches
                 .entry(name.clone())
                 .or_default()
-                .swap(c.enabled, Ordering::Relaxed);
-            toggled(&name, was, c.enabled);
+                .swap(on, Ordering::Relaxed);
+            toggled(name, was, on);
         }
-        drop(switches);
-        self.text = text;
-        Ok(())
     }
 }
 
@@ -707,33 +1227,123 @@ mod tests {
     }
 
     #[test]
-    fn overrides_switch_tables_for_one_application() -> TestResult {
-        let mut config = parse_config(
-            "tables:\n  trade: { kind: static }\n  book: { kind: dynamic, enabled: false }\n",
+    fn a_table_is_switched_per_app_and_until_a_time() -> TestResult {
+        let config = parse_config(
+            "tables:
+  trade: { kind: static }
+  book: { kind: dynamic, enabled: false }
+  fills:
+    kind: dynamic
+    enabled: false
+    apps: { binance: true, deribit: { until: 2026-09-27T18:00:00Z } }
+  signal: { kind: dynamic, enabled: { until: 2026-09-27T18:00:00Z }, apps: { okx: false } }
+",
         )?;
-        apply_overrides(
-            &mut config,
-            "tables:\n  trade: { enabled: false }\n  book: { enabled: true }\n",
-        )?;
-        assert!(!config["trade"].enabled && config["book"].enabled);
-        assert_eq!(
-            config["trade"].kind,
-            TableKind::Static,
-            "kind is not overridden"
-        );
+        let before: jiff::Timestamp = "2026-09-27T17:59:59Z".parse()?;
+        let after: jiff::Timestamp = "2026-09-27T18:00:00Z".parse()?;
+        let on = |table: &str, app: &str, now| config[table].is_on(app, now);
+
         assert!(
-            apply_overrides(&mut config, "tables:\n  nope: { enabled: true }\n").is_err(),
-            "a table tables.yaml lacks is an error, not a new table"
+            on("trade", "binance", after) && on("trade", "", after),
+            "default: every app"
         );
+        assert!(!on("book", "binance", before), "enabled: false: no app");
+        // Only the apps listed, the second only until its time.
+        assert!(on("fills", "binance", after));
+        assert!(on("fills", "deribit", before) && !on("fills", "deribit", after));
         assert!(
-            apply_overrides(
-                &mut config,
-                "tables:\n  trade: { kind: dynamic, enabled: true }\n"
-            )
-            .is_err(),
-            "kind belongs to tables.yaml"
+            !on("fills", "bybit", before),
+            "an app not listed takes `enabled`"
         );
+        // Every app until a time, except one that is off.
+        assert!(on("signal", "bybit", before) && !on("signal", "bybit", after));
+        assert!(!on("signal", "okx", before));
+        assert_eq!(config["trade"].kind, TableKind::Static);
+
+        for bad in [
+            "tables:\n  t: { kind: dynamic, enabled: { until: tomorrow } }\n",
+            "tables:\n  t: { kind: dynamic, apps: { a: { until: 2026-09-27T18:00:00Z, x: 1 } } }\n",
+            "tables:\n  t: { kind: dynamic, apps: { a: yes } }\n",
+            "tables:\n  t: { kind: dynamic, until: 2026-09-27T18:00:00Z }\n",
+        ] {
+            assert!(parse_config(bad).is_err(), "accepted {bad}");
+        }
         Ok(())
+    }
+
+    #[test]
+    fn traces_are_sampled_by_name_with_durations() -> TestResult {
+        let config = parse_config(
+            "tables:
+  otel_traces:
+    kind: static
+    enabled: false
+    apps: { binance: true }
+    traces:
+      t2t: { sample: 1000, slower_than: 50us }
+      order: { slower_than: 1ms }
+      rare: { slower_than: 2s }
+",
+        )?;
+        let traces = &config[OTEL_TRACES].traces;
+        assert_eq!(
+            traces["t2t"],
+            TraceConfig {
+                sample: 1000,
+                slower_than: Some(Threshold(50_000))
+            }
+        );
+        assert_eq!(traces["order"].sample, 1, "every one by default");
+        assert_eq!(traces["order"].slower_than, Some(Threshold(1_000_000)));
+        assert_eq!(traces["rare"].slower_than, Some(Threshold(2_000_000_000)));
+        for bad in ["fast", "50", "50 parsecs"] {
+            let text = format!(
+                "tables:\n  otel_traces: {{ kind: static, traces: {{ t: {{ slower_than: {bad} }} }} }}\n"
+            );
+            assert!(parse_config(&text).is_err(), "accepted slower_than: {bad}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn admin_action_is_retried_a_handful_of_times() {
+        let mut calls = 0;
+        let err: Result<(), _> = retry_admin(|| {
+            calls += 1;
+            Err(AeronOfferError::AdminAction)
+        });
+        assert!(matches!(err, Err(AeronOfferError::AdminAction)));
+        assert_eq!(calls, ADMIN_ACTION_RETRIES + 1);
+
+        calls = 0;
+        let ok = retry_admin(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(AeronOfferError::AdminAction)
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(ok, Ok(7));
+        assert_eq!(calls, 3);
+
+        let err = retry_admin(|| Err::<(), _>(AeronOfferError::BackPressured));
+        assert!(matches!(err, Err(AeronOfferError::BackPressured)));
+        assert_eq!(
+            classify(&AeronOfferError::NotConnected),
+            DropKind::NotConnected
+        );
+        assert_eq!(
+            classify(&AeronOfferError::BackPressured),
+            DropKind::BackPressure
+        );
+        assert_eq!(
+            classify(&AeronOfferError::Error(
+                AeronErrorType::PublicationError.into()
+            )),
+            DropKind::TooLarge
+        );
+        assert_eq!(classify(&AeronOfferError::Closed), DropKind::Other);
     }
 
     #[test]

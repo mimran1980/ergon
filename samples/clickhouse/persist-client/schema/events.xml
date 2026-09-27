@@ -35,6 +35,19 @@
                  fields whose parent is this one. -->
             <validValue name="Group" sinceVersion="1">5</validValue>
         </enum>
+        <enum name="MetricKind" encodingType="uint8">
+            <validValue name="Counter">0</validValue>
+            <validValue name="Gauge">1</validValue>
+            <validValue name="Histogram">2</validValue>
+        </enum>
+        <enum name="TraceWhy" encodingType="uint8">
+            <!-- One in `sample` of its trace. -->
+            <validValue name="Sampled">0</validValue>
+            <!-- Slower than `slower_than`. -->
+            <validValue name="Slow">1</validValue>
+            <!-- A `tracing` span. -->
+            <validValue name="Span">2</validValue>
+        </enum>
     </types>
 
     <!-- The dictionary: a shape's id (a hash of everything below), its table,
@@ -61,5 +74,108 @@
     <sbe:message name="Row" id="2">
         <field name="shape" id="1" type="uint32"/>
         <field name="ts" id="2" type="uint64"/>
+    </sbe:message>
+
+    <!-- Who recorded. Every Aeron frame an application publishes carries its
+         source id in the frame's reserved value, and this message names that
+         id: the ingester writes the names into every row. Sent before the
+         first record, and again every 5 s. -->
+    <sbe:message name="Source" id="3">
+        <field name="source" id="1" type="uint64"/>
+        <!-- UNIX ns when the application connected. -->
+        <field name="started" id="2" type="uint64"/>
+        <!-- Its Aeron client id: the owner of the driver's counters for its
+             publication, so `aeron_counters` can name them. -->
+        <field name="client" id="6" type="int64"/>
+        <data name="host" id="3" type="varString8"/>
+        <data name="pod" id="4" type="varString8"/>
+        <data name="app" id="5" type="varString8"/>
+    </sbe:message>
+
+    <!-- A metric series: its name and labels, once, keyed by `series` (a hash
+         of all of it). Sent before the first sample of it, and again every
+         interval. `precision` is a histogram's sub-bucket bits. -->
+    <sbe:message name="MetricDef" id="4">
+        <field name="series" id="1" type="uint64"/>
+        <field name="kind" id="2" type="MetricKind"/>
+        <field name="precision" id="3" type="uint8"/>
+        <group name="labels" id="4" dimensionType="groupSizeEncoding">
+            <data name="key" id="5" type="varString8"/>
+            <data name="value" id="6" type="varString8"/>
+        </group>
+        <data name="name" id="7" type="varString8"/>
+    </sbe:message>
+
+    <!-- Counters and gauges at the end of one interval: `ts` is its end
+         (UNIX ns). A counter's `value` is its total since the application
+         started and `delta` what the interval added. Split over several
+         messages when they do not fit one. -->
+    <sbe:message name="Metrics" id="5">
+        <field name="ts" id="1" type="uint64"/>
+        <field name="interval" id="2" type="uint64"/>
+        <group name="counters" id="3" dimensionType="groupSizeEncoding">
+            <field name="series" id="4" type="uint64"/>
+            <field name="value" id="5" type="uint64"/>
+            <field name="delta" id="6" type="uint64"/>
+        </group>
+        <group name="gauges" id="7" dimensionType="groupSizeEncoding">
+            <field name="series" id="8" type="uint64"/>
+            <field name="value" id="9" type="double"/>
+        </group>
+    </sbe:message>
+
+    <!-- One histogram series over one interval: the non-empty buckets of
+         log-linear buckets with `precision` sub-bucket bits (fewer than the
+         series records at when that many did not fit one message). -->
+    <sbe:message name="Histogram" id="6">
+        <field name="ts" id="1" type="uint64"/>
+        <field name="interval" id="2" type="uint64"/>
+        <field name="series" id="3" type="uint64"/>
+        <field name="count" id="4" type="uint64"/>
+        <field name="sum" id="5" type="uint64"/>
+        <field name="min" id="6" type="uint64"/>
+        <field name="max" id="7" type="uint64"/>
+        <field name="precision" id="8" type="uint8"/>
+        <group name="buckets" id="9" dimensionType="groupSizeEncoding">
+            <field name="index" id="10" type="uint16"/>
+            <field name="count" id="11" type="uint64"/>
+        </group>
+    </sbe:message>
+
+    <!-- A trace: its name, stages and attributes, once, keyed by `def` (a
+         hash of all of it). Sent before the first trace of it, and again
+         every 5 s. -->
+    <sbe:message name="TraceDef" id="7">
+        <field name="def" id="1" type="uint64"/>
+        <group name="stages" id="2" dimensionType="groupSizeEncoding">
+            <data name="name" id="3" type="varString8"/>
+        </group>
+        <group name="attrs" id="4" dimensionType="groupSizeEncoding">
+            <data name="name" id="5" type="varString8"/>
+        </group>
+        <data name="name" id="6" type="varString8"/>
+    </sbe:message>
+
+    <!-- One trace: when it started (UNIX ns), and each stage's end as ns
+         after that, in stage order; its attributes in def order. A
+         checkpoint trace has `span` and `parent` 0; a `tracing` span its own
+         ids and one mark, its duration. An attribute's `kind` is the event
+         `Kind` (255 when absent), its value `bits` or, for text, `text`. -->
+    <sbe:message name="Trace" id="8">
+        <field name="def" id="1" type="uint64"/>
+        <field name="traceHi" id="2" type="uint64"/>
+        <field name="traceLo" id="3" type="uint64"/>
+        <field name="span" id="4" type="uint64"/>
+        <field name="parent" id="5" type="uint64"/>
+        <field name="start" id="6" type="uint64"/>
+        <field name="why" id="7" type="TraceWhy"/>
+        <group name="marks" id="8" dimensionType="groupSizeEncoding">
+            <field name="ns" id="9" type="int64"/>
+        </group>
+        <group name="attrs" id="10" dimensionType="groupSizeEncoding">
+            <field name="kind" id="11" type="uint8"/>
+            <field name="bits" id="12" type="uint64"/>
+            <data name="text" id="13" type="varString8"/>
+        </group>
     </sbe:message>
 </sbe:messageSchema>

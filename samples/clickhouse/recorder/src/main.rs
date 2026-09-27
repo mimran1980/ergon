@@ -18,6 +18,12 @@
 //! * **Any Rust value** (`book_view`): `persist_client::record_value` of a
 //!   `Serialize` struct, nested as deep as it goes: its nested struct,
 //!   slices of structs (arrays), `Option` and enum become columns.
+//! * **Metrics** ([`Telemetry`]): messages per kind (counters), each
+//!   instrument's spread (gauges), the venue-to-us latency of trades and
+//!   quotes and the time `record` takes (histograms), published every 5 s.
+//! * **Traces**: `book_update`, a checkpoint trace of each book update from
+//!   the venue's timestamp through our handling, and a `tracing` span
+//!   around subscribing.
 //!
 //! Static or dynamic is `kind` in `config/tables.yaml`, not code. The
 //! handle is installed once in `main`; the free functions do nothing where
@@ -71,7 +77,10 @@ use nautilus_model::orderbook::{BookLevel, OrderBook};
 use nautilus_okx::OKXInstrumentType;
 use nautilus_okx::config::OKXDataClientConfig;
 use nautilus_okx::factories::OKXDataClientFactory;
+use persist_client::clock::{Clock, Nanos};
 use persist_client::event::Value;
+use persist_client::metrics::{Counter, Gauge, Histogram};
+use persist_client::trace::Tracer;
 use persist_client::{Persist, Settings};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -182,12 +191,75 @@ struct Recorder {
     volatility: HashMap<String, f64>,
     /// One `book_deltas` row's changes, reused.
     deltas: Vec<BookDeltasDeltasEntry>,
+    t: Telemetry,
+}
+
+/// The recorder's own metrics and trace. Made once; each update is a load
+/// and a store on this thread.
+#[derive(Debug)]
+struct Telemetry {
+    clock: Clock,
+    trades: Counter,
+    quotes: Counter,
+    books: Counter,
+    deltas: Counter,
+    /// The venue's timestamp to our handler, ns.
+    trade_latency: Histogram,
+    quote_latency: Histogram,
+    /// How long `persist_client::record` of a trade takes, ns.
+    record_ns: Histogram,
+    spread_bps: HashMap<InstrumentId, Gauge>,
+    /// Each book change, from the venue's timestamp: `wire`, `convert`,
+    /// `record`.
+    book_update: Tracer,
+}
+
+impl Telemetry {
+    fn new(venue: &Venue) -> Self {
+        let m = persist_client::metrics();
+        let kind = |k| m.counter("messages", &[("kind", k)]);
+        let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
+        Self {
+            clock: Clock::new(),
+            trades: kind("trade"),
+            quotes: kind("quote"),
+            books: kind("book"),
+            deltas: kind("book_deltas"),
+            trade_latency: latency("trade"),
+            quote_latency: latency("quote"),
+            record_ns: m.histogram("record_ns", &[("table", "trade")]),
+            spread_bps: venue
+                .instruments
+                .map(InstrumentId::from)
+                .into_iter()
+                .map(|id| {
+                    let gauge = m.gauge("spread_bps", &[("instrument", &id.to_string())]);
+                    (id, gauge)
+                })
+                .collect(),
+            book_update: persist_client::tracer(
+                "book_update",
+                &["wire", "convert", "record"],
+                &["deltas"],
+            ),
+        }
+    }
+
+    /// Ns from the venue's `ts_event` to now: negative when its clock is ahead.
+    fn since_venue(&self, ts_event: u64) -> u64 {
+        self.clock
+            .now()
+            .since(Nanos::from_epoch(ts_event as i64))
+            .max(0) as u64
+    }
 }
 
 nautilus_actor!(Recorder);
 
 impl DataActor for Recorder {
     fn on_start(&mut self) -> anyhow::Result<()> {
+        // A `tracing` span: recorded while `otel_traces` is on for this app.
+        let _span = tracing::info_span!("subscribe", venue = self.venue.name).entered();
         let second = NonZeroUsize::try_from(1000)?;
         let depth = NonZeroUsize::new(self.venue.depth);
         for id in self.venue.instruments.map(InstrumentId::from) {
@@ -267,6 +339,10 @@ impl DataActor for Recorder {
     }
 
     fn on_trade(&mut self, t: &TradeTick) -> anyhow::Result<()> {
+        self.t.trades.inc();
+        let latency = self.t.since_venue(t.ts_event.as_u64());
+        self.t.trade_latency.record(latency);
+        let started = self.t.clock.cached();
         let ticker = self.tickers.entry(t.instrument_id).or_default();
         ticker.last = Some(t.price.as_f64());
         ticker.trades += 1;
@@ -275,7 +351,7 @@ impl DataActor for Recorder {
         let trade_id = t.trade_id.as_str().as_bytes();
         let len =
             TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-        persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
+        persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
             Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&TradeFixedFields {
                     ts_event: t.ts_event.as_u64(),
@@ -292,10 +368,16 @@ impl DataActor for Recorder {
                 .venue(venue)?
                 .trade_id(trade_id)?
                 .encoded_length_with_header())
-        })
+        })?;
+        let took = self.t.clock.now().since(started);
+        self.t.record_ns.record(took.max(0) as u64);
+        Ok(())
     }
 
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
+        self.t.quotes.inc();
+        let latency = self.t.since_venue(q.ts_event.as_u64());
+        self.t.quote_latency.record(latency);
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
         persist_client::record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
@@ -315,11 +397,16 @@ impl DataActor for Recorder {
         // A derived signal needs no schema: one event, and `spread` in
         // tables.yaml, make a table whose columns are these fields.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
-        tracing::info!(table = "spread", instrument = %q.instrument_id, bps = (ask - bid) / (ask + bid) * 2e4);
+        let bps = (ask - bid) / (ask + bid) * 2e4;
+        tracing::info!(table = "spread", instrument = %q.instrument_id, bps);
+        if let Some(gauge) = self.t.spread_bps.get(&q.instrument_id) {
+            gauge.set(bps);
+        }
         Ok(())
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
+        self.t.books.inc();
         self.ticker(book);
         book_view(book);
         // Reading a snapshot walks the book: skip all of it when the table is off.
@@ -335,37 +422,52 @@ impl DataActor for Recorder {
             symbol.len(),
             venue.len(),
         );
-        persist_client::record(BookSnapshotEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&BookSnapshotFixedFields {
-                    ts_event: book.ts_last.as_u64(),
-                    ts_init: now,
-                    sequence: book.sequence,
-                })
-                .bids(bids.len() as u16, |g| {
-                    for &(price, size) in &bids {
-                        g.add_struct(&BookSnapshotBidsEntry { price, size })?;
-                    }
-                    Ok(())
-                })?
-                .asks(asks.len() as u16, |g| {
-                    for &(price, size) in &asks {
-                        g.add_struct(&BookSnapshotAsksEntry { price, size })?;
-                    }
-                    Ok(())
-                })?
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })
+        persist_client::record(
+            BookSnapshotEncoder::TEMPLATE_ID,
+            len,
+            |buf| -> anyhow::Result<_> {
+                Ok(BookSnapshotEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&BookSnapshotFixedFields {
+                        ts_event: book.ts_last.as_u64(),
+                        ts_init: now,
+                        sequence: book.sequence,
+                    })
+                    .bids(bids.len() as u16, |g| {
+                        for &(price, size) in &bids {
+                            g.add_struct(&BookSnapshotBidsEntry { price, size })?;
+                        }
+                        Ok(())
+                    })?
+                    .asks(asks.len() as u16, |g| {
+                        for &(price, size) in &asks {
+                            g.add_struct(&BookSnapshotAsksEntry { price, size })?;
+                        }
+                        Ok(())
+                    })?
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            },
+        )
     }
 
     fn on_book_deltas(&mut self, d: &OrderBookDeltas) -> anyhow::Result<()> {
+        self.t.deltas.inc();
+        // A checkpoint trace from the venue's timestamp: `wire` (the venue
+        // and the network), `convert` (rows built), `record` (published).
+        let tracer = &self.t.book_update;
+        let mut trace = tracer.start(
+            Nanos::from_epoch(d.ts_event.as_u64() as i64),
+            tracer.next_id(),
+        );
+        trace.mark(self.t.clock.now());
+        trace.attr(0, d.deltas.len() as i64);
         if !persist_client::enabled(BookDeltasEncoder::TEMPLATE_ID) {
+            trace.finish();
             return Ok(());
         }
         let (symbol, venue) = names(&d.instrument_id);
-        for chunk in d.deltas.chunks(DELTAS_PER_ROW) {
+        for (i, chunk) in d.deltas.chunks(DELTAS_PER_ROW).enumerate() {
             self.deltas.clear();
             for delta in chunk {
                 self.deltas.push(BookDeltasDeltasEntry {
@@ -383,6 +485,9 @@ impl DataActor for Recorder {
                     price: d9(delta.order.price.as_decimal())?,
                     size: d9(delta.order.size.as_decimal())?,
                 });
+            }
+            if i == 0 {
+                trace.mark(self.t.clock.now());
             }
             let deltas = &self.deltas;
             let len = BookDeltasEncoder::compute_length_with_header(
@@ -412,6 +517,8 @@ impl DataActor for Recorder {
                 },
             )?;
         }
+        trace.mark(self.t.clock.now());
+        trace.finish();
         Ok(())
     }
 
@@ -740,12 +847,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let persist = Persist::connect(SCHEMA, Settings::from_env())?;
     persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
+    // Publishes the metrics every interval. A busy-spinning application
+    // calls `poll` from its own loop instead, with the time it has.
+    let metrics = persist.metrics();
+    std::thread::Builder::new()
+        .name("metrics".into())
+        .spawn(move || {
+            let clock = Clock::new();
+            loop {
+                metrics.poll(clock.now());
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         venue,
         tickers: HashMap::new(),
         volatility: HashMap::new(),
         deltas: Vec::with_capacity(DELTAS_PER_ROW),
+        t: Telemetry::new(venue),
     })?;
     node.run().await?;
     Ok(())

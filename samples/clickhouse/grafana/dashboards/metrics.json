@@ -1,0 +1,340 @@
+{
+  "uid": "metrics",
+  "title": "Metrics",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "label": "app",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT app FROM market.metrics ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM market.metrics ORDER BY app",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Messages / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'messages' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Counter deltas: each interval's increase, summed across cells and divided by the bucket's seconds."
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Spread (bps)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['instrument'] AS instrument, avg(value) AS bps FROM market.metrics WHERE $__timeFilter(ts) AND name = 'spread_bps' AND app IN (${app:singlequote}) GROUP BY time, instrument ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "description": "A gauge: the last value set before each interval ended."
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Venue to us, p50 / p99 (ms)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, quantileExactWeighted(0.5)(le, c) / 1e6 AS p50, quantileExactWeighted(0.99)(le, c) / 1e6 AS p99 FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "description": "Buckets merged across intervals, so percentiles are exact to 3.1%. Zero when the venue's clock is ahead of ours (see Clamped)."
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "record() p50 / p99 / p99.9 (µs)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, app, quantileExactWeighted(0.5)(le, c) / 1e3 AS p50, quantileExactWeighted(0.99)(le, c) / 1e3 AS p99, quantileExactWeighted(0.999)(le, c) / 1e3 AS p999 FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "record() latency distribution (last interval)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT le AS upper_ns, sum(c) AS count FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c WHERE name = 'record_ns' AND app IN (${app:singlequote}) AND ts = (SELECT max(ts) FROM market.metrics_histogram WHERE name = 'record_ns') GROUP BY le ORDER BY le",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "description": "Each bucket's count: its upper bound in ns."
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Dropped records / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['reason']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'persist_dropped' GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Clamped trace stages / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['trace'], ' ', labels['stage']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'trace_clamped' AND labels['stage'] != 'total' GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Stages that ended before they began: the venue's clock is ahead of ours."
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Series",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT name, kind, app, pod, host, labels, argMax(value, ts) AS last FROM market.metrics WHERE ts > now() - INTERVAL 1 MINUTE GROUP BY name, kind, app, pod, host, labels ORDER BY name, app",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

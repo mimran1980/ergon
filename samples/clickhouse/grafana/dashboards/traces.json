@@ -1,0 +1,227 @@
+{
+  "uid": "traces",
+  "title": "Traces",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "trace",
+        "label": "trace",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT labels['trace'] FROM market.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
+        "definition": "SELECT DISTINCT labels['trace'] FROM market.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "trace_id",
+        "label": "trace_id",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
+        "definition": "SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Stage latency p50 / p99 (µs), every event",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, quantileExactWeighted(0.5)(le, c) / 1e3 AS p50, quantileExactWeighted(0.99)(le, c) / 1e3 AS p99 FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY time, stage ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs"
+        },
+        "overrides": []
+      },
+      "description": "From the always-on stage histograms: every event, sampled or not."
+    },
+    {
+      "id": 2,
+      "type": "piechart",
+      "title": "Share of total time by stage",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT labels['stage'] AS stage, sum(sum) AS ns FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY stage ORDER BY stage",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Slowest traces (pick one in the trace_id menu)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT Timestamp, TraceId, ServiceName, SpanName, Duration / 1e3 AS duration_us, SpanAttributes['why'] AS why FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = '${trace}' ORDER BY Duration DESC LIMIT 50",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Why traces were kept",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, SpanAttributes['why'] AS why, count() AS traces FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' GROUP BY time, why ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "description": "sampled: one in `sample`; slow: slower than `slower_than`; span: a `tracing` span."
+    },
+    {
+      "id": 5,
+      "type": "traces",
+      "title": "Trace ${trace_id}",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT TraceId AS traceID, SpanId AS spanID, ParentSpanId AS parentSpanID, ServiceName AS serviceName, SpanName AS operationName, toUnixTimestamp64Nano(Timestamp) / 1000000 AS startTime, Duration / 1000000 AS duration, arrayMap(key -> map('key', key, 'value', SpanAttributes[key]), mapKeys(SpanAttributes)) AS tags, arrayMap(key -> map('key', key, 'value', ResourceAttributes[key]), mapKeys(ResourceAttributes)) AS serviceTags FROM market.otel_traces WHERE TraceId = '${trace_id}' ORDER BY startTime",
+          "format": 3,
+          "queryType": "traces"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

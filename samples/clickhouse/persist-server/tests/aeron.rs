@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use persist_client::Persist;
+use persist_client::{Drops, Persist};
 use persist_server::{ClickHouse, Ingester, Report};
 
 #[path = "support/lab.rs"]
@@ -40,6 +40,12 @@ fn client(lab: &Lab, stream_id: i32) -> Result<Persist, Box<dyn Error>> {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id,
+        // Several tests connect before anything records the stream, and one
+        // checks that those records are dropped.
+        subscriber_timeout: Duration::ZERO,
+        host: "test-host".into(),
+        pod: "test-pod".into(),
+        app: "test-app".into(),
         ..persist_client::Settings::new(&lab.config)
     };
     Ok(Persist::connect(v1::SCHEMA, settings)?)
@@ -171,6 +177,12 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
         Ok(done)
     })?;
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "20000");
+    // Across two ingesters and an application restart of none: every SBE
+    // row is attributed, through the source id in each frame.
+    assert_eq!(
+        lab.query("SELECT host, pod, app, count() FROM DB.shapes GROUP BY ALL FORMAT TSV")?,
+        "test-host\ttest-pod\ttest-app\t20000"
+    );
     Ok(())
 }
 
@@ -274,10 +286,13 @@ fn nested_values_become_array_columns() -> TestResult {
     assert_eq!(
         lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'book' ORDER BY name FORMAT TSV")?,
         [
+            "app\tLowCardinality(String)",
             "bids.orders\tArray(Array(Nullable(UInt64)))",
             "bids.price\tArray(Nullable(Float64))",
+            "host\tLowCardinality(String)",
             "inserted_at\tDateTime64(3, \\'UTC\\')",
             "note\tNullable(String)",
+            "pod\tLowCardinality(String)",
             "regime\tNullable(String)",
             "regime.Volatile.vol\tNullable(Float64)",
             "spread.bps\tNullable(Float64)",
@@ -421,7 +436,12 @@ fn tracing_events_become_tables() -> TestResult {
     );
     assert_eq!(
         lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'signal' ORDER BY position FORMAT TSV")?,
-        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tNullable(String)\nedge\tNullable(Float64)\nn\tNullable(Int64)\nflag\tNullable(Bool)\ninserted_at\tDateTime64(3, \\'UTC\\')"
+        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tNullable(String)\nedge\tNullable(Float64)\nn\tNullable(Int64)\nflag\tNullable(Bool)\nhost\tLowCardinality(String)\npod\tLowCardinality(String)\napp\tLowCardinality(String)\ninserted_at\tDateTime64(3, \\'UTC\\')"
+    );
+    assert_eq!(
+        lab.query("SELECT DISTINCT host, pod, app FROM DB.signal FORMAT TSV")?,
+        "test-host\ttest-pod\ttest-app",
+        "every row names who recorded it"
     );
     assert_eq!(lab.query("SELECT count() FROM DB.fixed")?, "1");
     assert_eq!(lab.query("EXISTS TABLE DB.quiet")?, "0");
@@ -489,38 +509,322 @@ fn enabled_follows_the_config_file() -> TestResult {
 }
 
 #[test]
-fn an_override_file_switches_tables_for_one_application() -> TestResult {
-    let lab = Lab::new("aeron_override", "tables:\n  shapes: { kind: dynamic }\n")?;
-    let overrides = lab.dir.join("app.yaml");
+fn a_table_is_switched_per_app_until_a_time() -> TestResult {
+    let lab = Lab::new(
+        "aeron_per_app",
+        "tables:\n  shapes: { kind: dynamic, enabled: false }\n",
+    )?;
     let settings = persist_client::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id: stream(7),
-        overrides_path: Some(overrides.clone()),
+        app: "binance".into(),
+        subscriber_timeout: Duration::ZERO,
         ..persist_client::Settings::new(&lab.config)
     };
     let persist = Persist::connect(v1::SCHEMA, settings)?;
-    assert!(
-        persist.enabled(v1::TEMPLATE_ID),
-        "no override file: tables.yaml decides"
-    );
+    assert!(!persist.enabled(v1::TEMPLATE_ID), "off for every app");
 
-    std::fs::write(&overrides, "tables:\n  shapes: { enabled: false }\n")?;
-    wait_until("the override to switch it off", || {
-        Ok(!persist.enabled(v1::TEMPLATE_ID))
-    })?;
-    // An override naming a table tables.yaml lacks is rejected whole.
-    std::fs::write(
-        &overrides,
-        "tables:\n  shapes: { enabled: true }\n  nope: { enabled: true }\n",
+    // Another app's entry leaves this one as `enabled` says.
+    lab.write_config(
+        "tables:\n  shapes: { kind: dynamic, enabled: false, apps: { bybit: true } }\n",
     )?;
     std::thread::sleep(Duration::from_millis(2500));
     assert!(!persist.enabled(v1::TEMPLATE_ID));
 
-    std::fs::remove_file(&overrides)?;
-    wait_until("tables.yaml to decide again", || {
-        Ok(persist.enabled(v1::TEMPLATE_ID))
+    // On for this app until three seconds from now, then off by itself,
+    // with no further edit.
+    let until = jiff::Timestamp::now().checked_add(jiff::SignedDuration::from_secs(3))?;
+    lab.write_config(&format!(
+        "tables:\n  shapes: {{ kind: dynamic, enabled: false, apps: {{ binance: {{ until: {until} }} }} }}\n"
+    ))?;
+    wait_until("on for this app", || Ok(persist.enabled(v1::TEMPLATE_ID)))?;
+    wait_until("off once its time has passed", || {
+        Ok(!persist.enabled(v1::TEMPLATE_ID))
     })?;
+    assert!(jiff::Timestamp::now() >= until, "switched off early");
+    Ok(())
+}
+
+#[test]
+fn metrics_reach_their_tables_every_interval() -> TestResult {
+    use persist_client::clock::Clock;
+
+    let lab = Lab::new("aeron_metrics", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let stream_id = stream(14);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let settings = persist_client::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        subscriber_timeout: Duration::ZERO,
+        metrics_interval: Duration::from_secs(1),
+        host: "test-host".into(),
+        pod: "test-pod".into(),
+        app: "test-app".into(),
+        ..persist_client::Settings::new(&lab.config)
+    };
+    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    let metrics = persist.metrics();
+    let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
+    let depth = metrics.gauge("depth", &[]);
+    let latency = metrics.histogram("latency_ns", &[("stage", "decode")]);
+    sent.add(5);
+    depth.set(2.5);
+    for v in 1..=1000 {
+        latency.record(v * 1000);
+    }
+
+    // The application's loop: poll with the time it has, one message a call.
+    let clock = Clock::new();
+    wait_until("an interval of metrics in ClickHouse", || {
+        metrics.poll(clock.now());
+        let report = ingester.tick()?;
+        if !report.errors.is_empty() {
+            return Err(format!("unexpected errors: {:?}", report.errors).into());
+        }
+        let rows = |sql: &str| lab.query(sql).ok().and_then(|n| n.parse::<u64>().ok());
+        Ok(
+            rows("SELECT count() FROM DB.metrics WHERE name = 'orders_sent'").unwrap_or(0) > 0
+                && rows("SELECT count() FROM DB.metrics_histogram").unwrap_or(0) > 0,
+        )
+    })?;
+    assert_eq!(
+        lab.query("SELECT value, delta, labels['venue'], host, pod, app FROM DB.metrics WHERE name = 'orders_sent' ORDER BY ts LIMIT 1 FORMAT TSV")?,
+        "5\t5\tbinance\ttest-host\ttest-pod\ttest-app"
+    );
+    assert_eq!(
+        lab.query("SELECT kind, value, delta FROM DB.metrics WHERE name = 'depth' ORDER BY ts LIMIT 1 FORMAT TSV")?,
+        "gauge\t2.5\t\\N"
+    );
+    assert_eq!(
+        lab.query("SELECT DISTINCT labels['reason'] FROM DB.metrics WHERE name = 'persist_dropped' ORDER BY 1 FORMAT TSV")?,
+        "back_pressure\tnot_connected\tother\ttoo_large".replace('\t', "\n"),
+        "persist's own drops are counters too"
+    );
+    assert_eq!(
+        lab.query(
+            "SELECT count() FROM DB.metrics WHERE toUnixTimestamp64Nano(ts) % 1000000000 != 0"
+        )?,
+        "0",
+        "intervals end on whole multiples of the interval"
+    );
+    assert_eq!(
+        lab.query(
+            "SELECT count, min, max, sum, labels['stage'] FROM DB.metrics_histogram FORMAT TSV"
+        )?,
+        "1000\t1000\t1000000\t500500000\tdecode"
+    );
+    // Within the buckets' 2^-5 of the true values, from the row's own
+    // percentiles and from merging buckets.
+    let near = |got: &str, want: f64| -> TestResult {
+        let got: f64 = got.parse()?;
+        if (got - want).abs() > want / 32.0 {
+            return Err(format!("{got} is not within 3.1% of {want}").into());
+        }
+        Ok(())
+    };
+    near(
+        &lab.query("SELECT p50 FROM DB.metrics_histogram")?,
+        500_000.0,
+    )?;
+    near(
+        &lab.query("SELECT p99 FROM DB.metrics_histogram")?,
+        990_000.0,
+    )?;
+    near(
+        &lab.query("SELECT quantileExactWeighted(0.99)(le, c) FROM DB.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c")?,
+        990_000.0,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn the_drivers_counters_are_sampled_with_their_streams_and_clients() -> TestResult {
+    let lab = Lab::new("aeron_stats", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let stream_id = stream(15);
+    let settings = persist_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        aeron_stats_interval: Duration::from_millis(100),
+        ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
+    };
+    let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    record(&persist, 10)?;
+    // Samples until one has a delta: the second sample of a counter.
+    wait_until("two samples of this stream's publication", || {
+        let report = ingester.tick()?;
+        if !report.errors.is_empty() {
+            return Err(format!("unexpected errors: {:?}", report.errors).into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let n = lab
+            .query(&format!("SELECT count() FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} AND delta IS NOT NULL"))
+            .unwrap_or_default();
+        Ok(n.parse::<u64>().unwrap_or(0) > 0)
+    })?;
+    // The application's publication, named by its client, from its key.
+    assert_eq!(
+        lab.query(&format!("SELECT DISTINCT client_name, channel, session_id IS NOT NULL, value >= 10 * 64 FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} FORMAT TSV"))?,
+        "test-app\taeron:ipc?term-length=1m\t1\t1"
+    );
+    // The archive's recording of it, joined on the session.
+    assert_eq!(
+        lab.query(&format!("SELECT count() > 0 FROM DB.aeron_counters r JOIN DB.aeron_counters p ON r.session_id = p.session_id AND r.ts = p.ts WHERE r.type = 'rec-pos' AND r.recording_id IS NOT NULL AND p.type = 'pub-pos' AND p.stream_id = {stream_id}"))?,
+        "1"
+    );
+    assert_eq!(
+        lab.query("SELECT count() > 0 FROM DB.aeron_counters WHERE type = 'system' AND label LIKE 'Bytes%'")?,
+        "1"
+    );
+    assert_eq!(
+        lab.query("SELECT DISTINCT app FROM DB.aeron_counters")?,
+        "ingester",
+        "who sampled them"
+    );
+    Ok(())
+}
+
+#[test]
+fn traces_become_spans_of_otel_traces() -> TestResult {
+    use persist_client::clock::{Clock, Nanos};
+    use persist_client::trace::TraceId;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let lab = Lab::new(
+        "aeron_traces",
+        "tables:
+  shapes: { kind: dynamic }
+  otel_traces:
+    kind: static
+    enabled: false
+    apps: { test-app: true }
+    traces:
+      t2t: { sample: 2 }
+      order: { sample: 0, slower_than: 1ms }
+",
+    )?;
+    let stream_id = stream(16);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let settings = persist_client::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        subscriber_timeout: Duration::ZERO,
+        metrics_interval: Duration::from_secs(1),
+        host: "test-host".into(),
+        pod: "test-pod".into(),
+        app: "test-app".into(),
+        ..persist_client::Settings::new(&lab.config)
+    };
+    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    let t2t = persist.tracer("t2t", &["wire", "decode", "send"], &["levels"]);
+    let order = persist.tracer("order", &["risk", "send"], &[]);
+    let gateway = persist.tracer("order_gateway", &["send"], &[]);
+    // Made after `connect` applied tables.yaml: on from the start.
+    assert!(t2t.is_on() && order.is_on() && gateway.is_on());
+
+    // Four ticks: 100, 200 and 300 ns stages. One in two is published.
+    for _ in 0..4 {
+        let mut t = t2t.start(Nanos(1_000), t2t.next_id());
+        for at in [1_100, 1_300, 1_600] {
+            t.mark(Nanos(at));
+        }
+        t.attr(0, 10);
+        t.finish();
+    }
+    // Orders: none sampled, only the slow one published, and another
+    // component's trace of the same order joins it.
+    const ORDERS: u64 = TraceId::namespace("order");
+    let mut fast = order.start(Nanos(0), TraceId::new(ORDERS, 41));
+    fast.mark(Nanos(200));
+    fast.mark(Nanos(500));
+    fast.finish();
+    let mut slow = order.start(Nanos(0), TraceId::new(ORDERS, 42));
+    slow.mark(Nanos(100));
+    slow.mark(Nanos(2_000_000));
+    slow.finish();
+    let mut sent = gateway.start(Nanos(2_000_000), TraceId::new(ORDERS, 42));
+    sent.mark(Nanos(2_050_000));
+    sent.finish();
+    // `tracing` spans, a parent and a child.
+    let subscriber = tracing_subscriber::registry().with(persist.layer());
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info_span!("connect", venue = "binance", attempt = 2).in_scope(|| {
+            tracing::info_span!("handshake").in_scope(|| {});
+            // A library's internals: below INFO, never recorded.
+            tracing::debug_span!("framed_read").in_scope(|| {});
+        });
+    });
+
+    let metrics = persist.metrics();
+    let clock = Clock::new();
+    wait_until("the traces and their stage histograms", || {
+        metrics.poll(clock.now());
+        let report = ingester.tick()?;
+        if !report.errors.is_empty() {
+            return Err(format!("unexpected errors: {:?}", report.errors).into());
+        }
+        let n = |sql: &str| {
+            lab.query(sql)
+                .ok()
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+        Ok(n("SELECT count() FROM DB.otel_traces") >= 15
+            && n("SELECT count() FROM DB.metrics_histogram WHERE name = 'trace_ns'") >= 4)
+    })?;
+    // 2 ticks x (root + 3 stages), the slow order (root + 2), the gateway's
+    // (root + 1), and 2 spans.
+    assert_eq!(lab.query("SELECT count() FROM DB.otel_traces")?, "15");
+    assert_eq!(
+        lab.query("SELECT count() FROM DB.otel_traces WHERE SpanName = 'framed_read'")?,
+        "0",
+        "debug spans are not recorded"
+    );
+    assert_eq!(
+        lab.query("SELECT count(), any(SpanAttributes['why']), any(SpanAttributes['levels']), any(Duration) FROM DB.otel_traces WHERE SpanName = 't2t' AND ParentSpanId = '' FORMAT TSV")?,
+        "2\tsampled\t10\t600"
+    );
+    assert_eq!(
+        lab.query("SELECT SpanName, Duration FROM DB.otel_traces s WHERE ParentSpanId IN (SELECT SpanId FROM DB.otel_traces WHERE SpanName = 't2t') GROUP BY SpanName, Duration ORDER BY Duration FORMAT TSV")?,
+        "wire\t100\ndecode\t200\nsend\t300",
+        "each stage a child of its trace"
+    );
+    assert_eq!(
+        lab.query("SELECT SpanAttributes['why'], Duration FROM DB.otel_traces WHERE SpanName = 'order' AND ParentSpanId = '' FORMAT TSV")?,
+        "slow\t2000000"
+    );
+    assert_eq!(
+        lab.query("SELECT uniqExact(TraceId), count() FROM DB.otel_traces WHERE SpanName IN ('order', 'order_gateway') AND ParentSpanId = '' FORMAT TSV")?,
+        "1\t2",
+        "one order, one trace, across components"
+    );
+    assert_eq!(
+        lab.query("SELECT c.TraceId = p.TraceId, c.ParentSpanId = p.SpanId, p.SpanAttributes['venue'], p.SpanAttributes['attempt'], p.SpanAttributes['why'] FROM DB.otel_traces c, DB.otel_traces p WHERE c.SpanName = 'handshake' AND p.SpanName = 'connect' FORMAT TSV")?,
+        "1\t1\tbinance\t2\tspan"
+    );
+    assert_eq!(
+        lab.query("SELECT DISTINCT ServiceName, ResourceAttributes['k8s.pod.name'], host, pod, app FROM DB.otel_traces FORMAT TSV")?,
+        "test-app\ttest-pod\ttest-host\ttest-pod\ttest-app"
+    );
+    // Every tick counted, published or not.
+    assert_eq!(
+        lab.query("SELECT labels['stage'], sum(count) FROM DB.metrics_histogram WHERE name = 'trace_ns' AND labels['trace'] = 't2t' GROUP BY 1 ORDER BY 1 FORMAT TSV")?,
+        "decode\t4\nsend\t4\ntotal\t4\nwire\t4"
+    );
     Ok(())
 }
 
@@ -559,7 +863,13 @@ fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
     // No ingester has asked the archive to record this stream.
     let persist = client(&lab, stream(2))?;
     persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
-    assert_eq!(persist.dropped(), 1);
+    assert_eq!(
+        persist.drops(),
+        Drops {
+            not_connected: 1,
+            ..Drops::default()
+        }
+    );
 
     let _ingester = ingester(&lab, lab.ch.clone(), stream(2))?;
     wait_until("the archive to record the stream", || {
@@ -569,9 +879,57 @@ fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
     persist.record(v1::TEMPLATE_ID, 4096, |_| {
         Err("encoded an oversized record")
     })?;
-    assert_eq!(persist.dropped(), 2);
+    assert_eq!(
+        persist.drops(),
+        Drops {
+            not_connected: 1,
+            too_large: 1,
+            ..Drops::default()
+        }
+    );
     persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
     assert_eq!(persist.dropped(), 2);
+    Ok(())
+}
+
+#[test]
+fn connect_reports_when_nobody_is_recording() -> TestResult {
+    let lab = Lab::new("aeron_wait", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let settings = persist_client::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id: stream(13),
+        subscriber_timeout: Duration::from_millis(300),
+        ..persist_client::Settings::new(&lab.config)
+    };
+    match Persist::connect(v1::SCHEMA, settings) {
+        Err(err) => assert!(err.to_string().contains("no subscriber"), "{err}"),
+        Ok(_) => return Err("connected with no subscriber".into()),
+    }
+    Ok(())
+}
+
+#[test]
+fn two_threads_publish_on_the_one_stream() -> TestResult {
+    let lab = Lab::new("aeron_thread", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let stream_id = stream(12);
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+    let other = persist.clone();
+    let recorded = std::thread::spawn(move || -> Result<(), String> {
+        other
+            .record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+            .map_err(|e| e.to_string())
+    });
+    recorded
+        .join()
+        .map_err(|_| -> Box<dyn Error> { "the other thread panicked".into() })??;
+    assert_eq!(persist.dropped(), 0);
+    ingest(&mut ingester, &lab, "shapes", 2)?;
     Ok(())
 }
 

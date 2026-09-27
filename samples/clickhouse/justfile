@@ -161,7 +161,7 @@ _aeron-jar:
 
 # Time recording on the app thread: SBE, tracing on and off, and a control.
 latency: _test-clickhouse _test-aeron
-    for arm in control sbe installed uninstalled event value value-nested event-off no-table; do \
+    for arm in control sbe installed uninstalled event value value-nested event-off no-table counter gauge histogram clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
         cargo run -q --release -p persist-server --example record_latency -- $arm; done
 
 lint:

@@ -9,7 +9,9 @@ publish.workspace = true
 
 [dependencies]
 ergo-sbe.workspace = true
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 log.workspace = true
+minstant = "0.1"
 rusteron-client.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

@@ -21,10 +21,11 @@
 //! without end.
 //!
 //! The first value of a type, recorded to a table, makes its [`Shape`]. After
-//! that each value is written in one pass, compiled for its type, into a
+//! that each value is written in one pass, compiled for the type, into a
 //! reused buffer that also checks the shape covers it, then copied into
-//! Aeron. A value the shape does not cover (an `Option` now `Some`, another
-//! enum variant, a longer tuple) grows the shape, which keeps the order its
+//! Aeron. Measuring the row and writing it again is slower than that copy.
+//! A value the shape does not cover (an `Option` now `Some`, another enum
+//! variant, a longer tuple) grows the shape, which keeps the order its
 //! fields are visited in, and is sent again.
 
 use std::cell::RefCell;
@@ -38,9 +39,7 @@ use serde::Serialize;
 use serde::ser::{self, SerializeMap, SerializeSeq, SerializeStruct, SerializeTuple};
 
 use crate::Persist;
-use crate::event::{
-    AddressHasher, FieldDef, HEADER, Kind, NONE, ROW_START, Shape, Value, fnv64, now_ns,
-};
+use crate::event::{AddressHasher, FieldDef, HEADER, Kind, NONE, Shape, Value, fnv64, now_ns};
 
 /// Why a value could not be measured, learned or written.
 #[derive(Debug)]
@@ -805,16 +804,48 @@ struct Scratch {
     groups: Vec<(usize, u32, usize)>,
 }
 
+/// A row being measured or written. Indexed writes land inside bytes already
+/// counted by [`Bytes::resize`] or [`Bytes::extend_from_slice`].
+trait Bytes {
+    fn written(&self) -> usize;
+    fn resize(&mut self, len: usize);
+    fn extend_from_slice(&mut self, bytes: &[u8]);
+    fn or_byte(&mut self, index: usize, mask: u8);
+    fn set_byte(&mut self, index: usize, value: u8);
+    fn copy_at(&mut self, index: usize, bytes: &[u8]);
+}
+
+impl Bytes for Vec<u8> {
+    fn written(&self) -> usize {
+        self.len()
+    }
+    fn resize(&mut self, len: usize) {
+        Vec::resize(self, len, 0);
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        Vec::extend_from_slice(self, bytes);
+    }
+    fn or_byte(&mut self, index: usize, mask: u8) {
+        self[index] |= mask;
+    }
+    fn set_byte(&mut self, index: usize, value: u8) {
+        self[index] = value;
+    }
+    fn copy_at(&mut self, index: usize, bytes: &[u8]) {
+        self[index..index + bytes.len()].copy_from_slice(bytes);
+    }
+}
+
 /// Writes a value's row against a shape, in one pass. The fields must come
 /// in the shape's order; any it skips are absent.
-struct Walker<'s, 'b> {
+struct Walker<'s, 'b, B: Bytes> {
     shape: &'s Shape,
-    row: &'b mut Vec<u8>,
+    row: &'b mut B,
     frames: &'b mut Vec<Frame>,
     groups: &'b mut Vec<(usize, u32, usize)>,
 }
 
-impl Walker<'_, '_> {
+impl<B: Bytes> Walker<'_, '_, B> {
     /// The field `name` of `kind`, next in the current row or entry, after
     /// marking the fields skipped to reach it absent. Returns its position
     /// and index.
@@ -832,7 +863,8 @@ impl Walker<'_, '_> {
         self.skip(p)?;
         let frame = self.frames.last_mut().ok_or(Problem::Misfit)?;
         frame.cursor = p + 1;
-        self.row[frame.base + level.presence + p / 8] |= 1 << (p % 8);
+        let at = frame.base + level.presence + p / 8;
+        self.row.or_byte(at, 1 << (p % 8));
         Ok((p, f))
     }
 
@@ -851,8 +883,8 @@ impl Walker<'_, '_> {
 
     /// Start a row or entry of `level` at the end of the row.
     fn begin_level(&mut self, level: usize) {
-        let base = self.row.len();
-        self.row.resize(base + self.shape.levels[level].block, 0);
+        let base = self.row.written();
+        self.row.resize(base + self.shape.levels[level].block);
         self.frames.push(Frame {
             level,
             cursor: 0,
@@ -871,7 +903,7 @@ impl Walker<'_, '_> {
     }
 }
 
-impl Sink for Walker<'_, '_> {
+impl<B: Bytes> Sink for Walker<'_, '_, B> {
     fn leaf(&mut self, name: &str, value: Value<'_>) -> Result<(), Problem> {
         let (p, _) = self.take(name, value.kind())?;
         // A fixed value's place in its block (`Str` has none: it is appended).
@@ -888,7 +920,7 @@ impl Sink for Walker<'_, '_> {
             }
             Value::Bool(v) => {
                 let at = at().ok_or(Problem::Misfit)?;
-                self.row[at] = u8::from(v);
+                self.row.set_byte(at, u8::from(v));
                 return Ok(());
             }
             Value::I64(v) => (at(), v.to_le_bytes()),
@@ -896,13 +928,14 @@ impl Sink for Walker<'_, '_> {
             Value::F64(v) => (at(), v.to_le_bytes()),
         };
         let at = at.ok_or(Problem::Misfit)?;
-        self.row[at..at + 8].copy_from_slice(&bytes);
+        self.row.copy_at(at, &bytes);
         Ok(())
     }
 
     fn begin_group(&mut self, name: &str) -> Result<(), Problem> {
         let (_, f) = self.take(name, Kind::Group)?;
-        self.groups.push((self.row.len(), 0, self.shape.entries[f]));
+        self.groups
+            .push((self.row.written(), 0, self.shape.entries[f]));
         self.row.extend_from_slice(&[0; 4]);
         Ok(())
     }
@@ -921,13 +954,46 @@ impl Sink for Walker<'_, '_> {
 
     fn end_group(&mut self) -> Result<(), Problem> {
         let (at, count, _) = self.groups.pop().ok_or(Problem::Misfit)?;
-        self.row[at..at + 4].copy_from_slice(&count.to_le_bytes());
+        self.row.copy_at(at, &count.to_le_bytes());
         Ok(())
     }
 }
 
+/// Write or measure `value`'s row. [`Problem::Misfit`] when the shape does
+/// not cover it. `ts` is not part of the length.
+fn fill<T: ?Sized + Serialize, B: Bytes>(
+    shape: &Shape,
+    value: &T,
+    ts: u64,
+    row: &mut B,
+    path: &mut Path,
+    frames: &mut Vec<Frame>,
+    groups: &mut Vec<(usize, u32, usize)>,
+) -> Result<(), Problem> {
+    path.reset();
+    frames.clear();
+    groups.clear();
+    row.resize(HEADER);
+    let mut header = [0u8; HEADER];
+    shape.write_header(&mut header);
+    row.copy_at(0, &header);
+    let mut walker = Walker {
+        shape,
+        row,
+        frames,
+        groups,
+    };
+    walker.begin_level(0);
+    walker.row.copy_at(HEADER, &shape.id.to_le_bytes());
+    walker.row.copy_at(HEADER + 4, &ts.to_le_bytes());
+    value.serialize(&mut Visit {
+        sink: &mut walker,
+        path,
+    })?;
+    walker.end_level()
+}
+
 /// Write `value`'s row into `scratch.row`, recorded at `ts`.
-/// [`Problem::Misfit`] when the shape does not cover it.
 fn walk<T: ?Sized + Serialize>(
     shape: &Shape,
     value: &T,
@@ -940,26 +1006,8 @@ fn walk<T: ?Sized + Serialize>(
         frames,
         groups,
     } = scratch;
-    path.reset();
     row.clear();
-    frames.clear();
-    groups.clear();
-    row.resize(HEADER, 0);
-    shape.write_header(row);
-    let mut walker = Walker {
-        shape,
-        row,
-        frames,
-        groups,
-    };
-    walker.begin_level(0);
-    walker.row[HEADER..HEADER + 4].copy_from_slice(&shape.id.to_le_bytes());
-    walker.row[HEADER + 4..HEADER + ROW_START].copy_from_slice(&ts.to_le_bytes());
-    value.serialize(&mut Visit {
-        sink: &mut walker,
-        path,
-    })?;
-    walker.end_level()
+    fill(shape, value, ts, row, path, frames, groups)
 }
 
 // ------------------------------------------------------------- recording
@@ -1020,7 +1068,7 @@ impl Persist {
 
     fn record_at<T: ?Sized + Serialize>(&self, site: &mut Site, value: &T, scratch: &mut Scratch) {
         let ts = now_ns();
-        let written = match &site.shape {
+        let written = match site.shape.as_ref() {
             Some(shape) => walk(shape, value, ts, scratch),
             None => Err(Problem::Misfit),
         };
@@ -1031,7 +1079,16 @@ impl Persist {
                     .broken
                     .as_ref()
                     .is_some_and(|(_, at)| at.elapsed() < std::time::Duration::from_secs(1));
-                if cooling || !self.grow(site, value, ts, scratch) {
+                if cooling || !self.learn_shape(site, value, scratch) {
+                    self.drop_one();
+                    return;
+                }
+                let Some(shape) = site.shape.clone() else {
+                    self.drop_one();
+                    return;
+                };
+                if let Err(problem) = walk(&shape, value, ts, scratch) {
+                    self.broken(site, &problem);
                     self.drop_one();
                     return;
                 }
@@ -1042,37 +1099,36 @@ impl Persist {
                 return;
             }
         }
-        let sent = site.shape.as_deref().is_some_and(|s| self.send_shape(s));
-        if !(sent && self.publish(&scratch.row)) {
-            self.drop_one();
+        // `send_shape` and `publish` count their own drops.
+        if site
+            .shape
+            .as_deref()
+            .is_some_and(|shape| self.send_shape(shape))
+        {
+            let _ = self.publish(&scratch.row);
         }
     }
 
-    /// Learn `value` into `site`'s shape, and write it again. `false`,
-    /// logged, when it cannot be recorded.
+    /// Learn `value` into `site`'s shape. `false`, logged, when it cannot be recorded.
     #[cold]
-    fn grow<T: ?Sized + Serialize>(
+    fn learn_shape<T: ?Sized + Serialize>(
         &self,
         site: &mut Site,
         value: &T,
-        ts: u64,
         scratch: &mut Scratch,
     ) -> bool {
-        let written = learn(value, site.shape.as_deref(), &mut scratch.path).and_then(|fields| {
-            let shape = self
-                .shape(
-                    &site.table,
-                    fields.iter().map(|f| (f.name.as_str(), f.kind, f.parent)),
-                )
-                .ok_or(Problem::Unrecordable(
-                    "no shape for it (see the error above)".into(),
-                ))?;
-            let written = walk(&shape, value, ts, scratch);
-            site.shape = Some(shape);
-            written
+        let learned = learn(value, site.shape.as_deref(), &mut scratch.path).and_then(|fields| {
+            self.shape(
+                &site.table,
+                fields.iter().map(|f| (f.name.as_str(), f.kind, f.parent)),
+            )
+            .ok_or_else(|| Problem::Unrecordable("no shape for it (see the error above)".into()))
         });
-        match written {
-            Ok(()) => true,
+        match learned {
+            Ok(shape) => {
+                site.shape = Some(shape);
+                true
+            }
             Err(problem) => {
                 self.broken(site, &problem);
                 false

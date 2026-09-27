@@ -1,0 +1,308 @@
+{
+  "uid": "aeron",
+  "title": "Aeron",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Driver throughput and faults / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, splitByChar(':', label)[1] AS counter, sum(delta) / $__interval_s AS rate FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'system' AND delta IS NOT NULL AND (label IN ('Bytes sent', 'Bytes received', 'NAKs sent', 'NAKs received', 'Short sends', 'Retransmits sent', 'Client liveness timeouts') OR label LIKE 'Errors%') GROUP BY time, counter ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Subscriber behind publisher (bytes)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT p.ts AS time, concat(toString(p.stream_id), ' ', if(s.client_name = '', toString(s.owner_id), s.client_name)) AS subscriber, max(p.value - s.value) AS behind FROM market.aeron_counters AS p INNER JOIN market.aeron_counters AS s ON p.ts = s.ts AND p.session_id = s.session_id AND p.stream_id = s.stream_id WHERE $__timeFilter(p.ts) AND p.type = 'pub-pos' AND s.type = 'sub-pos' GROUP BY time, subscriber ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "pub-pos minus each sub-pos of the same session: how far each subscriber lags."
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Archive behind publisher (bytes)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT p.ts AS time, concat('recording ', toString(r.recording_id)) AS recording, max(p.value - r.value) AS behind FROM market.aeron_counters AS p INNER JOIN market.aeron_counters AS r ON p.ts = r.ts AND p.session_id = r.session_id WHERE $__timeFilter(p.ts) AND p.type = 'pub-pos' AND r.type = 'rec-pos' GROUP BY time, recording ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Publisher headroom before back pressure (bytes)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT p.ts AS time, concat(toString(p.stream_id), ' ', p.client_name) AS publication, min(l.value - p.value) AS headroom FROM market.aeron_counters AS p INNER JOIN market.aeron_counters AS l ON p.ts = l.ts AND p.registration_id = l.registration_id WHERE $__timeFilter(p.ts) AND p.type = 'pub-pos' AND l.type = 'pub-lmt' GROUP BY time, publication ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "pub-lmt minus pub-pos: room left before offers are back-pressured."
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Clients",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT owner_id AS client_id, argMax(client_name, ts) AS name, argMax(label, ts) AS heartbeat, max(ts) AS seen FROM market.aeron_counters WHERE type = 'client-heartbeat' AND ts > now() - INTERVAL 1 MINUTE GROUP BY owner_id ORDER BY owner_id",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Streams",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT type, stream_id, session_id, channel, client_name, argMax(value, ts) AS position FROM market.aeron_counters WHERE ts > now() - INTERVAL 1 MINUTE AND stream_id IS NOT NULL GROUP BY type, stream_id, session_id, channel, client_name ORDER BY stream_id, type",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Distinct errors",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT last_observed, count, error FROM market.aeron_errors WHERE $__timeFilter(ts) ORDER BY last_observed DESC LIMIT 100",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Data loss",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT last_observed, observations, bytes_lost, session_id, stream_id, channel, source FROM market.aeron_loss WHERE $__timeFilter(ts) ORDER BY last_observed DESC LIMIT 100",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

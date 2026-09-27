@@ -22,6 +22,7 @@ use rusteron_archive::{
     SOURCE_LOCATION_LOCAL,
 };
 
+use crate::aeron_stats::AeronStats;
 use crate::{Error, Report, Settings, Writer};
 
 /// The archive's local control channel: same host, no ports.
@@ -63,6 +64,8 @@ pub struct Ingester {
     /// Everything up to here has been handed to the writer.
     polled: Option<Position>,
     max_queued: usize,
+    /// The driver's own statistics, and when they are next sampled.
+    stats: Option<(AeronStats, Duration, Instant)>,
 }
 
 fn aeron(e: impl std::fmt::Display) -> Error {
@@ -84,6 +87,7 @@ impl Ingester {
         if let Some(dir) = &settings.aeron_dir {
             ctx.set_dir(&dir.as_str().into_c_string()).map_err(aeron)?;
         }
+        ctx.set_client_name(c"ingester").map_err(aeron)?;
         let client = Aeron::new(&ctx).map_err(aeron)?;
         client.start().map_err(aeron)?;
         let archive_ctx = AeronArchiveContext::new().map_err(aeron)?;
@@ -110,6 +114,15 @@ impl Ingester {
             Err(e) => return Err(aeron(e)),
         }
         let checkpoint = load(&settings.checkpoint_path)?;
+        let stats = if settings.aeron_stats_interval.is_zero() {
+            None
+        } else {
+            Some((
+                AeronStats::open(ctx.get_dir())?,
+                settings.aeron_stats_interval,
+                Instant::now(),
+            ))
+        };
         Ok(Self {
             writer,
             replay: None,
@@ -122,6 +135,7 @@ impl Ingester {
             checkpoint,
             polled: checkpoint,
             max_queued: settings.max_queued_bytes,
+            stats,
         })
     }
 
@@ -137,6 +151,16 @@ impl Ingester {
         self.writer.run(&mut report);
         if self.writer.queued_bytes() == 0 {
             self.commit(&mut report)?;
+        }
+        if let Some((stats, every, next)) = &mut self.stats
+            && Instant::now() >= *next
+        {
+            *next = Instant::now() + *every;
+            let now = persist_client::clock::Clock::new().now().epoch_ns();
+            let clients = self.writer.client_names();
+            report
+                .errors
+                .extend(stats.sample(self.writer.clickhouse(), now, &clients));
         }
         self.writer.log(&report);
         Ok(report)
@@ -233,7 +257,8 @@ impl Ingester {
         while writer.queued_bytes() < self.max_queued {
             let polled = replay.subscription.poll_fn(
                 |message, header| {
-                    writer.push(message);
+                    // The frame's reserved value is the recording app's source id.
+                    writer.push(message, header.reserved_value().unwrap_or(0) as u64);
                     last = Some(header.position());
                 },
                 1024,

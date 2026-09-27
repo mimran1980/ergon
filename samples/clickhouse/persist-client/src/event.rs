@@ -32,8 +32,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::field::{Field, FieldSet, Visit};
+use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::registry::LookupSpan;
 
 use crate::Persist;
 
@@ -351,6 +353,11 @@ impl Shape {
         &self.message
     }
 
+    /// The shape's message is in the stream; rows of it may follow.
+    pub(crate) fn mark_sent(&self) {
+        self.sent.store(true, Ordering::Release);
+    }
+
     /// Field `i`'s ClickHouse column: its path, groups included (`bids.price`).
     #[must_use]
     pub fn column(&self, i: usize) -> &str {
@@ -543,8 +550,9 @@ fn shape_id<'a>(table: &str, fields: impl Iterator<Item = (&'a str, Kind, Option
     hash
 }
 
-/// FNV-1a, 64 bits.
-pub(crate) fn fnv64(bytes: &[u8]) -> u64 {
+/// FNV-1a, 64 bits: how series, sources and traces are keyed.
+#[must_use]
+pub fn fnv64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     })
@@ -577,7 +585,6 @@ impl Persist {
             return;
         };
         if !self.send_shape(&shape) {
-            self.drop_one();
             return;
         }
         let text = fields
@@ -590,6 +597,7 @@ impl Persist {
         let ts = now_ns();
         self.claim(shape.row_len(text), |buf| {
             shape.write_row(buf, ts, |i| Some(fields[i].1));
+            true
         });
     }
 
@@ -670,7 +678,6 @@ impl Persist {
             return;
         };
         if !self.send_shape(shape) {
-            self.drop_one();
             return;
         }
         let text = site
@@ -684,6 +691,7 @@ impl Persist {
         let ts = now_ns();
         self.claim(shape.row_len(text), |buf| {
             shape.write_row(buf, ts, |i| scratch.value(site.src[i]));
+            true
         });
     }
 
@@ -809,7 +817,19 @@ pub struct PersistLayer {
     pub(crate) persist: Persist,
 }
 
-impl<S: Subscriber> Layer<S> for PersistLayer {
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for PersistLayer {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        crate::spans::on_new_span(&self.persist, attrs, id, &ctx);
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+        crate::spans::on_record(id, values, &ctx);
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        crate::spans::on_close(&self.persist, &id, &ctx);
+    }
+
     fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
         let meta = event.metadata();
         let key = (

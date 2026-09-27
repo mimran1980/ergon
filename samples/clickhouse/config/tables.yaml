@@ -10,12 +10,13 @@
 #                run and keeps writing every column that still matches.
 # kind: dynamic  Follows the data: a field added to market.xml becomes a new
 #                column when the recorder restarts; a new event field, at once.
-# enabled:       Record it now (default true). Set false to stop recording.
-#
-# One exchange only: config/exchanges/<exchange>.yaml overrides `enabled` for
-# that exchange's recorder, live. It may only name tables listed here:
-#   tables:
-#     book_deltas: { enabled: false }
+# enabled:       Record it now (default true): true, false, or
+#                { until: 2026-09-27T18:00:00Z } for on until then (UTC).
+# apps:          Per app (PERSIST_APP, here the exchange), the same values;
+#                an app not listed takes `enabled`. For example, book
+#                changes from Binance only, and from Deribit for an hour:
+#                  book_deltas: { kind: dynamic, enabled: false,
+#                                 apps: { binance: true, deribit: { until: 2026-09-27T18:00:00Z } } }
 tables:
   trade:         { kind: static }
   quote:         { kind: static }
@@ -31,6 +32,14 @@ tables:
   book_view:     { kind: dynamic }  # a nested struct (record_value): spread.bps, bids.price arrays, an enum  # one row per instrument a second; each venue adds the columns it has
   instrument:    { kind: dynamic }  # instrument definitions: tick size, fees, ...
   instrument_status: { kind: dynamic }
+  # Traces (Grafana's trace view). Switched like any table, per app and until
+  # a time; `traces` samples each by name: one in `sample`, plus every one
+  # slower than `slower_than`. Metrics (tables `metrics`, `metrics_histogram`)
+  # and Aeron's own counters (`aeron_*`) are always recorded.
+  otel_traces:
+    kind: static
+    traces:
+      book_update: { sample: 1000, slower_than: 100ms }
   # Data only one venue offers, named after its Nautilus type.
   deribit_volatility_index:  { kind: dynamic }  # DVOL
   hyperliquid_open_interest: { kind: dynamic }

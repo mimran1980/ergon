@@ -131,6 +131,9 @@ spec:
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_SCHEMAS, value: /lab/schema }
             - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
+            # `host` of the aeron_* rows it samples.
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: state, mountPath: /state }
@@ -165,7 +168,8 @@ spec:
         - name: grafana
           image: grafana/grafana:12.4.11
           env:
-            - { name: GF_PLUGINS_PREINSTALL_SYNC, value: grafana-clickhouse-datasource }
+            # Pinned: its OTel trace mapping must match otel_traces' columns.
+            - { name: GF_PLUGINS_PREINSTALL_SYNC, value: grafana-clickhouse-datasource@4.21.3 }
             - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
             - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Admin }
             - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }

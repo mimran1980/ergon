@@ -4,8 +4,9 @@
 #  1. ClickHouse answers, and its /play UI is served.
 #  2. Every deployed exchange's recorder is writing trades and quotes.
 #  3. Every Grafana panel's query runs through Grafana without error.
-#  4. The verification notebook runs clean inside JupyterLab's pod.
-#  5. Toggling a dynamic table in config/tables.yaml starts and stops it live.
+#  4. Metrics, histograms, traces and Aeron's counters arrive, with host and pod.
+#  5. The verification notebook runs clean inside JupyterLab's pod.
+#  6. Toggling a dynamic table in config/tables.yaml starts and stops it live.
 #
 # Leaves config/tables.yaml exactly as it found it.
 set -euo pipefail
@@ -41,10 +42,22 @@ disabled() { grep -Eq "^  $1: .*enabled: false" config/tables.yaml; }
 for uid in $uids; do
     dash=$(curl -sf "$GRAFANA/api/dashboards/uid/$uid" | jq '.dashboard')
     adhoc=$(echo "$dash" | jq -r '.templating.list[]? | select(.name=="sql") | .query // empty')
+    # Query variables ($app, $trace, $trace_id) take their first value, or,
+    # as `${x:singlequote}`, all of them.
+    # ($table is checked for every table, below.)
+    vars=$(echo "$dash" | jq -c '.templating.list[]? | select(.type=="query" and .name!="table") | {name, query}')
     while IFS= read -r target; do
         title=$(echo "$target" | jq -r '.title')
         raw=$(echo "$target" | jq -r '.rawSql')
         raw=${raw//'${sql:raw}'/$adhoc}
+        while IFS= read -r v; do
+            [[ -n $v ]] || continue
+            name=$(echo "$v" | jq -r '.name')
+            values=$(sql "$(echo "$v" | jq -r '.query') FORMAT TSV")
+            raw=${raw//"\${$name:singlequote}"/$(sed "s/.*/'&'/" <<<"$values" | paste -sd, -)}
+            raw=${raw//"\${$name}"/$(head -1 <<<"$values")}
+        done <<<"$vars"
+        title=${title//'${trace_id}'/one trace}
         # Panels driven by the $table picker are checked for every table.
         for table in $([[ $raw == *'${table'* ]] && echo "$tables" || echo "-"); do
             query=${raw//'${table:singlequote}'/"'$table'"}
@@ -56,8 +69,11 @@ for uid in $uids; do
             err=$(echo "$result" | jq -r '.results.A.error // empty')
             [[ -z $err ]] || fail "Grafana panel '$title' [$table] ($uid): $err"
             rows=$(echo "$result" | jq '[.results.A.frames[]?.data.values[0]? // [] | length] | add // 0')
-            # A disabled table may legitimately have nothing recent.
+            # A disabled table may legitimately have nothing recent, and a
+            # healthy driver no errors or losses.
             [[ $rows -gt 0 ]] || disabled "$table" || { [[ $title == *book_snapshot* ]] && disabled book_snapshot; } \
+                || [[ $title == "Distinct errors" || $title == "Data loss" ]] \
+                || [[ $table == aeron_errors || $table == aeron_loss ]] \
                 || fail "Grafana panel '$title' [$table] ($uid) returned no rows"
             checked=$((checked + 1))
         done
@@ -68,12 +84,23 @@ bad=$(curl -s -H 'Content-Type: application/json' "$GRAFANA/api/ds/query" -d '{"
 [[ -n $(echo "$bad" | jq -r '.results.A.error // empty') ]] || fail "Grafana did not report an error for a bad query"
 ok "$checked Grafana panel queries (per-table panels over all $(wc -w <<<"$tables" | tr -d ' ') tables) run without error and return rows"
 
-# 4. Notebook (before the toggle: it checks disabled tables got nothing for 30 s)
+# 4. Metrics, traces and Aeron's counters: recent, and attributed
+apps=$(tr A-Z a-z <<<"$expected")
+for table in metrics metrics_histogram otel_traces aeron_counters; do
+    ts=$([[ $table == otel_traces ]] && echo Timestamp || echo ts)
+    n=$(sql "SELECT count() FROM market.$table WHERE $ts > now() - INTERVAL 1 MINUTE AND host != '' AND pod != ''")
+    (( n > 0 )) || fail "$table: no rows with a host and pod in the last minute"
+done
+got=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(app)), ',') FROM market.metrics WHERE ts > now() - INTERVAL 1 MINUTE AND app != ''")
+[[ $got == "$apps" ]] || fail "metrics in the last minute came from '$got', expected $apps"
+ok "metrics, histograms, traces and Aeron counters arriving, with host and pod, from $got"
+
+# 5. Notebook (before the toggle: it checks disabled tables got nothing for 30 s)
 "${KUBE[@]}" exec deploy/jupyter -- jupyter nbconvert --to notebook --execute --stdout verify.ipynb >/dev/null \
     || fail "notebooks/verify.ipynb failed (open http://localhost:8888 to see where)"
 ok "notebooks/verify.ipynb runs clean"
 
-# 5. Live toggle of a dynamic table
+# 6. Live toggle of a dynamic table
 config=config/tables.yaml
 saved=$(cat "$config")
 trap 'printf "%s\n" "$saved" > "$config"' EXIT

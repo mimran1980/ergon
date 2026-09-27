@@ -12,12 +12,24 @@
 //! * `value-nested` `record_value` of a struct with a nested struct and five levels
 //! * `event-off` the same event for a disabled table
 //! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
+//! * `counter`, `gauge`, `histogram`  one update of a metric
+//!
+//! The metric and clock arms are below the timer's resolution, so each
+//! sample times 100 of them (`x100` in the output).
+//! * `clock-now` `Clock::now`; `clock-cached` `Clock::cached`; `system-time` `SystemTime::now`
+//! * `poll-idle` `Metrics::poll` between intervals; `poll-due` with a 1 ms interval,
+//!   so every interval publishes, one message a call
+//! * `trace-off`, `trace-unsampled`, `trace-sampled`  a 4-stage checkpoint trace
+//!   (start, 4 marks, an attribute, finish) with `otel_traces` off, on but not
+//!   sampled, and every one published
+//! * `span-on`, `span-off`  a `tracing` span entered and closed
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use persist_client::Persist;
+use persist_client::clock::{Clock, Nanos};
 use persist_server::{ClickHouse, Ingester};
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -32,11 +44,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::temp_dir().join(format!("persist-latency-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let config = dir.join("tables.yaml");
+    let arm = std::env::args().nth(1).unwrap_or_else(|| "sbe".into());
+    // Traces and spans are on for this app except in the `-off` arms.
+    let traces = match arm.as_str() {
+        "trace-off" | "span-off" => "enabled: false",
+        "trace-unsampled" => "enabled: true, traces: { t2t: { sample: 0 } }",
+        _ => "enabled: true",
+    };
     std::fs::write(
         &config,
-        "tables:\n  shapes: { kind: dynamic }\n  signal: { kind: dynamic }\n  book: { kind: dynamic }\n  quiet: { kind: dynamic, enabled: false }\n",
+        format!(
+            "tables:\n  shapes: {{ kind: dynamic }}\n  signal: {{ kind: dynamic }}\n  book: {{ kind: dynamic }}\n  quiet: {{ kind: dynamic, enabled: false }}\n  otel_traces: {{ kind: static, {traces} }}\n"
+        ),
     )?;
-    let arm = std::env::args().nth(1).unwrap_or_else(|| "sbe".into());
 
     // The ingester, on its own thread as it would be in its own process.
     let stop = Arc::new(AtomicBool::new(false));
@@ -67,6 +87,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         persist_client::Settings {
             aeron_dir: Some(aeron_dir),
             stream_id: STREAM,
+            app: "latency".into(),
+            metrics_interval: if arm == "poll-due" {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_secs(5)
+            },
             ..persist_client::Settings::new(&config)
         },
     )?;
@@ -76,6 +102,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     if arm == "installed" {
         persist.install();
+    }
+    let metrics = persist.metrics();
+    let counter = metrics.counter("latency_counter", &[("arm", "counter")]);
+    let gauge = metrics.gauge("latency_gauge", &[]);
+    let histogram = metrics.histogram("latency_histogram", &[]);
+    // Series for `poll-due` to publish: ten counters and a histogram.
+    let others: Vec<_> = (0..10)
+        .map(|i| metrics.counter("latency_other", &[("i", &i.to_string())]))
+        .collect();
+    let clock = Clock::new();
+    let tracer = persist.tracer("t2t", &["wire", "decode", "decide", "send"], &["levels"]);
+    while (arm.starts_with("trace-") || arm.starts_with("span-"))
+        && tracer.is_on() != !arm.ends_with("-off")
+    {
+        std::thread::sleep(Duration::from_millis(10));
     }
 
     let signal = Signal {
@@ -94,23 +135,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One record every 5 µs (200k/s, far above the lab's live rate) for 8 s.
     // The first 3 s are skipped: pages are touched for the first time then,
     // which is a one-off cost.
+    let reps = match arm.as_str() {
+        "counter" | "gauge" | "histogram" | "clock-now" | "clock-cached" | "system-time" => 100,
+        _ => 1,
+    };
     let mut samples = Vec::with_capacity(1_000_000);
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(8) {
+        clock.now(); // the loop's one clock read, as a duty cycle would
         let t = Instant::now();
-        match arm.as_str() {
-            "sbe" => persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?,
-            "installed" | "uninstalled" => {
-                persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?
+        for i in 0..reps {
+            match arm.as_str() {
+                "sbe" => persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?,
+                "installed" | "uninstalled" => {
+                    persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?
+                }
+                "event" => {
+                    tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3)
+                }
+                "value" => persist.record_value("signal", &signal),
+                "value-nested" => persist.record_value("book", &book),
+                "no-table" => tracing::trace!(x = 1),
+                "event-off" => {
+                    tracing::info!(table = "quiet", instrument = "BTCUSDT", edge = 0.25, n = 3)
+                }
+                "counter" => counter.inc(),
+                "gauge" => gauge.set(i as f64),
+                "histogram" => histogram.record(850 + (i as u64 & 63) * 64),
+                "clock-now" => {
+                    let _ = std::hint::black_box(clock.now());
+                }
+                "clock-cached" => {
+                    let _ = std::hint::black_box(clock.cached());
+                }
+                "system-time" => {
+                    let _ = std::hint::black_box(std::time::SystemTime::now());
+                }
+                "poll-idle" | "poll-due" => {
+                    others[0].inc();
+                    histogram.record(850);
+                    metrics.poll(clock.cached());
+                }
+                "trace-off" | "trace-unsampled" | "trace-sampled" => {
+                    let mut t = tracer.start(Nanos(1_000), tracer.next_id());
+                    for at in [1_100, 1_300, 1_600, 2_000] {
+                        t.mark(Nanos(at));
+                    }
+                    t.attr(0, 10);
+                    t.finish();
+                }
+                "span-on" | "span-off" => tracing::info_span!("work", n = 3).in_scope(|| {}),
+                _ => {}
             }
-            "event" => tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3),
-            "value" => persist.record_value("signal", &signal),
-            "value-nested" => persist.record_value("book", &book),
-            "no-table" => tracing::trace!(x = 1),
-            "event-off" => {
-                tracing::info!(table = "quiet", instrument = "BTCUSDT", edge = 0.25, n = 3)
-            }
-            _ => {}
         }
         let took = t.elapsed();
         if started.elapsed() > Duration::from_secs(3) {
@@ -123,8 +199,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     samples.sort();
     let at = |q: f64| samples[((samples.len() - 1) as f64 * q) as usize];
     println!(
-        "{arm:11} {} records, dropped {}: p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}",
+        "{arm:11} {} records{}, dropped {}: p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}",
         samples.len(),
+        if reps > 1 {
+            format!(" x{reps}")
+        } else {
+            String::new()
+        },
         persist.dropped(),
         at(0.5),
         at(0.99),
