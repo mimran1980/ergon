@@ -1,13 +1,23 @@
-# One-node kind cluster. The sample directory is mounted into the node at
-# /lab, so pods read config/, grafana/ and notebooks/ straight from this
-# checkout: edit a file on your machine and the pod sees it.
-# `just up` substitutes LAB_DIR with the absolute sample path. The UIs listen
-# on every interface (0.0.0.0), so other machines on the network reach them.
+# Four-node kind cluster standing in for three regions, by where each
+# exchange's matching engine is. Regions are node labels
+# (topology.kubernetes.io/region); feeds, engines and dummy exchanges are
+# pinned to their region by node affinity (config/streams.yaml).
+#
+#   an1  Tokyo (2 nodes)     binance, hyperliquid: feeds can move between them
+#   as1  Singapore/HK        bybit, okx
+#   ew2  London LD4          deribit
+#
+# Every node is schedulable (the lab's pods tolerate the control plane's
+# taint) and runs the Aeron and ingester DaemonSets. The sample directory is
+# mounted into every node at /lab, so pods read config/, grafana/ and
+# notebooks/ straight from this checkout. `just up` substitutes LAB_DIR with
+# the absolute sample path. The UIs listen on every interface (0.0.0.0).
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: clickhouse-lab
 nodes:
   - role: control-plane
+    labels: { topology.kubernetes.io/region: an1 }
     extraMounts:
       - hostPath: LAB_DIR
         containerPath: /lab
@@ -15,3 +25,18 @@ nodes:
       - { containerPort: 30123, hostPort: 8123, listenAddress: 0.0.0.0 }  # ClickHouse HTTP + /play UI
       - { containerPort: 30300, hostPort: 3000, listenAddress: 0.0.0.0 }  # Grafana
       - { containerPort: 30888, hostPort: 8888, listenAddress: 0.0.0.0 }  # JupyterLab
+  - role: worker
+    labels: { topology.kubernetes.io/region: an1 }
+    extraMounts:
+      - hostPath: LAB_DIR
+        containerPath: /lab
+  - role: worker
+    labels: { topology.kubernetes.io/region: as1 }
+    extraMounts:
+      - hostPath: LAB_DIR
+        containerPath: /lab
+  - role: worker
+    labels: { topology.kubernetes.io/region: ew2 }
+    extraMounts:
+      - hostPath: LAB_DIR
+        containerPath: /lab

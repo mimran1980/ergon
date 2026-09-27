@@ -1,0 +1,98 @@
+# One exchange's feed handler (md): NautilusTrader + persist-client. It
+# publishes the exchange's market data on its two UDP feeds
+# (config/streams.yaml: `md` reliable, `tob` best effort) through the node's
+# shared media driver, and its events, metrics and traces on the node's IPC
+# persist stream. `just exchange <name>` fills in __EXCHANGE__ and
+# __REGION__ (from streams.yaml) and applies it.
+#
+# It uses the node's network, so its pod IP is the node's, which is where
+# its feeds' control sockets are: the headless Service md-<exchange> resolves
+# to whichever node it runs on, and that is how subscribers find it again
+# after it moves. It runs in its exchange's region, on any node there. One
+# replica, recreated rather than rolled: two publishers of one feed at once
+# would interleave.
+apiVersion: v1
+kind: Service
+metadata:
+  name: md-__EXCHANGE__
+  namespace: lab
+  labels: { app: md, exchange: __EXCHANGE__ }
+spec:
+  clusterIP: None
+  selector: { app: md, exchange: __EXCHANGE__ }
+  # Resolvable as soon as the pod has an address, not only once ready.
+  publishNotReadyAddresses: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: md-__EXCHANGE__
+  namespace: lab
+  labels: { app: md, exchange: __EXCHANGE__ }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: md, exchange: __EXCHANGE__ } }
+  template:
+    metadata: { labels: { app: md, exchange: __EXCHANGE__ } }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # On SIGTERM it closes its publications at once (Persist::shutdown),
+      # so subscribers move to its next pod within seconds.
+      terminationGracePeriodSeconds: 10
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: topology.kubernetes.io/region, operator: In, values: [__REGION__] }
+      # Only the control plane's taint: tolerating everything would also
+      # tolerate a cordon, and a moved pod would land back on its node.
+      tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
+        - name: md
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/md]
+          env:
+            - { name: EXCHANGE, value: __EXCHANGE__ }
+            # Its entry in config/streams.yaml.
+            - { name: SERVICE, value: md-__EXCHANGE__ }
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
+            # The app's name: its entry under a table's `apps` in tables.yaml.
+            - { name: PERSIST_APP, value: __EXCHANGE__ }
+            # Idle strategy of the threads md owns (the metrics poller):
+            # spin, noop, yield or sleep. Its market data arrives on
+            # NautilusTrader's tokio runtime, which this does not change.
+            - { name: IDLE, value: sleep }
+            # glibc keeps a heap arena per thread by default, and
+            # NautilusTrader's runtime has many threads: two is plenty.
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            # The node's IP (its feeds bind it), and names for every row.
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # On the node's network HOSTNAME is the node's name, not the pod's.
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          # NautilusTrader's caches grow with instruments and book depth.
+          resources: { requests: { memory: 64Mi }, limits: { memory: 256Mi } }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }

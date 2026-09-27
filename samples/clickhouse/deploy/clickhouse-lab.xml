@@ -1,0 +1,52 @@
+<!-- ClickHouse settings for the lab (mounted into config.d, see lab.yaml).
+     ClickHouse logs itself into system tables that grow without bound: in
+     a lab they outgrow the market data (3 GiB against 1 GiB). Keep only the
+     query and part logs, for a day, and small caches: memory is shared with the rest
+     of the lab. -->
+<clickhouse>
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <latency_log remove="1"/>
+    <error_log remove="1"/>
+    <query_log>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+    </query_log>
+    <!-- The ClickHouse tables dashboard's rows inserted per table. -->
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </part_log>
+    <mark_cache_size>67108864</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+    <index_mark_cache_size>67108864</index_mark_cache_size>
+    <primary_index_cache_size>67108864</primary_index_cache_size>
+    <!-- Stay well inside the container's limit: at the default 0.9 its own
+         accounting misses enough (allocator, merges) that the kernel
+         OOM-killed it at 1.5 GiB. A query over the cap fails; nothing else. -->
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+    <!-- Four ingesters insert into every table every 2 s, and each insert is
+         a part, kept after it is merged away for old_parts_lifetime (8
+         minutes by default): over 20,000 parts. -->
+    <merge_tree>
+        <old_parts_lifetime>60</old_parts_lifetime>
+    </merge_tree>
+    <!-- Threads: the defaults start over 700, and each holds allocator
+         caches ClickHouse does not count, which pushed its resident memory
+         past its own limit. One server with no replication, Kafka or
+         distributed tables needs few. -->
+    <background_schedule_pool_size>32</background_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>2</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>2</background_distributed_schedule_pool_size>
+    <background_buffer_flush_schedule_pool_size>2</background_buffer_flush_schedule_pool_size>
+    <background_fetches_pool_size>2</background_fetches_pool_size>
+    <background_move_pool_size>2</background_move_pool_size>
+    <background_common_pool_size>4</background_common_pool_size>
+    <max_thread_pool_free_size>32</max_thread_pool_free_size>
+</clickhouse>

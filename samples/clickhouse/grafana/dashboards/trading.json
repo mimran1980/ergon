@@ -1,0 +1,417 @@
+{
+  "uid": "trading",
+  "title": "Trading",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "engine",
+        "label": "engine",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT app FROM market.ema ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM market.ema ORDER BY app",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "asset",
+        "label": "asset",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT asset FROM market.ema ORDER BY asset",
+        "definition": "SELECT DISTINCT asset FROM market.ema ORDER BY asset",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Aggregated mid and its EMAs: ${asset} in ${engine}",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT ts AS time, mid, ema5m, ema30m, ema1h, ema4h, ema12h, ema1d FROM market.ema WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}' ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Time-decayed EMAs of the mid of the region's aggregated book, published once a second. The strategy trades the mid crossing its 5m EMA, with the 5m against the 30m as the trend."
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Orders and fills / min",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT time, series, n FROM (SELECT toStartOfMinute(ts) AS time, concat('order ', side) AS series, count() AS n FROM market.new_order WHERE $__timeFilter(ts) AND app = '${engine}' GROUP BY time, series UNION ALL SELECT toStartOfMinute(ts) AS time, concat('fill ', side) AS series, count() AS n FROM market.execution_report WHERE $__timeFilter(ts) AND status = 'Filled' AND app = replace('${engine}', 'engine-', 'exch-sim-') GROUP BY time, series) ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "description": "new_order from the engine, execution_report (Filled) from its region's dummy exchange."
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Position (base) and PnL (quote): ${asset}",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, name, avg(value) AS v FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('position', 'pnl') AND labels['asset'] = '${asset}' GROUP BY time, name ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Filled position, and cash plus position at the aggregated mid."
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Aggregated depth by venue, top 10 a side (base quantity; asks negative)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, v AS venue, avg(depth) AS depth FROM (SELECT ts, v, arraySum(arrayFilter((s, x) -> x = v, bids.size, bids.venue)) - arraySum(arrayFilter((s, x) -> x = v, asks.size, asks.venue)) AS depth FROM market.agg_book ARRAY JOIN arrayDistinct(arrayConcat(bids.venue, asks.venue)) AS v WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}') GROUP BY time, venue ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Which venues make the region's best ten levels, and with how much size, normalised to base quantity from each instrument's spec (OKX contracts x contract value, Deribit USD / price)."
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Aggregated book now: ${asset}",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "WITH (SELECT argMax(tuple(bids.price, bids.size, bids.venue, asks.price, asks.size, asks.venue), ts) FROM market.agg_book WHERE app = '${engine}' AND asset = '${asset}' AND ts > now() - INTERVAL 1 MINUTE) AS b SELECT n AS level, b.3[n] AS bid_venue, b.2[n] AS bid_size, b.1[n] AS bid, b.4[n] AS ask, b.5[n] AS ask_size, b.6[n] AS ask_venue FROM (SELECT arrayJoin(range(1, greatest(length(b.1), length(b.4)) + 1)) AS n)",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Venues' perpetuals trade at a basis to each other and to spot, so the aggregate is often crossed by a basis point or two: that is the market, not a stale book."
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Tick to trade, per stage: p50 / p99 (µs), every tick",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, quantileExactWeighted(0.5)(le, c) / 1e3 AS p50, quantileExactWeighted(0.99)(le, c) / 1e3 AS p99 FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs"
+        },
+        "overrides": []
+      },
+      "description": "From the feed handler's receive time: feed (to the engine), decode, book, signal (EMAs), decide, send (the order published). The lab's loops sleep when idle, so feed includes up to 1 ms of that; spin for real numbers."
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Orders with their tick-to-trade trace (click one)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT Timestamp, TraceId, ServiceName, round(Duration / 1e3) AS us FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = 'tick_to_trade' AND SpanAttributes['why'] = 'kept' AND ServiceName = '${engine}' ORDER BY Timestamp DESC LIMIT 100",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TraceId"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open the trace",
+                    "url": "/d/traces/traces?var-trace=tick_to_trade&var-trace_id=${__value.raw}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Every tick that led to an order is kept, under the order's id; the dummy exchange's order_ack trace shares it, so the trace view shows both."
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Feed health: book age by venue (ms)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['venue'] AS venue, max(value) / 1e6 AS age_ms FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name = 'book_age_ns' GROUP BY time, venue ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "description": "Since the venue's feed last delivered a message. A feed handler that moves nodes shows here as a gap of a few seconds."
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Feed resyncs and top-of-book quotes / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(name, ' ', labels['venue']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('feed_resyncs', 'tob_quotes') GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "A resync is a new publisher session (a restart or a move): that venue's books are dropped and rebuilt from its next snapshot."
+    }
+  ]
+}

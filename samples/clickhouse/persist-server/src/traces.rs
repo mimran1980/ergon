@@ -100,6 +100,7 @@ pub(crate) fn write_trace(
     let why = match t.why() {
         codec::TraceWhy::Sampled => "sampled",
         codec::TraceWhy::Slow => "slow",
+        codec::TraceWhy::Kept => "kept",
         _ => "span",
     };
     let mut attributes: Vec<(&str, String)> = Vec::new();

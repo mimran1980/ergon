@@ -79,16 +79,39 @@ fn wait_until(what: &str, mut done: impl FnMut() -> Result<bool, Box<dyn Error>>
 }
 
 /// Record `n` messages, 100 a millisecond, as a live feed would: a flat-out
-/// burst larger than half a term outruns the archive and is dropped.
+/// burst larger than half a term outruns the archive and is dropped. On a
+/// loaded machine the archive can fall behind even this, so a record
+/// refused for back pressure is retried, as an application that must not
+/// lose it would; any other drop fails the test.
 fn record(persist: &Persist, n: usize) -> TestResult {
     for i in 0..n {
-        persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+        taken(persist, || {
+            persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
         if i % 100 == 99 {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    assert_eq!(persist.dropped(), 0);
+    assert_eq!(dropped_but_back_pressure(persist), 0);
     Ok(())
+}
+
+/// Make one record with `record`, again while back pressure refuses it.
+fn taken<E: Into<Box<dyn Error>>>(
+    persist: &Persist,
+    mut record: impl FnMut() -> Result<(), E>,
+) -> TestResult {
+    wait_until("a record to be taken", || {
+        let before = persist.drops().back_pressure;
+        record().map_err(Into::into)?;
+        Ok(persist.drops().back_pressure == before)
+    })
+}
+
+/// Records dropped for anything but back pressure (which [`taken`] retries).
+fn dropped_but_back_pressure(persist: &Persist) -> u64 {
+    let drops = persist.drops();
+    drops.total() - drops.back_pressure
 }
 
 /// Tick until `table` holds `rows`; every report is kept.
@@ -756,6 +779,14 @@ fn traces_become_spans_of_otel_traces() -> TestResult {
     slow.mark(Nanos(100));
     slow.mark(Nanos(2_000_000));
     slow.finish();
+    // Kept: published although fast and unsampled, under the id it learnt
+    // part way.
+    let mut kept = order.start(Nanos(0), order.next_id());
+    kept.mark(Nanos(200));
+    kept.set_id(TraceId::new(ORDERS, 43));
+    kept.keep();
+    kept.mark(Nanos(500));
+    kept.finish();
     let mut sent = gateway.start(Nanos(2_000_000), TraceId::new(ORDERS, 42));
     sent.mark(Nanos(2_050_000));
     sent.finish();
@@ -783,12 +814,12 @@ fn traces_become_spans_of_otel_traces() -> TestResult {
                 .and_then(|n| n.parse::<u64>().ok())
                 .unwrap_or(0)
         };
-        Ok(n("SELECT count() FROM DB.otel_traces") >= 15
+        Ok(n("SELECT count() FROM DB.otel_traces") >= 18
             && n("SELECT count() FROM DB.metrics_histogram WHERE name = 'trace_ns'") >= 4)
     })?;
-    // 2 ticks x (root + 3 stages), the slow order (root + 2), the gateway's
-    // (root + 1), and 2 spans.
-    assert_eq!(lab.query("SELECT count() FROM DB.otel_traces")?, "15");
+    // 2 ticks x (root + 3 stages), the slow and kept orders (root + 2
+    // each), the gateway's (root + 1), and 2 spans.
+    assert_eq!(lab.query("SELECT count() FROM DB.otel_traces")?, "18");
     assert_eq!(
         lab.query("SELECT count() FROM DB.otel_traces WHERE SpanName = 'framed_read'")?,
         "0",
@@ -804,11 +835,11 @@ fn traces_become_spans_of_otel_traces() -> TestResult {
         "each stage a child of its trace"
     );
     assert_eq!(
-        lab.query("SELECT SpanAttributes['why'], Duration FROM DB.otel_traces WHERE SpanName = 'order' AND ParentSpanId = '' FORMAT TSV")?,
-        "slow\t2000000"
+        lab.query("SELECT SpanAttributes['why'], Duration, TraceId FROM DB.otel_traces WHERE SpanName = 'order' AND ParentSpanId = '' ORDER BY Duration FORMAT TSV")?,
+        format!("kept\t500\t{ORDERS:016x}{:016x}\nslow\t2000000\t{ORDERS:016x}{:016x}", 43, 42)
     );
     assert_eq!(
-        lab.query("SELECT uniqExact(TraceId), count() FROM DB.otel_traces WHERE SpanName IN ('order', 'order_gateway') AND ParentSpanId = '' FORMAT TSV")?,
+        lab.query("SELECT uniqExact(TraceId), count() FROM DB.otel_traces WHERE SpanName IN ('order', 'order_gateway') AND ParentSpanId = '' AND SpanAttributes['why'] != 'kept' FORMAT TSV")?,
         "1\t2",
         "one order, one trace, across components"
     );
@@ -950,4 +981,357 @@ fn a_mis_sized_encode_is_caught() {
     }
     // Claims one byte more than the message has.
     let _ = persist.record(v1::TEMPLATE_ID, v1::LEN + 1, v1::encode);
+}
+
+/// The Aeron behaviour the multi-node lab rests on, on one driver: an MDC
+/// feed publication with `ssc=true` publishes with no subscriber, the
+/// node's archive records it through a spy (no network hop), and
+/// subscribers reach it by name, reliably and best-effort.
+#[test]
+fn an_mdc_feed_is_spy_recorded_and_reachable_by_name() -> TestResult {
+    use rusteron_archive::{
+        Aeron, AeronArchiveAsyncConnect, AeronArchiveContext, AeronArchiveReplayParams,
+        AeronContext, Handlers, IntoCString, SOURCE_LOCATION_LOCAL,
+    };
+
+    let stream_id = stream(17);
+    let port = 41_000 + (std::process::id() % 1000) as i32 * 2;
+    let ctx = AeronContext::new()?;
+    ctx.set_dir(&aeron_dir().into_c_string())?;
+    let aeron = Aeron::new(&ctx)?;
+    aeron.start()?;
+    let archive_ctx = AeronArchiveContext::new()?;
+    archive_ctx.set_aeron(&aeron)?;
+    archive_ctx.set_control_request_channel(c"aeron:ipc?term-length=64k")?;
+    archive_ctx.set_control_response_channel(c"aeron:ipc?term-length=64k")?;
+    let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &aeron)?
+        .poll_blocking(Duration::from_secs(10))?;
+    // The node's archive listens for the feed before it exists.
+    let spy = format!("aeron-spy:aeron:udp?control=127.0.0.1:{port}|control-mode=dynamic");
+    archive.start_recording(
+        &spy.as_str().into_c_string(),
+        stream_id,
+        SOURCE_LOCATION_LOCAL,
+        false,
+    )?;
+
+    let feed = format!(
+        "aeron:udp?control=127.0.0.1:{port}|control-mode=dynamic|fc=min|ssc=true|term-length=64k"
+    );
+    let publication = aeron
+        .async_add_publication(&feed.as_str().into_c_string(), stream_id)?
+        .poll_blocking(Duration::from_secs(10))?;
+    wait_until("the spy to connect the publication (ssc)", || {
+        Ok(publication.is_connected())
+    })?;
+    let offer = |i: u8| -> TestResult {
+        wait_until("an offer to succeed", || {
+            Ok(publication.offer(&[i; 32]).is_ok())
+        })
+    };
+    // No subscriber at all: still published, and archived.
+    for i in 0..10 {
+        offer(i)?;
+    }
+
+    let subscribe = |extra: &str| {
+        let channel = format!(
+            "aeron:udp?endpoint=127.0.0.1:0|control=localhost:{port}|control-mode=dynamic{extra}"
+        );
+        aeron
+            .async_add_subscription(
+                &channel.as_str().into_c_string(),
+                stream_id,
+                Handlers::NONE,
+                Handlers::NONE,
+            )?
+            .poll_blocking(Duration::from_secs(10))
+    };
+    let reliable = subscribe("")?;
+    let best_effort = subscribe("|reliable=false|tether=false|group=false")?;
+    wait_until("both subscribers to join by name", || {
+        Ok(reliable.is_connected() && best_effort.is_connected())
+    })?;
+    for i in 10..20 {
+        offer(i)?;
+    }
+    // A subscriber joins at the sender's position, which can still be
+    // behind the publisher's (the first ten went to no network receiver):
+    // it gets a run of messages ending at the last, with the ten sent after
+    // it joined, none lost and in order.
+    for (name, sub) in [("reliable", &reliable), ("best-effort", &best_effort)] {
+        let mut got = Vec::new();
+        wait_until(&format!("the {name} subscriber's ten"), || {
+            sub.poll_fn(|m, _| got.push(m[0]), 100)?;
+            Ok(got.last() == Some(&19))
+        })?;
+        let first = *got.first().ok_or("nothing received")?;
+        assert!(first <= 10, "{name}: {got:?}");
+        assert_eq!(got, (first..20).collect::<Vec<u8>>(), "{name}");
+    }
+
+    // The archive has all twenty, from before and after the subscribers.
+    let mut ids = Vec::new();
+    let mut count = 0;
+    archive.list_recordings_for_uri_fn(&mut count, 0, 1000, c"aeron:udp", stream_id, |d| {
+        ids.push(d.recording_id())
+    })?;
+    let recording = *ids.last().ok_or("the spy made no recording")?;
+    let params = AeronArchiveReplayParams::new(-1, -1, 0, -1, -1, -1)?;
+    let session = archive.start_replay(recording, c"aeron:ipc", stream_id + 1, &params)?;
+    let replay = aeron
+        .async_add_subscription(
+            &format!("aeron:ipc?session-id={}", session as i32).into_c_string(),
+            stream_id + 1,
+            Handlers::NONE,
+            Handlers::NONE,
+        )?
+        .poll_blocking(Duration::from_secs(10))?;
+    let mut replayed = Vec::new();
+    wait_until("the recording to replay", || {
+        replay.poll_fn(|m, _| replayed.push(m[0]), 100)?;
+        Ok(replayed.len() >= 20)
+    })?;
+    assert_eq!(replayed, (0..20).collect::<Vec<u8>>());
+    let _ = archive.stop_replay(session);
+    let _ = archive.stop_recording_channel_and_stream(&spy.as_str().into_c_string(), stream_id);
+    Ok(())
+}
+
+/// A feed (a UDP publication in the registry) is recorded by the node's
+/// archive through the ingester's spy, and ingested beside the persist
+/// stream: two live recordings at once. Its tables are switched when
+/// inserted, since the feed itself is published regardless.
+#[test]
+fn a_feed_is_recorded_by_spy_and_its_table_switched_at_insert() -> TestResult {
+    let lab = Lab::new("aeron_feed", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let stream_id = stream(18);
+    let feed_stream = stream(19);
+    let port = 42_000 + (std::process::id() % 1000) as u16 * 2;
+    let streams = persist_client::streams::Streams::parse(&format!(
+        "services:\n  md-test: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    ))?;
+    let settings = persist_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        streams: Some(streams.clone()),
+        host_ip: "127.0.0.1".into(),
+        ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
+    };
+    let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    let persist = client(&lab, stream_id)?;
+    let feed = persist.feed(&streams.publication("md-test", "127.0.0.1")?, feed_stream)?;
+    wait_until("the persist stream and the feed to be recorded", || {
+        Ok(persist.is_connected() && feed.is_connected())
+    })?;
+    assert!(
+        feed.max_payload() < 1500,
+        "one UDP frame: {}",
+        feed.max_payload()
+    );
+    for _ in 0..50 {
+        taken(&persist, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    record(&persist, 30)?;
+    ingest(&mut ingester, &lab, "shapes", 80)?;
+    assert_eq!(
+        lab.query("SELECT app, count() FROM DB.shapes GROUP BY app FORMAT TSV")?,
+        "test-app\t80",
+        "the feed's rows are attributed through the Source message on the feed itself"
+    );
+
+    // Off for this app: the feed still publishes (a subscriber needs it) and
+    // the archive still records it, but the ingester keeps it out.
+    lab.write_config("tables:\n  shapes: { kind: dynamic, apps: { test-app: false } }\n")?;
+    std::thread::sleep(Duration::from_millis(1500));
+    for _ in 0..20 {
+        taken(&persist, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    for _ in 0..10 {
+        let report = ingester.tick()?;
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(dropped_but_back_pressure(&persist), 0, "published");
+    assert_eq!(
+        lab.query("SELECT count() FROM DB.shapes")?,
+        "80",
+        "not inserted"
+    );
+
+    // SIGTERM: every publication closes at once, so subscribers move on to
+    // the next publisher without waiting out this client's timeout. A
+    // record after it is quietly not published.
+    let before = persist.dropped();
+    persist.shutdown();
+    feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+    persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+    assert_eq!(persist.dropped(), before, "not counted as drops");
+    Ok(())
+}
+
+#[test]
+fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
+    use persist_client::streams::subscription_channel;
+
+    let lab = Lab::new("aeron_subscriber", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let (stream_id, feed_stream) = (stream(20), stream(21));
+    let port = 42_001 + (std::process::id() % 1000) as u16 * 2;
+    let publication = format!(
+        "aeron:udp?control=127.0.0.1:{port}|control-mode=dynamic|fc=max|ssc=true|term-length=64k"
+    );
+    let reader = client(&lab, stream_id)?;
+    let mut sub = reader.subscriber(
+        &subscription_channel("localhost", port, "127.0.0.1", true),
+        feed_stream,
+    );
+    // A name that never resolves: retried quietly, never a panic.
+    let mut nowhere = reader.subscriber(
+        &subscription_channel("nowhere.invalid", port, "127.0.0.1", true),
+        feed_stream,
+    );
+    // v1 messages, and messages that started a session.
+    let (rows, sessions) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let poll = |sub: &mut persist_client::feed::Subscriber| {
+        sub.poll(
+            |m, new| {
+                if m.get(4..6) == Some(&v1::SCHEMA_ID.to_le_bytes()[..]) {
+                    rows.set(rows.get() + 1);
+                }
+                sessions.set(sessions.get() + usize::from(new));
+            },
+            100,
+        )
+    };
+    for n in 1..=2 {
+        // A publisher, then its restart: a new client, so a new session.
+        let publisher = client(&lab, stream_id)?;
+        let feed = publisher.feed(&publication, feed_stream)?;
+        // Both ends: the subscriber's image appears one status message
+        // before the publisher counts it (no spy here for `ssc`).
+        wait_until("the subscriber and the publisher to connect", || {
+            poll(&mut sub);
+            Ok(sub.is_connected() && feed.is_connected())
+        })?;
+        // Connected a moment before the driver raises the publication's
+        // limit: early records are back pressured. Each is retried until
+        // taken.
+        for _ in 0..5 {
+            taken(&publisher, || {
+                feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+            })?;
+        }
+        wait_until("the publisher's rows", || {
+            poll(&mut sub);
+            Ok(rows.get() == 5 * n)
+        })?;
+        // The next publisher starts at once. A publication still open on
+        // the driver would be shared, in the same session, and the
+        // subscriber would never see the restart: `shutdown` returns only
+        // once the driver has the close.
+        publisher.shutdown();
+    }
+    assert_eq!(sessions.get(), 2, "the first session, then the restart");
+    assert_eq!(poll(&mut nowhere), 0);
+    assert!(!nowhere.is_connected());
+    Ok(())
+}
+
+#[test]
+fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestResult {
+    let lab = Lab::new("aeron_persistent", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let (stream_id, feed_stream) = (stream(22), stream(23));
+    let port = 43_000 + (std::process::id() % 1000) as u16 * 2;
+    // `md-test.localhost` is this machine, and so is its archive.
+    let streams = persist_client::streams::Streams::parse(&format!(
+        "domain: localhost\narchive_port: 18010\nservices:\n  md-test: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    ))?;
+    // The node's ingester has its archive record the feed.
+    let settings = persist_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        streams: Some(streams.clone()),
+        host_ip: "127.0.0.1".into(),
+        ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
+    };
+    let _ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    let publication = streams.publication("md-test", "127.0.0.1")?;
+    let reader = client(&lab, stream_id)?;
+    let mut sub = reader.persistent(&streams, "md-test", "md", "127.0.0.1")?;
+    // v1 messages, and messages that started a subscription.
+    let (rows, fresh) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let poll = |sub: &mut persist_client::persistent::Persistent| {
+        sub.poll(
+            |m, new| {
+                if m.get(4..6) == Some(&v1::SCHEMA_ID.to_le_bytes()[..]) {
+                    rows.set(rows.get() + 1);
+                }
+                fresh.set(fresh.get() + usize::from(new));
+            },
+            100,
+        )
+    };
+
+    let first = client(&lab, stream_id)?;
+    let feed = first.feed(&publication, feed_stream)?;
+    wait_until("the feed to be recorded", || Ok(feed.is_connected()))?;
+    // It starts from live: what was published before is not its business.
+    wait_until("the subscriber to go live", || {
+        taken(&first, || feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode))?;
+        poll(&mut sub);
+        Ok(sub.is_live())
+    })?;
+    // Take everything in flight: quiet for 200 ms.
+    let drain = |sub: &mut persist_client::persistent::Persistent| {
+        let mut quiet = Instant::now();
+        while quiet.elapsed() < Duration::from_millis(200) {
+            if poll(sub) > 0 {
+                quiet = Instant::now();
+            }
+        }
+    };
+    drain(&mut sub);
+    rows.set(0);
+    for _ in 0..5 {
+        taken(&first, || feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode))?;
+    }
+    wait_until("the first publisher's five", || {
+        poll(&mut sub);
+        Ok(rows.get() >= 5)
+    })?;
+    assert_eq!(rows.get(), 5);
+
+    // A restart: a new session, which publishes before the subscriber polls
+    // again, past the old session's last position. Back on the live stream,
+    // Aeron's persistent subscription would take the new image as if it
+    // continued the old recording, having missed its start. Every one of its
+    // messages arrives, once, as a new session.
+    first.shutdown();
+    let second = client(&lab, stream_id)?;
+    let feed = second.feed(&publication, feed_stream)?;
+    for _ in 0..100 {
+        taken(&second, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    wait_until("the second publisher's hundred", || {
+        poll(&mut sub);
+        Ok(rows.get() >= 105)
+    })?;
+    drain(&mut sub);
+    assert_eq!(rows.get(), 105, "every message, once");
+    assert_eq!(
+        fresh.get(),
+        2,
+        "the first subscription, then the new session's"
+    );
+    Ok(())
 }

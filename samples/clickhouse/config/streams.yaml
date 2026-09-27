@@ -1,0 +1,43 @@
+# The feed registry: every service that publishes, its UDP port and its
+# streams, read by md, the engines, the dummy exchanges and the ingesters.
+#
+# * A service runs as one pod, in its region, on any node there. It
+#   publishes with its multi-destination-cast control socket on that node's
+#   IP and `port`; subscribers reach it by name,
+#   <service>.lab.svc.cluster.local, which Kubernetes keeps pointing at the
+#   node it runs on. So when it moves, subscribers follow.
+# * Ports and stream ids are unique across the whole registry, so any
+#   services share a node without clashing: adding a feed is one line here.
+# * Each node's archive records every archived stream published on that
+#   node, through a spy on the publication (shared memory, no network).
+#
+# Regions (topology.kubernetes.io/region), by the exchange's matching engine:
+#   an1 Tokyo, as1 Singapore/Hong Kong, ew2 London LD4.
+domain: lab.svc.cluster.local
+# Every node's archive: its control port (deploy/lab.yaml), which a persistent
+# subscription reaches by its publisher's name.
+archive_port: 8010
+services:
+  md-binance:     { port: 40501, region: an1, streams: { md: 2011, tob: 2012 } }
+  md-hyperliquid: { port: 40502, region: an1, streams: { md: 2021, tob: 2022 } }
+  md-bybit:       { port: 40503, region: as1, streams: { md: 2031, tob: 2032 } }
+  md-okx:         { port: 40504, region: as1, streams: { md: 2041, tob: 2042 } }
+  md-deribit:     { port: 40505, region: ew2, streams: { md: 2051, tob: 2052 } }
+  # One engine and one dummy exchange per region.
+  engine-an1:     { port: 40601, region: an1, streams: { signals: 3011, orders: 3012 } }
+  engine-as1:     { port: 40602, region: as1, streams: { signals: 3021, orders: 3022 } }
+  engine-ew2:     { port: 40603, region: ew2, streams: { signals: 3031, orders: 3032 } }
+  exch-sim-an1:   { port: 40701, region: an1, streams: { exec: 4011 } }
+  exch-sim-as1:   { port: 40702, region: as1, streams: { exec: 4021 } }
+  exch-sim-ew2:   { port: 40703, region: ew2, streams: { exec: 4031 } }
+kinds:
+  # Reliable: subscribers NAK and get every message; a slow one catches up
+  # from the archive (a persistent subscription) instead of slowing the
+  # publisher.
+  md:      { reliable: true }   # trades, order book changes, snapshots, bars
+  signals: { reliable: true }   # EMAs, the aggregated book
+  orders:  { reliable: true }
+  exec:    { reliable: true }   # execution reports
+  # Best effort: reliable=false|tether=false|group=false. Only the latest
+  # matters, so a lost one is not resent.
+  tob:     { reliable: false }  # quotes (top of book), tickers

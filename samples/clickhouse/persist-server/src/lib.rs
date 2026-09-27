@@ -44,7 +44,7 @@ mod table;
 mod traces;
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use persist_client::metrics::{
@@ -123,6 +123,11 @@ pub struct Settings {
     /// How often the media driver's counters, errors and losses are sampled
     /// into `aeron_counters`, `aeron_errors` and `aeron_loss`; zero never.
     pub aeron_stats_interval: Duration,
+    /// The feed registry: every archived feed published on this node is
+    /// recorded through a spy. `None` records the persist stream only.
+    pub streams: Option<persist_client::streams::Streams>,
+    /// This node's IP, which feeds published here bind.
+    pub host_ip: String,
 }
 
 impl Settings {
@@ -143,15 +148,33 @@ impl Settings {
             max_queued_bytes: 64 << 20,
             recheck: Duration::from_secs(30),
             aeron_stats_interval: Duration::from_secs(5),
+            streams: None,
+            host_ip: "127.0.0.1".into(),
         }
     }
 
     /// [`Settings::new`] from `CLICKHOUSE_URL` (`http://localhost:8123`),
     /// `CLICKHOUSE_USER` (`lab`), `CLICKHOUSE_PASSWORD` (`lab`),
     /// `CLICKHOUSE_DATABASE` (`market`), `PERSIST_CONFIG`
-    /// (`config/tables.yaml`) and `PERSIST_CHECKPOINT` (`persist.checkpoint`).
-    #[must_use]
-    pub fn from_env() -> Self {
+    /// (`config/tables.yaml`), `PERSIST_CHECKPOINT` (`persist.checkpoint`),
+    /// `PERSIST_STREAMS` (`config/streams.yaml`, if it exists) and `HOST_IP`
+    /// (`127.0.0.1`).
+    pub fn from_env() -> Result<Self, Error> {
+        let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+        let streams_path = var("PERSIST_STREAMS", "config/streams.yaml");
+        let streams = if Path::new(&streams_path).exists() {
+            Some(persist_client::streams::Streams::load(&streams_path)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            streams,
+            host_ip: var("HOST_IP", "127.0.0.1"),
+            ..Self::from_env_without_feeds()
+        })
+    }
+
+    fn from_env_without_feeds() -> Self {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         Self::new(
             ClickHouse::new(
@@ -377,14 +400,15 @@ fn messages(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// `(source id, message)` of each record in a table's queue.
-fn records(mut rest: &[u8]) -> impl Iterator<Item = (u64, &[u8])> {
+/// `(source id, from a feed, message)` of each record in a table's queue.
+fn records(mut rest: &[u8]) -> impl Iterator<Item = (u64, bool, &[u8])> {
     std::iter::from_fn(move || {
         let (len, tail) = rest.split_first_chunk::<4>()?;
         let (source, tail) = tail.split_first_chunk::<8>()?;
+        let (feed, tail) = tail.split_first()?;
         let (message, tail) = tail.split_at_checked(u32::from_le_bytes(*len) as usize)?;
         rest = tail;
-        Some((u64::from_le_bytes(*source), message))
+        Some((u64::from_le_bytes(*source), *feed != 0, message))
     })
 }
 
@@ -423,7 +447,9 @@ pub struct Writer {
     /// source. They are queued, so nothing is checkpointed past them, and
     /// wait up to `shape_wait` for it: the application sends every shape
     /// every 5 s.
-    pending: Vec<(Instant, u64, Vec<u8>)>,
+    pending: Vec<(Instant, u64, bool, Vec<u8>)>,
+    /// The message being pushed is from a feed's recording.
+    feed: bool,
     shape_wait: Duration,
 }
 
@@ -467,6 +493,7 @@ impl Writer {
             unknown_shapes: 0,
             shape_errors: Vec::new(),
             pending: Vec::new(),
+            feed: false,
             shape_wait: Duration::from_secs(30),
         };
         let text = std::fs::read_to_string(&writer.config_path)
@@ -481,6 +508,20 @@ impl Writer {
     /// `tables.yaml`: the message is skipped, and counted in the next
     /// tick's errors.
     pub fn push(&mut self, message: &[u8], source: u64) -> bool {
+        self.push_message(message, source)
+    }
+
+    /// [`Writer::push`] of a message from a recording; `feed` when it is a
+    /// feed's, whose tables `tables.yaml` switches here, when inserted
+    /// (subscribers needed every message, so it was published regardless).
+    pub fn push_from(&mut self, message: &[u8], source: u64, feed: bool) -> bool {
+        self.feed = feed;
+        let queued = self.push_message(message, source);
+        self.feed = false;
+        queued
+    }
+
+    fn push_message(&mut self, message: &[u8], source: u64) -> bool {
         let id = |at: usize| {
             message
                 .get(at..at + 2)
@@ -519,7 +560,7 @@ impl Writer {
                 }
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, message.to_vec()));
                 return true;
             };
             self.tables.iter_mut().find_map(|s| match &mut s.source {
@@ -546,9 +587,10 @@ impl Writer {
         };
         state.queued.extend_from_slice(&len.to_le_bytes());
         state.queued.extend_from_slice(&source.to_le_bytes());
+        state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
-        self.queued_bytes += 12 + message.len();
+        self.queued_bytes += 13 + message.len();
         true
     }
 
@@ -564,7 +606,7 @@ impl Writer {
             Some(true) => {
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, message.to_vec()));
                 true
             }
         }
@@ -582,9 +624,10 @@ impl Writer {
         };
         state.queued.extend_from_slice(&len.to_le_bytes());
         state.queued.extend_from_slice(&source.to_le_bytes());
+        state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
-        self.queued_bytes += 12 + message.len();
+        self.queued_bytes += 13 + message.len();
         true
     }
 
@@ -603,7 +646,7 @@ impl Writer {
             Some(_) => {
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, message.to_vec()));
                 true
             }
         }
@@ -670,13 +713,13 @@ impl Writer {
                 // The rows that were waiting for it.
                 let waiting: Vec<_> = self
                     .pending
-                    .extract_if(.., |(_, _, row)| {
+                    .extract_if(.., |(_, _, _, row)| {
                         row.get(8..12) == Some(&id.to_le_bytes()[..])
                     })
                     .collect();
-                for (_, source, row) in waiting {
+                for (_, source, feed, row) in waiting {
                     self.queued_bytes -= row.len();
-                    self.push(&row, source);
+                    self.push_from(&row, source, feed);
                 }
             }
         }
@@ -732,14 +775,14 @@ impl Writer {
     fn repush(&mut self, templates: [u16; 2]) {
         let waiting: Vec<_> = self
             .pending
-            .extract_if(.., |(_, _, m)| {
+            .extract_if(.., |(_, _, _, m)| {
                 m.get(2..4)
                     .is_some_and(|t| templates.iter().any(|x| t == x.to_le_bytes()))
             })
             .collect();
-        for (_, source, m) in waiting {
+        for (_, source, feed, m) in waiting {
             self.queued_bytes -= m.len();
-            self.push(&m, source);
+            self.push_from(&m, source, feed);
         }
     }
 
@@ -953,7 +996,8 @@ impl Writer {
                 traces: &self.trace_defs,
             };
             let mut names = Vec::new();
-            for (source, message) in records(&state.queued) {
+            let now = jiff::Timestamp::now();
+            for (source, feed, message) in records(&state.queued) {
                 let known = self.origins.get(&source);
                 if known.is_none() && source != 0 {
                     self.unknown_origins += 1;
@@ -961,6 +1005,16 @@ impl Writer {
                 let known = known.map_or(["", "", ""], |o| {
                     [o.host.as_str(), o.pod.as_str(), o.app.as_str()]
                 });
+                // A feed was published whatever `tables.yaml` says; whether
+                // it is kept is decided now, for the app that recorded it.
+                if feed
+                    && !state
+                        .config
+                        .as_ref()
+                        .is_some_and(|c| c.is_on(known[2], now))
+                {
+                    continue;
+                }
                 names.clear();
                 for (name, _) in known.iter().zip(origin).filter(|(_, i)| **i) {
                     table::write_string(name.as_bytes(), &mut names);

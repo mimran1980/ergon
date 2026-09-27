@@ -1,4 +1,4 @@
-# Aeron media driver + archive in one JVM (LabDriver.java). Settings come
+# The Aeron Archive (LabDriver.java), a client of the node's C media driver. Settings come
 # from JAVA_TOOL_OPTIONS (see lab.yaml).
 FROM eclipse-temurin:21-jdk AS build
 RUN wget -q -O /aeron-all.jar \

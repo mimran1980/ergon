@@ -33,22 +33,18 @@
 //! ClickHouse. Which tables are recorded is decided by `config/tables.yaml`,
 //! re-read while this runs.
 
-#[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
-#[rustfmt::skip]
-#[path = "generated/market.rs"]
-mod market;
-
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use arrayvec::ArrayVec;
 
-use market::{
+use market::market::{
     BarEncoder, BarFixedFields, BookAction, BookDeltasDeltasEntry, BookDeltasEncoder,
     BookDeltasFixedFields, BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder,
     BookSnapshotFixedFields, Decimal9, FundingRateEncoder, FundingRateFixedFields,
-    IndexPriceEncoder, IndexPriceFixedFields, MarkPriceEncoder, MarkPriceFixedFields, QuoteEncoder,
-    QuoteFixedFields, Side, TradeEncoder, TradeFixedFields, TryToSbe,
+    IndexPriceEncoder, IndexPriceFixedFields, InstrumentSpecEncoder, InstrumentSpecFixedFields,
+    MarkPriceEncoder, MarkPriceFixedFields, QuoteEncoder, QuoteFixedFields, Rate, Side,
+    TradeEncoder, TradeFixedFields, TryToSbe,
 };
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
@@ -86,11 +82,11 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use tracing_subscriber::layer::SubscriberExt;
 
-const SCHEMA: &str = include_str!("../../schema/market.xml");
 /// Levels per side in each `book_snapshot` row.
 const BOOK_LEVELS: usize = 10;
-/// Book changes per `book_deltas` row: a whole snapshot would not fit one.
-const DELTAS_PER_ROW: usize = 1000;
+/// At most this many book changes per `book_deltas` message; fewer when one
+/// UDP frame holds fewer (see [`Feeds::open`]).
+const MAX_DELTAS_PER_ROW: usize = 1000;
 
 /// An exchange this recorder can follow.
 #[derive(Debug)]
@@ -192,6 +188,58 @@ struct Recorder {
     /// One `book_deltas` row's changes, reused.
     deltas: Vec<BookDeltasDeltasEntry>,
     t: Telemetry,
+    feeds: Feeds,
+}
+
+/// This exchange's feeds (config/streams.yaml): market data other
+/// applications subscribe to, recorded by the archive of the node it runs on.
+struct Feeds {
+    /// Reliable: trades, order book changes and snapshots, bars, mark and
+    /// index prices, funding rates.
+    md: persist_client::feed::Feed,
+    /// Best effort: quotes (top of book).
+    tob: persist_client::feed::Feed,
+    /// Book changes per `book_deltas` message: as many as one UDP frame holds.
+    deltas_per_row: usize,
+}
+
+impl std::fmt::Debug for Feeds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Feeds")
+            .field("md", &self.md.stream_id())
+            .field("tob", &self.tob.stream_id())
+            .finish()
+    }
+}
+
+impl Feeds {
+    /// Open `service`'s feeds from the registry, on the node at `host_ip`.
+    fn open(persist: &Persist, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let streams = persist_client::streams::Streams::load(
+            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
+        )?;
+        let host_ip = std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into());
+        let channel = streams.publication(service, &host_ip)?;
+        let md = persist.feed(&channel, streams.stream(service, "md")?)?;
+        let tob = persist.feed(&channel, streams.stream(service, "tob")?)?;
+        // Room for the longest symbol and venue name in these feeds.
+        let fits =
+            |n: usize| BookDeltasEncoder::compute_length_with_header(n, 32, 16) <= md.max_payload();
+        let deltas_per_row = (1..=MAX_DELTAS_PER_ROW)
+            .rev()
+            .find(|&n| fits(n))
+            .unwrap_or(1);
+        log::info!(
+            "feeds {service}: md stream {}, tob stream {}, on {channel}; {deltas_per_row} book changes a message",
+            md.stream_id(),
+            tob.stream_id()
+        );
+        Ok(Self {
+            md,
+            tob,
+            deltas_per_row,
+        })
+    }
 }
 
 /// The recorder's own metrics and trace. Made once; each update is a load
@@ -319,7 +367,7 @@ impl DataActor for Recorder {
             maker_fee = %i.maker_fee(),
             taker_fee = %i.taker_fee(),
         );
-        Ok(())
+        self.spec(i)
     }
 
     fn on_instrument_status(&mut self, s: &InstrumentStatus) -> anyhow::Result<()> {
@@ -351,24 +399,26 @@ impl DataActor for Recorder {
         let trade_id = t.trade_id.as_str().as_bytes();
         let len =
             TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-        persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
-            Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&TradeFixedFields {
-                    ts_event: t.ts_event.as_u64(),
-                    ts_init: t.ts_init.as_u64(),
-                    price: d9(t.price.as_decimal())?,
-                    size: d9(t.size.as_decimal())?,
-                    aggressor: match t.aggressor_side {
-                        AggressorSide::Buy => Side::Buy,
-                        AggressorSide::Sell => Side::Sell,
-                        AggressorSide::NoAggressor => Side::NoSide,
-                    },
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .trade_id(trade_id)?
-                .encoded_length_with_header())
-        })?;
+        self.feeds
+            .md
+            .record(TradeEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+                Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&TradeFixedFields {
+                        ts_event: t.ts_event.as_u64(),
+                        ts_init: t.ts_init.as_u64(),
+                        price: d9(t.price.as_decimal())?,
+                        size: d9(t.size.as_decimal())?,
+                        aggressor: match t.aggressor_side {
+                            AggressorSide::Buy => Side::Buy,
+                            AggressorSide::Sell => Side::Sell,
+                            AggressorSide::NoAggressor => Side::NoSide,
+                        },
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .trade_id(trade_id)?
+                    .encoded_length_with_header())
+            })?;
         let took = self.t.clock.now().since(started);
         self.t.record_ns.record(took.max(0) as u64);
         Ok(())
@@ -380,20 +430,22 @@ impl DataActor for Recorder {
         self.t.quote_latency.record(latency);
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
-        persist_client::record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
-            Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&QuoteFixedFields {
-                    ts_event: q.ts_event.as_u64(),
-                    ts_init: q.ts_init.as_u64(),
-                    bid_price: d9(q.bid_price.as_decimal())?,
-                    ask_price: d9(q.ask_price.as_decimal())?,
-                    bid_size: d9(q.bid_size.as_decimal())?,
-                    ask_size: d9(q.ask_size.as_decimal())?,
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })?;
+        self.feeds
+            .tob
+            .record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+                Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&QuoteFixedFields {
+                        ts_event: q.ts_event.as_u64(),
+                        ts_init: q.ts_init.as_u64(),
+                        bid_price: d9(q.bid_price.as_decimal())?,
+                        ask_price: d9(q.ask_price.as_decimal())?,
+                        bid_size: d9(q.bid_size.as_decimal())?,
+                        ask_size: d9(q.ask_size.as_decimal())?,
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })?;
         // A derived signal needs no schema: one event, and `spread` in
         // tables.yaml, make a table whose columns are these fields.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
@@ -409,9 +461,10 @@ impl DataActor for Recorder {
         self.t.books.inc();
         self.ticker(book);
         book_view(book);
-        // Reading a snapshot walks the book: skip all of it when the table is off.
-        if !persist_client::enabled(BookSnapshotEncoder::TEMPLATE_ID) {
-            return Ok(());
+        // Published whether or not `book_snapshot` is persisted: a
+        // subscriber that joins or falls behind resyncs its book from it.
+        if let Some(instrument) = self.cache().instrument(&book.instrument_id) {
+            self.spec(&instrument)?;
         }
         let now = self.core.timestamp_ns().as_u64();
         let (symbol, venue) = names(&book.instrument_id);
@@ -422,7 +475,7 @@ impl DataActor for Recorder {
             symbol.len(),
             venue.len(),
         );
-        persist_client::record(
+        self.feeds.md.record(
             BookSnapshotEncoder::TEMPLATE_ID,
             len,
             |buf| -> anyhow::Result<_> {
@@ -462,12 +515,8 @@ impl DataActor for Recorder {
         );
         trace.mark(self.t.clock.now());
         trace.attr(0, d.deltas.len() as i64);
-        if !persist_client::enabled(BookDeltasEncoder::TEMPLATE_ID) {
-            trace.finish();
-            return Ok(());
-        }
         let (symbol, venue) = names(&d.instrument_id);
-        for (i, chunk) in d.deltas.chunks(DELTAS_PER_ROW).enumerate() {
+        for (i, chunk) in d.deltas.chunks(self.feeds.deltas_per_row).enumerate() {
             self.deltas.clear();
             for delta in chunk {
                 self.deltas.push(BookDeltasDeltasEntry {
@@ -495,7 +544,7 @@ impl DataActor for Recorder {
                 symbol.len(),
                 venue.len(),
             );
-            persist_client::record(
+            self.feeds.md.record(
                 BookDeltasEncoder::TEMPLATE_ID,
                 len,
                 |buf| -> anyhow::Result<_> {
@@ -527,7 +576,7 @@ impl DataActor for Recorder {
         let (symbol, venue) = names(&id);
         let spec = b.bar_type.to_string();
         let len = BarEncoder::compute_length_with_header(symbol.len(), venue.len(), spec.len());
-        persist_client::record(BarEncoder::TEMPLATE_ID, len, |buf| {
+        self.feeds.md.record(BarEncoder::TEMPLATE_ID, len, |buf| {
             Ok(BarEncoder::wrap_and_apply_header(buf, 0)
                 .fixed(&BarFixedFields {
                     ts_event: b.ts_event.as_u64(),
@@ -549,53 +598,59 @@ impl DataActor for Recorder {
         self.tickers.entry(m.instrument_id).or_default().mark = Some(m.value.as_f64());
         let (symbol, venue) = names(&m.instrument_id);
         let len = MarkPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        persist_client::record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&MarkPriceFixedFields {
-                    ts_event: m.ts_event.as_u64(),
-                    ts_init: m.ts_init.as_u64(),
-                    price: d9(m.value.as_decimal())?,
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })
+        self.feeds
+            .md
+            .record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&MarkPriceFixedFields {
+                        ts_event: m.ts_event.as_u64(),
+                        ts_init: m.ts_init.as_u64(),
+                        price: d9(m.value.as_decimal())?,
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })
     }
 
     fn on_index_price(&mut self, x: &IndexPriceUpdate) -> anyhow::Result<()> {
         self.tickers.entry(x.instrument_id).or_default().index = Some(x.value.as_f64());
         let (symbol, venue) = names(&x.instrument_id);
         let len = IndexPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        persist_client::record(IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&IndexPriceFixedFields {
-                    ts_event: x.ts_event.as_u64(),
-                    ts_init: x.ts_init.as_u64(),
-                    price: d9(x.value.as_decimal())?,
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })
+        self.feeds
+            .md
+            .record(IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&IndexPriceFixedFields {
+                        ts_event: x.ts_event.as_u64(),
+                        ts_init: x.ts_init.as_u64(),
+                        price: d9(x.value.as_decimal())?,
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
         self.tickers.entry(f.instrument_id).or_default().funding = f.rate.to_f64();
         let (symbol, venue) = names(&f.instrument_id);
         let len = FundingRateEncoder::compute_length_with_header(symbol.len(), venue.len());
-        persist_client::record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&FundingRateFixedFields {
-                    ts_event: f.ts_event.as_u64(),
-                    ts_init: f.ts_init.as_u64(),
-                    rate: rate(f.rate)?,
-                    interval_minutes: f.interval,
-                    next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .encoded_length_with_header())
-        })
+        self.feeds
+            .md
+            .record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&FundingRateFixedFields {
+                        ts_event: f.ts_event.as_u64(),
+                        ts_init: f.ts_init.as_u64(),
+                        rate: rate(f.rate)?,
+                        interval_minutes: f.interval,
+                        next_funding_ts: f.next_funding_ns.map(|t| t.as_u64()),
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .encoded_length_with_header())
+            })
     }
 
     /// Venue-specific data: into `ticker` where it fits, and every field, as
@@ -651,6 +706,37 @@ impl DataActor for Recorder {
 }
 
 impl Recorder {
+    /// How to read `i`'s sizes, on the md feed: when it is loaded, and before
+    /// each book snapshot, so a subscriber that joins late or resyncs has it.
+    fn spec(&self, i: &InstrumentAny) -> anyhow::Result<()> {
+        let id = i.id();
+        let (symbol, venue) = names(&id);
+        let base = i.base_currency().map_or("", |c| c.code.as_str());
+        let quote = i.quote_currency().code.as_str();
+        let len = InstrumentSpecEncoder::compute_length_with_header(
+            symbol.len(),
+            venue.len(),
+            base.len(),
+            quote.len(),
+        );
+        let ts = self.core.timestamp_ns().as_u64();
+        self.feeds
+            .md
+            .record(InstrumentSpecEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(InstrumentSpecEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&InstrumentSpecFixedFields {
+                        ts_event: ts,
+                        multiplier: d9(i.multiplier().as_decimal())?,
+                        inverse: u8::from(i.is_inverse()),
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .base(base.as_bytes())?
+                    .quote(quote.as_bytes())?
+                    .encoded_length_with_header())
+            })
+    }
+
     /// One `ticker` row: the instrument's last second. Its columns are
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
@@ -776,7 +862,7 @@ fn d9(d: Decimal) -> anyhow::Result<Decimal9> {
 
 /// `d` exactly, as the schema's `Rate` (mantissa x 10^-18): funding rates
 /// carry more decimals than `Decimal9` holds.
-fn rate(d: Decimal) -> anyhow::Result<market::Rate> {
+fn rate(d: Decimal) -> anyhow::Result<Rate> {
     d.try_to_sbe().map_err(anyhow::Error::msg)
 }
 
@@ -844,19 +930,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // After `build()`, so persist's log lines go through Nautilus' logger.
     // Installed for the process: every callback records through
     // `persist_client::record` and friends, with no handle to pass around.
-    let persist = Persist::connect(SCHEMA, Settings::from_env())?;
+    let persist = Persist::connect(market::MARKET_SCHEMA, Settings::from_env())?;
     persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
+    let service = std::env::var("SERVICE").unwrap_or_else(|_| format!("md-{}", venue.name));
+    let feeds = Feeds::open(&persist, &service)?;
+    // SIGTERM (a restart, or a move to another node): close every
+    // publication at once, so subscribers turn to the next pod of this feed
+    // within seconds rather than after this client's timeout.
+    let closing = persist.clone();
+    tokio::spawn(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            term.recv().await;
+            log::info!("SIGTERM: closing the feeds");
+            closing.shutdown();
+            std::process::exit(0);
+        }
+    });
     // Publishes the metrics every interval. A busy-spinning application
     // calls `poll` from its own loop instead, with the time it has.
     let metrics = persist.metrics();
+    let idle = persist_client::idle::Idle::from_env("IDLE", persist_client::idle::Idle::Sleep)?;
     std::thread::Builder::new()
         .name("metrics".into())
         .spawn(move || {
             let clock = Clock::new();
             loop {
                 metrics.poll(clock.now());
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                idle.idle(0);
             }
         })?;
     node.add_actor(Recorder {
@@ -864,8 +966,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         venue,
         tickers: HashMap::new(),
         volatility: HashMap::new(),
-        deltas: Vec::with_capacity(DELTAS_PER_ROW),
+        deltas: Vec::with_capacity(MAX_DELTAS_PER_ROW),
         t: Telemetry::new(venue),
+        feeds,
     })?;
     node.run().await?;
     Ok(())

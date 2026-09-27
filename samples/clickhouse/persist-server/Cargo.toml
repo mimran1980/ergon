@@ -12,15 +12,17 @@ name = "ingester"
 path = "src/main.rs"
 
 [dependencies]
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 ergo-sbe.workspace = true
 log.workspace = true
 persist-client.workspace = true
 rusteron-archive.workspace = true
+signal-hook = "0.3"
 ureq = { version = "2", default-features = false }
 
 [dev-dependencies]
-jiff = { version = "0.2", default-features = false, features = ["std"] }
+market.workspace = true
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }

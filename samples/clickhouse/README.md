@@ -2,30 +2,42 @@
 
 Record anything a low-latency application sees into ClickHouse, and switch
 recording on and off while it runs. The application only publishes to Aeron;
-a separate ingester does the ClickHouse work.
+a separate ingester does the ClickHouse work. The lab around it is a small
+trading deployment: feed handlers publishing market data over UDP, one
+shared media driver per node, and an engine per region trading on it.
 
 ```text
-recorder app ──try_claim──▶ Aeron IPC ──▶ Aeron Archive (disk) ──replay──▶ ingester ──▶ ClickHouse
-(persist-client)                          purged behind the ingester      (persist-server)
+             node (one of four, in three regions)
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │ md-<exchange> ──UDP MDC feeds──▶ other nodes' engines                │
+ │      │  (IPC: events, metrics, traces)                                │
+ │      ▼                                                                │
+ │ aeron pod: C media driver ◀── spy ── Java archive ──replay──▶ ingester ──▶ ClickHouse
+ │ engine-<region> ──orders──▶ exch-sim-<region> ──fills──▶ engine        │
+ └──────────────────────────────────────────────────────────────────────┘
 ```
 
 | Crate | What it is |
 |---|---|
-| `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else, metrics, traces and a low-latency clock. |
+| `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else, metrics, traces, a low-latency clock, UDP feeds (`Feed`, `Subscriber`, `Persistent`) and the feed registry. |
 | `persist-server` | The ingester, as a library and the `ingester` binary: replays the archive into ClickHouse tables, checkpoints, purges. |
-| `recorder` | The sample application: public market data from one exchange (Binance, Bybit, OKX, Deribit or Hyperliquid) via NautilusTrader, no API keys. |
+| `market` | The lab's SBE codecs: `schema/market.xml` (market data) and `schema/trading.xml` (EMAs, aggregated books, orders, fills). |
+| `md` | A feed handler: public market data from one exchange (Binance, Bybit, OKX, Deribit or Hyperliquid) via NautilusTrader, no API keys, published as SBE on its UDP feeds. |
+| `engine` | `engine`, a region's trading engine, and `exch-sim`, its dummy exchange. |
+| `aeron-driver` | The C media driver (Aeron 1.52.2, from `rusteron-media-driver`), configured from the environment. |
 
 ## Run it
 
 ```sh
 cd samples/clickhouse
-just up                # kind cluster: ClickHouse, Grafana, JupyterLab, Aeron, the ingester, Binance and Bybit
-just exchange deribit  # add an exchange: binance bybit okx deribit hyperliquid
+just up                # kind cluster (4 nodes, 3 regions): ClickHouse, Grafana, JupyterLab, Aeron, the ingesters, every exchange, an engine per region
+just exchange deribit  # (re)deploy an exchange's feed handler: binance bybit okx deribit hyperliquid
 just unexchange okx    # remove one; its data stays
-just recorder          # rebuild + redeploy the recorders and ingester after a code or schema change
+just engines           # (re)deploy each region's engine and dummy exchange
+just md                # rebuild + redeploy the feed handlers, engines and ingesters after a code or schema change
 just aeron             # rebuild + redeploy Aeron, then its clients
-just verify            # end-to-end check of the running lab
-just logs              # recorder, ingester and Aeron logs
+just verify            # end-to-end check of the running lab, including moving a feed handler between nodes
+just logs              # feed handler, engine, ingester and Aeron logs
 ```
 
 You need Docker, kind, kubectl, just and jq.
@@ -38,28 +50,183 @@ this checkout mounted read-write): run it only on a network you trust.
 | What | Where |
 |---|---|
 | ClickHouse query UI | <http://localhost:8123/play> (user `lab`, password `lab`) |
-| Grafana | <http://localhost:3000>: *Market data*, *ClickHouse tables* (every table, plus ad-hoc SQL), *Metrics*, *Traces* (with the trace view) and *Aeron* |
+| Grafana | <http://localhost:3000>: *Trading* (EMAs, aggregated book, orders, tick-to-trade), *Aeron* (feeds by node, receivers behind senders, MDC destinations, NAKs, re-resolutions), *Market data*, *ClickHouse tables*, *Metrics* and *Traces* |
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb>, then Run All |
 | What is recorded | `config/tables.yaml`: edits apply within a second |
+| Who publishes what | `config/streams.yaml`: every service's port, region and streams |
 
 | Pod | Kind | What it runs |
 |---|---|---|
-| `aeron` | DaemonSet, one per node | The Aeron media driver and archive. Its directory is on the node's tmpfs, so every pod on the node shares it; the recordings are on the node's disk. |
+| `aeron` | DaemonSet, one per node, host network | The C media driver (conductor, sender and receiver threads) and the Java archive as its client. Its directory is on the node's tmpfs, so every pod on the node shares it; the recordings are on the node's disk. |
 | `ingester` | DaemonSet, beside each Aeron | Archive -> ClickHouse. Its checkpoint is on the node's disk. |
-| `recorder-<exchange>` | Deployment per exchange | NautilusTrader + persist-client for one exchange (`deploy/recorder.yaml`). |
-
-The recorders on a node publish on one Aeron stream. Aeron shares one IPC
-publication between them, so they make one recording, and adding or removing
-an exchange touches nothing else.
-
-If a pause (a laptop sleeping, say) outlasts Aeron's 30 s timeouts, the
-archive dies. The `aeron` pod then exits and is restarted, and the ingester
-and recorders exit and reconnect to the new driver. The ingester also exits
-on any failed archive request, and resumes from its checkpoint.
+| `md-<exchange>` | Deployment per exchange, host network, in its region | NautilusTrader + persist-client for one exchange (`deploy/md.yaml`). |
+| `engine-<region>`, `exch-sim-<region>` | Deployment per region, host network | The engine and its dummy exchange (`deploy/engine.yaml`). |
 
 `just stop` / `just start` pause the cluster and keep the data;
 `just destroy` deletes it. `just test` leaves a ClickHouse and an Aeron
 driver running for the next run; `just test-stop` frees their memory.
+
+## Architecture
+
+**Regions.** Each kind node carries `topology.kubernetes.io/region`: `an1`
+(Tokyo, two nodes: Binance, Hyperliquid), `as1` (Singapore: Bybit, OKX) and
+`ew2` (London: Deribit). A feed handler runs in its exchange's region, on
+any node there; each region has one engine and one dummy exchange, which see
+only that region's venues. The global view is ClickHouse.
+
+**One registry, no clashes.** `config/streams.yaml` gives every publishing
+service its own UDP control port and every stream its own id, so any
+services can share a node's driver and a pod can move anywhere without a
+clash. `Streams::parse` refuses a duplicate port or id. Adding a feed is one
+line.
+
+```yaml
+md-binance: { port: 40501, region: an1, streams: { md: 2011, tob: 2012 } }
+kinds: { md: { reliable: true }, tob: { reliable: false } }
+```
+
+**Finding a publisher that moves: Kubernetes DNS is the dynamic DNS.** Every
+publisher runs on the host network, so its pod IP is its node's IP, and has a
+headless Service of its own name. `md-binance.lab.svc.cluster.local` so
+always resolves to the node, and the driver, it runs on; Kubernetes
+registers and deregisters it as the pod moves. Publishers bind their
+multi-destination-cast (MDC) control socket on their node
+(`control=$HOST_IP:40501|control-mode=dynamic`); subscribers name it
+(`endpoint=$HOST_IP:0|control=md-binance.lab.svc.cluster.local:40501|control-mode=dynamic`).
+The driver resolves the name, and re-resolves it after 5 s without data, so
+a subscription follows a moved publisher with no help from the application.
+`verify` moves md-binance between the two `an1` nodes: its engine takes data
+from the new node within seconds.
+
+What sets the gap is not DNS but the old publisher's liveness: a killed
+client's publication keeps heartbeating until the driver times the client
+out, and the subscriber does not re-resolve while it hears heartbeats. So
+the drivers' client timeout is 10 s, not 30, and every publisher closes its
+publications on SIGTERM (`Persist::shutdown`), which ends the old session at
+once.
+
+**Reliable and best-effort feeds.** Every feed publishes with `fc=max` (the
+fastest subscriber sets the pace, so a slow one never holds a feed handler
+back) and `ssc=true` (the archive's spy counts as a subscriber, so a feed
+nobody subscribes to is still published and recorded). `md` streams (trades,
+book changes and snapshots, bars, mark and index prices, funding) are
+reliable: subscribers NAK and are repaired. `tob` streams (quotes) are
+`reliable=false|tether=false|group=false`: no NAKs, and a slow subscriber is
+dropped rather than slowing anyone. Every feed message fits one UDP frame
+(1408-byte MTU): md sizes its `book_deltas` chunks from `Feed::max_payload`.
+
+**Persisting a feed at IPC speed, wherever its publisher runs.** Each node's
+archive spy-records every stream of the registry on its own node's address
+(`aeron-spy:aeron:udp?control=$HOST_IP:<port>|control-mode=dynamic`). A spy
+reads the publication's term buffers in shared memory: no network hop, and no
+work for the publisher. Wherever md-binance lands, that node's archive is
+already listening, and its ingester replays the new recording; the old
+node's recording stops, is ingested and purged. Each feed carries the
+`Source` message itself, so its rows name their app, host and pod. A feed's
+table switches (`enabled`, `apps`, `until`) are applied when rows are
+inserted, not when published: subscribers need every message.
+
+**Persistent subscriptions: nothing lost, nobody waits.** The engine takes
+each `md` stream, and its exchange's fills, through Aeron's persistent
+subscription (`Persist::persistent`): over the recording that the archive on
+the publisher's node makes, reached by the publisher's name on port 8010. It
+replays until it catches the live stream, then takes the live stream; an
+engine that falls behind drops back to the recording and rejoins, and the
+publisher (`fc=max`) never waits for it. A persistent subscription follows
+one recording, and a restarted or moved publisher's new session is a new
+recording, on whichever node it now runs: Aeron fails the old subscription
+once it has replayed it to its end, and `Persistent` finds the new
+recording, by name, and replays it from its first message. Its handler is
+told, and the engine drops that venue's books and rebuilds them from the
+new session's first snapshot (md publishes one per instrument a second,
+after the instrument's `InstrumentSpec`). Finding a recording asks the
+archive on a thread of its own: the engine's loop never waits.
+
+The dummy exchange starts from the beginning of its engine's `orders`
+recording, so after a restart it answers what was sent while it was down;
+it ignores orders more than 10 s old, and the engine gives up on an order
+unanswered for 30 s. An order answered just before a restart is answered
+again, and the engine applies each fill once. Top of book (`tob`) stays a
+plain best-effort subscription (`Subscriber`).
+
+**Idle strategies are configuration.** The driver's three threads
+(`AERON_{CONDUCTOR,SENDER,RECEIVER}_IDLE_STRATEGY` in `deploy/lab.yaml`) and
+every loop the lab owns (`IDLE`: `spin`, `noop`, `yield`, `sleep`) say what
+they do when idle. The lab runs the driver's sender and receiver on `yield`
+and everything else on `sleep`, so four nodes share one laptop; in
+production, spin the driver's sender and receiver and the engine on isolated
+cores.
+
+**The embedded (invoker) driver.** An application can run the driver's duty
+cycle on its own thread instead. That saves the hand-off to the sender
+thread (a cache-line transfer, on the order of 100 ns; not measured here),
+but puts everything the conductor does on the
+trading thread: mapping a new publication's or image's term buffers
+(milliseconds), timeouts, NAKs and retransmits, and blocking name
+resolution when a publisher moves. Nobody else can use that driver either,
+so there is no node archive to spy-record the feeds. It suits one process
+that owns the box, not this design.
+
+**Production.** One Kubernetes cluster per region. Git holds
+`streams.yaml` and `tables.yaml`, and GitOps (Argo CD or Flux) syncs them
+into every cluster as ConfigMaps; names resolve across regions with
+multi-cluster DNS (`*.clusterset.local`), and every region's ingesters write
+to one ClickHouse. Cross-node tick-to-trade stages need PTP-synchronised
+clocks: kind's nodes share one kernel clock, a real cluster does not.
+
+## The engine
+
+`engine-<region>` is one thread in one loop, the HFT model. From every feed
+handler in its region it keeps each instrument's L2 book (Decimal9
+mantissas, never rounded), and per asset:
+
+- **the aggregated book**, sizes normalised to base quantity from each
+  instrument's `InstrumentSpec`: linear `size × multiplier` (OKX's contracts
+  are 0.01 BTC or 0.1 ETH), inverse `size × multiplier / price` (Deribit's
+  perpetuals are sized in USD). USDT, USDC and USD are taken as one quote
+  currency; venues' perpetuals trade at a basis of a basis point or two, so
+  the aggregate is often crossed by that much;
+- **time-decayed EMAs** of the aggregated mid over 5m, 30m, 1h, 4h, 12h and
+  1d (`α = 1 − e^(−Δt/τ)`, so each moves on every change);
+- **a strategy**: the mid crossing its 5m EMA, taken with the trend (5m
+  against 30m) or when it reduces the position, at most one order per 30 s
+  per asset and never past 0.01, as a marketable limit order at the
+  aggregated best price.
+
+Once a second it publishes each asset's `ema` and `agg_book` on its
+`signals` feed, and orders on `orders`; `exch-sim` fills each at its price
+and answers `New` then `Filled` on `exec`. The node's archive records all of
+it, so each is a ClickHouse table with no more code.
+
+**Tick-to-trade** is the checkpoint trace `tick_to_trade`, from the feed
+handler's receive time through `feed`, `decode`, `book`, `signal`, `decide`
+and `send`. Every tick counts in its stage histograms; one that led to an
+order is kept (`Trace::keep`) under the order's id (`Trace::set_id`), and
+`exch-sim`'s `order_ack` trace of the same order shares it, so Grafana's
+trace view shows both applications in one waterfall. On the lab (loops
+sleeping 1 ms when idle, four nodes on a laptop), medians: decode 3–7 µs,
+book 13–45 µs, EMAs and decision about 1 µs, publishing the order 10–22 µs;
+`feed` dominates at a few ms, most of it the sleeping loops.
+
+## Memory
+
+The whole lab runs in about 3.4 GiB, a third of it Kubernetes itself
+(API server, etcd, and each node's CNI and proxy). Every container has a
+limit; measured in use, 2026-09-27:
+
+| Pod | In use | Limit | How |
+|---|---|---|---|
+| `clickhouse` | 550–700 MiB | 1 GiB | thread pools cut from over 700 threads to about 140 (each thread's allocator cache is memory ClickHouse does not count), a cap at 75% of the limit, small caches, system logs other than the query and part logs off (`deploy/clickhouse-lab.xml`) |
+| `aeron`: driver | 51–57 MiB | 256 MiB | mostly its shared-memory term buffers: feeds use 1 MiB terms |
+| `aeron`: archive | 62–72 MiB | 192 MiB | JVM: 64 MiB heap, 48 MiB direct, C1 only, 16 MiB code cache |
+| `md-<exchange>` | 20–80 MiB | 256 MiB | `MALLOC_ARENA_MAX=2` |
+| `grafana` | ~130 MiB | 192 MiB | `GOMEMLIMIT=96MiB` |
+| `jupyter` | ~75 MiB | 512 MiB | pandas frames when the notebook runs |
+| `ingester`, `engine`, `exch-sim` | 1–4 MiB | 256, 64, 64 MiB | |
+
+Docker Desktop's own VM limit is what protects the Mac: give it what the
+clusters need (8 GiB is plenty for this lab), not all of the machine's
+memory, or macOS swaps.
 
 ## Record a table
 
@@ -340,9 +507,9 @@ tables:
   it, with no further edit. The application re-reads the file every second,
   so switching a table needs no restart.
 - **`apps`**: the same values per app, by name (`PERSIST_APP`; each
-  recorder is its exchange). An app not listed takes `enabled`.
+  feed handler is its exchange). An app not listed takes `enabled`.
 - **`kind: dynamic`**: the table follows the data. A field added to the SBE
-  message becomes `ALTER TABLE … ADD COLUMN` when the recorder restarts, and a
+  message becomes `ALTER TABLE … ADD COLUMN` when its publisher restarts, and a
   new event field is added as soon as it arrives.
 - **`kind: static`**: created if missing, then never altered. A column the
   table lacks, or has with another type, is not written. The ingester logs an
@@ -379,8 +546,8 @@ tables:
 
 Decimals and timestamps travel as their integer, and ClickHouse stores that
 integer, so nothing is rounded. Prices and sizes in `market.xml` are
-`Decimal9` (mantissa × 10⁻⁹). The recorder's `d9()` is ergo-sbe's generated
-`rust_decimal` conversion (`with_domain_type` in `recorder/build.rs`): it
+`Decimal9` (mantissa × 10⁻⁹). md's `d9()` is ergo-sbe's generated
+`rust_decimal` conversion (`with_domain_type` in `market/build.rs`): it
 converts exactly, and returns an error rather than rounding.
 
 Other composites, sets, non-`char` arrays, nested groups and big-endian
@@ -390,8 +557,8 @@ schemas are rejected when the schema loads.
 groups or var-data with `sinceVersion`. The archive may still hold records
 from before the change. The ingester decodes each record for its own version,
 so fields it doesn't carry are written as their defaults.
-Change a schema in `schema/` and run `just ingester` (and `just recorder`
-for the recorder's own `market.xml`).
+Change a schema in `schema/` and run `just md` (it restarts the ingesters
+first, then every publisher).
 
 ## Durability
 
@@ -399,20 +566,21 @@ for the recorder's own `market.xml`).
   stops replaying and the archive holds the data on disk. Nothing is dropped.
 - **Checkpoint and purge.** After each insert the ingester saves its position
   (`recording position`), then deletes the archive segments behind it. When
-  the last recorder on the node exits, the recording stops. Once all of it is
+  its last publisher on the node exits, the recording stops. Once all of it is
   in ClickHouse, the recording is deleted.
 - **At least once.** A crash between an insert and the checkpoint write
   replays those records, so they can appear twice.
-- **Sessions.** The recorders on a node share one publication, so they make
-  one recording. It stops only when none is left; the next recorder starts a
-  new one. The ingester takes recordings oldest first.
+- **Sessions.** The applications on a node share one IPC publication, so
+  they make one recording; each feed is a recording of its own, and a new
+  session (a restart, a move) a new one. The ingester replays them all at
+  once, each with its own checkpoint.
 
 ## Latency
 
 `just latency` times each operation on the application thread, 200k times a
 second for 8 s, with an ingester replaying the archive beside it. The run
 below: 2026-09-27, Apple M4, rustc 1.98.1, with the kind lab (ClickHouse,
-the ingester, five recorders) running on the same machine, which widens the
+the ingester, five feed handlers) running on the same machine, which widens the
 tails. The timer's resolution is 42 ns, so the metric and clock arms time
 100 operations per sample; their rows are divided back to one operation.
 Nothing was dropped.
@@ -482,17 +650,17 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
   does the same for `open_interest`. Nothing else is redeployed.
 
 - **Turn recording off and on.** Set `book_snapshot: { kind: dynamic, enabled: false }`
-  and save. Within a second every recorder logs `recording book_snapshot: off`
+  and save. Within a second every feed handler's ingester stops inserting it
   and Grafana's *Order book* panels stop moving; set it back to `true` and
   they resume. For one exchange only, give the table `apps: { <exchange>: false }`.
 - **Add a column to a dynamic table.** Add
   `<field name="bidLevels" id="12" type="uint8"/>` to `BookSnapshot` after
   `sequence`. Set `bid_levels: bids.len() as u8` in `on_book`, then run
-  `just recorder`. The ingester logs
+  `just md`. The ingester logs
   ``applied: ALTER TABLE `market`.`book_snapshot` ADD COLUMN IF NOT EXISTS `bid_levels` UInt8``.
 - **Change a static table.** Add `<field name="isMaker" id="9" type="uint8"/>`
   to `Trade` after `aggressor`, set `is_maker: 0` in `on_trade`, then run
-  `just recorder`. The ingester logs the `ALTER` that `trade` needs, and every
+  `just md`. The ingester logs the `ALTER` that `trade` needs, and every
   other column keeps flowing.
 - **Trace one exchange for ten minutes.** Give `otel_traces` in
   `tables.yaml` `enabled: false` and `apps: { okx: { until: <ten minutes from now, UTC> } }`,
@@ -500,7 +668,7 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
   *Traces*, pick one in `trace_id`); at that time it stops by itself, while
   the stage latency panels keep counting every update.
 - **Record a new signal.** Add `tracing::info!(table = "my_signal", value = x)`
-  anywhere in the recorder, plus `my_signal: { kind: dynamic }` in
+  anywhere in md, plus `my_signal: { kind: dynamic }` in
   `tables.yaml`.
 
 ## Checks
@@ -509,7 +677,7 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
 just test     # unit + integration tests (a throwaway ClickHouse on :18123 and an Aeron archive driver)
 just lint     # clippy -D warnings + rustfmt
 just latency  # the table above
-just verify   # the running lab: /play, live data, every Grafana panel, the notebook, a live toggle
+just verify   # the running lab: /play, live data, the engines' orders and traces, every Grafana panel, the notebook, a live toggle, a feed handler moved between nodes
 ```
 
 ## Limits
@@ -525,7 +693,7 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
 - One table that never inserts (say, a static table ClickHouse refuses) holds
   the checkpoint back. The archive then grows until it is fixed. Nothing is
   lost, but it uses disk.
-- The recorders and the ingester reconnect by exiting and being restarted,
+- The applications and the ingester reconnect by exiting and being restarted,
   so a restarted `aeron` pod costs every client a restart and the records
   published in between. A client notices within the 30 s driver timeout.
 - An event table's column types come from the first shape that has the
@@ -559,6 +727,10 @@ just verify   # the running lab: /play, live data, every Grafana panel, the note
   definition, one after another. That one call costs a publish per
   message, which `poll`'s one-message bound does not cover. A cursor over
   the heartbeat, one message per call, would bound it too.
+- A persistent subscription replays only what the archive still holds:
+  the ingester purges a recording's segments once they are in ClickHouse,
+  so an engine or exchange down for longer than that catches up from the
+  oldest segment left.
 - Checkpoint traces take at most 16 stages and 8 numeric attributes;
   `tracing` spans may carry text.
 - In this lab, the kind node's clock can lag the venues' (Docker Desktop's

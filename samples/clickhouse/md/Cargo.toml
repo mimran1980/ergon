@@ -1,6 +1,6 @@
 [package]
-name = "recorder"
-description = "Public market data from one exchange via NautilusTrader, persisted with SBE."
+name = "md"
+description = "A feed handler: one exchange's public market data via NautilusTrader, published as SBE on UDP feeds."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 arrayvec = "0.7"
+log.workspace = true
+market.workspace = true
 persist-client.workspace = true
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
@@ -23,12 +25,9 @@ nautilus-hyperliquid = "0.64"
 nautilus-okx = "0.64"
 nautilus-live = "0.64"
 nautilus-model = "0.64"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-
-[build-dependencies]
-ergo-sbe.workspace = true
 
 [lints]
 workspace = true

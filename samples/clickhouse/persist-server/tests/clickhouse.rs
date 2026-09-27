@@ -517,8 +517,8 @@ fn unreachable_clickhouse_keeps_every_record_queued() -> TestResult {
     assert!(report.inserted.is_empty());
     // Nothing is dropped. The ingester stops replaying past its limit
     // instead, and the rest waits in the archive.
-    // Each is queued with its length and source id.
-    assert_eq!(writer.queued_bytes(), 11 * (12 + v1::LEN));
+    // Each is queued with its length, source id and feed flag.
+    assert_eq!(writer.queued_bytes(), 11 * (13 + v1::LEN));
     Ok(())
 }
 
@@ -537,7 +537,7 @@ fn table_that_cannot_be_created_keeps_its_records_queued() -> TestResult {
     // retry back-off. Neither may throw the queued record away.
     assert!(!writer.tick().errors.is_empty());
     writer.tick();
-    assert_eq!(writer.queued_bytes(), 12 + v1::LEN);
+    assert_eq!(writer.queued_bytes(), 13 + v1::LEN);
     lab.query(&format!("DROP USER {user}"))?;
     Ok(())
 }
@@ -588,7 +588,8 @@ fn market_schema_tables() -> TestResult {
             "funding_rate",
             "index_price",
             "bar",
-            "book_deltas"
+            "book_deltas",
+            "instrument_spec"
         ]
     );
     let column = |table: &str, column: &str| {
@@ -616,6 +617,82 @@ fn market_schema_tables() -> TestResult {
     assert_eq!(
         ch.create_sql(&book.shape()),
         "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
+    );
+    Ok(())
+}
+
+#[test]
+fn trading_rows_round_trip_beside_market_rows() -> TestResult {
+    use market::trading::{
+        AggBookAsksEntry, AggBookBidsEntry, AggBookEncoder, AggBookFixedFields, Decimal9,
+        NewOrderEncoder, NewOrderFixedFields, Side,
+    };
+    let lab = Lab::new(
+        "trading",
+        "tables:\n  agg_book: { kind: dynamic }\n  new_order: { kind: static }\n",
+    )?;
+    let mut writer = Writer::new(
+        &[market::MARKET_SCHEMA, market::TRADING_SCHEMA],
+        lab.ch.clone(),
+        &lab.config,
+        Duration::ZERO,
+    )?;
+    // A venue shorter than its 12 chars is NUL-padded on the wire.
+    let venue = |name: &[u8]| {
+        let mut v = [0; 12];
+        v[..name.len()].copy_from_slice(name);
+        v
+    };
+    let mut buf = [0u8; AggBookEncoder::compute_length_with_header(2, 1, 3)];
+    let len = AggBookEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&AggBookFixedFields {
+            ts: 1_700_000_000_000_000_000,
+        })
+        .bids(2, |g| {
+            g.add_struct(&AggBookBidsEntry {
+                price: Decimal9::new(100_000_000_000),
+                size: Decimal9::new(1_500_000_000),
+                venue: venue(b"BINANCE"),
+            })?;
+            g.add_struct(&AggBookBidsEntry {
+                price: Decimal9::new(99_000_000_000),
+                size: Decimal9::new(2_000_000_000),
+                venue: venue(b"HYPERLIQUID"),
+            })?;
+            Ok(())
+        })?
+        .asks(1, |g| {
+            g.add_struct(&AggBookAsksEntry {
+                price: Decimal9::new(101_000_000_000),
+                size: Decimal9::new(250_000_000),
+                venue: venue(b"BINANCE"),
+            })?;
+            Ok(())
+        })?
+        .asset(b"BTC")?
+        .encoded_length_with_header();
+    assert!(writer.push(&buf[..len], 0));
+    let mut buf = [0u8; NewOrderEncoder::compute_length_with_header(3)];
+    let len = NewOrderEncoder::wrap_and_apply_header(&mut buf, 0)
+        .fixed(&NewOrderFixedFields {
+            ts: 1_700_000_000_000_001_000,
+            tick_ts: 1_700_000_000_000_000_000,
+            order_id: 7,
+            side: Side::Sell,
+            price: Decimal9::new(100_000_000_000),
+            qty: Decimal9::new(1_000_000),
+        })
+        .asset(b"BTC")?
+        .encoded_length_with_header();
+    assert!(writer.push(&buf[..len], 0));
+    clean(&writer.tick())?;
+    assert_eq!(
+        lab.query("SELECT bids.price, bids.size, bids.venue, asks.venue, asset FROM DB.agg_book FORMAT TSV")?,
+        "[100,99]\t[1.5,2]\t['BINANCE','HYPERLIQUID']\t['BINANCE']\tBTC"
+    );
+    assert_eq!(
+        lab.query("SELECT order_id, side, price, qty, tick_ts FROM DB.new_order FORMAT TSV")?,
+        "7\tSell\t100\t0.001\t2023-11-14 22:13:20.000000000"
     );
     Ok(())
 }

@@ -1,12 +1,13 @@
 # ClickHouse persistence lab. Run from samples/clickhouse/.
 #
-#   just up         create the kind cluster and run everything (Binance and Bybit recorders)
-#   just exchange okx deribit   add recorders: binance bybit okx deribit hyperliquid
+#   just up         create the kind cluster (4 nodes, 3 regions) and run everything: every exchange's feed, and an engine per region
+#   just exchange okx deribit   add feed handlers: binance bybit okx deribit hyperliquid
 #   just unexchange okx         remove one
-#   just recorder   rebuild + redeploy the recorders and ingester after a code/schema change
-#   just aeron      rebuild + redeploy Aeron (LabDriver.java, aeron.Dockerfile), then its clients
-#   just ingester   restart the ingester: it reloads every schema in schema/
-#   just logs       follow the recorder, ingester and Aeron logs
+#   just engines    (re)deploy each region's engine and dummy exchange
+#   just md         rebuild + redeploy the feed handlers, engines and ingesters after a code/schema change
+#   just aeron      rebuild + redeploy Aeron (driver, LabDriver.java, aeron.Dockerfile), then its clients
+#   just ingester   restart the ingesters: they reload every schema in schema/
+#   just logs       follow the feed handler, ingester and Aeron logs
 #   just verify     check the running lab end to end
 #   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
 #   just test-stop  stop that throwaway ClickHouse and driver (2 GB+ of memory)
@@ -15,6 +16,7 @@
 #   just destroy    delete the cluster and its data
 
 cluster := "clickhouse-lab"
+build_jobs := "2"
 kube := "kubectl --context kind-" + cluster + " -n lab"
 
 default:
@@ -23,19 +25,36 @@ default:
 # Create the cluster (if needed), build images, deploy, wait, print URLs.
 up: _cluster images
     kubectl --context kind-{{cluster}} apply -f deploy/lab.yaml
-    just exchange binance bybit
+    just exchange binance hyperliquid bybit okx deribit
+    just engines
     {{kube}} rollout status statefulset/clickhouse --timeout=300s
     {{kube}} rollout status deploy/grafana deploy/jupyter daemonset/aeron daemonset/ingester --timeout=300s
     @just urls
 
-# Deploy a recorder for each named exchange: binance bybit okx deribit hyperliquid.
+# Deploy a feed handler (md) for each named exchange, in its region from
+# config/streams.yaml: binance bybit okx deribit hyperliquid.
 exchange +names:
-    for x in {{names}}; do sed "s/__EXCHANGE__/$x/g" deploy/recorder.yaml | kubectl --context kind-{{cluster}} apply -f -; done
-    for x in {{names}}; do {{kube}} rollout status deploy/recorder-$x --timeout=300s; done
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for x in {{names}}; do
+        region=$(sed -n "s/^  md-$x: .*region: \([a-z0-9]*\).*/\1/p" config/streams.yaml)
+        [[ -n $region ]] || { echo "md-$x is not in config/streams.yaml" >&2; exit 1; }
+        sed "s/__EXCHANGE__/$x/g; s/__REGION__/$region/g" deploy/md.yaml | kubectl --context kind-{{cluster}} apply -f -
+    done
+    for x in {{names}}; do {{kube}} rollout status deploy/md-$x --timeout=300s; done
 
-# Remove the named exchanges' recorders. Their recorded data stays.
+# Deploy an engine and a dummy exchange in every region of config/streams.yaml.
+engines:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for region in $(sed -n 's/^  engine-\([a-z0-9]*\):.*/\1/p' config/streams.yaml); do
+        sed "s/__REGION__/$region/g" deploy/engine.yaml | kubectl --context kind-{{cluster}} apply -f -
+    done
+    for d in $({{kube}} get deploy -l 'app in (engine,exch-sim)' -o name); do {{kube}} rollout status $d --timeout=300s; done
+
+# Remove the named exchanges' feed handlers. Their recorded data stays.
 unexchange +names:
-    for x in {{names}}; do {{kube}} delete deploy/recorder-$x; done
+    for x in {{names}}; do {{kube}} delete deploy/md-$x service/md-$x; done
 
 # Reachable from other machines too: every port listens on 0.0.0.0.
 urls:
@@ -45,7 +64,8 @@ urls:
     echo "ClickHouse UI  http://$host:8123/play   (user lab / password lab)"
     echo "Grafana        http://$host:3000"
     echo "JupyterLab     http://$host:8888/lab/tree/verify.ipynb"
-    echo "Recorders      $({{kube}} get deploy -l app=recorder -o jsonpath='{.items[*].metadata.labels.exchange}')"
+    echo "Feeds          $({{kube}} get deploy -l app=md -o jsonpath='{.items[*].metadata.labels.exchange}')"
+    echo "Engines        $({{kube}} get deploy -l app=engine -o jsonpath='{.items[*].metadata.labels.region}')"
     echo "Config         $PWD/config/tables.yaml  (edits apply live)"
 
 _cluster:
@@ -55,50 +75,62 @@ _cluster:
         sed "s|LAB_DIR|$PWD|" deploy/kind.yaml | kind create cluster --config -
     fi
 
-images: build-recorder
+images: build
     docker build -q -t lab/jupyter:local -f deploy/jupyter.Dockerfile deploy
     docker build -q -t lab/aeron:local -f deploy/aeron.Dockerfile deploy
     just _load lab/jupyter:local
     just _load lab/aeron:local
-    just _load lab/recorder:local
+    just _load lab/app:local
 
 # `kind load docker-image` fails on Docker's containerd image store
 # ("content digest … not found"), so import a single-platform save directly.
+# Into every node: a pod can land on any of them.
 _load image:
-    docker save --platform linux/$(docker version -f '{{{{.Server.Arch}}') {{image}} \
-        | docker exec -i {{cluster}}-control-plane ctr -n k8s.io images import --all-platforms -
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tar=$(mktemp)
+    docker save --platform linux/$(docker version -f '{{{{.Server.Arch}}') {{image}} > "$tar"
+    for node in $(kind get nodes --name {{cluster}}); do
+        docker exec -i "$node" ctr -n k8s.io images import --all-platforms - < "$tar"
+    done
+    rm -f "$tar"
 
-# Compile the recorder and ingester for Linux; build their image with the schema.
-build-recorder:
+# Compile the lab's binaries for Linux; build their image with the schema.
+# Two compile jobs: NautilusTrader's crates take gigabytes each to build, and
+# the Docker VM shares the machine with the running lab. Raise it with
+# `just build_jobs=8 build` on a machine with memory to spare.
+build:
     docker build -q -t lab/builder:local -f deploy/builder.Dockerfile deploy
     docker run --rm -v "$PWD/../..":/src -w /src/samples/clickhouse \
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
-        -e CARGO_TARGET_DIR=/target lab/builder:local \
-        sh -c 'cargo build --release -p recorder -p persist-server --bins && mkdir -p target/linux \
-            && cp /target/release/recorder /target/release/ingester schema/market.xml target/linux/'
-    docker build -q -t lab/recorder:local -f deploy/recorder.Dockerfile target/linux
+        -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} lab/builder:local \
+        sh -c 'cargo build --release -p md -p persist-server -p aeron-driver -p engine --bins && mkdir -p target/linux \
+            && cp /target/release/md /target/release/ingester /target/release/aeron-driver /target/release/engine /target/release/exch-sim schema/market.xml target/linux/'
+    docker build -q -t lab/app:local -f deploy/app.Dockerfile target/linux
 
-# Rebuild and restart the recorders and the ingester (after changing schema/market.xml or code).
-recorder: build-recorder
-    just _load lab/recorder:local
-    # The ingester first: a new one understands what new recorders send.
+# Rebuild and restart the feed handlers, engines and ingesters (after changing a schema or code).
+md: build
+    just _load lab/app:local
+    # The ingesters first: a new one understands what new feed handlers send.
     {{kube}} rollout restart daemonset/ingester
     {{kube}} rollout status daemonset/ingester --timeout=120s
-    {{kube}} rollout restart deploy -l app=recorder
-    for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
+    {{kube}} rollout restart deploy -l 'app in (md,engine,exch-sim)'
+    for d in $({{kube}} get deploy -l 'app in (md,engine,exch-sim)' -o name); do {{kube}} rollout status $d --timeout=300s; done
 
 # The clients are restarted too, so they join the new driver at once rather
 # than after their 30 s timeout.
 # Rebuild and restart Aeron and its clients (after changing LabDriver.java or aeron.Dockerfile).
 aeron:
+    just build
+    just _load lab/app:local
     docker build -q -t lab/aeron:local -f deploy/aeron.Dockerfile deploy
     just _load lab/aeron:local
     {{kube}} rollout restart daemonset/aeron
     {{kube}} rollout status daemonset/aeron --timeout=120s
     {{kube}} rollout restart daemonset/ingester
-    {{kube}} rollout restart deploy -l app=recorder
+    {{kube}} rollout restart deploy -l 'app in (md,engine,exch-sim)'
     {{kube}} rollout status daemonset/ingester --timeout=120s
-    for d in $({{kube}} get deploy -l app=recorder -o name); do {{kube}} rollout status $d --timeout=300s; done
+    for d in $({{kube}} get deploy -l 'app in (md,engine,exch-sim)' -o name); do {{kube}} rollout status $d --timeout=300s; done
 
 # Restart the ingester so it loads every schema in schema/ again; it resumes from its checkpoint.
 ingester:
@@ -106,7 +138,7 @@ ingester:
     {{kube}} rollout status daemonset/ingester --timeout=120s
 
 logs:
-    {{kube}} logs -f -l 'app in (recorder,ingester,aeron)' --prefix --max-log-requests 20 --tail 20
+    {{kube}} logs -f -l 'app in (md,engine,exch-sim,ingester,aeron)' --prefix --max-log-requests 30 --tail 20
 
 # End-to-end checks against the running lab.
 verify:

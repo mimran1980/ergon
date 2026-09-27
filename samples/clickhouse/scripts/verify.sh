@@ -2,13 +2,18 @@
 # End-to-end checks against the running lab (`just up` first).
 #
 #  1. ClickHouse answers, and its /play UI is served.
-#  2. Every deployed exchange's recorder is writing trades and quotes.
+#  2. Every deployed exchange's feed handler (md) is writing trades and quotes.
+#     Every region's engine publishes EMAs and its aggregated book, its orders
+#     are filled, and a kept tick-to-trade trace joins its exchange's trace.
 #  3. Every Grafana panel's query runs through Grafana without error.
 #  4. Metrics, histograms, traces and Aeron's counters arrive, with host and pod.
 #  5. The verification notebook runs clean inside JupyterLab's pod.
 #  6. Toggling a dynamic table in config/tables.yaml starts and stops it live.
+#  7. A feed handler moved to another node (cordon, delete): it publishes from
+#     there, its engine resyncs it, its region's other feed never stops, and
+#     no row is recorded twice.
 #
-# Leaves config/tables.yaml exactly as it found it.
+# Leaves config/tables.yaml, and every node's schedulability, as it found them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,13 +30,43 @@ play=$(curl -sf "$CH/play") && [[ $play == *"<title>ClickHouse Query</title>"* ]
 ok "ClickHouse answers; query UI at $CH/play"
 
 # 2. Live data from every deployed exchange
-expected=$("${KUBE[@]}" get deploy -l app=recorder -o jsonpath='{range .items[*]}{.metadata.labels.exchange}{"\n"}{end}' | tr a-z A-Z | sort | paste -sd, -)
-[[ -n $expected ]] || fail "no recorder is deployed (just exchange binance)"
+expected=$("${KUBE[@]}" get deploy -l app=md -o jsonpath='{range .items[*]}{.metadata.labels.exchange}{"\n"}{end}' | tr a-z A-Z | sort | paste -sd, -)
+[[ -n $expected ]] || fail "no feed handler is deployed (just exchange binance)"
 venues=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(venue)), ',') FROM market.trade WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 [[ $venues == "$expected" ]] || fail "trades in the last minute came from '$venues', expected $expected"
 quotes=$(sql "SELECT count() FROM market.quote WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 (( quotes > 0 )) || fail "no quotes in the last minute"
 ok "trades from $venues and $quotes quotes in the last minute"
+
+# 2b. Engines and their dummy exchanges
+engines=$("${KUBE[@]}" get deploy -l app=engine -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)
+[[ -n $engines ]] || fail "no engine is deployed (just engines)"
+for engine in $engines; do
+    region=${engine#engine-}
+    has_md=$(sed -n "s/^  md-\([a-z]*\): .*region: $region[,} ].*/\1/p" config/streams.yaml \
+        | while read -r x; do "${KUBE[@]}" get deploy "md-$x" -o name 2>/dev/null; done)
+    [[ -n $has_md ]] || continue # no feed deployed in its region
+    n=$(sql "SELECT uniqExact(asset) FROM market.ema WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE")
+    (( n >= 2 )) || fail "$engine: EMAs for $n assets in the last minute, expected BTC and ETH"
+    n=$(sql "SELECT count() FROM market.agg_book WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE AND length(bids.price) > 0 AND length(asks.price) > 0")
+    (( n > 0 )) || fail "$engine: no aggregated book in the last minute"
+done
+ok "engines publishing EMAs and aggregated books: $(paste -sd' ' - <<<"$engines")"
+orders=$(sql "SELECT count() FROM market.new_order WHERE ts > now() - INTERVAL 1 HOUR AND ts < now() - INTERVAL 30 SECOND")
+(( orders > 0 )) || fail "no orders in the last hour (the strategy trades a 5m EMA cross at most every 30 s)"
+# An order sent while its exchange was down is lost (plain subscriptions,
+# no catch-up): judge those sent since both were last started.
+unfilled=0
+for engine in $engines; do
+    since=$("${KUBE[@]}" get pod -l "app in (engine,exch-sim),region=${engine#engine-}" -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.running.startedAt}{"\n"}{end}' | sort | tail -1)
+    [[ -n $since ]] || continue
+    n=$(sql "SELECT count() FROM market.new_order WHERE app = '$engine' AND ts > parseDateTime64BestEffort('$since') AND ts < now() - INTERVAL 30 SECOND AND order_id NOT IN (SELECT order_id FROM market.execution_report WHERE status = 'Filled')")
+    unfilled=$((unfilled + n))
+done
+[[ $unfilled == 0 ]] || fail "$unfilled orders sent while their engine and exchange were both up have no fill"
+joined=$(sql "SELECT count() FROM (SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND SpanName IN ('tick_to_trade', 'order_ack') AND SpanAttributes['why'] = 'kept' AND Timestamp > now() - INTERVAL 1 HOUR GROUP BY TraceId HAVING uniqExact(SpanName) = 2)")
+(( joined > 0 )) || fail "no order's tick_to_trade trace shares its id with the exchange's order_ack"
+ok "$orders orders in the last hour, every one sent to a running exchange filled; $joined traced from tick to exchange ack under one id"
 
 # 3. Grafana panels
 uids=$(curl -sf "$GRAFANA/api/search?type=dash-db" | jq -r '.[].uid')
@@ -85,7 +120,7 @@ bad=$(curl -s -H 'Content-Type: application/json' "$GRAFANA/api/ds/query" -d '{"
 ok "$checked Grafana panel queries (per-table panels over all $(wc -w <<<"$tables" | tr -d ' ') tables) run without error and return rows"
 
 # 4. Metrics, traces and Aeron's counters: recent, and attributed
-apps=$(tr A-Z a-z <<<"$expected")
+apps=$( (tr A-Z a-z <<<"$expected" | tr , '\n'; "${KUBE[@]}" get deploy -l 'app in (engine,exch-sim)' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}') | sort | paste -sd, -)
 for table in metrics metrics_histogram otel_traces aeron_counters; do
     ts=$([[ $table == otel_traces ]] && echo Timestamp || echo ts)
     n=$(sql "SELECT count() FROM market.$table WHERE $ts > now() - INTERVAL 1 MINUTE AND host != '' AND pod != ''")
@@ -119,8 +154,79 @@ after=$(sql "SELECT count() FROM market.book_snapshot")
 ok "book_snapshot off: row count stayed at $after"
 printf "%s\n" "$saved" > "$config"
 trap - EXIT
-restarts=$("${KUBE[@]}" get pod -l 'app in (aeron,ingester,recorder)' -o jsonpath='{range .items[*]}{.metadata.name}={.status.containerStatuses[0].restartCount} {end}')
+restarts=$("${KUBE[@]}" get pod -l 'app in (aeron,ingester,md,engine,exch-sim)' -o jsonpath='{range .items[*]}{.metadata.name}={.status.containerStatuses[0].restartCount} {end}')
 [[ $restarts != *=[1-9]* ]] || fail "restarted: $restarts"
-ok "Aeron, the ingester and the recorders never restarted"
+ok "Aeron, the ingesters, the feed handlers, the engines and the exchanges never restarted"
+
+# 7. Move a feed handler to another node of its region
+mover=md-binance other=HYPERLIQUID engine=engine-an1
+if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
+    old_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{.items[0].metadata.name}')
+    old_node=$("${KUBE[@]}" get pod "$old_pod" -o jsonpath='{.spec.nodeName}')
+    metric() { sql "SELECT argMax(value, ts) FROM market.metrics WHERE app = '$engine' AND name = '$1' AND labels['venue'] = '$2'"; }
+    resyncs=$(metric feed_resyncs BINANCE)
+    started=$(sql "SELECT now64(9)")
+    kubectl --context kind-clickhouse-lab cordon "$old_node" >/dev/null
+    trap 'kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null' EXIT
+    "${KUBE[@]}" delete pod "$old_pod" --wait=false >/dev/null
+    for _ in $(seq 90); do
+        new_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$old_pod\$" || true)
+        [[ -n $new_pod ]] && break
+        sleep 1
+    done
+    [[ -n $new_pod ]] || fail "$mover did not come back within 90 s"
+    new_node=$("${KUBE[@]}" get pod "$new_pod" -o jsonpath='{.spec.nodeName}')
+    [[ $new_node != "$old_node" ]] || fail "$mover came back on $old_node, the cordoned node"
+    kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null
+    trap - EXIT
+    moved=$(date +%s)
+    # Its engine joins the new node's publication, and resyncs its books.
+    for _ in $(seq 60); do
+        (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break
+        sleep 1
+    done
+    (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) || fail "$engine did not resync BINANCE within 60 s of the move"
+    for _ in $(seq 30); do
+        age=$(sql "SELECT argMax(value, ts) FROM market.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = 'BINANCE' AND ts > now() - INTERVAL 5 SECOND")
+        [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) && break
+        sleep 1
+    done
+    [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) || fail "$engine: BINANCE's book still stale after the move (${age:-no} ns)"
+    recovered=$(( $(date +%s) - moved ))
+    worst=$(sql "SELECT max(value) FROM market.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = '$other' AND ts > '$started'")
+    (( ${worst%%.*} < 5000000000 )) || fail "$engine: $other's book went ${worst} ns without an update during the move"
+    # Recorded by the new node's archive, and nothing twice.
+    for _ in $(seq 60); do
+        hosts=$(sql "SELECT count() FROM market.trade WHERE venue = 'BINANCE' AND host = '$new_node' AND ts_event > '$started'")
+        (( hosts > 0 )) && break
+        sleep 1
+    done
+    (( hosts > 0 )) || fail "no BINANCE trades recorded from $new_node after the move"
+    dupes=$(sql "SELECT count() - uniqExact(symbol, trade_id) FROM market.trade WHERE venue = 'BINANCE' AND ts_event > '$started' - INTERVAL 1 MINUTE")
+    [[ $dupes == 0 ]] || fail "$dupes BINANCE trades recorded twice across the move"
+    ok "$mover moved $old_node -> $new_node: $engine resynced it, its book fresh $recovered s after, $other never stale (worst $((${worst%%.*} / 1000000)) ms), trades from the new node, none twice"
+
+    # Restarted in place: the same node's driver, so only a closed
+    # publication makes the new pod a new session its engine can see.
+    resyncs=$(metric feed_resyncs BINANCE)
+    kubectl --context kind-clickhouse-lab cordon "$old_node" >/dev/null
+    trap 'kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null' EXIT
+    "${KUBE[@]}" delete pod "$new_pod" --wait=false >/dev/null
+    for _ in $(seq 90); do
+        again=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$new_pod\$" || true)
+        [[ -n $again ]] && break
+        sleep 1
+    done
+    [[ -n $again ]] || fail "$mover did not come back within 90 s of its restart"
+    [[ $("${KUBE[@]}" get pod "$again" -o jsonpath='{.spec.nodeName}') == "$new_node" ]] || fail "$mover's restart left $new_node"
+    kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null
+    trap - EXIT
+    for _ in $(seq 60); do
+        (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break
+        sleep 1
+    done
+    (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) || fail "$engine saw no new session when $mover restarted on $new_node"
+    ok "$mover restarted in place on $new_node: a new session, and $engine resynced it"
+fi
 
 echo "all checks passed"

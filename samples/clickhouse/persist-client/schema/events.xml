@@ -47,6 +47,8 @@
             <validValue name="Slow">1</validValue>
             <!-- A `tracing` span. -->
             <validValue name="Span">2</validValue>
+            <!-- Kept by the application (`Trace::keep`): one that led to an order, say. -->
+            <validValue name="Kept">3</validValue>
         </enum>
     </types>
 

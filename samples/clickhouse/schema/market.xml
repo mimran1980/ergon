@@ -6,7 +6,7 @@
   becomes String. Whether a table is recorded, and whether persistence may
   alter it, is set in config/tables.yaml.
 
-  To see schema evolution: add a field here, rebuild the recorder, redeploy.
+  To see schema evolution: add a field here, rebuild the feed handlers, redeploy.
   Dynamic tables gain the column; static tables log the ALTER they need.
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
@@ -147,5 +147,20 @@
         </group>
         <data name="symbol" id="9" type="varString"/>
         <data name="venue" id="10" type="varString"/>
+    </sbe:message>
+
+    <!-- How an instrument's sizes read: in base quantity, a size is
+         `size x multiplier` (linear, spot) or `size x multiplier / price`
+         (inverse, sized in quote currency). Published on the md feed when
+         the instrument is loaded, so subscribers can compare sizes across
+         venues. -->
+    <sbe:message name="InstrumentSpec" id="9">
+        <field name="tsEvent" id="1" type="Timestamp"/>
+        <field name="multiplier" id="2" type="Decimal9"/>
+        <field name="inverse" id="3" type="uint8"/>
+        <data name="symbol" id="4" type="varString"/>
+        <data name="venue" id="5" type="varString"/>
+        <data name="base" id="6" type="varString"/>
+        <data name="quote" id="7" type="varString"/>
     </sbe:message>
 </sbe:messageSchema>

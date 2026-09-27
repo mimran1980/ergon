@@ -15,6 +15,7 @@ use codec::{
 
 pub const SCHEMA: &str = include_str!("../schemas/shapes_v1.xml");
 pub const TEMPLATE_ID: u16 = ShapesEncoder::TEMPLATE_ID;
+pub const SCHEMA_ID: u16 = ShapesEncoder::SCHEMA_ID;
 const NOTE: &[u8] = b"hello";
 /// Exact length of the message [`encode`] writes.
 pub const LEN: usize = ShapesEncoder::compute_length_with_header(2, NOTE.len());

@@ -303,6 +303,203 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Feeds: who publishes where (last 30 s)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT host, stream_id, session_id, argMax(client_name, ts) AS client, argMax(channel, ts) AS publication, argMax(value, ts) AS position FROM market.aeron_counters WHERE ts > now() - INTERVAL 30 SECOND AND type = 'pub-pos' AND startsWith(channel, 'aeron:udp') GROUP BY host, stream_id, session_id ORDER BY stream_id, host",
+          "format": 1,
+          "queryType": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Every UDP feed publication by node: after a move a stream shows up under its new host with a new session."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Receivers behind senders, by stream and node (bytes)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT s.time AS time, concat(toString(s.stream_id), ' ', s.host, ' → ', r.host) AS receiver, max(s.pos - r.pos) AS behind FROM (SELECT toStartOfInterval(ts, INTERVAL 5 SECOND) AS time, host, session_id, stream_id, max(value) AS pos FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'snd-pos' GROUP BY ALL) AS s INNER JOIN (SELECT toStartOfInterval(ts, INTERVAL 5 SECOND) AS time, host, session_id, stream_id, max(value) AS pos FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'rcv-pos' GROUP BY ALL) AS r ON s.time = r.time AND s.session_id = r.session_id AND s.stream_id = r.stream_id GROUP BY time, receiver ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "snd-pos on the publisher's node minus rcv-pos on each subscriber's node, per 5 s: across nodes, unlike the panel above."
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "MDC destinations per feed",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(host, ' :', extract(label, 'control=[^:]+:(\\\\d+)')) AS feed, max(value) AS destinations FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'mdc-num-dest' GROUP BY time, feed ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Subscribers (other nodes' drivers) each feed is sending to. A subscriber that follows a moved publisher leaves one node's count and joins another's."
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "NAKs, retransmits and loss per node / s",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(host, ' ', label) AS series, sum(delta) / $__interval_s AS rate FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'system' AND label IN ('NAKs sent', 'NAKs received', 'Retransmits sent', 'Loss gap fills') GROUP BY time, series ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Reliable streams repair loss with NAKs and retransmits; best-effort ones (tob) never NAK."
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Name re-resolutions per node (a publisher moved)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, host, sum(delta) AS changes FROM market.aeron_counters WHERE $__timeFilter(ts) AND type = 'system' AND startsWith(label, 'Resolution changes') GROUP BY time, host ORDER BY time",
+          "format": 0,
+          "queryType": "timeseries"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "description": "The driver re-resolves a subscription's control name after 5 s without data; a change means the publisher's name now points at another node."
     }
   ]
 }

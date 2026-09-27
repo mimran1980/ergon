@@ -28,11 +28,17 @@ spec:
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
           ports: [{ containerPort: 8123 }]
           # ClickHouse sizes its caches to what it may use: without a limit,
-          # that is most of Docker's memory.
-          resources: { limits: { memory: 2Gi } }
+          # that is most of Docker's memory. clickhouse-lab.xml keeps its own
+          # logging and caches small.
+          resources: { requests: { memory: 384Mi }, limits: { memory: 1Gi } }
           readinessProbe:
             httpGet: { path: /ping, port: 8123 }
-          volumeMounts: [{ name: data, mountPath: /var/lib/clickhouse }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/clickhouse }
+            - { name: settings, mountPath: /etc/clickhouse-server/config.d/lab.xml, readOnly: true }
+      volumes:
+        - name: settings
+          hostPath: { path: /lab/deploy/clickhouse-lab.xml, type: File }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec:
@@ -49,16 +55,28 @@ spec:
   selector: { app: clickhouse }
   ports: [{ port: 8123, targetPort: 8123, nodePort: 30123 }]
 ---
-# Aeron, one per node (a DaemonSet): the media driver and the archive in one
-# JVM. Recorders and the ingester on the node share its directory, which is
-# on the node's tmpfs, so every pod there talks to it over shared memory. The
-# recordings are on the node's disk, so a restart loses nothing. If the
-# archive dies (see deploy/LabDriver.java) the pod exits and is restarted,
-# and the clients, whose driver is gone, exit and reconnect too.
+# Aeron, one per node (a DaemonSet), shared by every application on the node:
+#
+# * `driver`: Aeron's C media driver (aeron-driver), DEDICATED threading:
+#   conductor, sender and receiver threads. No JIT or garbage collector on
+#   the network threads.
+# * `archive`: the Java Aeron Archive (deploy/LabDriver.java), a client of
+#   that driver. It records the node's IPC persist stream and, through spies,
+#   every feed published on this node (see config/streams.yaml).
+#
+# The pod uses the node's network: the driver binds the node's IP, so a feed
+# published here is reached at this node's address, and it resolves channel
+# names (md-binance.lab.svc.cluster.local) through the cluster's DNS. Its
+# directory is on the node's tmpfs, shared over shared memory with every pod
+# on the node; the recordings are on the node's disk. The archive's control
+# endpoint is the node's port 8010, so a subscriber catching up on a feed
+# reaches the archive recording it by the feed's own name
+# (md-binance.lab.svc.cluster.local:8010). If the driver goes, the
+# archive exits too (LabDriver.java) and both restart; clients reconnect.
 #
 # Timeouts are 30 s rather than Aeron's 10 s, so a laptop that sleeps
 # briefly does not take everything down; AERON_DRIVER_TIMEOUT matches it on
-# the Rust clients.
+# the clients.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -69,26 +87,68 @@ spec:
   template:
     metadata: { labels: { app: aeron } }
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations: [{ operator: Exists }]
       containers:
-        - name: aeron
+        - name: driver
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/aeron-driver]
+          env:
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DIR_DELETE_ON_START, value: "true" }
+            - { name: AERON_THREADING_MODE, value: DEDICATED }
+            # Idle strategy of each driver thread: spin (busy spin), noop,
+            # yield, sleep-ns or backoff. For the best latency set the sender
+            # and receiver (and the conductor) to `spin` on isolated cores:
+            # each then keeps one core at 100%. This lab runs four nodes on
+            # one machine, so it yields and sleeps instead.
+            - { name: AERON_SENDER_IDLE_STRATEGY, value: yield }
+            - { name: AERON_RECEIVER_IDLE_STRATEGY, value: yield }
+            - { name: AERON_CONDUCTOR_IDLE_STRATEGY, value: sleep-ns }
+            - { name: AERON_IPC_TERM_BUFFER_LENGTH, value: "16777216" }
+            # A publisher that dies without closing keeps its publication
+            # (and every subscriber's image of it) alive until its client
+            # times out: Aeron's 10 s default bounds how long a moved feed's
+            # subscribers stay on the dead node. Feeds close cleanly on
+            # SIGTERM instead.
+            - { name: AERON_CLIENT_LIVENESS_TIMEOUT, value: "10000000000" }
+            - { name: AERON_PUBLICATION_UNBLOCK_TIMEOUT, value: "15000000000" }
+            # A closed publication lingers, still heartbeating its
+            # subscribers, and they re-resolve its name only after 5 s of
+            # silence (compiled in): 5 s linger + 5 s + the 1 s check was
+            # the 11 s a restarted feed took to reach its engine. 1 s is
+            # enough for a last retransmit on this network.
+            - { name: AERON_PUBLICATION_LINGER_TIMEOUT, value: "1000000000" }
+          # Its term buffers are shared-memory files, charged to whoever
+          # touches them first: 16 MiB x 3 per IPC publication.
+          resources: { requests: { memory: 64Mi }, limits: { memory: 256Mi } }
+          startupProbe:
+            exec: { command: [test, -f, /aeron/driver/cnc.dat] }
+            periodSeconds: 1
+            failureThreshold: 120
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+        - name: archive
           image: lab/aeron:local
           imagePullPolicy: Never
           env:
             # 16 MiB segments, so the purge behind the ingester shows within minutes.
             - name: JAVA_TOOL_OPTIONS
+              # A small JVM: left alone, it sizes heap and direct memory from
+              # the whole machine, not this container. C1 only (TieredStopAt
+              # Level=1) keeps the code cache and compiler threads small; the
+              # archive's work is file I/O, not hot Java.
               value: >-
-                -Daeron.dir=/aeron/driver -Daeron.dir.delete.on.start=true
-                -Daeron.ipc.term.buffer.length=16m
-                -Daeron.client.liveness.timeout=30s -Daeron.publication.unblock.timeout=45s
-                -Daeron.driver.timeout=30000 -Daeron.archive.connect.timeout=30s
+                -Xms16m -Xmx64m -XX:MaxDirectMemorySize=48m -XX:+UseSerialGC
+                -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=16m
+                -XX:MaxMetaspaceSize=48m -Xss512k
+                -Daeron.dir=/aeron/driver -Daeron.driver.timeout=30000
                 -Daeron.archive.dir=/archive/recordings
                 -Daeron.archive.segment.file.length=16m
-                -Daeron.archive.control.channel=aeron:udp?endpoint=localhost:8010
+                -Daeron.archive.control.channel=aeron:udp?endpoint=0.0.0.0:8010
                 -Daeron.archive.replication.channel=aeron:udp?endpoint=localhost:0
-          startupProbe:
-            exec: { command: [test, -f, /aeron/driver/cnc.dat] }
-            periodSeconds: 1
-            failureThreshold: 120
+          resources: { requests: { memory: 64Mi }, limits: { memory: 192Mi } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: archive, mountPath: /archive }
@@ -113,15 +173,16 @@ spec:
   template:
     metadata: { labels: { app: ingester } }
     spec:
+      tolerations: [{ operator: Exists }]
       initContainers:
         - name: wait-for-aeron
-          image: lab/recorder:local
+          image: lab/app:local
           imagePullPolicy: Never
           command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
           volumeMounts: [{ name: aeron, mountPath: /aeron }]
       containers:
         - name: ingester
-          image: lab/recorder:local
+          image: lab/app:local
           imagePullPolicy: Never
           command: [/usr/local/bin/ingester]
           env:
@@ -131,9 +192,20 @@ spec:
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_SCHEMAS, value: /lab/schema }
             - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
+            # Every feed in the registry published on this node is recorded
+            # through a spy on its publication, bound to this node's IP.
+            - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
+            # One insert per table per interval from each of the four nodes:
+            # every insert is a ClickHouse part, held in its memory.
+            - { name: PERSIST_INTERVAL, value: 2s }
+            # glibc keeps a heap arena per thread by default: two is plenty.
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             # `host` of the aeron_* rows it samples.
             - name: NODE_NAME
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          resources: { requests: { memory: 32Mi }, limits: { memory: 256Mi } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: state, mountPath: /state }
@@ -149,7 +221,7 @@ spec:
         - name: config
           hostPath: { path: /lab/config, type: Directory }
 ---
-# The recorders, one Deployment per exchange, are in recorder.yaml:
+# The feed handlers (md), one Deployment per exchange, are in md.yaml:
 # `just exchange okx` deploys one.
 ---
 # Grafana: http://<host>:3000. Datasource and dashboards come from grafana/.
@@ -175,7 +247,10 @@ spec:
             - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
             - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /lab/grafana/dashboards/market.json }
             - { name: GF_PATHS_PROVISIONING, value: /lab/grafana/provisioning }
+            # Go returns memory to the OS near this, instead of at twice the heap.
+            - { name: GOMEMLIMIT, value: 96MiB }
           ports: [{ containerPort: 3000 }]
+          resources: { requests: { memory: 64Mi }, limits: { memory: 192Mi } }
           readinessProbe:
             httpGet: { path: /api/health, port: 3000 }
           volumeMounts: [{ name: grafana, mountPath: /lab/grafana, readOnly: true }]
@@ -212,6 +287,8 @@ spec:
           env:
             - { name: CLICKHOUSE_HOST, value: clickhouse }
           ports: [{ containerPort: 8888 }]
+          # pandas frames of query results: raise it for bigger notebooks.
+          resources: { requests: { memory: 64Mi }, limits: { memory: 512Mi } }
           volumeMounts:
             - { name: notebooks, mountPath: /lab/notebooks }
             - { name: config, mountPath: /lab/config, readOnly: true }

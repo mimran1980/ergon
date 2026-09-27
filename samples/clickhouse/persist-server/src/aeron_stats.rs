@@ -326,10 +326,12 @@ impl AeronStats {
         let mut last = HashMap::with_capacity(counters.len());
         for c in &counters {
             let p = parse(c);
+            // No delta where it does not fit: a persistent subscription's
+            // join difference, say, is i64::MIN until it first joins.
             let delta = self
                 .last
                 .get(&(c.id, c.registration_id))
-                .map(|before| c.value - before);
+                .and_then(|before| c.value.checked_sub(*before));
             last.insert((c.id, c.registration_id), c.value);
             let client = names.get(&c.owner_id).map_or("", String::as_str);
             Row::new(&all, &mut out)

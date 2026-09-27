@@ -314,6 +314,7 @@ impl Tracer {
             n: 0,
             attrs: [0; MAX_ATTRS],
             sampled,
+            kept: false,
         }
     }
 
@@ -423,6 +424,7 @@ pub struct Trace<'t> {
     n: u8,
     attrs: [i64; MAX_ATTRS],
     sampled: bool,
+    kept: bool,
 }
 
 impl Trace<'_> {
@@ -444,8 +446,22 @@ impl Trace<'_> {
         }
     }
 
+    /// Publish this one whatever the sampling (while `otel_traces` is on):
+    /// a tick that ended in an order, say.
+    #[inline]
+    pub fn keep(&mut self) {
+        self.kept = true;
+    }
+
+    /// Its id, when the business id is known only part way: the order id a
+    /// tick led to, so the order's traces in other applications join it.
+    #[inline]
+    pub fn set_id(&mut self, id: TraceId) {
+        self.id = id;
+    }
+
     /// Record each stage and the whole into the histograms, and publish the
-    /// trace if it is sampled or slow and `otel_traces` is on.
+    /// trace if it is kept, sampled or slow and `otel_traces` is on.
     #[inline]
     pub fn finish(self) {
         let t = self.tracer;
@@ -458,17 +474,28 @@ impl Trace<'_> {
         if !t.switch.on.load(Relaxed) {
             return;
         }
-        let why = if self.sampled {
-            codec::TraceWhy::Sampled
-        } else {
-            let slow = t.switch.slower_than.load(Relaxed);
-            if slow > 0 && prev >= slow {
-                codec::TraceWhy::Slow
-            } else {
-                return;
-            }
-        };
-        t.publish(&self, why);
+        if let Some(why) = why(
+            self.kept,
+            self.sampled,
+            t.switch.slower_than.load(Relaxed),
+            prev,
+        ) {
+            t.publish(&self, why);
+        }
+    }
+}
+
+/// Why a finished trace that took `total` ns is published, if it is.
+#[inline]
+fn why(kept: bool, sampled: bool, slower_than: i64, total: i64) -> Option<codec::TraceWhy> {
+    if kept {
+        Some(codec::TraceWhy::Kept)
+    } else if sampled {
+        Some(codec::TraceWhy::Sampled)
+    } else if slower_than > 0 && total >= slower_than {
+        Some(codec::TraceWhy::Slow)
+    } else {
+        None
     }
 }
 
@@ -535,6 +562,18 @@ mod tests {
         assert_eq!(t.clamped[1].get(), 0);
         let counts: Vec<u64> = t.histograms.iter().map(|h| h.cell_count()).collect();
         assert_eq!(counts, [3, 3, 3], "wire, decode, total");
+    }
+
+    #[test]
+    fn kept_beats_sampling_and_speed() {
+        use codec::TraceWhy::{Kept, Sampled, Slow};
+        // (kept, sampled, slower_than, total)
+        assert_eq!(why(true, false, 0, 1), Some(Kept));
+        assert_eq!(why(true, true, 10, 99), Some(Kept));
+        assert_eq!(why(false, true, 10, 99), Some(Sampled));
+        assert_eq!(why(false, false, 10, 10), Some(Slow));
+        assert_eq!(why(false, false, 10, 9), None);
+        assert_eq!(why(false, false, 0, i64::MAX), None, "no threshold");
     }
 
     #[test]

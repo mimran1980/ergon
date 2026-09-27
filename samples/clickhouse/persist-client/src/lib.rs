@@ -44,9 +44,13 @@
 
 pub mod clock;
 pub mod event;
+pub mod feed;
+pub mod idle;
 pub mod metrics;
+pub mod persistent;
 pub mod source;
 mod spans;
+pub mod streams;
 pub mod trace;
 mod value;
 
@@ -57,7 +61,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use rusteron_client::{
+use rusteron_archive::{
     Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronOfferError, AeronPublication,
     IntoCString,
 };
@@ -297,11 +301,13 @@ impl Drops {
 
 /// Which counter [`Persist::count`] increments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DropKind {
+pub(crate) enum DropKind {
     NotConnected,
     BackPressure,
     TooLarge,
     Other,
+    /// After [`Persist::shutdown`]: not a drop.
+    Closed,
 }
 
 /// Where to publish and what to read.
@@ -477,7 +483,7 @@ struct Inner {
     source_message: Vec<u8>,
     /// Series and their publishing; see [`Persist::metrics`].
     metrics: metrics::Metrics,
-    _aeron: Aeron,
+    aeron: Aeron,
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -495,6 +501,12 @@ struct Shared {
     /// again after the watcher marks them due.
     shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
     shapes_due: AtomicBool,
+    /// Bumped every 5 s: each feed sends its `Source` message again.
+    heartbeat: AtomicU64,
+    /// [`Persist::shutdown`] has begun: nothing more is published.
+    closed: AtomicBool,
+    /// Every feed's publication, for [`Persist::shutdown`] to close.
+    feeds: Mutex<Vec<AeronPublication>>,
     /// Each trace's switch by name, set from `otel_traces` by the watcher.
     traces: RwLock<HashMap<String, Arc<trace::TraceSwitch>>>,
     /// Every trace definition made, re-sent with the shapes.
@@ -526,6 +538,9 @@ impl Persist {
             shapes: Mutex::new(HashMap::new()),
             // The first record sends the `Source` message first.
             shapes_due: AtomicBool::new(true),
+            heartbeat: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+            feeds: Mutex::new(Vec::new()),
             traces: RwLock::new(HashMap::new()),
             trace_defs: Mutex::new(Vec::new()),
             spans_on: AtomicBool::new(false),
@@ -596,7 +611,7 @@ impl Persist {
                 source,
                 source_message,
                 metrics,
-                _aeron: aeron,
+                aeron,
                 shared,
                 stop,
                 watcher: Some(thread),
@@ -901,20 +916,78 @@ impl Persist {
     /// Claim `len` bytes, stamped with this application's source id.
     #[inline]
     fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
+        self.try_claim_on(&self.inner.publication, len)
+    }
+
+    /// Close every publication now, so the media driver drops them at once
+    /// and subscribers turn to the next publisher of each feed within
+    /// seconds, rather than after this client's liveness timeout. Call it on
+    /// SIGTERM, before exiting. Records made from now on are not published.
+    ///
+    /// It returns once the client has handed each close to the driver (at
+    /// most a second): a close is asynchronous, and one lost to an exit
+    /// leaves the publication open until the client times out. A new
+    /// process on the same node would then join that publication, in the
+    /// old session, and subscribers would never see it restart.
+    pub fn shutdown(&self) {
+        let shared = &self.inner.shared;
+        if shared.closed.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // Let records already claiming finish: each takes well under a
+        // microsecond.
+        std::thread::sleep(Duration::from_millis(50));
+        let mut publications =
+            std::mem::take(&mut *shared.feeds.lock().unwrap_or_else(PoisonError::into_inner));
+        publications.push(self.inner.publication.clone());
+        let done = Arc::new(AtomicU64::new(0));
+        let handler = {
+            let done = Arc::clone(&done);
+            rusteron_archive::Handler::new(move || {
+                done.fetch_add(1, Ordering::Relaxed);
+            })
+        };
+        let closing = publications
+            .into_iter()
+            .map(|p| p.close_with_handler(Some(&handler)))
+            .filter(Result::is_ok)
+            .count() as u64;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while done.load(Ordering::Relaxed) < closing && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if done.load(Ordering::Relaxed) < closing {
+            log::warn!("shutdown: the driver took more than a second to close the publications");
+            // The client still holds it and may call it yet: never free it.
+            std::mem::forget(handler);
+        }
+    }
+
+    /// Claim `len` bytes of `publication`, stamped with this application's
+    /// source id.
+    #[inline]
+    pub(crate) fn try_claim_on(
+        &self,
+        publication: &AeronPublication,
+        len: usize,
+    ) -> Result<Claim, DropKind> {
+        if self.inner.shared.closed.load(Ordering::Relaxed) {
+            return Err(DropKind::Closed);
+        }
         let claim = AeronBufferClaim::new_zeroed_on_stack();
-        retry_admin(|| self.inner.publication.try_claim(len, &claim))
-            .map_err(|err| classify(&err))?;
+        retry_admin(|| publication.try_claim(len, &claim)).map_err(|err| classify(&err))?;
         claim.frame_header_mut().reserved_value = self.inner.source.id as i64;
         Ok(Claim { claim, done: false })
     }
 
-    fn count(&self, kind: DropKind) {
+    pub(crate) fn count(&self, kind: DropKind) {
         let shared = &self.inner.shared;
         let counter = match kind {
             DropKind::NotConnected => &shared.not_connected,
             DropKind::BackPressure => &shared.back_pressure,
             DropKind::TooLarge => &shared.too_large,
             DropKind::Other => &shared.other,
+            DropKind::Closed => return,
         };
         counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -932,7 +1005,7 @@ impl Persist {
     }
 
     #[cold]
-    fn drop_one(&self) {
+    pub(crate) fn drop_one(&self) {
         self.count(DropKind::Other);
     }
 
@@ -976,19 +1049,19 @@ impl Drop for Inner {
 
 /// A claimed slot of the term buffer: aborted when dropped uncommitted, so
 /// an `encode` that fails releases it at once.
-struct Claim {
+pub(crate) struct Claim {
     claim: AeronBufferClaim,
     done: bool,
 }
 
 impl Claim {
     #[inline]
-    fn data(&mut self) -> &mut [u8] {
+    pub(crate) fn data(&mut self) -> &mut [u8] {
         self.claim.data()
     }
 
     #[inline]
-    fn commit(mut self) -> Result<(), rusteron_client::AeronCError> {
+    pub(crate) fn commit(mut self) -> Result<(), rusteron_archive::AeronCError> {
         self.done = true;
         self.claim.commit().map(drop)
     }
@@ -1047,7 +1120,9 @@ fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> R
     Ok(())
 }
 
-fn publish(settings: &Settings) -> Result<(Aeron, AeronPublication), rusteron_client::AeronCError> {
+fn publish(
+    settings: &Settings,
+) -> Result<(Aeron, AeronPublication), rusteron_archive::AeronCError> {
     let ctx = AeronContext::new()?;
     if let Some(dir) = &settings.aeron_dir {
         ctx.set_dir(&dir.as_str().into_c_string())?;
@@ -1094,6 +1169,7 @@ impl Watcher {
         self.ticks += 1;
         if self.ticks.is_multiple_of(5) {
             self.shared.shapes_due.store(true, Ordering::Relaxed);
+            self.shared.heartbeat.fetch_add(1, Ordering::Relaxed);
         }
         match self.reload() {
             Ok(()) => self.error = None,

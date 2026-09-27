@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What the engines publish (signals, orders) and the dummy exchanges answer
+  (execution reports). Every message is a ClickHouse table, as in
+  market.xml, recorded by the archive of the node the engine or exchange
+  runs on.
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="trading"
+                   id="89"
+                   version="0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varString">
+            <type name="length" primitiveType="uint32" maxValue="1024"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+        <!-- An exact decimal: mantissa x 10^-9, stored as Decimal(18, 9). -->
+        <composite name="Decimal9">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8" presence="constant">-9</type>
+        </composite>
+        <!-- UNIX epoch nanoseconds; stored as DateTime64(9, 'UTC'). -->
+        <type name="Timestamp" primitiveType="uint64" semanticType="UTCTimestamp"/>
+        <!-- A venue's name, as NautilusTrader spells it (BINANCE, …). -->
+        <type name="Venue" primitiveType="char" length="12"/>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="Buy">1</validValue>
+            <validValue name="Sell">2</validValue>
+        </enum>
+        <enum name="OrderStatus" encodingType="uint8">
+            <validValue name="New">1</validValue>
+            <validValue name="Filled">2</validValue>
+            <validValue name="Rejected">3</validValue>
+        </enum>
+    </types>
+
+    <!-- One asset's exponential moving averages of its aggregated mid, over
+         each horizon, time-decayed so they move on every book change.
+         Published once a second. -->
+    <sbe:message name="Ema" id="1">
+        <field name="ts" id="1" type="Timestamp"/>
+        <field name="mid" id="2" type="double"/>
+        <field name="ema5m" id="3" type="double"/>
+        <field name="ema30m" id="4" type="double"/>
+        <field name="ema1h" id="5" type="double"/>
+        <field name="ema4h" id="6" type="double"/>
+        <field name="ema12h" id="7" type="double"/>
+        <field name="ema1d" id="8" type="double"/>
+        <data name="asset" id="9" type="varString"/>
+    </sbe:message>
+
+    <!-- One asset's book across the region's venues: the best levels of all
+         of them, sizes in base quantity. Published once a second. -->
+    <sbe:message name="AggBook" id="2">
+        <field name="ts" id="1" type="Timestamp"/>
+        <group name="bids" id="2" dimensionType="groupSizeEncoding">
+            <field name="price" id="3" type="Decimal9"/>
+            <field name="size" id="4" type="Decimal9"/>
+            <field name="venue" id="5" type="Venue"/>
+        </group>
+        <group name="asks" id="6" dimensionType="groupSizeEncoding">
+            <field name="price" id="7" type="Decimal9"/>
+            <field name="size" id="8" type="Decimal9"/>
+            <field name="venue" id="9" type="Venue"/>
+        </group>
+        <data name="asset" id="10" type="varString"/>
+    </sbe:message>
+
+    <!-- An order from an engine to its region's dummy exchange. `tickTs` is
+         the market data it was decided on (the feed handler's receive time). -->
+    <sbe:message name="NewOrder" id="3">
+        <field name="ts" id="1" type="Timestamp"/>
+        <field name="tickTs" id="2" type="Timestamp"/>
+        <field name="orderId" id="3" type="uint64"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="price" id="5" type="Decimal9"/>
+        <field name="qty" id="6" type="Decimal9"/>
+        <data name="asset" id="7" type="varString"/>
+    </sbe:message>
+
+    <!-- The dummy exchange's answer: accepted, then filled at the order's
+         price. -->
+    <sbe:message name="ExecutionReport" id="4">
+        <field name="ts" id="1" type="Timestamp"/>
+        <field name="orderId" id="2" type="uint64"/>
+        <field name="status" id="3" type="OrderStatus"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="fillPrice" id="5" type="Decimal9"/>
+        <field name="fillQty" id="6" type="Decimal9"/>
+        <data name="asset" id="7" type="varString"/>
+    </sbe:message>
+</sbe:messageSchema>

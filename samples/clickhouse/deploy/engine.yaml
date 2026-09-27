@@ -1,0 +1,155 @@
+# A region's trading engine: its md feeds, aggregated book, EMAs and orders: `just engines` fills in __REGION__ for each region in
+# config/streams.yaml and applies it. Like md, it uses the node's network
+# and has a headless Service of its own name, so its subscribers find it
+# wherever it runs in the region; one replica, recreated rather than rolled.
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine-__REGION__
+  namespace: lab
+  labels: { app: engine, region: __REGION__ }
+spec:
+  clusterIP: None
+  selector: { app: engine, region: __REGION__ }
+  publishNotReadyAddresses: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engine-__REGION__
+  namespace: lab
+  labels: { app: engine, region: __REGION__ }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: engine, region: __REGION__ } }
+  template:
+    metadata: { labels: { app: engine, region: __REGION__ } }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # SIGTERM closes its feeds at once.
+      terminationGracePeriodSeconds: 10
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: topology.kubernetes.io/region, operator: In, values: [__REGION__] }
+      tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
+        - name: engine
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/engine]
+          env:
+            - { name: REGION, value: __REGION__ }
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
+            - { name: PERSIST_APP, value: engine-__REGION__ }
+            # Its loop's idle strategy: spin, noop, yield or sleep. The lab
+            # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
+            # machine; spin on an isolated core for real tick-to-trade.
+            - { name: IDLE, value: sleep }
+            - { name: MALLOC_ARENA_MAX, value: "1" }
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          resources: { requests: { memory: 16Mi }, limits: { memory: 64Mi } }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }
+---
+# A region's dummy exchange: it fills the engine's orders: `just engines` fills in __REGION__ for each region in
+# config/streams.yaml and applies it. Like md, it uses the node's network
+# and has a headless Service of its own name, so its subscribers find it
+# wherever it runs in the region; one replica, recreated rather than rolled.
+apiVersion: v1
+kind: Service
+metadata:
+  name: exch-sim-__REGION__
+  namespace: lab
+  labels: { app: exch-sim, region: __REGION__ }
+spec:
+  clusterIP: None
+  selector: { app: exch-sim, region: __REGION__ }
+  publishNotReadyAddresses: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exch-sim-__REGION__
+  namespace: lab
+  labels: { app: exch-sim, region: __REGION__ }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: exch-sim, region: __REGION__ } }
+  template:
+    metadata: { labels: { app: exch-sim, region: __REGION__ } }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # SIGTERM closes its feeds at once.
+      terminationGracePeriodSeconds: 10
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: topology.kubernetes.io/region, operator: In, values: [__REGION__] }
+      tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
+        - name: exch-sim
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/exch-sim]
+          env:
+            - { name: REGION, value: __REGION__ }
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
+            - { name: PERSIST_APP, value: exch-sim-__REGION__ }
+            # Its loop's idle strategy: spin, noop, yield or sleep. The lab
+            # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
+            # machine; spin on an isolated core for real tick-to-trade.
+            - { name: IDLE, value: sleep }
+            - { name: MALLOC_ARENA_MAX, value: "1" }
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          resources: { requests: { memory: 16Mi }, limits: { memory: 64Mi } }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: config
+          hostPath: { path: /lab/config, type: Directory }
