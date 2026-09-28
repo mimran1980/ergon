@@ -36,7 +36,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ergo_sbe::generate_to_out_dir(&schema_path, ergo_sbe::GenerationConfig::new(module))?;
     }
 
-    println!("cargo::rerun-if-changed=../sbe/src/codegen.rs");
-    println!("cargo::rerun-if-changed=../sbe/src/schema.rs");
     Ok(())
 }
