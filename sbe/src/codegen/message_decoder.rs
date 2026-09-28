@@ -148,7 +148,7 @@ pub(crate) fn generate_message_decoder(
     let _header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
     let _header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
     let _header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
-    let _header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
+    let header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
 
     let sealed_path = &gen_ctx.sealed_path;
 
@@ -1451,31 +1451,60 @@ pub(crate) fn generate_message_decoder(
             });
         }
         let mut offset = body_end;
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.#header_vr_ident() as u64,
+        )?;
     });
 
-    // Group dimension checks
+    // Group dimension checks. Both the tailed skip and the fixed-stride
+    // multiply use the dimension header's block length and the frame's
+    // acting version. The compiled stride at version 0 rejects a valid
+    // extension (the next tail is read out of the padding) and accepts a
+    // wire block length of 0 when slack bytes cover the compiled width.
     for g in &msg.groups {
-        let (dim_name, dim_size, _, count_field) = get_dimension_info(elements, &g.dimension_type);
+        let (dim_name, dim_size, bl_field, count_field) =
+            get_dimension_info(elements, &g.dimension_type);
         let g_snake = to_snake_case(&g.name);
         let ds_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
         let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let ebl_lit = syn::LitInt::new(
-            &g.effective_block_length().to_string(),
-            proc_macro2::Span::call_site(),
-        );
+        let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
-        let entry_dec_ident = {
+        let (entry_dec_ident, group_dec_ident) = {
             let raw = to_pascal_case(&g.name);
             let unique = if multi_message {
                 format!("{name}{raw}")
             } else {
                 raw
             };
-            syn::Ident::new(
-                &format!("{unique}EntryDecoder"),
-                proc_macro2::Span::call_site(),
+            (
+                syn::Ident::new(
+                    &format!("{unique}EntryDecoder"),
+                    proc_macro2::Span::call_site(),
+                ),
+                syn::Ident::new(&format!("{unique}Decoder"), proc_macro2::Span::call_site()),
             )
+        };
+        let wire_block = quote::quote! {
+            let group_block_length = match sbe_rt::checked_header_usize(
+                "blockLength",
+                dim.#bf_ident() as u64,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+            };
+            let min_fixed = <#group_dec_ident::<'_, sbe_rt::Detached>>::min_readable_fixed_extent(
+                acting_version,
+            );
+            if count > 0 && group_block_length < min_fixed {
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: #g_snake,
+                    needed: min_fixed,
+                    available: group_block_length,
+                }
+                .into());
+            }
         };
         if has_tails {
             verify_stmts.push(quote::quote! {
@@ -1495,6 +1524,7 @@ pub(crate) fn generate_message_decoder(
                         Ok(count) => count,
                         Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                     };
+                    #wire_block
                     let mut entry_offset = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
@@ -1505,7 +1535,7 @@ pub(crate) fn generate_message_decoder(
                         }
                     };
                     for _ in 0..count {
-                        match #entry_dec_ident::skip(buf, entry_offset, #ebl_lit, 0) {
+                        match #entry_dec_ident::skip(buf, entry_offset, group_block_length, acting_version) {
                             Ok(next) => entry_offset = next,
                             Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                         }
@@ -1531,6 +1561,7 @@ pub(crate) fn generate_message_decoder(
                         Ok(count) => count,
                         Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                     };
+                    #wire_block
                     let dim_end = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
@@ -1540,7 +1571,7 @@ pub(crate) fn generate_message_decoder(
                             });
                         }
                     };
-                    let entries = match count.checked_mul(#ebl_lit) {
+                    let entries = match count.checked_mul(group_block_length) {
                         Some(v) => v,
                         None => {
                             return Err(sbe_rt::VerifyError::MessageTooShort {

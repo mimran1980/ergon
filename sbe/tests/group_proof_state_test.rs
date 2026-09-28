@@ -546,3 +546,136 @@ fn warm_nested_short_block_is_rejected_before_bulk_decode() -> Result<(), Box<dy
     );
     Ok(())
 }
+
+/// `verify` must walk groups at the wire block length and the frame version.
+///
+/// The compiled stride at version 0 reads the next tail out of an extension's
+/// padding, so a longer valid block is rejected. A zero wire block with slack
+/// bytes covering the compiled width used to be accepted, including a nested
+/// fixed-stride group.
+#[test]
+fn verify_walks_wire_block_length_and_acting_version() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="verify_walk" id="11" version="1"
+                   byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+    </composite>
+  </types>
+  <sbe:message name="Frame" id="1" blockLength="0">
+    <group name="wide" id="1" dimensionType="groupSizeEncoding">
+      <field name="value" id="2" type="uint32"/>
+      <data name="note" id="3" type="varStringEncoding"/>
+    </group>
+    <group name="ticks" id="4" dimensionType="groupSizeEncoding">
+      <field name="px" id="5" type="uint32"/>
+    </group>
+    <group name="rows" id="6" dimensionType="groupSizeEncoding">
+      <field name="value" id="7" type="uint32"/>
+      <group name="extra" id="8" dimensionType="groupSizeEncoding" sinceVersion="1">
+        <field name="flag" id="9" type="uint8"/>
+      </group>
+      <group name="cells" id="11" dimensionType="groupSizeEncoding">
+        <field name="qty" id="12" type="uint32"/>
+      </group>
+      <data name="label" id="10" type="varStringEncoding"/>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("verify_walk"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    compile_and_run(
+        "gp_verify_walk",
+        &src,
+        r#"
+        fn put_u16(buf: &mut [u8], at: usize, v: u16) {
+            buf[at..at + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        fn put_u32(buf: &mut [u8], at: usize, v: u32) {
+            buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        fn seal(buf: &mut [u8], version: u16) {
+            put_u16(buf, 2, 1);
+            put_u16(buf, 4, 11);
+            put_u16(buf, 6, version);
+        }
+
+        // Wire block 8, compiled block 4. The note sits after 4 bytes of
+        // 0xFF padding. The compiled stride reads that padding as the length.
+        let mut wide = [0u8; 34];
+        seal(&mut wide, 0);
+        put_u16(&mut wide, 8, 8);
+        put_u16(&mut wide, 10, 1);
+        put_u32(&mut wide, 12, 1);
+        wide[16..20].fill(0xff);
+        put_u32(&mut wide, 20, 2);
+        wide[24] = b'h';
+        wide[25] = b'i';
+        // ticks and rows follow, both empty.
+        FrameDecoder::verify(&wide).expect("extended block length is a valid frame");
+
+        // ticks blockLength 0, count 1, with 4 slack bytes so the compiled
+        // width still fits. That frame is not valid.
+        let mut ticks = [0u8; 24];
+        seal(&mut ticks, 0);
+        put_u16(&mut ticks, 12, 0);
+        put_u16(&mut ticks, 14, 1);
+        assert!(
+            FrameDecoder::verify(&ticks).is_err(),
+            "a zero block length with one tick must be rejected"
+        );
+
+        // Acting version 1 carries `extra` between the fixed block and
+        // `cells`. Version 0 would parse `extra`'s header as the next tail.
+        let mut versioned = [0u8; 42];
+        seal(&mut versioned, 1);
+        put_u16(&mut versioned, 16, 4);
+        put_u16(&mut versioned, 18, 1);
+        put_u32(&mut versioned, 20, 7);
+        put_u16(&mut versioned, 24, 1);
+        put_u16(&mut versioned, 26, 1);
+        versioned[28] = 9;
+        put_u16(&mut versioned, 29, 4);
+        put_u16(&mut versioned, 31, 1);
+        put_u32(&mut versioned, 33, 3);
+        put_u32(&mut versioned, 37, 1);
+        versioned[41] = b'Z';
+        FrameDecoder::verify(&versioned).expect("version 1 frame with extra must verify");
+
+        // Nested cells blockLength 0, count 1. At version 0 `extra` is
+        // absent, so the short cells header is what the walk reads. A valid
+        // empty label follows it, which is why a stride-only walk accepts it.
+        let mut hostile = [0u8; 32];
+        seal(&mut hostile, 0);
+        put_u16(&mut hostile, 16, 4);
+        put_u16(&mut hostile, 18, 1);
+        put_u32(&mut hostile, 20, 1);
+        put_u16(&mut hostile, 24, 0);
+        put_u16(&mut hostile, 26, 1);
+        assert!(
+            FrameDecoder::verify(&hostile).is_err(),
+            "nested cells blockLength 0 with count 1 must be rejected"
+        );
+        "#,
+    );
+    Ok(())
+}

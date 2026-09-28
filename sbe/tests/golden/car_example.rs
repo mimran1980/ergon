@@ -2751,6 +2751,17 @@ impl<'a> CarDecoder<'a> {
             "blockLength",
             header.block_length() as u64,
         )?;
+        let min_fixed = <FuelFiguresDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(self.acting_version);
+        if count > 0 && block_len < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: min_fixed,
+                available: block_len,
+            });
+        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -2783,6 +2794,17 @@ impl<'a> CarDecoder<'a> {
             "blockLength",
             header.block_length() as u64,
         )?;
+        let min_fixed = <PerformanceFiguresDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(self.acting_version);
+        if count > 0 && block_len < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: min_fixed,
+                available: block_len,
+            });
+        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -3176,6 +3198,10 @@ impl<'a> CarDecoder<'a> {
             });
         }
         let mut offset = body_end;
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.version() as u64,
+        )?;
         {
             if offset + 4 > buf.len() {
                 return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
@@ -3192,6 +3218,27 @@ impl<'a> CarDecoder<'a> {
                 Ok(count) => count,
                 Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
             };
+            let group_block_length = match sbe_rt::checked_header_usize(
+                "blockLength",
+                dim.block_length() as u64,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+            };
+            let min_fixed = <FuelFiguresDecoder<
+                '_,
+                sbe_rt::Detached,
+            >>::min_readable_fixed_extent(acting_version);
+            if count > 0 && group_block_length < min_fixed {
+                return Err(
+                    sbe_rt::DecodeError::BufferTooShort {
+                        field: "fuel_figures",
+                        needed: min_fixed,
+                        available: group_block_length,
+                    }
+                        .into(),
+                );
+            }
             let mut entry_offset = match offset.checked_add(4) {
                 Some(v) => v,
                 None => {
@@ -3202,7 +3249,12 @@ impl<'a> CarDecoder<'a> {
                 }
             };
             for _ in 0..count {
-                match FuelFiguresEntryDecoder::skip(buf, entry_offset, 6, 0) {
+                match FuelFiguresEntryDecoder::skip(
+                    buf,
+                    entry_offset,
+                    group_block_length,
+                    acting_version,
+                ) {
                     Ok(next) => entry_offset = next,
                     Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                 }
@@ -3225,6 +3277,27 @@ impl<'a> CarDecoder<'a> {
                 Ok(count) => count,
                 Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
             };
+            let group_block_length = match sbe_rt::checked_header_usize(
+                "blockLength",
+                dim.block_length() as u64,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
+            };
+            let min_fixed = <PerformanceFiguresDecoder<
+                '_,
+                sbe_rt::Detached,
+            >>::min_readable_fixed_extent(acting_version);
+            if count > 0 && group_block_length < min_fixed {
+                return Err(
+                    sbe_rt::DecodeError::BufferTooShort {
+                        field: "performance_figures",
+                        needed: min_fixed,
+                        available: group_block_length,
+                    }
+                        .into(),
+                );
+            }
             let mut entry_offset = match offset.checked_add(4) {
                 Some(v) => v,
                 None => {
@@ -3235,7 +3308,12 @@ impl<'a> CarDecoder<'a> {
                 }
             };
             for _ in 0..count {
-                match PerformanceFiguresEntryDecoder::skip(buf, entry_offset, 1, 0) {
+                match PerformanceFiguresEntryDecoder::skip(
+                    buf,
+                    entry_offset,
+                    group_block_length,
+                    acting_version,
+                ) {
                     Ok(next) => entry_offset = next,
                     Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                 }
@@ -5051,6 +5129,17 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             "blockLength",
             header.block_length() as u64,
         )?;
+        let min_fixed = <PerformanceFiguresAccelerationDecoder<
+            '_,
+            sbe_rt::Detached,
+        >>::min_readable_fixed_extent(self.acting_version);
+        if count > 0 && block_len < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: min_fixed,
+                available: block_len,
+            });
+        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {

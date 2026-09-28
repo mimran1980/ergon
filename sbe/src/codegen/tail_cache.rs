@@ -63,6 +63,16 @@ pub(crate) fn emit_tail_offsets(
         let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let gn_lit = g.name.as_str();
         let entry_decoder_ident = &entry_skip[gi];
+        let group_dec_ident = syn::Ident::new(
+            &format!(
+                "{}Decoder",
+                entry_decoder_ident
+                    .to_string()
+                    .strip_suffix("EntryDecoder")
+                    .expect("group entry skip type is named *EntryDecoder")
+            ),
+            proc_macro2::Span::call_site(),
+        );
         let version_skip = if g.since_version > 0 {
             let since_lit =
                 syn::LitInt::new(&g.since_version.to_string(), proc_macro2::Span::call_site());
@@ -95,6 +105,20 @@ pub(crate) fn emit_tail_offsets(
                     "blockLength",
                     header.#bf_ident() as u64,
                 )?;
+                // Same short-block rule as the group constructors. `verify`
+                // reaches nested groups through this walk, and a wire
+                // block length of 0 with a positive count would otherwise
+                // skip the entry bytes the getters still read.
+                let min_fixed = <#group_dec_ident::<'_, sbe_rt::Detached>>::min_readable_fixed_extent(
+                    self.acting_version,
+                );
+                if count > 0 && block_len < min_fixed {
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #gn_lit,
+                        needed: min_fixed,
+                        available: block_len,
+                    });
+                }
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {

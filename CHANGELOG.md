@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- **`verify` walked repeating groups at the compiled block length and
+  version 0.** A wire block longer than the schema was rejected because the
+  next tail was read out of the extension padding, and a nested group whose
+  wire block length was too short for its fields was accepted. The walk now
+  uses the dimension header's block length and the frame's acting version,
+  and rejects a short block the same way the group constructor does.
 - **A nested fixed-stride group reached through a warm parent entry accepted
   `blockLength` shorter than its required fields.** `wrap_trusted` skipped
   the check `wrap` already applied, so a frame with `numInGroup` 1 and a
