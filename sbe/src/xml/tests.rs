@@ -3579,6 +3579,40 @@ fn include_with_non_types_sibling_elements_is_tolerated() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn include_whose_root_is_a_message_is_an_error() -> Result<(), Box<dyn std::error::Error>> {
+    // sbe-tool splices an included <message> into the schema. We read messages
+    // only from the root document, so the include must fail, not vanish.
+    let dir = std::env::temp_dir().join(format!("ergon_xml_inc_msg_{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let inc = dir.join("order.xml");
+    std::fs::write(
+        &inc,
+        r#"<?xml version="1.0"?>
+<sbe:message xmlns:sbe="http://fixprotocol.io/2016/sbe" name="Order" id="2">
+<field name="qty" id="1" type="uint32"/>
+</sbe:message>"#,
+    )?;
+    let schema = format!(
+        r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <include href="{}"/>
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+<field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#,
+        inc.display()
+    );
+    let result = parse(&schema);
+    std::fs::remove_file(&inc).ok();
+    let Err(err) = result else {
+        return Err("an included <message> must not be dropped silently".into());
+    };
+    assert!(format!("{err}").contains("not supported"), "{err}");
+    Ok(())
+}
+
+#[test]
 fn char_constant_without_text_is_tolerated_at_parse_time() -> Result<(), Box<dyn std::error::Error>>
 {
     // presence="constant" with no element text: the length check is

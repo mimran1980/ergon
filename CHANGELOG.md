@@ -28,6 +28,10 @@
   field returned `Side::Buy`. A primitive constant field may still reference
   an enum whose encoding type matches its own. A literal constant belongs in
   `constantValue`, not `valueRef`.
+- **An included file whose root is `<message>` was dropped silently.** sbe-tool
+  splices such a message into the schema; ergon produced no codec and no
+  error. It is now a parse error that tells you to declare the message in the
+  root schema.
 
 ## [0.1.29] — 2026-09-19
 
