@@ -11,12 +11,12 @@
 //! Grafana shows it under the engine's tick-to-trade trace of that order.
 
 use engine::App;
+use persist_client::clock::{Clock, Nanos};
+use persist_client::trace::TraceId;
 use schema::trading::sbe_rt::EncodeError;
 use schema::trading::{
     ExecutionReportEncoder, ExecutionReportFixedFields, NewOrderDecoder, OrderStatus,
 };
-use persist_client::clock::{Clock, Nanos};
-use persist_client::trace::TraceId;
 
 const ORDERS: u64 = TraceId::namespace("order");
 /// Orders older than this when they arrive are ignored.

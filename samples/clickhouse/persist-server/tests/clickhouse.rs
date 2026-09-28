@@ -624,8 +624,7 @@ fn market_schema_tables() -> TestResult {
 #[test]
 fn trading_rows_round_trip_beside_market_rows() -> TestResult {
     use schema::trading::{
-        AggBookAsksEntry, AggBookBidsEntry, AggBookEncoder, AggBookFixedFields, Decimal9,
-        NewOrderEncoder, NewOrderFixedFields, Side,
+        AggBookEncoder, AggBookFixedFields, Decimal9, NewOrderEncoder, NewOrderFixedFields, Side,
     };
     let lab = Lab::new(
         "trading",
@@ -637,35 +636,35 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
         &lab.config,
         Duration::ZERO,
     )?;
-    // A venue shorter than its 12 chars is NUL-padded on the wire.
-    let venue = |name: &[u8]| {
-        let mut v = [0; 12];
-        v[..name.len()].copy_from_slice(name);
-        v
-    };
     let mut buf = [0u8; AggBookEncoder::compute_length_with_header(2, 1, 3)];
     let len = AggBookEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&AggBookFixedFields {
             ts: 1_700_000_000_000_000_000,
         })
         .bids(2, |g| {
-            g.add_struct(&AggBookBidsEntry {
-                price: Decimal9::new(100_000_000_000),
-                size: Decimal9::new(1_500_000_000),
-                venue: venue(b"BINANCE"),
+            g.add_checked(|mut entry| {
+                entry
+                    .price_wire(Decimal9::new(100_000_000_000))
+                    .size_wire(Decimal9::new(1_500_000_000))
+                    .venue_str("BINANCE")?;
+                Ok(entry.complete())
             })?;
-            g.add_struct(&AggBookBidsEntry {
-                price: Decimal9::new(99_000_000_000),
-                size: Decimal9::new(2_000_000_000),
-                venue: venue(b"HYPERLIQUID"),
+            g.add_checked(|mut entry| {
+                entry
+                    .price_wire(Decimal9::new(99_000_000_000))
+                    .size_wire(Decimal9::new(2_000_000_000))
+                    .venue_str("HYPERLIQUID")?;
+                Ok(entry.complete())
             })?;
             Ok(())
         })?
         .asks(1, |g| {
-            g.add_struct(&AggBookAsksEntry {
-                price: Decimal9::new(101_000_000_000),
-                size: Decimal9::new(250_000_000),
-                venue: venue(b"BINANCE"),
+            g.add_checked(|mut entry| {
+                entry
+                    .price_wire(Decimal9::new(101_000_000_000))
+                    .size_wire(Decimal9::new(250_000_000))
+                    .venue_str("BINANCE")?;
+                Ok(entry.complete())
             })?;
             Ok(())
         })?

@@ -14,8 +14,9 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
-    named_accessor_ident, owner_accessor_names, resolve_field_ident, tail_accessor_ident,
+    DECODER_RESERVED, FixedArrayTextKind, acting_accessors, enum_uses_null_as_option,
+    field_has_conversion_free, fixed_array_text_kind, named_accessor_ident, owner_accessor_names,
+    resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
@@ -687,6 +688,42 @@ pub(crate) fn generate_message_decoder(
                             #elements
                         }
                     });
+                    if prim_size == 1
+                        && let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                    {
+                        let as_str = syn::Ident::new(
+                            &format!("{fname_snake}_as_str"),
+                            proc_macro2::Span::call_site(),
+                        );
+                        let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                        let ascii = matches!(kind, FixedArrayTextKind::Ascii);
+                        let absent = if since > 0 {
+                            quote::quote! {
+                                if self.acting_version < #since_lit
+                                    || #offset_end_lit > self.acting_block_length
+                                {
+                                    return Ok("");
+                                }
+                            }
+                        } else {
+                            quote::quote! {
+                                if #offset_end_lit > self.acting_block_length {
+                                    return Ok("");
+                                }
+                            }
+                        };
+                        impl_body.extend(quote::quote! {
+                            /// This fixed text field with trailing NUL padding removed.
+                            #[inline]
+                            pub fn #as_str(&self) -> Result<&str, sbe_rt::DecodeError> {
+                                #absent
+                                let start = self.offset + #offset_lit;
+                                let bytes = &self.buf[start..start + #len_lit];
+                                sbe_rt::decode_fixed_text(#field_lit, bytes, #ascii)
+                            }
+                        });
+                    }
                     // Destination-buffer copy for byte-width arrays (Java getVehicleCode(byte[])).
                     if prim_size == 1 {
                         let copy_ident = syn::Ident::new(

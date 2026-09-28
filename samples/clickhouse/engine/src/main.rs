@@ -11,16 +11,15 @@
 //! sends an order is kept under that order's id. `exch-sim` uses the same id.
 
 use engine::{App, Book, Change, Emas, Spec, Strategy, aggregate};
+use persist_client::clock::{Clock, Nanos};
 use schema::market::{
-    BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder, QuoteDecoder,
+    AnyMessage, BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder,
     Side as MdSide,
 };
 use schema::trading::{
-    AggBookAsksEntry, AggBookBidsEntry, AggBookEncoder, AggBookFixedFields, Decimal9, EmaEncoder,
-    EmaFixedFields, ExecutionReportDecoder, NewOrderEncoder, NewOrderFixedFields, OrderStatus,
-    Side,
+    AggBookEncoder, AggBookFixedFields, AnyMessage as TradingMessage, Decimal9, EmaEncoder,
+    EmaFixedFields, NewOrderEncoder, NewOrderFixedFields, OrderStatus, Side,
 };
-use persist_client::clock::{Clock, Nanos};
 use std::collections::HashMap;
 
 use persist_client::feed::{Delivery, Feed, Subscriber};
@@ -152,7 +151,6 @@ fn add_venues(
             replayed: metrics.counter("feed_replayed", &l),
             tob: metrics.counter("tob_quotes", &l),
             tob_latency: metrics.histogram("tob_latency_ns", &l),
-            label: venue_label(&label),
             name: label,
         });
     }
@@ -170,8 +168,6 @@ struct Instrument {
 struct Venue {
     /// BINANCE
     name: String,
-    /// `name` as `agg_book`'s fixed 12 chars.
-    label: [u8; 12],
     instruments: Vec<Instrument>,
     /// Publisher sessions seen: every one after the first is a restart.
     sessions: u64,
@@ -216,23 +212,6 @@ struct Core {
     metrics: persist_client::metrics::Metrics,
 }
 
-/// A message's SBE header: `(template id, schema id)`.
-fn header(m: &[u8]) -> Option<(u16, u16)> {
-    let h = m.get(..8)?;
-    Some((
-        u16::from_le_bytes([h[2], h[3]]),
-        u16::from_le_bytes([h[4], h[5]]),
-    ))
-}
-
-fn venue_label(name: &str) -> [u8; 12] {
-    let mut label = [0; 12];
-    for (l, b) in label.iter_mut().zip(name.bytes()) {
-        *l = b;
-    }
-    label
-}
-
 impl Core {
     /// One message of venue `v`'s `md` stream. Never panics: a panic here
     /// would abort the process inside Aeron's callback.
@@ -242,12 +221,11 @@ impl Core {
         if delivery.first {
             self.new_session(v);
         }
-        let Some((template, schema)) = header(m) else {
+        // One decode. A different schema (the persist `Source` message) or a
+        // short frame is not a book update.
+        let Ok(msg) = AnyMessage::decode(m, 0) else {
             return;
         };
-        if schema != InstrumentSpecDecoder::SCHEMA_ID {
-            return; // persist's `Source` messages
-        }
         // A replayed message is old news: it neither makes the book look
         // fresh nor counts as a tick; it is counted apart.
         if self.live {
@@ -255,10 +233,10 @@ impl Core {
         } else {
             self.venues[v].replayed.inc();
         }
-        match template {
-            BookDeltasDecoder::TEMPLATE_ID => self.on_deltas(t2t, v, m, received),
-            BookSnapshotDecoder::TEMPLATE_ID => self.on_snapshot(t2t, v, m, received),
-            InstrumentSpecDecoder::TEMPLATE_ID => self.on_spec(v, m),
+        match msg {
+            AnyMessage::BookDeltas(d) => self.on_deltas(t2t, v, d, received),
+            AnyMessage::BookSnapshot(d) => self.on_snapshot(t2t, v, d, received),
+            AnyMessage::InstrumentSpec(d) => self.on_spec(v, d),
             _ => {}
         }
     }
@@ -293,10 +271,7 @@ impl Core {
             })
     }
 
-    fn on_spec(&mut self, v: usize, m: &[u8]) {
-        let Ok(d) = InstrumentSpecDecoder::decode(m, 0) else {
-            return;
-        };
+    fn on_spec(&mut self, v: usize, d: InstrumentSpecDecoder<'_>) {
         let (Ok(symbol), Ok(base)) = (d.symbol(), d.base_as_str()) else {
             return;
         };
@@ -334,10 +309,7 @@ impl Core {
         instrument.asset = Some(asset);
     }
 
-    fn on_snapshot(&mut self, t2t: &Tracer, v: usize, m: &[u8], received: Nanos) {
-        let Ok(d) = BookSnapshotDecoder::decode(m, 0) else {
-            return;
-        };
+    fn on_snapshot(&mut self, t2t: &Tracer, v: usize, d: BookSnapshotDecoder<'_>, received: Nanos) {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
         let at = self.clock.from_remote(d.ts_init() as i64, received);
@@ -355,10 +327,7 @@ impl Core {
         self.tick(v, i, d.ts_init(), trace);
     }
 
-    fn on_deltas(&mut self, t2t: &Tracer, v: usize, m: &[u8], received: Nanos) {
-        let Ok(d) = BookDeltasDecoder::decode(m, 0) else {
-            return;
-        };
+    fn on_deltas(&mut self, t2t: &Tracer, v: usize, d: BookDeltasDecoder<'_>, received: Nanos) {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
         let at = self.clock.from_remote(d.ts_init() as i64, received);
@@ -459,25 +428,20 @@ impl Core {
 
     /// Best effort top of book: counted, and how old it arrives.
     fn on_tob(&mut self, v: usize, m: &[u8]) {
-        if header(m).map(|(_, s)| s) != Some(QuoteDecoder::SCHEMA_ID) {
+        let Ok(AnyMessage::Quote(q)) = AnyMessage::decode(m, 0) else {
             return;
-        }
-        if let Ok(q) = QuoteDecoder::decode(m, 0) {
-            let venue = &self.venues[v];
-            venue.tob.inc();
-            let age = self
-                .clock
-                .wall()
-                .since(Nanos::from_epoch(q.ts_init() as i64));
-            venue.tob_latency.record(age.max(0) as u64);
-        }
+        };
+        let venue = &self.venues[v];
+        venue.tob.inc();
+        let age = self
+            .clock
+            .wall()
+            .since(Nanos::from_epoch(q.ts_init() as i64));
+        venue.tob_latency.record(age.max(0) as u64);
     }
 
     fn on_exec(&mut self, m: &[u8]) {
-        if header(m).map(|(_, s)| s) != Some(ExecutionReportDecoder::SCHEMA_ID) {
-            return;
-        }
-        let Ok(r) = ExecutionReportDecoder::decode(m, 0) else {
+        let Ok(TradingMessage::ExecutionReport(r)) = TradingMessage::decode(m, 0) else {
             return;
         };
         match r.status() {
@@ -557,12 +521,6 @@ impl Core {
                     })
                 })
             };
-            let label = |venue: &str| {
-                self.venues
-                    .iter()
-                    .find(|v| v.name == venue)
-                    .map_or([0; 12], |v| v.label)
-            };
             let bids = aggregate(books(), true, AGG_LEVELS);
             let asks = aggregate(books(), false, AGG_LEVELS);
             let len =
@@ -576,20 +534,24 @@ impl Core {
                             .fixed(&AggBookFixedFields { ts })
                             .bids(bids.len() as u16, |g| {
                                 for &(price, size, venue) in &bids {
-                                    g.add_struct(&AggBookBidsEntry {
-                                        price: Decimal9::new(price),
-                                        size: d9(size),
-                                        venue: label(venue),
+                                    g.add_checked(|mut entry| {
+                                        entry
+                                            .price_wire(Decimal9::new(price))
+                                            .size_wire(d9(size))
+                                            .venue_str(venue)?;
+                                        Ok(entry.complete())
                                     })?;
                                 }
                                 Ok(())
                             })?
                             .asks(asks.len() as u16, |g| {
                                 for &(price, size, venue) in &asks {
-                                    g.add_struct(&AggBookAsksEntry {
-                                        price: Decimal9::new(price),
-                                        size: d9(size),
-                                        venue: label(venue),
+                                    g.add_checked(|mut entry| {
+                                        entry
+                                            .price_wire(Decimal9::new(price))
+                                            .size_wire(d9(size))
+                                            .venue_str(venue)?;
+                                        Ok(entry.complete())
                                     })?;
                                 }
                                 Ok(())

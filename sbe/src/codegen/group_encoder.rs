@@ -9,7 +9,9 @@ use crate::structured_ir::{
     get_dimension_info, get_vardata_info, rust_type,
 };
 
-use super::conversion_helpers::{field_has_conversion_free, owner_accessor_names};
+use super::conversion_helpers::{
+    FixedArrayTextKind, field_has_conversion_free, fixed_array_text_kind, owner_accessor_names,
+};
 use super::field_type::field_type_ident;
 use super::message_encoder::vardata_encode_str_setter;
 use super::runtime::{to_pascal_case, to_snake_case};
@@ -624,6 +626,24 @@ pub(crate) fn generate_group_encoder(
                             self
                         }
                     });
+                    if prim_size == 1
+                        && let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                    {
+                        let str_ident = syn::Ident::new(&format!("{setter_name}_str"), span);
+                        let field_lit = syn::LitStr::new(&f.name, span);
+                        let ascii = matches!(kind, FixedArrayTextKind::Ascii);
+                        entry_methods.extend(quote::quote! {
+                            /// Write `src` into this fixed text field, zero-padded.
+                            #[inline]
+                            pub fn #str_ident(
+                                &mut self,
+                                src: &str,
+                            ) -> Result<&mut Self, sbe_rt::EncodeError> {
+                                Ok(self.#f_ident(sbe_rt::encode_fixed_text(#field_lit, src, #ascii)?))
+                            }
+                        });
+                    }
                 } else if prim_size == 1 {
                     entry_methods.extend(quote::quote! {
                         #[inline]

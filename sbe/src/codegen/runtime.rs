@@ -355,6 +355,46 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
+            /// Zero-pad `src` into a fixed text field. `ascii` rejects a
+            /// non-ASCII string before any byte is written.
+            #[inline]
+            pub fn encode_fixed_text<const N: usize>(
+                field: &'static str,
+                src: &str,
+                ascii: bool,
+            ) -> Result<[u8; N], EncodeError> {
+                if ascii && !src.is_ascii() {
+                    return Err(EncodeError::InvalidAscii { field });
+                }
+                if src.len() > N {
+                    return Err(EncodeError::FixedArrayTooLong {
+                        field,
+                        max_length: N,
+                        actual: src.len(),
+                    });
+                }
+                let mut out = [0u8; N];
+                out[..src.len()].copy_from_slice(src.as_bytes());
+                Ok(out)
+            }
+
+            /// Fixed text with trailing NUL padding removed. `ascii` rejects
+            /// a byte above 127.
+            #[inline]
+            pub fn decode_fixed_text<'a>(
+                field: &'static str,
+                bytes: &'a [u8],
+                ascii: bool,
+            ) -> Result<&'a str, DecodeError> {
+                let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+                let text = &bytes[..end];
+                if ascii && !text.is_ascii() {
+                    return Err(DecodeError::InvalidAscii { field });
+                }
+                core::str::from_utf8(text)
+                    .map_err(|error| DecodeError::InvalidUtf8 { field, error })
+            }
+
             /// Meta attribute selector (Java `MetaAttribute` parity).
             #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
             pub enum MetaAttribute {

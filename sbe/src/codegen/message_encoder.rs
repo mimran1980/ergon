@@ -615,35 +615,11 @@ pub(crate) fn generate_message_encoder(
                         {
                             let str_ident = syn::Ident::new(&format!("{method_name}_str"), span);
                             let field_lit = syn::LitStr::new(&f.name, span);
-                            let ascii_check = match kind {
-                                FixedArrayTextKind::Ascii => quote::quote! {
-                                    if !src.is_ascii() {
-                                        return Err(sbe_rt::EncodeError::InvalidAscii {
-                                            field: #field_lit,
-                                        });
-                                    }
-                                },
-                                FixedArrayTextKind::Utf8 => quote::quote! {},
-                            };
+                            let ascii = matches!(kind, FixedArrayTextKind::Ascii);
                             let str_fn = quote::quote! {
                                 #[inline]
                                 pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
-                                    #ascii_check
-                                    if src.len() > #len_lit {
-                                        return Err(sbe_rt::EncodeError::FixedArrayTooLong {
-                                            field: #field_lit,
-                                            max_length: #len_lit,
-                                            actual: src.len(),
-                                        });
-                                    }
-                                    let mut tmp = [0 as #r_type; #len_lit];
-                                    let bytes = src.as_bytes();
-                                    let mut i = 0usize;
-                                    while i < bytes.len() {
-                                        tmp[i] = bytes[i] as #r_type;
-                                        i += 1;
-                                    }
-                                    Ok(self.#f_ident(tmp))
+                                    Ok(self.#f_ident(sbe_rt::encode_fixed_text(#field_lit, src, #ascii)?))
                                 }
                             };
                             impl_contents.extend(str_fn.clone());

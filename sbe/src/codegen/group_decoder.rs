@@ -11,8 +11,9 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    acting_accessors, enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
+    FixedArrayTextKind, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
+    find_domain_type, fixed_array_from_bulk_bytes, fixed_array_text_kind, owner_accessor_names,
+    tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -1021,6 +1022,42 @@ pub(crate) fn generate_group_decoder(
                             #elements
                         }
                     });
+                    if prim_size == 1
+                        && let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                    {
+                        let as_str = syn::Ident::new(
+                            &format!("{}_as_str", to_snake_case(&f.name)),
+                            proc_macro2::Span::call_site(),
+                        );
+                        let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                        let ascii = matches!(kind, FixedArrayTextKind::Ascii);
+                        let since_check = if f.since_version > 0 {
+                            quote::quote! {
+                                if self.acting_version < #since_lit
+                                    || #offset_end_lit > self.acting_block_length
+                                {
+                                    return Ok("");
+                                }
+                            }
+                        } else {
+                            quote::quote! {
+                                if #offset_end_lit > self.acting_block_length {
+                                    return Ok("");
+                                }
+                            }
+                        };
+                        entry_body.extend(quote::quote! {
+                            /// This fixed text field with trailing NUL padding removed.
+                            #[inline]
+                            pub fn #as_str(&self) -> Result<&str, sbe_rt::DecodeError> {
+                                #since_check
+                                let offset = self.offset + #offset_lit;
+                                let bytes = &self.buf[offset..offset + #len_lit];
+                                sbe_rt::decode_fixed_text(#field_lit, bytes, #ascii)
+                            }
+                        });
+                    }
                 } else if f.presence == Presence::Optional {
                     let null_val = f.null_value.unwrap_or(0);
                     let null_check =

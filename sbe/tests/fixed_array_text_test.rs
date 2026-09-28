@@ -16,6 +16,67 @@ fn generate_demo() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn a_group_char_field_reads_and_writes_text() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="g" id="1" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <type name="Venue" primitiveType="char" length="12"/>
+    </types>
+    <sbe:message name="Book" id="1">
+        <group name="bids" id="2" dimensionType="groupSizeEncoding">
+            <field name="venue" id="1" type="Venue"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>"#;
+    let mut ir = ergo_sbe::parse(xml)?;
+    ergo_sbe::resolve_schema(&mut ir, Some(xml))?;
+    let schema = Schema::from_ir(ir);
+    let (modules, _) = Generator::new(GenerationConfig::new("grp_txt"))
+        .generate(&schema)?
+        .into_parts();
+    let src = modules.into_iter().next().ok_or("no module")?.source;
+    assert!(src.contains("fn venue_str"), "group encoder must take &str");
+    assert!(
+        src.contains("fn venue_as_str"),
+        "group decoder must return &str"
+    );
+    compile_and_run(
+        "group_char_text",
+        &src,
+        r#"
+        let len = BookEncoder::compute_length_with_header(1);
+        let mut buf = [0u8; 64];
+        let written = BookEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&BookFixedFields {})
+            .bids(1, |g| {
+                g.add_checked(|mut entry| {
+                    entry.venue_str("BINANCE")?;
+                    Ok(entry.complete())
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        let msg = AnyMessage::decode(&buf[..written], 0)?;
+        let AnyMessage::Book(book) = msg else { panic!("book") };
+        let mut bids = book.bids()?;
+        let entry = bids.next().unwrap();
+        assert_eq!(entry.venue_as_str()?, "BINANCE");
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
 fn str_setters_present_only_for_supported_text_encodings() -> Result<(), Box<dyn std::error::Error>>
 {
     let src = generate_demo()?;
