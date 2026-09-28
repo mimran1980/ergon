@@ -1,21 +1,8 @@
-# Aeron, one per node, shared by every application on the node:
-#
-# * `driver`: Aeron's C media driver (aeron-driver), DEDICATED threading:
-#   conductor, sender and receiver threads. No JIT or garbage collector on
-#   the network threads.
-# * `archive`: the Java Aeron Archive (docker/aeron.Dockerfile), a client of
-#   that driver. It records the node's IPC persist stream and, through spies,
-#   every feed published on this node (config/streams.yaml).
-#
-# On the node's network: the driver binds the node's IP, so a feed published
-# here is reached at this node's address, and it resolves channel names
-# (md-binance.lab.svc.cluster.local) through the cluster's DNS. Its directory
-# is on the node's tmpfs, shared over shared memory with every pod on the
-# node; the recordings are on the node's disk. The archive's control endpoint
-# is the node's port 8010, so a subscriber catching
-# up on a feed reaches the archive recording it by the feed's own name. If
-# the driver goes, the archive exits too (a fatal Aeron error ends it) and both restart;
-# clients reconnect.
+# One Aeron per node, on the host network.
+# `driver` is the C media driver. `archive` records the IPC persist stream
+# and spies every feed published on this node. The driver directory is on
+# the node's tmpfs. Recordings are on its disk. Archive control is port 8010.
+# If the driver dies, the archive exits and both restart.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

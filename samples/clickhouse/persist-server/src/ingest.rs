@@ -1,28 +1,16 @@
-//! Aeron Archive -> ClickHouse: replay every recording on this node from its
-//! checkpoint, insert, save the checkpoints, purge what is behind them.
+//! Replay this node's recordings into ClickHouse, then purge behind the checkpoint.
 //!
-//! The node's archive records two kinds of stream:
+//! The archive records the IPC persist stream and, through a spy, every feed
+//! published on this node. Each Aeron session is its own recording and has
+//! its own checkpoint. A stopped recording is deleted once it is fully
+//! ingested. A live one has its inserted segments deleted.
 //!
-//! * the applications' IPC persist stream (tables, events, metrics, traces);
-//! * every feed in `config/streams.yaml` that is published on this node,
-//!   through a spy on its UDP publication: the archive reads the
-//!   publication's buffers in shared memory, and the publisher does no
-//!   extra work. A feed that moves to another node is recorded there.
+//! A crash before the checkpoint is saved replays that batch. The insert token
+//! is the batch's recording positions, and ClickHouse drops the repeat. Each
+//! table remembers the last 1000 inserts.
 //!
-//! Every run of an application is its own recording (a new Aeron session),
-//! and several are live at once (one per feed on the node, and the persist
-//! stream), so all of them are replayed together, each with its own
-//! checkpoint. A stopped recording is deleted once all of it is in
-//! ClickHouse; a live one has its inserted segments purged.
-//!
-//! A crash between an insert and the checkpoint write replays that batch.
-//! The replayed insert carries the same deduplication token (the batch's
-//! recording positions), and ClickHouse drops it. Each table remembers the
-//! last 1000 inserts.
-//!
-//! A failed archive request is returned from [`Ingester::tick`]: the archive,
-//! or this client's session with it, is gone, and only a new connection
-//! recovers. The checkpoints make exiting and starting again safe.
+//! An archive error from [`Ingester::tick`] means this connection is dead.
+//! A new process resumes from the checkpoints.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

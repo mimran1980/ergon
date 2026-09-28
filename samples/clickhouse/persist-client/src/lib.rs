@@ -1,40 +1,23 @@
-//! Record data for ClickHouse: the application side.
+//! Publish rows, metrics, and traces to Aeron. The ingester writes ClickHouse.
+//! The application does not talk to ClickHouse and does not wait for it.
 //!
-//! Two ways in, onto one Aeron stream:
+//! * [`Persist::record`] encodes an SBE message into the Aeron term. The table
+//!   is the message name.
+//! * [`Persist::layer`] records `tracing` events that set `table`. Columns are
+//!   the fields. See [`event`].
+//! * [`mod@metrics`], [`trace`], and [`clock`] are the hot-path tools.
 //!
-//! * [`Persist::record`] encodes an SBE message straight into the Aeron
-//!   publication. Its table is the SBE message.
-//! * [`Persist::layer`] records `tracing` events that name a table, e.g.
-//!   `tracing::info!(table = "signal", instrument = %id, edge = 0.25)`. The
-//!   table's columns are the events' fields (see [`event`]).
+//! [`Persist::install`] one handle per process. The free functions then work
+//! from any thread. With nothing installed they do nothing and do not call
+//! `encode`.
 //!
-//! Beside them, [`mod@metrics`] (counters, gauges, histograms), [`trace`]
-//! (checkpoint traces, and `tracing` spans through the layer) and
-//! [`clock`] (a per-thread cached clock) for low-latency threads. Every
-//! frame carries the application's [`source`] id, so every row names its
-//! host, pod and app.
+//! A disabled SBE table is one relaxed load, and `encode` is not called. An
+//! enabled one is a claim, the encode, and a commit. If a dictionary heartbeat
+//! is queued, the call also publishes one of those messages. A term rotation
+//! is tried eight times and then dropped.
 //!
-//! A separate ingester (`persist-server`) reads the Aeron Archive recording of
-//! that stream, inserts every message into the ClickHouse table its SBE
-//! message defines, and purges the recording behind it. The application never
-//! talks to ClickHouse and never waits for it.
-//!
-//! Hold a [`Persist`], or [`install`](Persist::install) one for the process
-//! and record from any thread with the free functions [`record`], [`enabled`],
-//! [`record_row`] and [`event_enabled`], without passing a handle around.
-//! Before one is installed, or when none ever is (a test, a tool), the free
-//! functions do nothing: `encode` is never called. Each costs one load more
-//! than holding the handle.
-//!
-//! A disabled SBE table costs one relaxed atomic load; an enabled one a
-//! `try_claim`, the encode and a commit. No lock, no allocation, no copy. A
-//! disabled event table costs a read lock and a lookup, with no formatting.
-//! Term rotation is retried a handful of times and then dropped, so the call
-//! cannot spin.
-//!
-//! `config/tables.yaml` is re-read every second, so recording switches on and
-//! off while the application runs. `enabled` is read here, `kind` by the
-//! ingester:
+//! `tables.yaml` is re-read every second. `enabled` is applied here. `kind`
+//! is applied by the ingester.
 //!
 //! ```yaml
 //! tables:
@@ -54,9 +37,9 @@ pub mod streams;
 pub mod trace;
 mod value;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -494,6 +477,13 @@ struct Inner {
     watcher: Option<JoinHandle<()>>,
 }
 
+/// One message of a heartbeat round.
+struct Beat {
+    bytes: Vec<u8>,
+    shape: Option<Arc<event::Shape>>,
+    def: Option<Arc<trace::DefMessage>>,
+}
+
 /// State the config watcher writes and the hot path reads.
 struct Shared {
     /// Indexed by SBE template id.
@@ -502,10 +492,15 @@ struct Shared {
     /// not list (off). Call sites cache theirs, so the lock is taken when a
     /// call site first names a table, not per event.
     events: RwLock<HashMap<String, Arc<AtomicBool>>>,
-    /// Every event shape made so far, by id. The next record sends them
-    /// again after the watcher marks them due.
+    /// Every event shape made so far, by id. A heartbeat round sends them
+    /// again, one message per record, after the watcher marks them due.
     shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
     shapes_due: AtomicBool,
+    /// The heartbeat round still to send: `Source`, then each shape, then
+    /// each trace definition. Empty when nothing is due.
+    heartbeat_queue: Mutex<VecDeque<Beat>>,
+    /// [`Shared::heartbeat_queue`]'s length, so an idle record is one load.
+    heartbeat_left: AtomicUsize,
     /// Bumped every 5 s: each feed sends its `Source` message again.
     heartbeat: AtomicU64,
     /// [`Persist::shutdown`] has begun: nothing more is published.
@@ -543,6 +538,8 @@ impl Persist {
             shapes: Mutex::new(HashMap::new()),
             // The first record sends the `Source` message first.
             shapes_due: AtomicBool::new(true),
+            heartbeat_queue: Mutex::new(VecDeque::new()),
+            heartbeat_left: AtomicUsize::new(0),
             heartbeat: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             feeds: Mutex::new(Vec::new()),
@@ -861,25 +858,68 @@ impl Persist {
         }
     }
 
-    /// Shape heartbeats are due every 5 s. The next record sends them, on
-    /// this publication, so a row still follows its shape.
+    /// One dictionary message, when a heartbeat round is due or unfinished.
+    /// An idle call is two relaxed loads. A new shape is still published
+    /// ahead of its first row by `send_shape`; this only repeats what was
+    /// already sent.
     #[inline]
     fn flush_due_shapes(&self) {
-        let due = &self.inner.shared.shapes_due;
-        if due.load(Ordering::Relaxed) && due.swap(false, Ordering::Relaxed) {
-            self.flush_shapes();
-        }
-    }
-
-    /// This application's `Source` message, then every shape. Called with
-    /// `shapes_due` already cleared. These repeat, so one Aeron cannot take
-    /// is not a dropped record: an unsent `Source` is retried by the next
-    /// record, and a shape by its next row or the next heartbeat.
-    fn flush_shapes(&self) {
-        if self.publish_owned(&self.inner.source_message).is_err() {
-            self.inner.shared.shapes_due.store(true, Ordering::Relaxed);
+        let shared = &self.inner.shared;
+        if shared.heartbeat_left.load(Ordering::Relaxed) == 0
+            && !shared.shapes_due.load(Ordering::Relaxed)
+        {
             return;
         }
+        self.send_one_heartbeat();
+    }
+
+    /// Publish the next heartbeat message. These repeat, so one Aeron cannot
+    /// take is not a dropped record: an unsent `Source` stays at the front
+    /// of the queue, and a shape is sent by its next row or the next round.
+    fn send_one_heartbeat(&self) {
+        let shared = &self.inner.shared;
+        let mut queue = shared
+            .heartbeat_queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if queue.is_empty() {
+            if !shared.shapes_due.swap(false, Ordering::Relaxed) {
+                return;
+            }
+            queue.extend(self.heartbeat_round());
+        }
+        let Some(beat) = queue.pop_front() else {
+            shared.heartbeat_left.store(0, Ordering::Relaxed);
+            return;
+        };
+        // Held across the publish so two threads cannot reorder the round.
+        let sent = self.publish_owned(&beat.bytes).is_ok();
+        if sent {
+            shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
+            if let Some(shape) = &beat.shape {
+                shape.mark_sent();
+            }
+            if let Some(def) = &beat.def {
+                def.sent.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        // The `Source` message has to stay ahead of the rows that follow.
+        // A shape or a trace definition can wait for its own next send.
+        if beat.shape.is_none() && beat.def.is_none() {
+            queue.push_front(beat);
+        }
+        shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
+    }
+
+    /// `Source`, then every shape, then every trace definition.
+    fn heartbeat_round(&self) -> VecDeque<Beat> {
+        let mut round = VecDeque::new();
+        round.push_back(Beat {
+            bytes: self.inner.source_message.clone(),
+            shape: None,
+            def: None,
+        });
         let shapes: Vec<_> = self
             .inner
             .shared
@@ -890,9 +930,11 @@ impl Persist {
             .cloned()
             .collect();
         for shape in shapes {
-            if self.publish_owned(shape.message()).is_ok() {
-                shape.mark_sent();
-            }
+            round.push_back(Beat {
+                bytes: shape.message().to_vec(),
+                shape: Some(shape),
+                def: None,
+            });
         }
         let defs = self
             .inner
@@ -902,10 +944,13 @@ impl Persist {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         for def in defs {
-            if self.publish_owned(&def.message).is_ok() {
-                def.sent.store(true, Ordering::Relaxed);
-            }
+            round.push_back(Beat {
+                bytes: def.message.clone(),
+                shape: None,
+                def: Some(def),
+            });
         }
+        round
     }
 
     /// Publish a built message; why not, when Aeron could not take it.

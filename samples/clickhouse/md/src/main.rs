@@ -1,44 +1,19 @@
-//! Records one exchange's public market data into ClickHouse.
+//! One exchange's public market data. `EXCHANGE` picks the venue. No API keys.
 //!
-//! `EXCHANGE` picks the venue (see [`VENUES`]); each runs as its own pod.
-//! NautilusTrader connects to it (public streams, no API keys) and calls this
-//! actor with everything the venue publishes for two instruments. All three
-//! ways of recording appear here:
+//! Quotes and trades are SBE `record` calls. `ticker`, `spread`, and
+//! `book_view` go out once a second with the book, not on every quote.
+//! Counters, gauges, and histograms are updated on the callback and published
+//! from the metrics thread. `book_update` is a checkpoint trace.
 //!
-//! * **SBE, static table** (`trade`, `quote`): a message in
-//!   `schema/market.xml`, encoded straight into the Aeron term buffer by
-//!   `persist_client::record`. The table is created once and never altered.
-//! * **SBE, dynamic table** (`book_deltas`, `book_snapshot`, `bar`,
-//!   `mark_price`, `index_price`, `funding_rate`): the same, but the table
-//!   gains a column when the message gains a field.
-//! * **Events** (`spread`, `ticker`, `instrument`, `instrument_status`, and
-//!   each kind of venue-specific data, in a table named after its type): a
-//!   `tracing::info!(table = …)` or `persist_client::record_row`, whose
-//!   fields are the columns.
-//! * **Any Rust value** (`book_view`): `persist_client::record_value` of a
-//!   `Serialize` struct, nested as deep as it goes: its nested struct,
-//!   slices of structs (arrays), `Option` and enum become columns.
-//! * **Metrics** ([`Telemetry`]): messages per kind (counters), each
-//!   instrument's spread (gauges), the venue-to-us latency of trades and
-//!   quotes and the time `record` takes (histograms), published every 5 s.
-//! * **Traces**: `book_update`, a checkpoint trace of each book update from
-//!   the venue's timestamp through our handling, and a `tracing` span
-//!   around subscribing.
-//!
-//! Static or dynamic is `kind` in `config/tables.yaml`, not code. The
-//! handle is installed once in `main`; the free functions do nothing where
-//! none is installed, as in this file's tests.
-//!
-//! The ingester (`persist-server`) takes it from the Aeron Archive into
-//! ClickHouse. Which tables are recorded is decided by `config/tables.yaml`,
-//! re-read while this runs.
+//! `kind` in `tables.yaml` chooses static or dynamic. The handle is installed
+//! once in `main`. With none installed, the free functions do nothing.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use arrayvec::ArrayVec;
 
-use market::market::{
+use schema::market::{
     BarEncoder, BarFixedFields, BookAction, BookDeltasDeltasEntry, BookDeltasEncoder,
     BookDeltasFixedFields, BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder,
     BookSnapshotFixedFields, Decimal9, FundingRateEncoder, FundingRateFixedFields,
@@ -469,19 +444,18 @@ impl DataActor for Recorder {
                     .venue(venue)?
                     .encoded_length_with_header())
             })?;
-        // A derived signal needs no schema: one event, and `spread` in
-        // tables.yaml, make a table whose columns are these fields.
+        // The hot path keeps a gauge. The `spread` table is a tracing event
+        // on the once-a-second book, below.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
-        let bps = (ask - bid) / (ask + bid) * 2e4;
-        tracing::info!(table = "spread", instrument = %q.instrument_id, bps);
         if let Some(gauge) = self.t.spread_bps.get(&q.instrument_id) {
-            gauge.set(bps);
+            gauge.set((ask - bid) / (ask + bid) * 2e4);
         }
         Ok(())
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
         self.t.books.inc();
+        self.spread(book);
         self.ticker(book);
         book_view(book);
         // Published whether or not `book_snapshot` is persisted: a
@@ -763,6 +737,20 @@ impl Recorder {
             })
     }
 
+    /// One `spread` row a second. A `tracing` event builds a table from its
+    /// fields, and it does not belong on the quote callback.
+    fn spread(&self, book: &OrderBook) {
+        let (Some(bid), Some(ask)) = (book.best_bid_price(), book.best_ask_price()) else {
+            return;
+        };
+        let (bid, ask) = (bid.as_f64(), ask.as_f64());
+        let mid = ask + bid;
+        if mid == 0.0 {
+            return;
+        }
+        tracing::info!(table = "spread", instrument = %book.instrument_id, bps = (ask - bid) / mid * 2e4);
+    }
+
     /// One `ticker` row: the instrument's last second. Its columns are
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
@@ -969,7 +957,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // After `build()`, so persist's log lines go through Nautilus' logger.
     // Installed for the process: every callback records through
     // `persist_client::record` and friends, with no handle to pass around.
-    let persist = Persist::connect(market::MARKET_SCHEMA, Settings::from_env())?;
+    let persist = Persist::connect(schema::MARKET_SCHEMA, Settings::from_env())?;
     persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     let service = std::env::var("SERVICE").unwrap_or_else(|_| format!("md-{}", venue.name));

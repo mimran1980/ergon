@@ -1,6 +1,6 @@
 [package]
-name = "market"
-description = "The lab's SBE codecs: market data (schema/market.xml) and trading (schema/trading.xml)."
+name = "schema"
+description = "The lab's SBE schemas and the codecs generated from them."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

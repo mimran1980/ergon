@@ -15,16 +15,10 @@
 //! | group `bids { price }`                     | `bids.price Array(T)`           |
 //! | var-data                                   | `String`                        |
 //!
-//! Decimals and timestamps keep their wire integer: the row carries the
-//! mantissa or tick count as is, so nothing is rounded.
-//!
-//! Other composites, sets, non-`char` arrays and nested groups are rejected
-//! when the schema is loaded, so a message that uses them is never
-//! half-recorded.
-//!
-//! Messages are decoded the SBE way for their own version: a field past the
-//! message's block, or a group or var-data newer than the message, is written
-//! as its default, so records made before a schema change still load.
+//! The mantissa or tick count is stored as-is. Other composites, sets,
+//! non-`char` arrays, and nested groups are rejected when the schema loads.
+//! A field past the message's acting block, or a group newer than its version,
+//! is written as its default.
 
 use ergo_sbe::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use persist_client::snake_case;

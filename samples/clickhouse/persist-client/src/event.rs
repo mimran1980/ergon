@@ -8,7 +8,8 @@
 //!
 //! Each kind of row, a [`Shape`] (the table, and its fields with their kinds
 //! in order), is published once as a `Shape` message of `schema/events.xml`
-//! before the first row that uses it, and again every 5 s. A `Row` then
+//! before the first row that uses it, and again every 5 s, one shape per
+//! later record. A `Row` then
 //! carries values only, laid out by its shape: no names, no type tags.
 //!
 //! ```text

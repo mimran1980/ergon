@@ -623,7 +623,7 @@ fn market_schema_tables() -> TestResult {
 
 #[test]
 fn trading_rows_round_trip_beside_market_rows() -> TestResult {
-    use market::trading::{
+    use schema::trading::{
         AggBookAsksEntry, AggBookBidsEntry, AggBookEncoder, AggBookFixedFields, Decimal9,
         NewOrderEncoder, NewOrderFixedFields, Side,
     };
@@ -632,7 +632,7 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
         "tables:\n  agg_book: { kind: dynamic }\n  new_order: { kind: static }\n",
     )?;
     let mut writer = Writer::new(
-        &[market::MARKET_SCHEMA, market::TRADING_SCHEMA],
+        &[schema::MARKET_SCHEMA, schema::TRADING_SCHEMA],
         lab.ch.clone(),
         &lab.config,
         Duration::ZERO,

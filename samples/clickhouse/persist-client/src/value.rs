@@ -12,21 +12,15 @@
 //! | `#[serde(flatten)]` field               | its fields, beside the others        | one column each                   |
 //! | enum                                    | its variant's name, then its fields under `x.Variant` | `x`, `x.Variant.f` |
 //!
-//! A group inside a group is an `Array(Array(…))`. A list inside a struct
-//! field is named with underscores up to it (`stats.bids` → `stats_bids`):
-//! ClickHouse makes array columns that share a first name segment one
-//! Nested structure, whose arrays must be equally long, and only one list's
-//! own fields are sure to be. A value nested deeper than 8 lists, or 32
-//! structs, is refused: a recursive type would otherwise add columns
-//! without end.
+//! A list inside a struct is named with underscores (`stats.bids` becomes
+//! `stats_bids`). ClickHouse treats `a.b` array columns as one Nested
+//! structure, and those arrays must be the same length. Deeper than 8 lists
+//! or 32 structs is refused.
 //!
-//! The first value of a type, recorded to a table, makes its [`Shape`]. After
-//! that each value is written in one pass, compiled for the type, into a
-//! reused buffer that also checks the shape covers it, then copied into
-//! Aeron. Measuring the row and writing it again is slower than that copy.
-//! A value the shape does not cover (an `Option` now `Some`, another enum
-//! variant, a longer tuple) grows the shape, which keeps the order its
-//! fields are visited in, and is sent again.
+//! The first value of a type makes the [`Shape`]. Later values are written
+//! once into a reused buffer and copied into the Aeron claim. A value the
+//! shape does not cover grows the shape, in visit order, and the new shape
+//! is sent again.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};

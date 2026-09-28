@@ -2040,8 +2040,8 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
- "market",
  "persist-client",
+ "schema",
  "signal-hook",
 ]
 
@@ -3178,21 +3178,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "market"
-version = "0.1.0"
-dependencies = [
- "ergo-sbe",
- "rust_decimal",
-]
-
-[[package]]
 name = "md"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
  "log",
- "market",
  "nautilus-binance",
  "nautilus-bybit",
  "nautilus-common",
@@ -3205,6 +3196,7 @@ dependencies = [
  "nautilus-okx",
  "persist-client",
  "rust_decimal",
+ "schema",
  "serde",
  "serde_json",
  "tokio",
@@ -4172,9 +4164,9 @@ dependencies = [
  "ergo-sbe",
  "jiff",
  "log",
- "market",
  "persist-client",
  "rusteron-archive",
+ "schema",
  "serde",
  "signal-hook",
  "tracing",
@@ -4847,6 +4839,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "schema"
+version = "0.1.0"
+dependencies = [
+ "ergo-sbe",
+ "rust_decimal",
 ]
 
 [[package]]

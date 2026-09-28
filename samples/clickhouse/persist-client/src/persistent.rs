@@ -1,32 +1,19 @@
-//! A reliable feed that loses nothing: Aeron's persistent subscription over
-//! the recording that the archive on a service's node makes of one of its
-//! streams (see [`crate::streams`]).
+//! A persistent subscription over the archive recording of one stream.
 //!
-//! It replays the recording until it catches the live stream, then takes the
-//! live stream; a subscriber that falls behind drops back to the recording
-//! and rejoins, losing nothing, and the publisher never waits for it.
+//! Replays until it catches the live stream. If it falls behind, it rejoins
+//! from the recording. The publisher does not wait.
 //!
-//! A persistent subscription follows one recording. When the publisher
-//! restarts or moves, its new session is a new recording, on the archive of
-//! the node it now runs on. Aeron's persistent subscription replays the old
-//! recording to its end and fails when the live stream it finds next is at
-//! another position (1.52.2): a new session is. [`Persistent`] then finds
-//! the new recording, through the service's name, and replays it from its
-//! first message, so nothing the new publisher sent is missed.
+//! A restart or a move is a new recording. Aeron 1.52.2 replays the old one
+//! to its end and then fails. [`Persistent`] finds the new recording by the
+//! service's name and replays from the first message. The handler is told,
+//! so the caller can drop state built from the old session.
 //!
-//! ponytail: a new session exactly at the old one's stop position would be
-//! joined as its continuation; check each live message's session against
-//! the recording's if that ever matters. Its handler is told when a message is the first of a
-//! subscription, because whatever was built from the old session (an order
-//! book, say) must be rebuilt.
+//! ponytail: a new session that starts at the old stop position would be
+//! treated as the same recording. Check the session id if that matters.
 //!
-//! Finding a recording asks the archive, which takes round trips: it runs on
-//! a thread of its own, and [`Persistent::poll`] never waits for it. It
-//! resolves the service's name itself, each time, and talks to the archive
-//! by IP: the media driver resolves a channel's hostname once per shared
-//! endpoint, and while the old node's archive still answered, a channel
-//! naming the service kept reaching it for a minute after a move. A
-//! persistent subscription so belongs to the archive it was made on.
+//! The archive lookup runs on its own thread. [`Persistent::poll`] does not
+//! wait. The archive is addressed by IP. The driver caches a channel hostname
+//! per endpoint, so a name would keep reaching the old node after a move.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};

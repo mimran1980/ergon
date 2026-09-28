@@ -1,31 +1,21 @@
-//! A regional trading engine: one thread, one loop, the HFT model.
+//! One thread, one loop, for one region.
 //!
-//! It subscribes to every feed handler in its region (`md-*` in
-//! config/streams.yaml, `REGION`), by name, so it follows them when they
-//! move. Their `md` streams, and its exchange's fills, come through
-//! persistent subscriptions (`Persistent`): a slow engine catches up from the
-//! archive, and a restarted feed handler's new session is replayed from its
-//! first message, so nothing is lost. Top of book (`tob`) is best effort.
-//! From the `md` streams it keeps each instrument's L2 book (rebuilt
-//! from every snapshot, and from scratch when a publisher restarts), and
-//! per asset the aggregated best bid and ask in base quantity, the mid's
-//! EMAs and a strategy. Its orders go to the region's dummy exchange
-//! (`exch-sim`), whose fills come back on `exec`. Once a second it publishes
-//! each asset's EMAs and aggregated book on `signals`; the node's archive
-//! records them, so they become ClickHouse tables with no more code.
+//! `md` streams and the exchange's fills come through `Persistent`, so a slow
+//! or restarted engine catches up from the archive. `tob` is best effort.
+//! The loop keeps each instrument's L2 book, and per asset an aggregated book,
+//! EMAs, and a strategy. Orders go to `exch-sim`. Fills come back on `exec`.
+//! Once a second it publishes `ema` and `agg_book` on `signals`.
 //!
-//! Tick-to-trade is the checkpoint trace `tick_to_trade`, from the feed
-//! handler's receive time through `feed`, `decode`, `book`, `signal`,
-//! `decide` and `send`. Every tick counts in its stage histograms; one that
-//! led to an order is kept, under the order's id, which the exchange's
-//! `order_ack` trace shares.
+//! `tick_to_trade` is a checkpoint trace: `feed`, `decode`, `book`, `signal`,
+//! `decide`, `send`. Every tick updates the stage histograms. A tick that
+//! sends an order is kept under that order's id. `exch-sim` uses the same id.
 
 use engine::{App, Book, Change, Emas, Spec, Strategy, aggregate};
-use market::market::{
+use schema::market::{
     BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder, QuoteDecoder,
     Side as MdSide,
 };
-use market::trading::{
+use schema::trading::{
     AggBookAsksEntry, AggBookBidsEntry, AggBookEncoder, AggBookFixedFields, Decimal9, EmaEncoder,
     EmaFixedFields, ExecutionReportDecoder, NewOrderEncoder, NewOrderFixedFields, OrderStatus,
     Side,
@@ -49,7 +39,7 @@ const ORDERS: u64 = TraceId::namespace("order");
 const ORDER_TIMEOUT_NS: i64 = 30 * SECOND;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::start(market::TRADING_SCHEMA)?;
+    let app = App::start(schema::TRADING_SCHEMA)?;
     let service = format!("engine-{}", app.region);
     let (s, ip) = (&app.streams, app.host_ip.as_str());
     let publication = s.publication(&service, ip)?;
@@ -440,7 +430,7 @@ impl Core {
             let sent = self
                 .orders
                 .record(NewOrderEncoder::TEMPLATE_ID, len, |buf| {
-                    Ok::<_, market::trading::sbe_rt::EncodeError>(
+                    Ok::<_, schema::trading::sbe_rt::EncodeError>(
                         NewOrderEncoder::wrap_and_apply_header(buf, 0)
                             .fixed(&NewOrderFixedFields {
                                 // By the wall clock: the exchange compares it with its own.
@@ -543,7 +533,7 @@ impl Core {
             let [ema5m, ema30m, ema1h, ema4h, ema12h, ema1d] = asset.emas.values;
             let len = EmaEncoder::compute_length_with_header(name.len());
             let _ = self.signals.record(EmaEncoder::TEMPLATE_ID, len, |buf| {
-                Ok::<_, market::trading::sbe_rt::EncodeError>(
+                Ok::<_, schema::trading::sbe_rt::EncodeError>(
                     EmaEncoder::wrap_and_apply_header(buf, 0)
                         .fixed(&EmaFixedFields {
                             ts,
@@ -581,7 +571,7 @@ impl Core {
             let _ = self
                 .signals
                 .record(AggBookEncoder::TEMPLATE_ID, len, |buf| {
-                    Ok::<_, market::trading::sbe_rt::EncodeError>(
+                    Ok::<_, schema::trading::sbe_rt::EncodeError>(
                         AggBookEncoder::wrap_and_apply_header(buf, 0)
                             .fixed(&AggBookFixedFields { ts })
                             .bids(bids.len() as u16, |g| {

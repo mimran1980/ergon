@@ -1,14 +1,9 @@
-# A region's engine and dummy exchange, written once. deploy/trading/<region>/
-# names them engine-<region> and exch-sim-<region>, labels them with the
-# region (which REGION reads) and pins them to it.
+# A region's engine and dummy exchange, written once.
+# deploy/trading/<region>/ names them and pins the region.
 
 ---
-# A region's trading engine: every feed handler in its region, the aggregated
-# book, EMAs, orders and tick-to-trade, in one loop on one thread.
-#
-# On the node's network, like md (deploy/md/base): its Service's name
-# resolves to its node's media driver. One replica, recreated rather than
-# rolled; on SIGTERM it closes its feeds at once.
+# One loop, one thread: that region's books, EMAs, orders, and tick-to-trade.
+# Host network. One replica, Recreate. SIGTERM closes the feeds.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -81,11 +76,7 @@ spec:
   selector: { app: engine }
   publishNotReadyAddresses: true
 ---
-# A region's dummy exchange: it fills its region's engine's orders.
-#
-# On the node's network, like md (deploy/md/base): its Service's name
-# resolves to its node's media driver. One replica, recreated rather than
-# rolled; on SIGTERM it closes its feeds at once.
+# Fills its region's orders. Host network. One replica, Recreate. SIGTERM closes the feeds.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

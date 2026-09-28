@@ -1,14 +1,6 @@
-# Everything the lab runs, in namespace lab. `just deploy` applies it
-# (kubectl apply -k .). deploy/infra/ is plain Kubernetes YAML; the feed
-# handler and the engine are each written once (deploy/md/base,
-# deploy/trading/base), with a ten-line folder per exchange and per region
-# naming it and pinning it to its region.
-#
-# To add an exchange: its line in config/streams.yaml, its venue in md's
-# VENUES, a copy of deploy/md/binance/ with the exchange and region changed,
-# and its line below.
-#
-# Isolated cores: `just spin` (deploy/spin). `just up` does not apply it.
+# `just deploy` applies this. Add an exchange: streams.yaml, md's VENUES,
+# a copy of deploy/md/binance/, and a line below.
+# Isolated cores: `just spin`. `just up` does not apply those patches.
 namespace: lab
 resources:
   - deploy/namespace.yaml

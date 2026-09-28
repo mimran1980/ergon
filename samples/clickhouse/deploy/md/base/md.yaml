@@ -1,17 +1,6 @@
-# The feed handler, written once. deploy/md/<exchange>/ names it md-<exchange>,
-# labels it with its exchange (which EXCHANGE reads) and pins it to its region.
-#
-# A feed handler (md): NautilusTrader + persist-client for one exchange. It
-# publishes the exchange's market data on its two UDP feeds
-# (config/streams.yaml: `md` reliable, `tob` best effort) through the node's
-# media driver, and its events, metrics and traces on the node's IPC
-# persist stream.
-#
-# It runs on the node's network, so its pod IP is the node's, which is where
-# its feeds' sockets are: its Service's name resolves to its node's media
-# driver, and follows it when it moves (it checks this at start: POD_IP must
-# be HOST_IP). One replica, recreated rather than rolled: two publishers of
-# one feed at once would interleave. On SIGTERM it closes its feeds at once.
+# The feed handler, written once. deploy/md/<exchange>/ names it and pins the region.
+# Host network, so its Service name resolves to the node's driver. It checks
+# POD_IP equals HOST_IP. One replica, Recreate. SIGTERM closes the feeds.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

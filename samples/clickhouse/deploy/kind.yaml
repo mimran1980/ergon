@@ -1,17 +1,8 @@
-# Four-node kind cluster standing in for three regions, by where each
-# exchange's matching engine is. Regions are node labels
-# (topology.kubernetes.io/region); feeds, engines and dummy exchanges are
-# pinned to their region by node affinity (config/streams.yaml).
-#
-#   an1  Tokyo (2 nodes)     binance, hyperliquid: feeds can move between them
-#   as1  Singapore/HK        bybit, okx
-#   ew2  London LD4          deribit, kraken futures
-#
-# Every node is schedulable (the lab's pods tolerate the control plane's
-# taint) and runs the Aeron and ingester DaemonSets. The sample directory is
-# mounted into every node at /lab, so pods read config/, grafana/ and
-# notebooks/ straight from this checkout. `just up` substitutes LAB_DIR with
-# the absolute sample path. The UIs listen on every interface (0.0.0.0).
+# Four kind nodes, three regions. Feeds can move between the two an1 nodes.
+#   an1  Tokyo        binance, hyperliquid
+#   as1  Singapore    bybit, okx
+#   ew2  London       deribit, kraken futures
+# Every node runs Aeron and an ingester. `just up` mounts this checkout at /lab.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: clickhouse-lab

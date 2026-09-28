@@ -12,14 +12,21 @@
 //!
 //! Times are [`Nanos`]: signed nanoseconds since one anchor per process,
 //! taken when the first clock is made, so every clock in the process agrees.
-//! Where the CPU's time-stamp counter is invariant (x86-64 Linux, via
-//! `minstant`), a read is `rdtsc` and a multiply. Elsewhere `minstant` would
-//! fall back to the wall clock, which can step backwards, so the clock reads
-//! `std::time::Instant` instead: monotonic everywhere.
+//! On Linux the read is `minstant` (the time-stamp counter when it is
+//! available). Elsewhere it is [`std::time::Instant`]: `minstant`'s fallback
+//! there is the wall clock, which can step backwards.
 
 use std::cell::Cell;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Monotonic clock for this process. Linux uses `minstant`. Other operating
+/// systems use [`std::time::Instant`], because `minstant` reads the wall clock
+/// when the time-stamp counter is not compiled in.
+#[cfg(target_os = "linux")]
+type Mono = minstant::Instant;
+#[cfg(not(target_os = "linux"))]
+type Mono = std::time::Instant;
 
 /// Nanoseconds since the process's anchor. Signed: a time converted from
 /// another clock (a venue's timestamp, say) may be before the anchor.
@@ -50,13 +57,10 @@ impl Nanos {
     }
 }
 
-/// One pairing of the monotonic clocks with the wall clock.
+/// One pairing of the monotonic clock with the wall clock.
 struct Anchor {
-    tsc: minstant::Instant,
-    std: Instant,
+    mono: Mono,
     epoch_ns: i64,
-    /// Read the time-stamp counter: invariant and calibrated.
-    use_tsc: bool,
 }
 
 static ANCHOR: LazyLock<Anchor> = LazyLock::new(|| {
@@ -64,29 +68,19 @@ static ANCHOR: LazyLock<Anchor> = LazyLock::new(|| {
     // monotonic reads that are closest together.
     let mut best: Option<(Duration, Anchor)> = None;
     for _ in 0..8 {
-        let (tsc, std) = (minstant::Instant::now(), Instant::now());
+        let mono = Mono::now();
         let wall = SystemTime::now();
-        let gap = std.elapsed();
+        let gap = mono.elapsed();
         if best.as_ref().is_none_or(|(g, _)| gap < *g) {
             let epoch_ns = wall
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
-            best = Some((
-                gap,
-                Anchor {
-                    tsc,
-                    std,
-                    epoch_ns,
-                    use_tsc: minstant::is_tsc_available(),
-                },
-            ));
+            best = Some((gap, Anchor { mono, epoch_ns }));
         }
     }
     best.map(|(_, a)| a).unwrap_or_else(|| Anchor {
-        tsc: minstant::Instant::now(),
-        std: Instant::now(),
+        mono: Mono::now(),
         epoch_ns: 0,
-        use_tsc: false,
     })
 });
 
@@ -96,9 +90,7 @@ static ANCHOR: LazyLock<Anchor> = LazyLock::new(|| {
 pub struct Clock {
     cached: Cell<Nanos>,
     /// The process's anchor, copied so a read touches only this clock.
-    use_tsc: bool,
-    tsc: minstant::Instant,
-    std: Instant,
+    mono: Mono,
 }
 
 impl Default for Clock {
@@ -113,9 +105,7 @@ impl Clock {
     pub fn new() -> Self {
         let clock = Self {
             cached: Cell::new(Nanos(0)),
-            use_tsc: ANCHOR.use_tsc,
-            tsc: ANCHOR.tsc,
-            std: ANCHOR.std,
+            mono: ANCHOR.mono,
         };
         clock.now();
         clock
@@ -167,12 +157,7 @@ impl Clock {
     #[inline]
     #[must_use]
     pub fn read(&self) -> Nanos {
-        let since = if self.use_tsc {
-            minstant::Instant::now().duration_since(self.tsc)
-        } else {
-            self.std.elapsed()
-        };
-        Nanos(nanos(since))
+        Nanos(nanos(self.mono.elapsed()))
     }
 }
 

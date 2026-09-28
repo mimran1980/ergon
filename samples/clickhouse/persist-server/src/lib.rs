@@ -1,19 +1,14 @@
-//! Ingest recorded SBE messages into ClickHouse.
+//! Replay the Aeron Archive into ClickHouse.
 //!
-//! Applications record with `persist-client`, which publishes each message on
-//! an Aeron stream. The Aeron Archive records that stream to disk, and the
-//! [`Ingester`] replays the recording from its checkpoint: it inserts the
-//! messages, saves the new checkpoint, and purges the recording up to it. The
-//! archive is the buffer, so neither a slow ClickHouse nor a restarted
-//! ingester loses a record.
+//! `persist-client` publishes. The archive records. [`Ingester`] replays from
+//! its checkpoint, inserts, saves the checkpoint, and purges behind it. If
+//! ClickHouse is slow, the archive holds the data.
 //!
-//! The SBE schema is the table definition: every message is a table and every
-//! field a column (see `table.rs`). Any other table in `tables.yaml` is fed by
-//! `tracing` events, and its columns are their fields (see `events.rs`).
-//! [`Writer`] batches each table into one `INSERT … FORMAT RowBinary` a
-//! second.
+//! An SBE message is a table (`table.rs`). Any other name in `tables.yaml` is
+//! a `tracing` event (`events.rs`). [`Writer`] inserts one RowBinary batch per
+//! table per tick.
 //!
-//! `config/tables.yaml` names the tables and is re-read while running:
+//! `tables.yaml` is re-read while running:
 //!
 //! ```yaml
 //! tables:
@@ -21,19 +16,12 @@
 //!   book_snapshot: { kind: dynamic, enabled: false } # follows the schema
 //! ```
 //!
-//! * **static** tables are created once and then never altered. If the schema
-//!   and the table disagree, the mismatching columns are not written and an
-//!   ERROR names the `ALTER` that would fix it; everything else keeps flowing.
-//! * **dynamic** tables follow the schema: a new SBE field becomes
-//!   `ALTER TABLE … ADD COLUMN` the next time the ingester starts, and a new
-//!   event field as soon as it arrives.
-//! * `enabled` is read by the application (`persist-client`): it decides what
-//!   is recorded. Every listed table is created here, so queries against a
-//!   disabled one still work.
+//! `static` is created once and never altered. A mismatched column is skipped
+//! and the log prints the `ALTER`. `dynamic` adds a column when a new field
+//! arrives. `enabled` is the application's switch. Listed tables are created
+//! even when off, so a query against an empty one still works.
 //!
-//! A failed insert re-checks its table first, so a table altered or dropped
-//! while recording is reported (static) or fixed (dynamic, or recreated) and
-//! the records are retried.
+//! A failed insert compares the table again, then retries the rows.
 
 mod aeron_stats;
 mod clickhouse;

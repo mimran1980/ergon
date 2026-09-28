@@ -11,8 +11,8 @@
 //! Grafana shows it under the engine's tick-to-trade trace of that order.
 
 use engine::App;
-use market::trading::sbe_rt::EncodeError;
-use market::trading::{
+use schema::trading::sbe_rt::EncodeError;
+use schema::trading::{
     ExecutionReportEncoder, ExecutionReportFixedFields, NewOrderDecoder, OrderStatus,
 };
 use persist_client::clock::{Clock, Nanos};
@@ -23,7 +23,7 @@ const ORDERS: u64 = TraceId::namespace("order");
 const ORDER_TTL_NS: i64 = 10_000_000_000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::start(market::TRADING_SCHEMA)?;
+    let app = App::start(schema::TRADING_SCHEMA)?;
     let (s, ip) = (&app.streams, app.host_ip.as_str());
     let service = format!("exch-sim-{}", app.region);
     let engine = format!("engine-{}", app.region);
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     status,
                                     side: o.side(),
                                     fill_price: o.price_value(),
-                                    fill_qty: market::trading::Decimal9::new(qty),
+                                    fill_qty: schema::trading::Decimal9::new(qty),
                                 })
                                 .asset(asset)?
                                 .encoded_length_with_header(),

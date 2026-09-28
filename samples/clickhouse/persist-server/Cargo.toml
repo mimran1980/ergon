@@ -22,7 +22,7 @@ signal-hook = "0.3"
 ureq = { version = "2", default-features = false }
 
 [dev-dependencies]
-market.workspace = true
+schema.workspace = true
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
