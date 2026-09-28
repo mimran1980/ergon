@@ -37,6 +37,7 @@ jobs:
           bash scripts/tests/test-ci-network-and-coverage.sh
           bash scripts/tests/test-repository-hygiene.sh
           bash scripts/tests/test-public-api.sh
+          bash scripts/tests/test-bench-historic.sh
           ./scripts/check-test-policy.sh
           ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh

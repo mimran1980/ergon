@@ -34,6 +34,7 @@ policy:
     bash scripts/tests/test-repository-hygiene.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-packaged-cluster-features.sh
+    bash scripts/tests/test-bench-historic.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
 
@@ -70,6 +71,7 @@ preflight:
     bash scripts/tests/test-generated-public-api.sh
     bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/tests/test-packaged-cluster-features.sh
+    bash scripts/tests/test-bench-historic.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
