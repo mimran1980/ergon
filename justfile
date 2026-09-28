@@ -35,8 +35,10 @@ policy:
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
+    bash scripts/tests/test-stale-deny-ignores.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
+    ./scripts/check-stale-deny-ignores.sh
 
 # Every cheap correctness gate in one pass — the ones that otherwise only run
 # inside `just release`.
@@ -72,6 +74,7 @@ preflight:
     bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
+    bash scripts/tests/test-stale-deny-ignores.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -86,6 +89,7 @@ preflight:
     ./scripts/regenerate-codegen-matrix-fixture.py --check
     @echo "=== config ==="
     ./scripts/check-mutation-config.sh
+    ./scripts/check-stale-deny-ignores.sh
     @echo ""
     @echo "audit: all cheap gates pass"
 

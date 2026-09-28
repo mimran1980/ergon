@@ -38,9 +38,11 @@ jobs:
           bash scripts/tests/test-repository-hygiene.sh
           bash scripts/tests/test-public-api.sh
           bash scripts/tests/test-bench-historic.sh
+          bash scripts/tests/test-stale-deny-ignores.sh
           ./scripts/check-test-policy.sh
           ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh
+          ./scripts/check-stale-deny-ignores.sh
 
   lint:
     needs: policy
