@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Fixed
+- **A nested fixed-stride group reached through a warm parent entry accepted
+  `blockLength` shorter than its required fields.** `wrap_trusted` skipped
+  the check `wrap` already applied, so a frame with `numInGroup` 1 and a
+  zero block length panicked in `bulk_decode_into` (or read past the buffer)
+  from safe code. Both constructors now share that rejection.
 - **A `rust_decimal::Decimal` encoded into a decimal composite with a
   constant exponent kept its own scale.** The built-in `TryToSbe` passed the
   unscaled mantissa through, so `1.5` into a `mantissa × 10⁻⁹` composite

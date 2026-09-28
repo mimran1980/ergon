@@ -3633,9 +3633,15 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven
-    /// the dimension header (and, for fixed groups, the full entry
-    /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    /// Dimension wrap after the caller has proven the dimension
+    /// header (and, for fixed groups, the full entry region) is
+    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    ///
+    /// The caller's extent proof does not cover a wire `blockLength`
+    /// shorter than the fixed fields active at `acting_version`. That
+    /// check is the same one [`Self::wrap_with_parent`] runs, and it
+    /// runs here too: a nested group reached through a warm parent
+    /// cache would otherwise hand out getters that read past `buf`.
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -3664,6 +3670,13 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             '_,
             sbe_rt::Detached,
         >>::min_readable_fixed_extent(acting_version);
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "fuelFigures",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -4683,9 +4696,15 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven
-    /// the dimension header (and, for fixed groups, the full entry
-    /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    /// Dimension wrap after the caller has proven the dimension
+    /// header (and, for fixed groups, the full entry region) is
+    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    ///
+    /// The caller's extent proof does not cover a wire `blockLength`
+    /// shorter than the fixed fields active at `acting_version`. That
+    /// check is the same one [`Self::wrap_with_parent`] runs, and it
+    /// runs here too: a nested group reached through a warm parent
+    /// cache would otherwise hand out getters that read past `buf`.
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -4714,6 +4733,13 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             '_,
             sbe_rt::Detached,
         >>::min_readable_fixed_extent(acting_version);
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "performanceFigures",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -5356,9 +5382,15 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven
-    /// the dimension header (and, for fixed groups, the full entry
-    /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    /// Dimension wrap after the caller has proven the dimension
+    /// header (and, for fixed groups, the full entry region) is
+    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+    ///
+    /// The caller's extent proof does not cover a wire `blockLength`
+    /// shorter than the fixed fields active at `acting_version`. That
+    /// check is the same one [`Self::wrap_with_parent`] runs, and it
+    /// runs here too: a nested group reached through a warm parent
+    /// cache would otherwise hand out getters that read past `buf`.
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -5387,6 +5419,13 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             '_,
             sbe_rt::Detached,
         >>::min_readable_fixed_extent(acting_version);
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "acceleration",
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
         Ok(Self {
             buf,
             offset: offset + 4,

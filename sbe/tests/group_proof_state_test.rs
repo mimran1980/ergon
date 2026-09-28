@@ -449,3 +449,100 @@ fn fixed_stride_group_keeps_add_checked() -> Result<(), Box<dyn std::error::Erro
     );
     Ok(())
 }
+
+/// Nested fixed-stride `wrap_trusted` must reject a short wire block.
+///
+/// `Iterator::next` on the parent warms the entry extent cache, and that
+/// cache is what sends the nested group through `wrap_trusted` instead of
+/// `wrap`. A parent extent proves the nested dimension header is in-bounds.
+/// It does not prove `blockLength` can hold the nested entry. Before the
+/// shared short-block check, `bulk_decode_into` then indexed past `buf`.
+#[test]
+fn warm_nested_short_block_is_rejected_before_bulk_decode() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (_, src) = generate(&Paths::example_schema(), "gp_warm_short");
+    compile_and_run(
+        "gp_warm_short",
+        &src,
+        r#"
+        fn assert_short(err: sbe_rt::DecodeError) {
+            match err {
+                sbe_rt::DecodeError::BufferTooShort { needed, available, .. } => {
+                    assert!(
+                        needed > available,
+                        "short stride must report the extent it could not prove"
+                    );
+                }
+                other => panic!("expected BufferTooShort, got {other:?}"),
+            }
+        }
+
+        let mut storage = [0u8; 512];
+        let len = CarEncoder::wrap_and_apply_header(&mut storage, 0)
+            .fixed(&CarFixedFields {
+                serial_number: 1,
+                model_year: 2020,
+                available: BooleanType::T,
+                code: Model::A,
+                some_numbers: [0; 4],
+                vehicle_code: *b"ABCDEF",
+                extras: OptionalExtras::default(),
+                engine: Engine::new(1, 1, [0; 3], 0i8, BooleanType::F,
+                                    Booster::new(BoostType::TURBO, 0)),
+            })
+            .fuel_figures(0, |_| Ok(()))?
+            .performance_figures(1, |g| {
+                g.add(|mut e| {
+                    e.octane_rating(95);
+                    e.acceleration(1, |a| {
+                        a.add(|row| {
+                            row.mph(0x1234).seconds(1.0);
+                            Ok(())
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                Ok(())
+            })?
+            .manufacturer(b"H")?
+            .model(b"C")?
+            .activation_code(b"A")?
+            .encoded_length_with_header();
+
+        let mut buf = storage[..len].to_vec();
+        let dim = buf.windows(6).position(|w| {
+            u16::from_le_bytes([w[0], w[1]]) == 6
+                && u16::from_le_bytes([w[2], w[3]]) == 1
+                && u16::from_le_bytes([w[4], w[5]]) == 0x1234
+        }).expect("acceleration dimension header");
+        buf[dim] = 0;
+        buf[dim + 1] = 0;
+        // Drop the entry payload and everything after it. The dimension
+        // header is the last four bytes, so a stride of 0 is the only
+        // reason a field read would stay in-bounds.
+        buf.truncate(dim + 4);
+        assert_eq!(
+            PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent(0),
+            6
+        );
+
+        let dec = CarDecoder::try_decode(&buf, 0)?;
+        let mut perf = dec.performance_figures()?;
+        match perf.next() {
+            Some(Err(err)) => assert_short(err),
+            Some(Ok(entry)) => match entry.acceleration() {
+                Err(err) => assert_short(err),
+                Ok(mut accel) => {
+                    let mut dst = Vec::new();
+                    match accel.bulk_decode_into(&mut dst) {
+                        Err(err) => assert_short(err),
+                        Ok(_) => panic!("bulk decoded a nested blockLength of 0"),
+                    }
+                }
+            },
+            None => panic!("performanceFigures entry missing"),
+        }
+        "#,
+    );
+    Ok(())
+}

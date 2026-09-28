@@ -905,3 +905,152 @@ fn generated_code_has_no_block_doc_comments() -> Result<(), Box<dyn std::error::
     );
     Ok(())
 }
+
+/// Short nested block at the two group locations the matrix splits apart.
+///
+/// A group nested in a message-level entry and a group nested in a nested
+/// entry are separate `wrap_trusted` call sites. Both must reject
+/// `blockLength` 0 with `numInGroup` 1 before a fixed-stride bulk read.
+#[test]
+fn short_nested_block_rejected_at_entry_and_nested_entry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="short_block_loc" id="9" version="0"
+                   byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="Book" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="tag" id="2" type="uint8"/>
+      <group name="cells" id="3" dimensionType="groupSizeEncoding">
+        <field name="qty" id="4" type="uint32"/>
+      </group>
+    </group>
+    <group name="outer" id="10" dimensionType="groupSizeEncoding">
+      <field name="tag" id="11" type="uint8"/>
+      <group name="mid" id="12" dimensionType="groupSizeEncoding">
+        <field name="tag" id="13" type="uint8"/>
+        <group name="inner" id="14" dimensionType="groupSizeEncoding">
+          <field name="qty" id="15" type="uint32"/>
+        </group>
+      </group>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(GenerationConfig::new("short_block_loc"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    compile_and_run_with_deps(
+        "cm_short_block_loc",
+        &src,
+        r#"
+        fn assert_short(err: sbe_rt::DecodeError) {
+            match err {
+                sbe_rt::DecodeError::BufferTooShort { needed, available, .. } => {
+                    assert!(needed > available, "needed {needed}, available {available}");
+                }
+                other => panic!("expected BufferTooShort, got {other:?}"),
+            }
+        }
+
+        assert_eq!(RowsCellsDecoder::min_readable_fixed_extent(0), 4);
+        assert_eq!(OuterMidInnerDecoder::min_readable_fixed_extent(0), 4);
+
+        // Group-entry location: rows entry -> cells. Header, then the rows
+        // dimension (block 1, count 1), one tag byte, then cells at
+        // blockLength 0, numInGroup 1. The buffer ends on that header.
+        let mut entry_buf = [0u8; 17];
+        entry_buf[2] = 1; // templateId
+        entry_buf[4] = 9; // schemaId
+        entry_buf[8] = 1; // rows blockLength
+        entry_buf[10] = 1; // rows count
+        entry_buf[12] = 7; // tag
+        entry_buf[15] = 1; // cells count, blockLength stays 0
+        let book = BookDecoder::try_decode(&entry_buf, 0)?;
+        let mut rows = book.rows()?;
+        match rows.next() {
+            Some(Err(err)) => assert_short(err),
+            Some(Ok(entry)) => match entry.cells() {
+                Err(err) => assert_short(err),
+                Ok(mut cells) => {
+                    let mut dst = Vec::new();
+                    match cells.bulk_decode_into(&mut dst) {
+                        Err(err) => assert_short(err),
+                        Ok(_) => panic!("bulk decoded a cells blockLength of 0"),
+                    }
+                }
+            },
+            None => panic!("missing row"),
+        }
+
+        // Empty cells stay legal: nothing is read.
+        entry_buf[15] = 0;
+        let book = BookDecoder::try_decode(&entry_buf, 0)?;
+        let mut rows = book.rows()?;
+        let entry = rows.next().expect("row").expect("row decodes");
+        let cells = entry.cells().expect("empty cells");
+        assert!(cells.is_empty());
+
+        // Nested-group-entry location: outer -> mid entry -> inner.
+        let mut deep = [0u8; 26];
+        deep[2] = 1;
+        deep[4] = 9;
+        deep[12] = 1; // outer blockLength
+        deep[14] = 1; // outer count
+        deep[16] = 3; // outer tag
+        deep[17] = 1; // mid blockLength
+        deep[19] = 1; // mid count
+        deep[21] = 4; // mid tag
+        deep[24] = 1; // inner count, blockLength stays 0
+        let book = BookDecoder::try_decode(&deep, 0)?;
+        let mut outer = book.outer()?;
+        let outer_entry = match outer.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(err)) => {
+                assert_short(err);
+                return Ok(());
+            }
+            None => panic!("missing outer entry"),
+        };
+        let mut mid = match outer_entry.mid() {
+            Ok(group) => group,
+            Err(err) => {
+                assert_short(err);
+                return Ok(());
+            }
+        };
+        match mid.next() {
+            Some(Err(err)) => assert_short(err),
+            Some(Ok(entry)) => match entry.inner() {
+                Err(err) => assert_short(err),
+                Ok(mut inner) => {
+                    let mut dst = Vec::new();
+                    match inner.bulk_decode_into(&mut dst) {
+                        Err(err) => assert_short(err),
+                        Ok(_) => panic!("bulk decoded an inner blockLength of 0"),
+                    }
+                }
+            },
+            None => panic!("missing mid entry"),
+        }
+        "#,
+        "",
+    );
+    Ok(())
+}

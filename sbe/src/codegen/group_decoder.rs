@@ -107,6 +107,23 @@ pub(crate) fn generate_group_decoder(
     } else {
         quote::quote! {}
     };
+    // One decision for every constructor. `wrap_with_parent` and
+    // `wrap_trusted` both used to decide "is this stride readable?" on their
+    // own, and the trusted path dropped the check. A parent entry's warm
+    // extent proves the nested dimension header is in-bounds; it does not
+    // prove this group's wire block length can hold the fields its getters
+    // then read unchecked. `min_fixed` stays in scope for the dynamic-extent
+    // store below.
+    let short_block = quote::quote! {
+        let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
+        if count > 0 && block_length < min_fixed {
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: #g_name_lit,
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
+    };
 
     // Dynamic groups have no constant stride, so the whole region cannot be
     // proven once at wrap time. Each private entry construction is instead
@@ -262,18 +279,7 @@ pub(crate) fn generate_group_decoder(
                     header.#bl_field_ident() as u64,
                 )?;
                 let entries_start = offset + #dim_size_lit;
-                // SBE acting-version rule at the flyweight trust boundary: an
-                // entry whose wire block length cannot hold the required fixed
-                // fields active at this version is malformed, and a required
-                // getter would otherwise perform an unchecked read past it.
-                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
-                if count > 0 && block_length < min_fixed {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: min_fixed,
-                        available: block_length,
-                    });
-                }
+                #short_block
                 #dyn_extent_decl
                 #fixed_extent_validation
                 Ok(#decoder_ident {
@@ -413,9 +419,15 @@ pub(crate) fn generate_group_decoder(
                 self.remaining_entries()
             }
 
-            /// Dimension wrap after the caller has proven
-            /// the dimension header (and, for fixed groups, the full entry
-            /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+            /// Dimension wrap after the caller has proven the dimension
+            /// header (and, for fixed groups, the full entry region) is
+            /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+            ///
+            /// The caller's extent proof does not cover a wire `blockLength`
+            /// shorter than the fixed fields active at `acting_version`. That
+            /// check is the same one [`Self::wrap_with_parent`] runs, and it
+            /// runs here too: a nested group reached through a warm parent
+            /// cache would otherwise hand out getters that read past `buf`.
             ///
             /// # Safety
             /// `offset + dimension_header_size` must not overflow and must be
@@ -437,7 +449,7 @@ pub(crate) fn generate_group_decoder(
                     "blockLength",
                     header.#bl_field_ident() as u64,
                 )?;
-                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
+                #short_block
                 #dyn_extent_decl
                 Ok(Self {
                     buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,
@@ -1509,17 +1521,19 @@ pub(crate) fn generate_group_decoder(
         } else {
             proc_macro2::TokenStream::new()
         };
-        // A warm entry cache proves the whole entry extent was validated, so
-        // the nested dim header is known in-bounds and `wrap_trusted` is sound
-        // here. The two modes spell "warm" differently; both are one load.
+        // A warm entry cache proves the nested dimension header is in-bounds,
+        // which is what makes `wrap_trusted`'s unchecked header read sound.
+        // It does not prove the nested stride. `wrap_trusted` applies the
+        // same short-block rejection as `wrap_with_parent`.
         let entry_extent_known = quote::quote! { self.tail_end.get().is_some() };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
-                // `Iterator::next` cached the complete validated entry extent,
-                // so this first-tail offset cannot overflow or exceed `buf`.
+                // `Iterator::next` cached the entry extent, so this first-tail
+                // offset cannot overflow or exceed `buf`.
                 if #entry_extent_known {
                     let offset = self.offset + self.acting_block_length;
-                    // SAFETY: a warm entry cache proves the nested dim is in-bounds.
+                    // SAFETY: a warm entry cache proves the nested dimension
+                    // header is in-bounds. Short strides are rejected inside.
                     return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
@@ -1532,7 +1546,8 @@ pub(crate) fn generate_group_decoder(
         };
         let trusted_ng_wrap = quote::quote! {
             if #entry_extent_known {
-                // SAFETY: tail_offset_* validated the nested dim header region.
+                // SAFETY: tail_offset_* validated the nested dimension header.
+                // Short strides are rejected inside `wrap_trusted`.
                 return unsafe {
                     #ng_decoder_ident::wrap_trusted(
                         self.buf, offset, self.acting_version, 0, 0,
