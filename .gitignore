@@ -32,3 +32,8 @@ mutants.out*/
 # are left alone (not untracked) rather than deleted.
 sbe/fuzz/corpus/
 sbe/fuzz/artifacts/
+
+# Local scratch left at the repo root.
+/.playwright-mcp/
+/Untitled
+/package-lock.json
