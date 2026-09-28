@@ -30,6 +30,7 @@ spec:
             httpGet: { path: /api/health, port: 3000 }
           volumeMounts: [{ name: grafana, mountPath: /lab/grafana, readOnly: true }]
       volumes:
+        # Kind only: deploy/kind.yaml mounts this checkout at /lab on every node.
         - name: grafana
           hostPath: { path: /lab/grafana, type: Directory }
 ---

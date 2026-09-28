@@ -27,13 +27,13 @@ spec:
       tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
       initContainers:
         - name: wait-for-aeron
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
           volumeMounts: [{ name: aeron, mountPath: /aeron }]
       containers:
         - name: engine
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [/usr/local/bin/engine]
           env:
@@ -104,13 +104,13 @@ spec:
       tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
       initContainers:
         - name: wait-for-aeron
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
           volumeMounts: [{ name: aeron, mountPath: /aeron }]
       containers:
         - name: exch-sim
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [/usr/local/bin/exch-sim]
           env:

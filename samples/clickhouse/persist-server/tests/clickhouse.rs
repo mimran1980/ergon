@@ -616,7 +616,7 @@ fn market_schema_tables() -> TestResult {
         .ok_or("book_snapshot")?;
     assert_eq!(
         ch.create_sql(&book.shape()),
-        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)"
+        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)\nSETTINGS non_replicated_deduplication_window = 1000"
     );
     Ok(())
 }
@@ -731,5 +731,27 @@ fn persistences_own_tables_are_never_event_tables_or_sbe_messages() -> TestResul
         Err(e) => assert!(e.to_string().contains("keeps for itself"), "{e}"),
         Ok(_) => return Err("a schema with a message named Metrics was accepted".into()),
     }
+    Ok(())
+}
+
+#[test]
+fn the_same_insert_token_lands_once() -> TestResult {
+    let lab = Lab::new("dedup", "")?;
+    let db = &lab.ch.database;
+    lab.ch.query(&format!("CREATE DATABASE {db}"))?;
+    lab.ch.query(&format!(
+        "CREATE TABLE {db}.dedup (n Int64) ENGINE = MergeTree ORDER BY n \
+         SETTINGS non_replicated_deduplication_window = 1000"
+    ))?;
+    let insert = |token: &str, n: i64| {
+        lab.ch.query(&format!(
+            "INSERT INTO {db}.dedup SETTINGS insert_deduplication_token = '{token}' VALUES ({n})"
+        ))
+    };
+    // The token names the insert, so a retry with different bytes is dropped.
+    insert("batch-1", 1)?;
+    insert("batch-1", 9)?;
+    insert("batch-2", 2)?;
+    assert_eq!(lab.query("SELECT count(), sum(n) FROM DB.dedup")?, "2\t3");
     Ok(())
 }

@@ -1,0 +1,14 @@
+# One core for the engine's loop. Applied by `just spin`, not by `just up`.
+spec:
+  template:
+    spec:
+      containers:
+        - name: engine
+          env:
+            - name: IDLE
+              value: spin
+          resources:
+            requests:
+              cpu: "1"
+            limits:
+              cpu: "1"

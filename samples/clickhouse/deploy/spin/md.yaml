@@ -1,0 +1,15 @@
+# IDLE here is the metrics poller. Market data still arrives on
+# NautilusTrader's runtime. Applied by `just spin`, not by `just up`.
+spec:
+  template:
+    spec:
+      containers:
+        - name: md
+          env:
+            - name: IDLE
+              value: spin
+          resources:
+            requests:
+              cpu: "1"
+            limits:
+              cpu: "1"

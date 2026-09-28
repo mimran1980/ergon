@@ -2,9 +2,9 @@
 # node's persist stream and every feed of the registry published here,
 # replays them into ClickHouse, checkpoints, purges. It follows
 # streams.yaml: a feed added to it is recorded with no restart. Any archive
-# error ends it; it restarts and resumes from its checkpoint. It ingests
-# every SBE schema in schema/ of this checkout, read at start-up: after
-# adding or changing one, `just ingester` restarts it.
+# error ends it; it restarts and resumes from its checkpoint. It reads the
+# SBE schemas shipped in its image (`/lab/schema`). After adding or changing
+# one, `just md` rebuilds that image and restarts it.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -17,13 +17,13 @@ spec:
       tolerations: [{ operator: Exists }]
       initContainers:
         - name: wait-for-aeron
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
           volumeMounts: [{ name: aeron, mountPath: /aeron }]
       containers:
         - name: ingester
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [/usr/local/bin/ingester]
           env:
@@ -46,7 +46,6 @@ spec:
             - { name: aeron, mountPath: /aeron }
             - { name: config, mountPath: /lab/config, readOnly: true }
             - { name: state, mountPath: /state }
-            - { name: schema, mountPath: /lab/schema, readOnly: true }
       volumes:
         - name: aeron
           hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
@@ -54,6 +53,3 @@ spec:
           configMap: { name: lab-config }
         - name: state
           hostPath: { path: /var/lib/lab/ingester, type: DirectoryOrCreate }
-        # schema/ of this checkout, mounted into every node (deploy/kind.yaml).
-        - name: schema
-          hostPath: { path: /lab/schema, type: Directory }

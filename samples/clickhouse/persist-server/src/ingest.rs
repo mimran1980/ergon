@@ -15,8 +15,10 @@
 //! checkpoint. A stopped recording is deleted once all of it is in
 //! ClickHouse; a live one has its inserted segments purged.
 //!
-//! Delivery is at least once: a crash between an insert and the checkpoint
-//! write replays those records, so ClickHouse can hold them twice.
+//! A crash between an insert and the checkpoint write replays that batch.
+//! The replayed insert carries the same deduplication token (the batch's
+//! recording positions), and ClickHouse drops it. Each table remembers the
+//! last 1000 inserts.
 //!
 //! A failed archive request is returned from [`Ingester::tick`]: the archive,
 //! or this client's session with it, is gone, and only a new connection
@@ -70,6 +72,11 @@ pub struct Ingester {
     /// New versions of `streams.yaml`, once [`Ingester::follow`] is called.
     watch: Option<persist_client::streams::Watch>,
     checkpoint_path: PathBuf,
+    /// Positions of an insert that may already be in ClickHouse. Written
+    /// before the insert and removed when the checkpoint passes it, so a
+    /// restart replays this batch and no further, with the same token.
+    pending_path: PathBuf,
+    pending: Option<BTreeMap<i64, i64>>,
     /// Everything up to here is in ClickHouse, by recording id.
     checkpoints: BTreeMap<i64, i64>,
     /// Everything up to here has been handed to the writer, by recording id.
@@ -119,6 +126,16 @@ impl Ingester {
             record_feeds(&archive, streams, &settings.host_ip, &mut feeds)?;
         }
         let checkpoints = load(&settings.checkpoint_path)?;
+        let pending_path = settings.checkpoint_path.with_extension("pending");
+        let pending = load(&pending_path)?;
+        let pending = in_flight(&checkpoints, pending);
+        if pending.is_none() {
+            // Already checkpointed, or nothing was ever in flight.
+            if pending_path.exists() {
+                std::fs::remove_file(&pending_path)
+                    .map_err(|e| Error::Checkpoint(format!("{}: {e}", pending_path.display())))?;
+            }
+        }
         let stats = if settings.aeron_stats_interval.is_zero() {
             None
         } else {
@@ -139,6 +156,8 @@ impl Ingester {
             host_ip: settings.host_ip,
             watch: None,
             checkpoint_path: settings.checkpoint_path,
+            pending_path,
+            pending,
             polled: checkpoints.clone(),
             checkpoints,
             max_queued: settings.max_queued_bytes,
@@ -162,9 +181,35 @@ impl Ingester {
             record_feeds(&self.archive, &streams, &self.host_ip, &mut self.feeds)?;
         }
         self.open_replays(&mut report)?;
-        self.poll()?;
+        if self.pending.is_none() {
+            self.poll(true)?;
+            if self.polled != self.checkpoints {
+                // The token is this file. An insert before it is durable can
+                // be replayed as a different batch and land twice.
+                if let Err(e) = save(&self.pending_path, &self.polled) {
+                    report.errors.push(e.to_string());
+                    self.writer.log(&report);
+                    return Ok(report);
+                }
+                self.pending = Some(self.polled.clone());
+            }
+        } else if self.writer.queued_bytes() == 0 && !self.pending_reached() {
+            // The restart replay is bounded by `pending`, so this reads the
+            // uncommitted batch and stops. Insert once it is all in hand:
+            // a prefix would consume the token and ClickHouse would drop the rest.
+            self.poll(false)?;
+            if !self.pending_reached() {
+                self.writer.log(&report);
+                return Ok(report);
+            }
+        }
+        if let Some(pending) = &self.pending {
+            self.writer.set_dedup_token(&dedup_token(pending));
+        } else {
+            self.writer.set_dedup_token("");
+        }
         self.writer.run(&mut report);
-        if self.writer.queued_bytes() == 0 {
+        if self.writer.queued_bytes() == 0 && self.pending_reached() {
             self.commit(&mut report)?;
         }
         if let Some((stats, every, next)) = &mut self.stats
@@ -214,9 +259,19 @@ impl Ingester {
                 .checkpoints
                 .get(&d.id)
                 .map_or(d.start, |&c| c.max(d.start));
+            // While an insert is uncommitted, replay that batch and stop.
+            // A live replay would pull in messages that were not part of it.
+            let length = if let Some(pending) = &self.pending {
+                match pending.get(&d.id) {
+                    Some(&end) if end > from => end - from,
+                    _ => continue,
+                }
+            } else {
+                -1
+            };
             // A stopped recording (its application exited) that is all in
             // ClickHouse is no longer needed.
-            if d.stop >= 0 && from >= d.stop {
+            if length < 0 && d.stop >= 0 && from >= d.stop {
                 self.archive.purge_recording(d.id).map_err(aeron)?;
                 self.checkpoints.remove(&d.id);
                 self.polled.remove(&d.id);
@@ -229,23 +284,26 @@ impl Ingester {
                 ));
                 continue;
             }
-            // Length -1: to the end, and on live if it is still recording.
-            let params = AeronArchiveReplayParams::new(-1, -1, from, -1, -1, -1).map_err(aeron)?;
+            // Length -1 replays to the end and follows a live recording.
+            // A positive length replays the uncommitted batch and stops.
+            let params =
+                AeronArchiveReplayParams::new(-1, -1, from, length, -1, -1).map_err(aeron)?;
             let replay_stream = self.stream_id + 1;
-            let session = match self
-                .archive
-                .start_replay(d.id, c"aeron:ipc", replay_stream, &params)
-            {
-                Ok(session) => session,
-                // Listed as recording, it stopped before the request with
-                // nothing past `from` (a publisher restarted before it sent
-                // anything): the next listing shows it stopped, and purges it.
-                Err(e) if e.code == AeronArchiveErrorCode::InvalidPosition => {
-                    log::info!("recording {}: not replayable yet ({e}); next tick", d.id);
-                    continue;
-                }
-                Err(e) => return Err(aeron(e)),
-            };
+            let session =
+                match self
+                    .archive
+                    .start_replay(d.id, c"aeron:ipc", replay_stream, &params)
+                {
+                    Ok(session) => session,
+                    // Listed as recording, it stopped before the request with
+                    // nothing past `from` (a publisher restarted before it sent
+                    // anything): the next listing shows it stopped, and purges it.
+                    Err(e) if e.code == AeronArchiveErrorCode::InvalidPosition => {
+                        log::info!("recording {}: not replayable yet ({e}); next tick", d.id);
+                        continue;
+                    }
+                    Err(e) => return Err(aeron(e)),
+                };
             let subscription = self
                 .aeron
                 .async_add_subscription(
@@ -281,13 +339,14 @@ impl Ingester {
 
     /// Hand replayed messages to the writer, a batch from each recording in
     /// turn, until it holds `max_queued` bytes; the rest waits in the archive.
-    fn poll(&mut self) -> Result<(), Error> {
+    fn poll(&mut self, capped: bool) -> Result<(), Error> {
+        let max_queued = self.max_queued;
         let writer = &mut self.writer;
         let mut finished = Vec::new();
         loop {
             let mut any = false;
             for (&recording, replay) in &mut self.replays {
-                if writer.queued_bytes() >= self.max_queued {
+                if capped && writer.queued_bytes() >= max_queued {
                     break;
                 }
                 let feed = replay.feed;
@@ -312,7 +371,7 @@ impl Ingester {
                 }
                 any |= polled > 0;
             }
-            if !any || writer.queued_bytes() >= self.max_queued {
+            if !any || (capped && writer.queued_bytes() >= max_queued) {
                 break;
             }
         }
@@ -333,17 +392,44 @@ impl Ingester {
         Ok(())
     }
 
+    fn clear_pending(&mut self, report: &mut Report) {
+        if self.pending.take().is_none() {
+            return;
+        }
+        if let Err(e) = std::fs::remove_file(&self.pending_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            report
+                .errors
+                .push(format!("{}: {e}", self.pending_path.display()));
+        }
+    }
+
+    /// The uncommitted batch, if there is one, has been read back.
+    fn pending_reached(&self) -> bool {
+        let Some(pending) = &self.pending else {
+            return true;
+        };
+        pending.iter().all(|(id, end)| {
+            self.checkpoints.get(id).is_some_and(|c| c >= end)
+                || self.polled.get(id).is_some_and(|p| p >= end)
+        })
+    }
+
     /// Everything polled is in ClickHouse: save the checkpoints and purge
     /// each recording's segments before its own.
     fn commit(&mut self, report: &mut Report) -> Result<(), Error> {
-        if self.polled == self.checkpoints {
+        let target = self.pending.clone().unwrap_or_else(|| self.polled.clone());
+        if target == self.checkpoints {
+            self.clear_pending(report);
             return Ok(());
         }
-        if let Err(e) = save(&self.checkpoint_path, &self.polled) {
+        if let Err(e) = save(&self.checkpoint_path, &target) {
             report.errors.push(e.to_string());
             return Ok(());
         }
-        self.checkpoints.clone_from(&self.polled);
+        self.checkpoints.clone_from(&target);
+        self.clear_pending(report);
         for (&recording, replay) in &mut self.replays {
             let Some(&position) = self.checkpoints.get(&recording) else {
                 continue;
@@ -377,6 +463,32 @@ impl Drop for Ingester {
             let _ = self.archive.stop_replay(replay.session);
         }
     }
+}
+
+/// `pending` when one of its positions is still ahead of `checkpoints`.
+fn in_flight(
+    checkpoints: &BTreeMap<i64, i64>,
+    pending: BTreeMap<i64, i64>,
+) -> Option<BTreeMap<i64, i64>> {
+    if pending.is_empty()
+        || pending
+            .iter()
+            .all(|(id, pos)| checkpoints.get(id).is_some_and(|c| c >= pos))
+    {
+        None
+    } else {
+        Some(pending)
+    }
+}
+
+/// The insert's identity: one token per batch, stable across the retry.
+/// ClickHouse drops a later insert that repeats it, whichever rows it holds.
+fn dedup_token(positions: &BTreeMap<i64, i64>) -> String {
+    positions
+        .iter()
+        .map(|(id, pos)| format!("{id}:{pos}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// `recording position` per line; none when nothing was ever inserted.
@@ -466,5 +578,24 @@ mod tests {
         std::fs::remove_file(&path)?;
         std::fs::remove_dir(&dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn a_checkpointed_batch_is_not_still_in_flight() {
+        let checkpoints = BTreeMap::from([(3, 4096), (7, 128)]);
+        assert!(in_flight(&checkpoints, BTreeMap::new()).is_none());
+        assert!(in_flight(&checkpoints, checkpoints.clone()).is_none());
+        assert!(in_flight(&checkpoints, BTreeMap::from([(3, 1000)])).is_none());
+        let ahead = BTreeMap::from([(3, 4096), (7, 256)]);
+        assert_eq!(
+            in_flight(&checkpoints, ahead.clone()).as_ref(),
+            Some(&ahead)
+        );
+    }
+
+    #[test]
+    fn the_dedup_token_is_the_positions_in_recording_order() {
+        let positions = BTreeMap::from([(7, 128), (3, 4096)]);
+        assert_eq!(dedup_token(&positions), "3:4096,7:128");
     }
 }

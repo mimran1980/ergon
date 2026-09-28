@@ -71,7 +71,7 @@ and `just deploy` applies (`kubectl apply -k .`, which needs nothing but
 kubectl):
 
 ```text
-kustomization.yaml       lists everything below; builds the ConfigMaps from config/ and clickhouse.xml
+kustomization.yaml       lists everything below; builds the ConfigMaps; sets the image tags
 deploy/
   kind.yaml              the cluster: 4 nodes, 3 regions
   namespace.yaml
@@ -82,7 +82,8 @@ deploy/
   trading/
     base/trading.yaml    the engine and the dummy exchange, written once
     an1/ as1/ ew2/       one small folder per region
-docker/                  the images: app (the Rust binaries), aeron (the archive), jupyter, builder
+  spin/                  patches `just spin` applies on top: spinning threads, one core each
+docker/                  the images: app (the Rust binaries and schema/), aeron (the archive), jupyter, builder
 ```
 
 An exchange's folder only names its copy of the base, labels it, and pins it
@@ -104,10 +105,18 @@ patches:
 
 To add an exchange: its line in `config/streams.yaml`, its venue in md's
 `VENUES`, a copy of `deploy/md/binance/` with the exchange and region
-changed, its line in `kustomization.yaml`, then `just deploy`. To run
+changed, its line in `kustomization.yaml`, then `just deploy`. The region
+in that folder and the region in `streams.yaml` are the same word;
+`just verify` fails when a running pod's node is in a different one. To run
 without one, take its line out of `kustomization.yaml` and delete its
-Deployment; its data stays. In production Argo CD or Flux applies the same
-files from Git to each region's cluster.
+Deployment; its data stays. Image tags are the `images:` block in
+`kustomization.yaml`. `just spin` applies the lab and then `deploy/spin/`:
+`IDLE=spin` on the engines, feed handlers and dummy exchanges, and the media
+driver's three threads spinning, one core each. `just up` stays on `sleep`
+so four nodes fit on one machine. In production
+Argo CD or Flux applies the same files from Git to each region's cluster.
+The schemas are in the app image. Grafana and Jupyter read this checkout
+through the kind node's `/lab` mount.
 
 ## Architecture
 
@@ -413,12 +422,12 @@ up to 30 s for it, and nothing is checkpointed past it meanwhile; one that
 still has none is reported and dropped. An application that records nothing
 does not publish those repeats until its next record.
 
-**More SBE schemas.** The ingester loads every `.xml` schema in `schema/` at
-start-up and tells messages apart by schema id and template id. To persist
-another application's messages, put its schema there, list its tables in
-`tables.yaml`, and run `just ingester`. It restarts and resumes from its
-checkpoint. Keep one version of each schema: the newest decodes records made
-with older versions.
+**More SBE schemas.** The ingester loads every `.xml` in `schema/` from its
+image at start-up and tells messages apart by schema id and template id. To
+persist another application's messages, put its schema there, list its tables
+in `tables.yaml`, and run `just md` (it rebuilds the image, restarts the
+ingesters, and they resume from their checkpoints). Keep one version of each
+schema: the newest decodes records made with older versions.
 
 **Who recorded it.** Every row of every table ends with `host`, `pod` and
 `app` (`LowCardinality(String)`). They cost the application nothing per
@@ -647,8 +656,14 @@ first, then every publisher).
   (`recording position`), then deletes the archive segments behind it. When
   its last publisher on the node exits, the recording stops. Once all of it is
   in ClickHouse, the recording is deleted.
-- **At least once.** A crash between an insert and the checkpoint write
-  replays those records, so they can appear twice.
+- **A retried insert lands once.** Before inserting, the ingester writes the
+  batch's recording positions. The insert carries that text as
+  `insert_deduplication_token`. A crash before the checkpoint is saved
+  replays that batch and stops, and ClickHouse drops the repeat. Each table
+  remembers the last 1000 inserts (`non_replicated_deduplication_window`);
+  a table created earlier gains the setting when the ingester next compares
+  it. A retry that arrives after 1000 newer inserts of that table can land
+  twice.
 - **Sessions.** The applications on a node share one IPC publication, so
   they make one recording; each feed is a recording of its own, and a new
   session (a restart, a move) a new one. The ingester replays them all at
@@ -780,6 +795,8 @@ just verify   # the running lab: /play, live data, the engines' orders and trace
 - One table that never inserts (say, a static table ClickHouse refuses) holds
   the checkpoint back. The archive then grows until it is fixed. Nothing is
   lost, but it uses disk.
+- ClickHouse remembers 1000 inserts per table for deduplication. A replay of
+  an older batch can land twice.
 - The applications and the ingester reconnect by exiting and being restarted,
   so a restarted `aeron` pod costs every client a restart and the records
   published in between. A client notices within the 30 s driver timeout.

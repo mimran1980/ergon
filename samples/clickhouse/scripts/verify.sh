@@ -5,6 +5,7 @@
 #  2. Every deployed exchange's feed handler (md) is writing trades and quotes.
 #     Every region's engine publishes EMAs and its aggregated book, its orders
 #     are filled, and a kept tick-to-trade trace joins its exchange's trace.
+#     Each running publisher's node region matches config/streams.yaml.
 #  3. Every Grafana panel's query runs through Grafana without error.
 #  4. Metrics, histograms, traces and Aeron's counters arrive, with host and pod.
 #  5. The verification notebook runs clean inside JupyterLab's pod.
@@ -51,6 +52,9 @@ ok "trades from $venues and $quotes quotes in the last minute"
 # would put it.
 drivers=$("${KUBE[@]}" get pod -l app=aeron -o jsonpath='{range .items[*]}{.spec.nodeName} {.status.podIP}{"\n"}{end}')
 driver_on() { awk -v n="$1" '$1 == n { print $2 }' <<<"$drivers"; }
+node_regions=$("${KUBE[@]}" get node -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.labels.topology\.kubernetes\.io/region}{"\n"}{end}')
+region_of_node() { awk -v n="$1" '$1 == n { print $2 }' <<<"$node_regions"; }
+region_of_service() { sed -n "s/^  $1: .*region: \\([a-z0-9]*\\).*/\\1/p" config/streams.yaml; }
 asker=$("${KUBE[@]}" get pod -l app=engine -o jsonpath='{.items[0].metadata.name}')
 checked_names=0
 while read -r service node; do
@@ -58,10 +62,14 @@ while read -r service node; do
     driver_ip=$(driver_on "$node")
     [[ -n $driver_ip ]] || fail "no Aeron driver on $node, where $service runs"
     [[ $resolved == "$driver_ip" ]] || fail "$service resolves to '$resolved', not $node's media driver at $driver_ip"
+    want=$(region_of_service "$service")
+    have=$(region_of_node "$node")
+    [[ -n $want ]] || fail "$service is running but has no region in config/streams.yaml"
+    [[ $have == "$want" ]] || fail "$service runs on $node ($have); config/streams.yaml says $want"
     checked_names=$((checked_names + 1))
 done < <("${KUBE[@]}" get pod -l 'app in (md,engine,exch-sim)' --field-selector=status.phase=Running \
     -o jsonpath='{range .items[*]}{.metadata.labels.app}-{.metadata.labels.exchange}{.metadata.labels.region} {.spec.nodeName}{"\n"}{end}')
-ok "$checked_names publisher names resolve to the media driver of the node each runs on"
+ok "$checked_names publishers resolve to their node's media driver, in the region config/streams.yaml names"
 
 # 2b. Engines and their dummy exchanges
 engines=$("${KUBE[@]}" get deploy -l app=engine -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)

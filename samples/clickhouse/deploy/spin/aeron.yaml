@@ -1,0 +1,19 @@
+# Sender, receiver, and conductor each spin on their own core.
+# Applied by `just spin`, not by `just up`.
+spec:
+  template:
+    spec:
+      containers:
+        - name: driver
+          env:
+            - name: AERON_SENDER_IDLE_STRATEGY
+              value: spin
+            - name: AERON_RECEIVER_IDLE_STRATEGY
+              value: spin
+            - name: AERON_CONDUCTOR_IDLE_STRATEGY
+              value: spin
+          resources:
+            requests:
+              cpu: "3"
+            limits:
+              cpu: "3"

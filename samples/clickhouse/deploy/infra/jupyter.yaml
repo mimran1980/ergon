@@ -11,7 +11,7 @@ spec:
     spec:
       containers:
         - name: jupyter
-          image: lab/jupyter:local
+          image: lab/jupyter
           imagePullPolicy: Never
           env:
             - { name: CLICKHOUSE_HOST, value: clickhouse }
@@ -22,6 +22,7 @@ spec:
             - { name: notebooks, mountPath: /lab/notebooks }
             - { name: config, mountPath: /lab/config, readOnly: true }
       volumes:
+        # Kind only: deploy/kind.yaml mounts this checkout at /lab on every node.
         - name: notebooks
           hostPath: { path: /lab/notebooks, type: Directory }
         - name: config

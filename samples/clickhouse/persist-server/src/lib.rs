@@ -422,6 +422,8 @@ pub struct Writer {
     config_text: String,
     /// RowBinary for the insert in progress; reused.
     rows: Vec<u8>,
+    /// Set for the uncommitted batch. Empty leaves ClickHouse's content checksum.
+    dedup_token: String,
     recheck: Duration,
     queued_bytes: usize,
     skipped: usize,
@@ -478,6 +480,7 @@ impl Writer {
             config_path: config_path.into(),
             config_text: String::new(),
             rows: Vec::new(),
+            dedup_token: String::new(),
             recheck,
             queued_bytes: 0,
             skipped: 0,
@@ -833,6 +836,13 @@ impl Writer {
         self.queued_bytes
     }
 
+    /// Identify this tick's inserts. A retry of the same batch passes the
+    /// same token, and ClickHouse drops it.
+    pub(crate) fn set_dedup_token(&mut self, token: &str) {
+        self.dedup_token.clear();
+        self.dedup_token.push_str(token);
+    }
+
     /// Reload `tables.yaml` if it changed, sync tables, insert what is queued.
     pub fn tick(&mut self) -> Report {
         let mut report = Report::default();
@@ -1044,9 +1054,11 @@ impl Writer {
                 ));
             }
             let columns: Vec<&str> = state.columns.iter().map(String::as_str).collect();
-            let inserted = match rows {
-                0 => Ok(()),
-                _ => self.ch.insert(state.source.name(), &columns, &self.rows),
+            let inserted = if rows == 0 {
+                Ok(())
+            } else {
+                self.ch
+                    .insert_token(state.source.name(), &columns, &self.rows, &self.dedup_token)
             };
             match inserted {
                 Ok(()) => {

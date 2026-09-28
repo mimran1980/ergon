@@ -5,7 +5,7 @@
 #
 #   an1  Tokyo (2 nodes)     binance, hyperliquid: feeds can move between them
 #   as1  Singapore/HK        bybit, okx
-#   ew2  London LD4          deribit
+#   ew2  London LD4          deribit, kraken futures
 #
 # Every node is schedulable (the lab's pods tolerate the control plane's
 # taint) and runs the Aeron and ingester DaemonSets. The sample directory is

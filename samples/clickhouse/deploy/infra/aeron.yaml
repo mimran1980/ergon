@@ -30,7 +30,7 @@ spec:
       tolerations: [{ operator: Exists }]
       containers:
         - name: driver
-          image: lab/app:local
+          image: lab/app
           imagePullPolicy: Never
           command: [/usr/local/bin/aeron-driver]
           env:
@@ -66,7 +66,7 @@ spec:
             failureThreshold: 120
           volumeMounts: [{ name: aeron, mountPath: /aeron }]
         - name: archive
-          image: lab/aeron:local
+          image: lab/aeron
           imagePullPolicy: Never
           env:
             # A small JVM: left alone, it sizes heap and direct memory from

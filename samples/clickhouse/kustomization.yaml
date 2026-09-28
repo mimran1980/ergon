@@ -7,6 +7,8 @@
 # To add an exchange: its line in config/streams.yaml, its venue in md's
 # VENUES, a copy of deploy/md/binance/ with the exchange and region changed,
 # and its line below.
+#
+# Isolated cores: `just spin` (deploy/spin). `just up` does not apply it.
 namespace: lab
 resources:
   - deploy/namespace.yaml
@@ -39,5 +41,13 @@ configMapGenerator:
   # restarts ClickHouse, which reads them only at start.
   - name: clickhouse-settings
     files: [lab.xml=deploy/infra/clickhouse.xml]
+# Image tags live here. The manifests name the image without one.
+images:
+  - name: lab/app
+    newTag: local
+  - name: lab/aeron
+    newTag: local
+  - name: lab/jupyter
+    newTag: local
 labels:
   - pairs: { app.kubernetes.io/part-of: lab }

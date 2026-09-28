@@ -7,6 +7,10 @@ use persist_client::TableKind;
 use crate::Error;
 use crate::table::{Column, Shape};
 
+/// How many recent inserts a table remembers. Plain MergeTree deduplicates
+/// nothing until this is set; a retry of one of those inserts is dropped.
+pub(crate) const DEDUP_WINDOW: u64 = 1000;
+
 /// Where and as whom to connect.
 #[derive(Clone, Debug)]
 pub struct ClickHouse {
@@ -57,9 +61,30 @@ impl ClickHouse {
 
     /// `INSERT INTO table (columns) FORMAT RowBinary` with `rows` as the body.
     pub(crate) fn insert(&self, table: &str, columns: &[&str], rows: &[u8]) -> Result<(), Error> {
+        self.insert_token(table, columns, rows, "")
+    }
+
+    /// [`Self::insert`] identified by `token`. ClickHouse drops the insert
+    /// when that token was already used for this table, so a retry of the
+    /// same batch does not add rows. An empty token keeps the content checksum.
+    pub(crate) fn insert_token(
+        &self,
+        table: &str,
+        columns: &[&str],
+        rows: &[u8],
+        token: &str,
+    ) -> Result<(), Error> {
         let cols: Vec<String> = columns.iter().map(|c| quote(c)).collect();
+        let settings = if token.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " SETTINGS insert_deduplication_token = '{}'",
+                token.replace('\'', "\\'")
+            )
+        };
         let sql = format!(
-            "INSERT INTO {}.{} ({}) FORMAT RowBinary",
+            "INSERT INTO {}.{} ({}){settings} FORMAT RowBinary",
             quote(&self.database),
             quote(table),
             cols.join(", ")
@@ -128,6 +153,9 @@ impl ClickHouse {
             });
         };
         let mut sync = Sync::default();
+        if let Some(ddl) = self.ensure_dedup(&table.name)? {
+            sync.applied.push(ddl);
+        }
         for Column { name, ch_type } in wanted {
             let target = format!("{}.{}", quote(&self.database), quote(&table.name));
             match existing.iter().find(|(n, _)| n == name) {
@@ -178,13 +206,43 @@ impl ClickHouse {
             .map(|ts| format!("\nPARTITION BY toDate({})", quote(ts)))
             .unwrap_or_default();
         format!(
-            "CREATE TABLE IF NOT EXISTS {}.{} (\n{}\n)\nENGINE = MergeTree{partition}\nORDER BY ({})",
+            "CREATE TABLE IF NOT EXISTS {}.{} (\n{}\n)\nENGINE = MergeTree{partition}\nORDER BY ({})\nSETTINGS non_replicated_deduplication_window = {DEDUP_WINDOW}",
             quote(&self.database),
             quote(&table.name),
             cols.join(",\n"),
             order.join(", "),
         )
     }
+
+    /// Give an existing table the dedup window [`Self::create_sql`] sets.
+    fn ensure_dedup(&self, table: &str) -> Result<Option<String>, Error> {
+        let sql = format!(
+            "SELECT engine_full FROM system.tables WHERE database = '{}' AND name = '{}' FORMAT TabSeparatedRaw",
+            self.database.replace('\'', "\\'"),
+            table.replace('\'', "\\'"),
+        );
+        if has_dedup_window(&self.query(&sql)?) {
+            return Ok(None);
+        }
+        let ddl = format!(
+            "ALTER TABLE {}.{} MODIFY SETTING non_replicated_deduplication_window = {DEDUP_WINDOW}",
+            quote(&self.database),
+            quote(table)
+        );
+        self.query(&ddl)?;
+        Ok(Some(ddl))
+    }
+}
+
+fn has_dedup_window(engine_full: &str) -> bool {
+    let engine = engine_full.replace(' ', "");
+    let key = "non_replicated_deduplication_window=";
+    let Some(at) = engine.find(key) else {
+        return false;
+    };
+    let rest = &engine[at + key.len()..];
+    let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    n == DEDUP_WINDOW.to_string()
 }
 
 fn quote(ident: &str) -> String {
@@ -193,4 +251,20 @@ fn quote(ident: &str) -> String {
 
 fn same_type(a: &str, b: &str) -> bool {
     a.replace(' ', "") == b.replace(' ', "")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_window_matches_only_that_setting() {
+        assert!(has_dedup_window(
+            "MergeTree SETTINGS non_replicated_deduplication_window = 1000"
+        ));
+        assert!(!has_dedup_window(
+            "MergeTree SETTINGS non_replicated_deduplication_window = 10000"
+        ));
+        assert!(!has_dedup_window("MergeTree ORDER BY tuple()"));
+    }
 }

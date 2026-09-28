@@ -209,6 +209,34 @@ fn recorded_messages_reach_clickhouse_and_the_archive_is_purged() -> TestResult 
     Ok(())
 }
 
+#[test]
+fn a_replayed_batch_is_inserted_once() -> TestResult {
+    let lab = Lab::new("aeron_dedup", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let stream_id = stream(5);
+    let persist = client(&lab, stream_id)?;
+    {
+        let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+        wait_until("the archive to record the stream", || {
+            Ok(persist.is_connected())
+        })?;
+        record(&persist, 100)?;
+        ingest(&mut ingester, &lab, "shapes", 100)?;
+    }
+    // The insert landed and the checkpoint was saved, which deletes the
+    // pending file. Put that position back as pending and drop the
+    // checkpoint: the next ingester replays the batch with the same token.
+    let checkpoint = lab.dir.join("checkpoint");
+    assert!(
+        !lab.dir.join("checkpoint.pending").exists(),
+        "a committed batch keeps no pending file"
+    );
+    std::fs::rename(&checkpoint, lab.dir.join("checkpoint.pending"))?;
+    let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
+    record(&persist, 50)?;
+    ingest(&mut ingester, &lab, "shapes", 150)?;
+    Ok(())
+}
+
 /// One call site, used twice.
 fn emit_signal(edge: f64) {
     tracing::info!(table = "signal", edge);

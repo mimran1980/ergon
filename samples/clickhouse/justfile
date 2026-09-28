@@ -1,6 +1,6 @@
 # ClickHouse persistence lab. Run from samples/clickhouse/.
 #
-#   just up         create the kind cluster (4 nodes, 3 regions), build the images, deploy the chart
+#   just up         create the kind cluster (4 nodes, 3 regions), build the images, apply the manifests
 #   just deploy     apply kustomization.yaml (deploy/, config/): after editing config/ or deploy/
 #   just md         rebuild + restart the feed handlers, engines and ingesters after a code/schema change
 #   just aeron      rebuild + restart Aeron (the driver, docker/aeron.Dockerfile), then its clients
@@ -31,7 +31,7 @@ up: _cluster images deploy
 # to config/ alone changes only the ConfigMap `lab-config`: the pods see it
 # within about a minute (the kubelet's sync) and apply it with no restart.
 # Server-side apply, so a field taken out of deploy/ is taken out of the
-# cluster too.
+# cluster too. Apply kustomization.yaml.
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -39,6 +39,24 @@ deploy:
 
 # Publish config/ only: `just deploy` by another name, for scripts that edit it.
 config: deploy
+
+# Not what `just up` does: four kind nodes on one machine cannot spare a core per thread.
+# Apply the lab, then deploy/spin/: spinning threads, one core each.
+spin: deploy
+    #!/usr/bin/env bash
+    set -euo pipefail
+    kube=(kubectl --context kind-{{cluster}} -n lab)
+    patch() {
+        local kind="$1" selector="$2" file="$3" name
+        for name in $("${kube[@]}" get "$kind" -l "$selector" -o name); do
+            "${kube[@]}" patch "$name" --type strategic --patch-file "$file"
+        done
+    }
+    patch deployment app=engine deploy/spin/engine.yaml
+    patch deployment app=exch-sim deploy/spin/exch-sim.yaml
+    patch deployment app=md deploy/spin/md.yaml
+    "${kube[@]}" patch daemonset/aeron --type strategic --patch-file deploy/spin/aeron.yaml
+
 
 # Reachable from other machines too: every port listens on 0.0.0.0.
 urls:
@@ -88,8 +106,9 @@ build:
     docker run --rm -v "$PWD/../..":/src -w /src/samples/clickhouse \
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
         -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} lab/builder:local \
-        sh -c 'cargo build --release -p md -p persist-server -p aeron-driver -p engine --bins && mkdir -p target/linux \
-            && cp /target/release/md /target/release/ingester /target/release/aeron-driver /target/release/engine /target/release/exch-sim schema/market.xml target/linux/'
+        sh -c 'cargo build --release -p md -p persist-server -p aeron-driver -p engine --bins && mkdir -p target/linux/schema \
+            && cp /target/release/md /target/release/ingester /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
+            && cp schema/*.xml target/linux/schema/'
     docker build -q -t lab/app:local -f docker/app.Dockerfile target/linux
 
 # Rebuild and restart the feed handlers, engines and ingesters (after changing a schema or code).
@@ -116,7 +135,7 @@ aeron:
     {{kube}} rollout status daemonset/ingester --timeout=120s
     for d in $({{kube}} get deploy -l 'app in (md,engine,exch-sim)' -o name); do {{kube}} rollout status $d --timeout=300s; done
 
-# Restart the ingester so it loads every schema in schema/ again; it resumes from its checkpoint.
+# Restart the ingesters; they resume from their checkpoints. Schema changes are `just md`.
 ingester:
     {{kube}} rollout restart daemonset/ingester
     {{kube}} rollout status daemonset/ingester --timeout=120s

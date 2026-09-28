@@ -1,0 +1,14 @@
+# One core for the dummy exchange's loop. Applied by `just spin`, not by `just up`.
+spec:
+  template:
+    spec:
+      containers:
+        - name: exch-sim
+          env:
+            - name: IDLE
+              value: spin
+          resources:
+            requests:
+              cpu: "1"
+            limits:
+              cpu: "1"
