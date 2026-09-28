@@ -633,43 +633,74 @@ fn parse_field_inheriting_presence() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn parse_value_ref_dot_notation() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+/// One schema whose single constant field is `<field {field}/>`, with an enum
+/// `Colour` (uint8), an enum `Side` (char) and a set `Flags` (uint8) in scope.
+fn value_ref_schema(field: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
-<enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="Colour.Red"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef dot-notation code path — may succeed or warn
-    let _ = parse(xml);
+<enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum>
+<enum name="Side" encodingType="char"><validValue name="Buy">B</validValue></enum>
+<set name="Flags" encodingType="uint8"><choice name="A">0</choice></set></types>
+<sbe:message name="M" id="1"><field name="c" id="1" presence="constant" {field}/></sbe:message>
+</sbe:messageSchema>"#
+    )
+}
 
+#[test]
+fn parse_value_ref_accepts_what_sbe_tool_accepts() -> Result<(), Box<dyn std::error::Error>> {
+    // The field's own enum, and a primitive whose encoding matches the enum's.
+    parse(&value_ref_schema(r#"type="Colour" valueRef="Colour.Red""#))?;
+    parse(&value_ref_schema(r#"type="uint8" valueRef="Colour.Red""#))?;
+    parse(&value_ref_schema(r#"type="char" valueRef="Side.Buy""#))?;
     Ok(())
 }
 
 #[test]
-fn parse_value_ref_unknown_enum_warns() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
-<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="NonExistent.SomeVal"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef unknown-enum warning path
-    let _ = parse(xml);
-
-    Ok(())
-}
-
-#[test]
-fn parse_value_ref_no_dot() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
-<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="SimpleVal"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef no-dot path
-    let _ = parse(xml);
-
+fn parse_value_ref_rejects_what_sbe_tool_rejects() -> Result<(), Box<dyn std::error::Error>> {
+    // Each of these built silently before; sbe-tool's Field.validate rejects
+    // them all, and the decoder would have returned the field enum's variant.
+    for (field, expected) in [
+        (
+            r#"type="uint8" valueRef="SimpleVal""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef="Colour.""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef=".Red""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef="NonExistent.SomeVal""#,
+            "enum name not found",
+        ),
+        (
+            r#"type="Colour" valueRef="Colour.Blue""#,
+            "validValue name not found",
+        ),
+        (r#"type="Flags" valueRef="Flags.A""#, "not an enum"),
+        (
+            r#"type="Colour" valueRef="Side.Buy""#,
+            "does not match field type",
+        ),
+        (
+            r#"type="uint16" valueRef="Colour.Red""#,
+            "does not match field type",
+        ),
+    ] {
+        let Err(err) = parse(&value_ref_schema(field)) else {
+            return Err(format!("expected {field} to be rejected").into());
+        };
+        let message = format!("{err}");
+        assert!(
+            message.contains(expected),
+            "{field}: expected '{expected}' in '{message}'"
+        );
+    }
     Ok(())
 }
 

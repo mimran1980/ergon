@@ -21,6 +21,13 @@
   in group and nested group entries, and in domain DTOs. A value more precise
   than the field holds is an error, never truncated. Under
   `DomainImpl::Manual` the impl still receives the field's own unit.
+- **An invalid `valueRef` built silently.** A malformed reference, an unknown
+  enum, an unknown valid value, a non-enum target, or an enum other than the
+  field's own now fail the parse, as they do in sbe-tool. Before, the decoder
+  kept only the part after the dot, so `valueRef="Other.Buy"` on a `Side`
+  field returned `Side::Buy`. A primitive constant field may still reference
+  an enum whose encoding type matches its own. A literal constant belongs in
+  `constantValue`, not `valueRef`.
 
 ## [0.1.29] — 2026-09-19
 

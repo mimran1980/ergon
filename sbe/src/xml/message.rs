@@ -131,6 +131,90 @@ pub(crate) fn parse_message(
     Ok(())
 }
 
+/// Resolve a `valueRef="EnumName.ValidValue"` to its enum's encoding type,
+/// rejecting a malformed reference, an unknown or non-enum type, and an unknown
+/// valid value — the same checks sbe-tool's `Field.validateValueRef` makes.
+fn value_ref_enum(
+    node: Node<'_, '_>,
+    value_ref: &str,
+    registry: &TypeRegistry,
+) -> Result<Option<PrimitiveType>, Fault> {
+    let Some((enum_name, value_name)) = value_ref
+        .split_once('.')
+        .filter(|(e, v)| !e.is_empty() && !v.is_empty())
+    else {
+        return Err(Fault::invalid(
+            node,
+            "valueRef (expected enum-name.valid-value-name)",
+            value_ref,
+        ));
+    };
+    let Some(enum_tokens) = registry.registry.get(enum_name) else {
+        return Err(Fault::invalid(
+            node,
+            "valueRef enum name not found",
+            enum_name,
+        ));
+    };
+    let Some(begin) = enum_tokens
+        .first()
+        .filter(|t| t.signal == Signal::BeginEnum)
+    else {
+        return Err(Fault::invalid(
+            node,
+            "valueRef type is not an enum",
+            enum_name,
+        ));
+    };
+    if !enum_tokens
+        .iter()
+        .any(|t| t.signal == Signal::Encoding && t.name == value_name)
+    {
+        return Err(Fault::invalid(
+            node,
+            "valueRef validValue name not found",
+            value_ref,
+        ));
+    }
+    Ok(begin.encoding.primitive_type)
+}
+
+/// A constant field's `valueRef` must name the field's own enum, or, for a
+/// primitive field, an enum with the same encoding type (sbe-tool
+/// `Field.validate`).
+fn validate_constant_value_ref(
+    node: Node<'_, '_>,
+    value_ref: &str,
+    type_name: &str,
+    registry: &TypeRegistry,
+) -> Result<(), Fault> {
+    let enum_encoding = value_ref_enum(node, value_ref, registry)?;
+    let enum_name = value_ref.split_once('.').map_or(value_ref, |(e, _)| e);
+    let matches = match registry.registry.get(type_name) {
+        Some(field_tokens)
+            if field_tokens
+                .first()
+                .is_some_and(|t| t.signal == Signal::BeginEnum) =>
+        {
+            enum_name == type_name
+        }
+        Some(_) => false,
+        None => registry
+            .encodings
+            .get(type_name)
+            .is_some_and(|e| e.primitive_type.is_some() && e.primitive_type == enum_encoding),
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(Fault::invalid(
+            node,
+            format!("valueRef does not match field type '{type_name}'"),
+            value_ref,
+        ))
+    }
+}
+
 pub(crate) fn validate_message_member_order(node: Node<'_, '_>) -> Result<(), Fault> {
     let mut phase = 0u8;
     for child in element_children(node) {
@@ -201,8 +285,12 @@ pub(crate) fn parse_message_child(
                     warn_state,
                 );
             }
+            let value_ref = node.attribute("valueRef");
+            if let Some(value_ref) = value_ref {
+                value_ref_enum(node, value_ref, registry)?;
+            }
             let constant_value = if presence == Presence::Constant {
-                let from_value_ref = node.attribute("valueRef");
+                let from_value_ref = value_ref;
                 let from_constant_value = node.attribute("constantValue");
                 if from_value_ref.is_none() && from_constant_value.is_none() {
                     // The field may inherit constant value from the referenced type.
@@ -218,27 +306,10 @@ pub(crate) fn parse_message_child(
                         ));
                     }
                 }
-                from_value_ref
-                    .or(from_constant_value)
-                    .map(|s| {
-                        if from_value_ref.is_some() {
-                            // valueRef format: "EnumName.ValidValue" — validate
-                            // the enum and variant exist at parse time (sbe-tool
-                            // rejects invalid valueRef).
-                            if let Some((enum_name, _variant_name)) = s.split_once('.') {
-                                if !registry.registry.contains_key(enum_name) {
-                                    warn_once(
-                                        &format!(
-                                            "warning: valueRef '{s}' references unknown enum '{enum_name}'"
-                                        ),
-                                        Some(node),
-                                        warn_state,
-                                    );
-                                }
-                            }
-                        }
-                        s.to_string()
-                    })
+                if let Some(value_ref) = from_value_ref {
+                    validate_constant_value_ref(node, value_ref, &type_name, registry)?;
+                }
+                from_value_ref.or(from_constant_value).map(str::to_string)
             } else {
                 None
             };

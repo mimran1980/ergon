@@ -475,13 +475,17 @@ fn generate_constant_value_schema() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn generate_constant_set_field() -> Result<(), Box<dyn std::error::Error>> {
-    // constant-set-field.xml has a SET field with presence="constant".
+fn constant_set_field_value_ref_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    // constant-set-field.xml gives a SET field presence="constant" with
+    // valueRef="Flags.A". A valueRef must name an enum validValue; sbe-tool
+    // rejects this schema ("valueRef for is not of type enum"), and so do we.
     use std::path::PathBuf;
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/schemas/constant-set-field.xml");
-    let (_s, src) = generate(&path, "const_set");
-    syn::parse_file(&src).expect("constant-set-field generates valid Rust");
+    let Err(err) = ergo_sbe::parse_file(&path) else {
+        return Err("constant set valueRef must be rejected".into());
+    };
+    assert!(format!("{err}").contains("not an enum"), "{err}");
     Ok(())
 }
 
