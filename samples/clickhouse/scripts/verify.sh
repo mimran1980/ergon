@@ -8,7 +8,8 @@
 #  3. Every Grafana panel's query runs through Grafana without error.
 #  4. Metrics, histograms, traces and Aeron's counters arrive, with host and pod.
 #  5. The verification notebook runs clean inside JupyterLab's pod.
-#  6. Toggling a dynamic table in config/tables.yaml starts and stops it live.
+#  6. Toggling a dynamic table in config/tables.yaml, published as the
+#     cluster's ConfigMap (`just config`), starts and stops it live.
 #  7. A feed handler moved to another node (cordon, delete): it publishes from
 #     there, its engine resyncs it, its region's other feed never stops, and
 #     no row is recorded twice.
@@ -29,18 +30,42 @@ sql() { curl -sf -u lab:lab "$CH/" --data-binary "$1"; }
 play=$(curl -sf "$CH/play") && [[ $play == *"<title>ClickHouse Query</title>"* ]] || fail "$CH/play did not serve the query UI"
 ok "ClickHouse answers; query UI at $CH/play"
 
+# 1b. The cluster runs this checkout's config/: `just config` publishes it.
+for f in tables.yaml streams.yaml; do
+    live=$("${KUBE[@]}" get configmap lab-config -o jsonpath="{.data.${f/./\\.}}")
+    [[ $live == "$(cat config/$f)" ]] || fail "the cluster's $f differs from config/$f: run \`just config\`"
+done
+ok "the cluster's ConfigMap lab-config is config/"
+
 # 2. Live data from every deployed exchange
 expected=$("${KUBE[@]}" get deploy -l app=md -o jsonpath='{range .items[*]}{.metadata.labels.exchange}{"\n"}{end}' | tr a-z A-Z | sort | paste -sd, -)
-[[ -n $expected ]] || fail "no feed handler is deployed (just exchange binance)"
+[[ -n $expected ]] || fail "no feed handler is deployed (just deploy)"
 venues=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(venue)), ',') FROM market.trade WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 [[ $venues == "$expected" ]] || fail "trades in the last minute came from '$venues', expected $expected"
 quotes=$(sql "SELECT count() FROM market.quote WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 (( quotes > 0 )) || fail "no quotes in the last minute"
 ok "trades from $venues and $quotes quotes in the last minute"
 
+# 2a. Every publisher's name resolves to its node's media driver: that is
+# where its feeds' control sockets are, not wherever its pod's own network
+# would put it.
+drivers=$("${KUBE[@]}" get pod -l app=aeron -o jsonpath='{range .items[*]}{.spec.nodeName} {.status.podIP}{"\n"}{end}')
+driver_on() { awk -v n="$1" '$1 == n { print $2 }' <<<"$drivers"; }
+asker=$("${KUBE[@]}" get pod -l app=engine -o jsonpath='{.items[0].metadata.name}')
+checked_names=0
+while read -r service node; do
+    resolved=$("${KUBE[@]}" exec "$asker" -c engine -- getent ahostsv4 "$service.lab.svc.cluster.local" | awk 'NR == 1 { print $1 }')
+    driver_ip=$(driver_on "$node")
+    [[ -n $driver_ip ]] || fail "no Aeron driver on $node, where $service runs"
+    [[ $resolved == "$driver_ip" ]] || fail "$service resolves to '$resolved', not $node's media driver at $driver_ip"
+    checked_names=$((checked_names + 1))
+done < <("${KUBE[@]}" get pod -l 'app in (md,engine,exch-sim)' --field-selector=status.phase=Running \
+    -o jsonpath='{range .items[*]}{.metadata.labels.app}-{.metadata.labels.exchange}{.metadata.labels.region} {.spec.nodeName}{"\n"}{end}')
+ok "$checked_names publisher names resolve to the media driver of the node each runs on"
+
 # 2b. Engines and their dummy exchanges
 engines=$("${KUBE[@]}" get deploy -l app=engine -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)
-[[ -n $engines ]] || fail "no engine is deployed (just engines)"
+[[ -n $engines ]] || fail "no engine is deployed (just deploy)"
 for engine in $engines; do
     region=${engine#engine-}
     has_md=$(sed -n "s/^  md-\([a-z]*\): .*region: $region[,} ].*/\1/p" config/streams.yaml \
@@ -104,10 +129,12 @@ for uid in $uids; do
             err=$(echo "$result" | jq -r '.results.A.error // empty')
             [[ -z $err ]] || fail "Grafana panel '$title' [$table] ($uid): $err"
             rows=$(echo "$result" | jq '[.results.A.frames[]?.data.values[0]? // [] | length] | add // 0')
-            # A disabled table may legitimately have nothing recent, and a
-            # healthy driver no errors or losses.
+            # A disabled table may legitimately have nothing recent, a
+            # healthy driver no errors or losses, and a lab whose tables all
+            # exist no schema change within the query log's day.
             [[ $rows -gt 0 ]] || disabled "$table" || { [[ $title == *book_snapshot* ]] && disabled book_snapshot; } \
                 || [[ $title == "Distinct errors" || $title == "Data loss" ]] \
+                || [[ $title == "Schema changes (CREATE / ALTER)" ]] \
                 || [[ $table == aeron_errors || $table == aeron_loss ]] \
                 || fail "Grafana panel '$title' [$table] ($uid) returned no rows"
             checked=$((checked + 1))
@@ -135,24 +162,30 @@ ok "metrics, histograms, traces and Aeron counters arriving, with host and pod, 
     || fail "notebooks/verify.ipynb failed (open http://localhost:8888 to see where)"
 ok "notebooks/verify.ipynb runs clean"
 
-# 6. Live toggle of a dynamic table
+# 6. Live toggle of a dynamic table, through the cluster's ConfigMap: the
+# kubelet takes up to about a minute to update it in the pods.
 config=config/tables.yaml
 saved=$(cat "$config")
-trap 'printf "%s\n" "$saved" > "$config"' EXIT
-set_book() { sed -E "s/^(  book_snapshot: \{ kind: dynamic, enabled: )(true|false)( \})/\1$1\3/" <<<"$saved" > "$config"; }
+push_config() { just config >/dev/null; }
+restore() { printf "%s\n" "$saved" > "$config"; push_config; }
+trap restore EXIT
+set_book() { sed -E "s/^(  book_snapshot: \{ kind: dynamic, enabled: )(true|false)( \})/\1$1\3/" <<<"$saved" > "$config"; push_config; }
 recent_books() { sql "SELECT count() FROM market.book_snapshot WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL $1 SECOND" 2>/dev/null || echo 0; }
 set_book true
-for _ in $(seq 30); do (( $(recent_books 5) > 0 )) && break; sleep 1; done
-(( $(recent_books 5) > 0 )) || fail "book_snapshot enabled but no rows arrived within 30 s"
+for _ in $(seq 150); do (( $(recent_books 5) > 0 )) && break; sleep 1; done
+(( $(recent_books 5) > 0 )) || fail "book_snapshot enabled but no rows arrived within 150 s"
 ok "book_snapshot on: rows arriving without a restart"
 set_book false
-sleep 3
-before=$(sql "SELECT count() FROM market.book_snapshot")
-sleep 5
-after=$(sql "SELECT count() FROM market.book_snapshot")
-[[ $before == "$after" ]] || fail "book_snapshot disabled but rows kept arriving ($before -> $after)"
+stopped=
+for _ in $(seq 25); do
+    before=$(sql "SELECT count() FROM market.book_snapshot")
+    sleep 6
+    after=$(sql "SELECT count() FROM market.book_snapshot")
+    [[ $before == "$after" ]] && { stopped=1; break; }
+done
+[[ -n $stopped ]] || fail "book_snapshot disabled but rows kept arriving 150 s later ($before -> $after)"
 ok "book_snapshot off: row count stayed at $after"
-printf "%s\n" "$saved" > "$config"
+restore
 trap - EXIT
 restarts=$("${KUBE[@]}" get pod -l 'app in (aeron,ingester,md,engine,exch-sim)' -o jsonpath='{range .items[*]}{.metadata.name}={.status.containerStatuses[0].restartCount} {end}')
 [[ $restarts != *=[1-9]* ]] || fail "restarted: $restarts"

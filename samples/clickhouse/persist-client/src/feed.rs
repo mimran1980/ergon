@@ -134,6 +134,34 @@ impl Feed {
     }
 }
 
+/// Where a subscribed message came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// Off the network, as it was published: current.
+    Live,
+    /// Replayed from the archive while catching up: possibly minutes old.
+    /// Rebuild state from it, but decide nothing and measure no latency on
+    /// it.
+    Replay,
+}
+
+/// How a subscription delivered one message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Delivery {
+    /// The first message of a new subscription: the first overall, or of a
+    /// publisher's new session after a restart or move, when whatever was
+    /// built from the old session must be rebuilt.
+    pub first: bool,
+    pub origin: Origin,
+}
+
+impl Delivery {
+    #[must_use]
+    pub fn is_live(self) -> bool {
+        self.origin == Origin::Live
+    }
+}
+
 /// A subscription to another service's feed, by its name: added without
 /// blocking, and added again every [`Subscriber::RETRY`] while the name does
 /// not resolve (its publisher is not deployed, or not started yet).
@@ -185,10 +213,11 @@ impl Subscriber {
     /// name is resolved on the node's shared driver, so not in a hurry.
     pub const RETRY: Duration = Duration::from_secs(5);
 
-    /// Up to `limit` messages, each with whether it starts a new session.
-    /// Returns how many were taken: the work count for an idle strategy.
+    /// Up to `limit` messages, each with how it was delivered: always live,
+    /// as nothing is replayed here. Returns how many were taken: the work
+    /// count for an idle strategy.
     #[inline]
-    pub fn poll(&mut self, mut handler: impl FnMut(&[u8], bool), limit: usize) -> usize {
+    pub fn poll(&mut self, mut handler: impl FnMut(&[u8], Delivery), limit: usize) -> usize {
         let State::Ready(subscription) = &self.state else {
             self.connect();
             return 0;
@@ -201,16 +230,20 @@ impl Subscriber {
                     return;
                 };
                 let id = values.frame().session_id();
+                let live = |first| Delivery {
+                    first,
+                    origin: Origin::Live,
+                };
                 if *session == Some(id) {
                     taken += 1;
-                    handler(message, false);
+                    handler(message, live(false));
                 } else if !superseded.contains(&Some(id)) {
                     if let Some(old) = session.replace(id) {
                         superseded.rotate_right(1);
                         superseded[0] = Some(old);
                     }
                     taken += 1;
-                    handler(message, true);
+                    handler(message, live(true));
                 }
             },
             limit,

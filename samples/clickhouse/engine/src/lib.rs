@@ -234,6 +234,8 @@ impl Strategy {
 pub struct App {
     pub persist: Persist,
     pub streams: Streams,
+    /// Where `streams` came from, to follow its changes.
+    pub streams_path: String,
     /// This node's IP: its feeds bind it.
     pub host_ip: String,
     /// `REGION`: which `md-*` feeds, and whose engine and exchange.
@@ -246,14 +248,16 @@ pub struct App {
 impl App {
     pub fn start(schema: &str) -> Result<Self, Box<dyn std::error::Error>> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        persist_client::streams::check_node_network()?;
         let persist = Persist::connect(schema, Settings::from_env())?;
         let stop = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
+        let streams_path =
+            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into());
         Ok(Self {
             persist,
-            streams: Streams::load(
-                std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
-            )?,
+            streams: Streams::load(&streams_path)?,
+            streams_path,
             host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
             region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
             // Lab default: yield. For the best latency, spin (or noop) on an

@@ -1,0 +1,10 @@
+# Region ew2's engine and dummy exchange: engine-ew2, exch-sim-ew2.
+resources: [../base]
+nameSuffix: -ew2
+labels:
+  - pairs: { region: ew2 }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: ew2 } }

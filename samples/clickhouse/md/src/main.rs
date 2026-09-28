@@ -61,6 +61,9 @@ use nautilus_deribit::factories::DeribitDataClientFactory;
 use nautilus_hyperliquid::config::HyperliquidDataClientConfig;
 use nautilus_hyperliquid::data_types::HyperliquidOpenInterest;
 use nautilus_hyperliquid::factories::HyperliquidDataClientFactory;
+use nautilus_kraken::common::enums::KrakenProductType;
+use nautilus_kraken::config::KrakenDataClientConfig;
+use nautilus_kraken::factories::KrakenDataClientFactory;
 use nautilus_live::node::LiveNode;
 use nautilus_model::data::{
     Bar, BarType, CustomData, DataType, FundingRateUpdate, IndexPriceUpdate, InstrumentStatus,
@@ -98,16 +101,19 @@ struct Venue {
     depth: usize,
     /// Perpetual swaps: mark price, index price and funding rate.
     perpetual: bool,
+    /// The venue streams one-minute bars.
+    bars: bool,
     /// Data only this venue offers: `(type, metadata key, metadata value)`.
     custom: &'static [(&'static str, &'static str, &'static str)],
 }
 
-const VENUES: [Venue; 5] = [
+const VENUES: [Venue; 6] = [
     Venue {
         name: "binance",
         instruments: ["BTCUSDT.BINANCE", "ETHUSDT.BINANCE"],
         depth: 20, // spot streams 5/10/20
         perpetual: false,
+        bars: true,
         custom: &[],
     },
     Venue {
@@ -115,6 +121,7 @@ const VENUES: [Venue; 5] = [
         instruments: ["BTCUSDT-LINEAR.BYBIT", "ETHUSDT-LINEAR.BYBIT"],
         depth: 50, // 1/50/200/1000
         perpetual: true,
+        bars: true,
         custom: &[],
     },
     Venue {
@@ -122,6 +129,7 @@ const VENUES: [Venue; 5] = [
         instruments: ["BTC-USDT-SWAP.OKX", "ETH-USDT-SWAP.OKX"],
         depth: 50, // 50 or 400
         perpetual: true,
+        bars: true,
         custom: &[],
     },
     Venue {
@@ -129,6 +137,7 @@ const VENUES: [Venue; 5] = [
         instruments: ["BTC-PERPETUAL.DERIBIT", "ETH-PERPETUAL.DERIBIT"],
         depth: 20, // 1/10/20
         perpetual: true,
+        bars: true,
         custom: &[
             ("DeribitVolatilityIndex", "index_name", "btc_usd"),
             ("DeribitVolatilityIndex", "index_name", "eth_usd"),
@@ -139,6 +148,7 @@ const VENUES: [Venue; 5] = [
         instruments: ["BTC-USD-PERP.HYPERLIQUID", "ETH-USD-PERP.HYPERLIQUID"],
         depth: 20,
         perpetual: true,
+        bars: true,
         custom: &[
             (
                 "HyperliquidOpenInterest",
@@ -162,6 +172,15 @@ const VENUES: [Venue; 5] = [
                 "ETH-USD-PERP.HYPERLIQUID",
             ),
         ],
+    },
+    Venue {
+        name: "kraken",
+        // Kraken Futures' linear perpetuals; Kraken calls bitcoin XBT.
+        instruments: ["PF_XBTUSD.KRAKEN", "PF_ETHUSD.KRAKEN"],
+        depth: 25,
+        perpetual: true,
+        bars: false, // Kraken Futures streams no bars
+        custom: &[],
     },
 ];
 
@@ -218,6 +237,7 @@ impl Feeds {
         let streams = persist_client::streams::Streams::load(
             std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
         )?;
+        persist_client::streams::check_node_network()?;
         let host_ip = std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into());
         let channel = streams.publication(service, &host_ip)?;
         let md = persist.feed(&channel, streams.stream(service, "md")?)?;
@@ -293,10 +313,11 @@ impl Telemetry {
         }
     }
 
-    /// Ns from the venue's `ts_event` to now: negative when its clock is ahead.
+    /// Ns from the venue's `ts_event` to now, both wall clocks; 0 when the
+    /// venue's is ahead.
     fn since_venue(&self, ts_event: u64) -> u64 {
         self.clock
-            .now()
+            .wall()
             .since(Nanos::from_epoch(ts_event as i64))
             .max(0) as u64
     }
@@ -323,11 +344,13 @@ impl DataActor for Recorder {
             self.subscribe_book_deltas(id, BookType::L2_MBP, depth, None, false, None);
             // Also drives the `ticker` row, once a second.
             self.subscribe_book_at_interval(id, BookType::L2_MBP, depth, second, None, None);
-            self.subscribe_bars(
-                BarType::from(format!("{id}-1-MINUTE-LAST-EXTERNAL")),
-                None,
-                None,
-            );
+            if self.venue.bars {
+                self.subscribe_bars(
+                    BarType::from(format!("{id}-1-MINUTE-LAST-EXTERNAL")),
+                    None,
+                    None,
+                );
+            }
             if self.venue.perpetual {
                 self.subscribe_mark_prices(id, None, None);
                 self.subscribe_index_prices(id, None, None);
@@ -509,11 +532,14 @@ impl DataActor for Recorder {
         // A checkpoint trace from the venue's timestamp: `wire` (the venue
         // and the network), `convert` (rows built), `record` (published).
         let tracer = &self.t.book_update;
+        // From the venue's time, placed by its wall-clock age: the `wire`
+        // stage is true whatever this process's clock has drifted.
+        let now = self.t.clock.now();
         let mut trace = tracer.start(
-            Nanos::from_epoch(d.ts_event.as_u64() as i64),
+            self.t.clock.from_remote(d.ts_event.as_u64() as i64, now),
             tracer.next_id(),
         );
-        trace.mark(self.t.clock.now());
+        trace.mark(now);
         trace.attr(0, d.deltas.len() as i64);
         let (symbol, venue) = names(&d.instrument_id);
         for (i, chunk) in d.deltas.chunks(self.feeds.deltas_per_row).enumerate() {
@@ -711,7 +737,7 @@ impl Recorder {
     fn spec(&self, i: &InstrumentAny) -> anyhow::Result<()> {
         let id = i.id();
         let (symbol, venue) = names(&id);
-        let base = i.base_currency().map_or("", |c| c.code.as_str());
+        let base = asset(i.base_currency().map_or("", |c| c.code.as_str()));
         let quote = i.quote_currency().code.as_str();
         let len = InstrumentSpecEncoder::compute_length_with_header(
             symbol.len(),
@@ -875,6 +901,11 @@ fn levels<'a>(
         .collect()
 }
 
+/// The asset `code` names: some venues call bitcoin XBT.
+fn asset(code: &str) -> &str {
+    if code == "XBT" { "BTC" } else { code }
+}
+
 /// An instrument's symbol and venue: the var-data every message ends with.
 fn names(id: &InstrumentId) -> (&[u8], &[u8]) {
     (id.symbol.as_str().as_bytes(), id.venue.as_str().as_bytes())
@@ -918,6 +949,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None,
             Box::new(DeribitDataClientFactory::new()),
             Box::new(DeribitDataClientConfig::default()),
+        )?,
+        "kraken" => builder.add_data_client(
+            None,
+            Box::new(KrakenDataClientFactory::new()),
+            Box::new(KrakenDataClientConfig {
+                product_type: KrakenProductType::Futures,
+                ..Default::default()
+            }),
         )?,
         _ => builder.add_data_client(
             None,
@@ -1003,6 +1042,13 @@ mod tests {
         assert!(d9(funding).is_err());
         assert_eq!(rate(funding)?.mantissa(), 11_265_900_000_000);
         Ok(())
+    }
+
+    #[test]
+    fn bitcoin_is_one_asset_whatever_the_venue_calls_it() {
+        assert_eq!(asset("XBT"), "BTC");
+        assert_eq!(asset("BTC"), "BTC");
+        assert_eq!(asset("ETH"), "ETH");
     }
 
     #[test]

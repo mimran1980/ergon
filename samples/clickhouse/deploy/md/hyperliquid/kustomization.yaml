@@ -1,0 +1,10 @@
+# Hyperliquid's feed handler, md-hyperliquid, in region an1.
+resources: [../base]
+nameSuffix: -hyperliquid
+labels:
+  - pairs: { exchange: hyperliquid }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: an1 } }

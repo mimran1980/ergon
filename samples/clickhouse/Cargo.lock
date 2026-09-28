@@ -3199,6 +3199,7 @@ dependencies = [
  "nautilus-core",
  "nautilus-deribit",
  "nautilus-hyperliquid",
+ "nautilus-kraken",
  "nautilus-live",
  "nautilus-model",
  "nautilus-okx",
@@ -3578,6 +3579,46 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "url",
+ "ustr",
+ "zeroize",
+]
+
+[[package]]
+name = "nautilus-kraken"
+version = "0.64.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12246474a987520b80c4390957d5963af9eb7be18901d338a2c2292a1dcacf7b"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "arc-swap",
+ "async-stream",
+ "async-trait",
+ "aws-lc-rs",
+ "base64 0.23.1",
+ "bon",
+ "dashmap",
+ "derive_builder",
+ "futures-util",
+ "indexmap 2.14.2",
+ "jiff",
+ "log",
+ "nautilus-common",
+ "nautilus-core",
+ "nautilus-live",
+ "nautilus-model",
+ "nautilus-network",
+ "parking_lot",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "strum",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
  "ustr",
  "zeroize",
 ]

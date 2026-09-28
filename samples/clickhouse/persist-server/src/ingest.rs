@@ -65,6 +65,10 @@ pub struct Ingester {
     stream_id: i32,
     /// Feed streams recorded here, by stream id.
     feeds: BTreeSet<i32>,
+    /// This node's IP: its feeds' spies bind it.
+    host_ip: String,
+    /// New versions of `streams.yaml`, once [`Ingester::follow`] is called.
+    watch: Option<persist_client::streams::Watch>,
     checkpoint_path: PathBuf,
     /// Everything up to here is in ClickHouse, by recording id.
     checkpoints: BTreeMap<i64, i64>,
@@ -109,31 +113,10 @@ impl Ingester {
             .map_err(aeron)?
             .poll_blocking(Duration::from_secs(10))
             .map_err(|e| Error::Aeron(format!("connecting to the archive: {e}")))?;
-        // Recordings outlive this process: after a restart they are kept.
-        let record = |channel: &str, stream_id: i32| -> Result<(), Error> {
-            match archive.start_recording(
-                &channel.into_c_string(),
-                stream_id,
-                SOURCE_LOCATION_LOCAL,
-                false,
-            ) {
-                Ok(_) => {
-                    log::info!("archive: recording {channel} stream {stream_id}");
-                    Ok(())
-                }
-                Err(e) if e.code == AeronArchiveErrorCode::ActiveSubscription => Ok(()),
-                Err(e) => Err(Error::Aeron(format!(
-                    "recording {channel} {stream_id}: {e}"
-                ))),
-            }
-        };
-        record(&settings.channel, settings.stream_id)?;
+        record(&archive, &settings.channel, settings.stream_id)?;
         let mut feeds = BTreeSet::new();
         if let Some(streams) = &settings.streams {
-            for (service, _, stream_id) in streams.archived() {
-                record(&streams.spy(service, &settings.host_ip)?, stream_id)?;
-                feeds.insert(stream_id);
-            }
+            record_feeds(&archive, streams, &settings.host_ip, &mut feeds)?;
         }
         let checkpoints = load(&settings.checkpoint_path)?;
         let stats = if settings.aeron_stats_interval.is_zero() {
@@ -153,6 +136,8 @@ impl Ingester {
             _ctx: ctx,
             stream_id: settings.stream_id,
             feeds,
+            host_ip: settings.host_ip,
+            watch: None,
             checkpoint_path: settings.checkpoint_path,
             polled: checkpoints.clone(),
             checkpoints,
@@ -161,11 +146,21 @@ impl Ingester {
         })
     }
 
+    /// Follow `streams.yaml` at `path` from now on: a service added to it has
+    /// its feeds recorded here from the next tick, with no restart.
+    pub fn follow(&mut self, path: impl Into<PathBuf>) -> Result<(), Error> {
+        self.watch = Some(persist_client::streams::Watch::spawn(path)?);
+        Ok(())
+    }
+
     /// Replay what was recorded since the last tick, insert it, then save the
     /// checkpoints and purge the archive behind them. An error means the
     /// archive can no longer be used: drop this ingester and connect again.
     pub fn tick(&mut self) -> Result<Report, Error> {
         let mut report = Report::default();
+        if let Some(streams) = self.watch.as_ref().and_then(|w| w.changed()) {
+            record_feeds(&self.archive, &streams, &self.host_ip, &mut self.feeds)?;
+        }
         self.open_replays(&mut report)?;
         self.poll()?;
         self.writer.run(&mut report);
@@ -237,10 +232,20 @@ impl Ingester {
             // Length -1: to the end, and on live if it is still recording.
             let params = AeronArchiveReplayParams::new(-1, -1, from, -1, -1, -1).map_err(aeron)?;
             let replay_stream = self.stream_id + 1;
-            let session = self
+            let session = match self
                 .archive
                 .start_replay(d.id, c"aeron:ipc", replay_stream, &params)
-                .map_err(aeron)?;
+            {
+                Ok(session) => session,
+                // Listed as recording, it stopped before the request with
+                // nothing past `from` (a publisher restarted before it sent
+                // anything): the next listing shows it stopped, and purges it.
+                Err(e) if e.code == AeronArchiveErrorCode::InvalidPosition => {
+                    log::info!("recording {}: not replayable yet ({e}); next tick", d.id);
+                    continue;
+                }
+                Err(e) => return Err(aeron(e)),
+            };
             let subscription = self
                 .aeron
                 .async_add_subscription(
@@ -405,6 +410,41 @@ fn save(path: &Path, checkpoints: &BTreeMap<i64, i64>) -> Result<(), Error> {
     std::fs::write(&tmp, text)
         .and_then(|()| std::fs::rename(&tmp, path))
         .map_err(|e| Error::Checkpoint(format!("{}: {e}", path.display())))
+}
+
+/// Have the archive record `channel` and `stream_id`. Recordings outlive
+/// this process: one already running is left as it is.
+fn record(archive: &AeronArchive, channel: &str, stream_id: i32) -> Result<(), Error> {
+    match archive.start_recording(
+        &channel.into_c_string(),
+        stream_id,
+        SOURCE_LOCATION_LOCAL,
+        false,
+    ) {
+        Ok(_) => {
+            log::info!("archive: recording {channel} stream {stream_id}");
+            Ok(())
+        }
+        Err(e) if e.code == AeronArchiveErrorCode::ActiveSubscription => Ok(()),
+        Err(e) => Err(Error::Aeron(format!(
+            "recording {channel} {stream_id}: {e}"
+        ))),
+    }
+}
+
+/// Record every archived feed of `streams` published on this node, through
+/// a spy on its publication, and track its stream id.
+fn record_feeds(
+    archive: &AeronArchive,
+    streams: &persist_client::streams::Streams,
+    host_ip: &str,
+    feeds: &mut BTreeSet<i32>,
+) -> Result<(), Error> {
+    for (service, _, stream_id) in streams.archived() {
+        record(archive, &streams.spy(service, host_ip)?, stream_id)?;
+        feeds.insert(stream_id);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

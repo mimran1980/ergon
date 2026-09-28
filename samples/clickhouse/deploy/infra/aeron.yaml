@@ -1,0 +1,95 @@
+# Aeron, one per node, shared by every application on the node:
+#
+# * `driver`: Aeron's C media driver (aeron-driver), DEDICATED threading:
+#   conductor, sender and receiver threads. No JIT or garbage collector on
+#   the network threads.
+# * `archive`: the Java Aeron Archive (docker/aeron.Dockerfile), a client of
+#   that driver. It records the node's IPC persist stream and, through spies,
+#   every feed published on this node (config/streams.yaml).
+#
+# On the node's network: the driver binds the node's IP, so a feed published
+# here is reached at this node's address, and it resolves channel names
+# (md-binance.lab.svc.cluster.local) through the cluster's DNS. Its directory
+# is on the node's tmpfs, shared over shared memory with every pod on the
+# node; the recordings are on the node's disk. The archive's control endpoint
+# is the node's port 8010, so a subscriber catching
+# up on a feed reaches the archive recording it by the feed's own name. If
+# the driver goes, the archive exits too (a fatal Aeron error ends it) and both restart;
+# clients reconnect.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: aeron
+spec:
+  selector: { matchLabels: { app: aeron } }
+  template:
+    metadata: { labels: { app: aeron } }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations: [{ operator: Exists }]
+      containers:
+        - name: driver
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/aeron-driver]
+          env:
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DIR_DELETE_ON_START, value: "true" }
+            - { name: AERON_THREADING_MODE, value: DEDICATED }
+            # Idle strategy of each driver thread: spin (busy spin), noop,
+            # yield, sleep-ns or backoff. For the best latency spin the sender
+            # and receiver (and the conductor) on isolated cores: each then
+            # keeps a core at 100%. This lab runs four nodes on one machine,
+            # so it yields and sleeps.
+            - { name: AERON_SENDER_IDLE_STRATEGY, value: yield }
+            - { name: AERON_RECEIVER_IDLE_STRATEGY, value: yield }
+            - { name: AERON_CONDUCTOR_IDLE_STRATEGY, value: sleep-ns }
+            - { name: AERON_IPC_TERM_BUFFER_LENGTH, value: "1.6777216e+07" }
+            # A publisher that dies without closing keeps its publication
+            # (and every subscriber's image of it) alive until its client
+            # times out: Aeron's 10 s default bounds how long a moved feed's
+            # subscribers stay on the dead node. Feeds close cleanly on
+            # SIGTERM instead.
+            - { name: AERON_CLIENT_LIVENESS_TIMEOUT, value: "10000000000" }
+            - { name: AERON_PUBLICATION_UNBLOCK_TIMEOUT, value: "15000000000" }
+            # A closed publication lingers, still heartbeating its
+            # subscribers, and they re-resolve its name only after 5 s of
+            # silence (compiled in): 5 s linger + 5 s + the 1 s check was
+            # the 11 s a restarted feed took to reach its engine. 1 s is
+            # enough for a last retransmit on this network.
+            - { name: AERON_PUBLICATION_LINGER_TIMEOUT, value: "1000000000" }
+          resources: { requests: { memory: 64Mi }, limits: { memory: 256Mi } }
+          startupProbe:
+            exec: { command: [test, -f, /aeron/driver/cnc.dat] }
+            periodSeconds: 1
+            failureThreshold: 120
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+        - name: archive
+          image: lab/aeron:local
+          imagePullPolicy: Never
+          env:
+            # A small JVM: left alone, it sizes heap and direct memory from
+            # the whole machine, not this container. C1 only keeps the code
+            # cache and compiler threads small; the archive's work is file
+            # I/O, not hot Java. 16 MiB segments, so the purge behind the
+            # ingester shows within minutes.
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Xms16m -Xmx64m -XX:MaxDirectMemorySize=48m -XX:+UseSerialGC
+                -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=16m
+                -XX:MaxMetaspaceSize=48m -Xss512k
+                -Daeron.dir=/aeron/driver -Daeron.driver.timeout=30000
+                -Daeron.archive.dir=/archive/recordings
+                -Daeron.archive.segment.file.length=16m
+                -Daeron.archive.control.channel=aeron:udp?endpoint=0.0.0.0:8010
+                -Daeron.archive.replication.channel=aeron:udp?endpoint=localhost:0
+          resources: { requests: { memory: 64Mi }, limits: { memory: 192Mi } }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: archive, mountPath: /archive }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: archive
+          hostPath: { path: /var/lib/lab/archive, type: DirectoryOrCreate }

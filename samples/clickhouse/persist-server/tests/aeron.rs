@@ -1200,11 +1200,12 @@ fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
     let (rows, sessions) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
     let poll = |sub: &mut persist_client::feed::Subscriber| {
         sub.poll(
-            |m, new| {
+            |m, delivery| {
+                assert!(delivery.is_live(), "a plain subscription replays nothing");
                 if m.get(4..6) == Some(&v1::SCHEMA_ID.to_le_bytes()[..]) {
                     rows.set(rows.get() + 1);
                 }
-                sessions.set(sessions.get() + usize::from(new));
+                sessions.set(sessions.get() + usize::from(delivery.first));
             },
             100,
         )
@@ -1266,15 +1267,20 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     let publication = streams.publication("md-test", "127.0.0.1")?;
     let reader = client(&lab, stream_id)?;
     let mut sub = reader.persistent(&streams, "md-test", "md", "127.0.0.1")?;
-    // v1 messages, and messages that started a subscription.
-    let (rows, fresh) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    // v1 messages, those replayed, and messages that started a subscription.
+    let (rows, replayed, fresh) = (
+        std::cell::Cell::new(0),
+        std::cell::Cell::new(0),
+        std::cell::Cell::new(0),
+    );
     let poll = |sub: &mut persist_client::persistent::Persistent| {
         sub.poll(
-            |m, new| {
+            |m, delivery| {
                 if m.get(4..6) == Some(&v1::SCHEMA_ID.to_le_bytes()[..]) {
                     rows.set(rows.get() + 1);
+                    replayed.set(replayed.get() + usize::from(!delivery.is_live()));
                 }
-                fresh.set(fresh.get() + usize::from(new));
+                fresh.set(fresh.get() + usize::from(delivery.first));
             },
             100,
         )
@@ -1328,10 +1334,108 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     })?;
     drain(&mut sub);
     assert_eq!(rows.get(), 105, "every message, once");
+    assert!(
+        replayed.get() > 0,
+        "the new session's start comes from the recording, as a replay"
+    );
+    // Caught up: what is published now arrives live.
+    wait_until("the subscriber to be live again", || {
+        poll(&mut sub);
+        Ok(sub.is_live())
+    })?;
+    let before = replayed.get();
+    taken(&second, || {
+        feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+    })?;
+    wait_until("one more, live", || {
+        poll(&mut sub);
+        Ok(rows.get() == 106)
+    })?;
+    assert_eq!(replayed.get(), before, "a live message is not a replay");
     assert_eq!(
         fresh.get(),
         2,
         "the first subscription, then the new session's"
     );
+    Ok(())
+}
+
+#[test]
+fn a_feed_added_to_the_registry_is_recorded_without_a_restart() -> TestResult {
+    use persist_client::streams::Streams;
+
+    let lab = Lab::new("aeron_follow", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let (stream_id, feed_stream) = (stream(24), stream(25));
+    let port = 44_000 + (std::process::id() % 1000) as u16 * 2;
+    let path = lab.dir.join("streams.yaml");
+    std::fs::write(&path, "services: {}\nkinds:\n  md: { reliable: true }\n")?;
+    let settings = persist_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        streams: Some(Streams::load(&path)?),
+        host_ip: "127.0.0.1".into(),
+        ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
+    };
+    let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    ingester.follow(&path)?;
+
+    // A new service in the registry, as a ConfigMap update delivers it.
+    let registry = format!(
+        "services:\n  md-new: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    );
+    std::fs::write(&path, &registry)?;
+    let streams = Streams::parse(&registry)?;
+    let persist = client(&lab, stream_id)?;
+    let feed = persist.feed(&streams.publication("md-new", "127.0.0.1")?, feed_stream)?;
+    // Connected only once the archive's spy records it (`ssc`).
+    wait_until("the ingester to record the new feed", || {
+        ingester.tick()?;
+        Ok(feed.is_connected())
+    })?;
+    for _ in 0..20 {
+        taken(&persist, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    ingest(&mut ingester, &lab, "shapes", 20)?;
+    Ok(())
+}
+
+#[test]
+fn a_recording_with_nothing_in_it_yet_waits_for_data() -> TestResult {
+    let lab = Lab::new("aeron_empty", "tables:\n  shapes: { kind: dynamic }\n")?;
+    let (stream_id, feed_stream) = (stream(26), stream(27));
+    let port = 45_000 + (std::process::id() % 1000) as u16 * 2;
+    let streams = persist_client::streams::Streams::parse(&format!(
+        "services:\n  md-idle: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    ))?;
+    let settings = persist_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        streams: Some(streams.clone()),
+        host_ip: "127.0.0.1".into(),
+        ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
+    };
+    let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    // A feed handler opens its feed at start and publishes nothing until its
+    // exchange connects: an active recording with nothing past its start,
+    // which the archive refuses to replay.
+    let persist = client(&lab, stream_id)?;
+    let feed = persist.feed(&streams.publication("md-idle", "127.0.0.1")?, feed_stream)?;
+    wait_until("the feed to be recorded", || Ok(feed.is_connected()))?;
+    for _ in 0..3 {
+        let report = ingester.tick()?;
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+    }
+    for _ in 0..5 {
+        taken(&persist, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    ingest(&mut ingester, &lab, "shapes", 5)?;
     Ok(())
 }

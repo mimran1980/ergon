@@ -178,17 +178,6 @@ impl Streams {
         ))
     }
 
-    /// The control channel of the archive recording `service`: the one on
-    /// the node it runs on, by its name.
-    pub fn archive(&self, service: &str) -> Result<String, Error> {
-        self.service(service)?;
-        Ok(format!(
-            "aeron:udp?endpoint={}:{}",
-            self.host(service),
-            self.archive_port
-        ))
-    }
-
     /// `service`'s control port.
     pub fn port(&self, service: &str) -> Result<u16, Error> {
         Ok(self.service(service)?.port)
@@ -202,6 +191,91 @@ impl Streams {
                 .filter(|(kind, _)| self.kinds.get(*kind).is_some_and(|k| k.archive))
                 .map(move |(kind, id)| (name.as_str(), kind.as_str(), *id))
         })
+    }
+}
+
+/// Watches `streams.yaml` on a thread of its own and hands each new
+/// version over, parsed and checked, so an application's own loop never
+/// touches the filesystem: it takes them with [`Watch::changed`], one
+/// relaxed channel poll. A version that does not parse is logged and
+/// skipped, keeping the last good one. In Kubernetes the file is a
+/// ConfigMap, which the kubelet swaps in place when it changes.
+pub struct Watch {
+    changes: std::sync::mpsc::Receiver<Streams>,
+}
+
+impl Watch {
+    /// How often the file is read.
+    pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// Watch `path`; its version now is the caller's.
+    pub fn spawn(path: impl Into<std::path::PathBuf>) -> Result<Self, Error> {
+        let path = path.into();
+        let (tx, changes) = std::sync::mpsc::channel();
+        let mut last = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut logged = None;
+        std::thread::Builder::new()
+            .name("streams-watch".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(Self::EVERY);
+                    let Ok(text) = std::fs::read_to_string(&path) else {
+                        continue;
+                    };
+                    if text == last {
+                        continue;
+                    }
+                    match Streams::parse(&text) {
+                        Ok(streams) => {
+                            log::info!("{}: changed", path.display());
+                            last = text;
+                            logged = None;
+                            if tx.send(streams).is_err() {
+                                return; // the application is gone
+                            }
+                        }
+                        Err(e) => {
+                            let e = e.to_string();
+                            if logged.as_ref() != Some(&e) {
+                                log::error!("{e}; keeping the previous version");
+                                logged = Some(e);
+                            }
+                        }
+                    }
+                }
+            })
+            .map_err(|e| Error::Config(format!("streams watch: {e}")))?;
+        Ok(Self { changes })
+    }
+
+    /// The newest version since the last call, if the file changed.
+    #[must_use]
+    pub fn changed(&self) -> Option<Streams> {
+        self.changes.try_iter().last()
+    }
+}
+
+/// Check that this publisher can be found by its name. Its headless
+/// Service resolves to its pod's IP, while its feeds live in the node's
+/// media driver, at the node's IP: the two are the same only for a pod on
+/// the node's network (`hostNetwork: true`). Without it the name would point
+/// subscribers at a pod address where no driver listens, and nothing would
+/// say so. `POD_IP` and `HOST_IP` come from the downward API; outside
+/// Kubernetes (either unset) there is nothing to check.
+pub fn check_node_network() -> Result<(), Error> {
+    node_network(
+        std::env::var("POD_IP").ok().as_deref(),
+        std::env::var("HOST_IP").ok().as_deref(),
+    )
+}
+
+fn node_network(pod_ip: Option<&str>, host_ip: Option<&str>) -> Result<(), Error> {
+    match (pod_ip, host_ip) {
+        (Some(pod), Some(host)) if pod != host => Err(Error::Config(format!(
+            "pod IP {pod} is not the node's {host}: a publisher must run on the node's network \
+             (hostNetwork: true), or its name resolves to where no media driver listens"
+        ))),
+        _ => Ok(()),
     }
 }
 
@@ -254,10 +328,6 @@ kinds:
             "aeron:udp?endpoint=172.18.0.5:0|control=md-binance.lab.svc.cluster.local:40501|control-mode=dynamic|reliable=false|tether=false|group=false"
         );
         assert_eq!(
-            s.archive("md-binance")?,
-            "aeron:udp?endpoint=md-binance.lab.svc.cluster.local:8010"
-        );
-        assert_eq!(
             s.spy("md-binance", "172.18.0.2")?,
             "aeron-spy:aeron:udp?control=172.18.0.2:40501|control-mode=dynamic"
         );
@@ -282,6 +352,41 @@ kinds:
         }
         assert!(s.archived().count() > 10);
         Ok(())
+    }
+
+    #[test]
+    fn a_watch_hands_over_each_good_version_and_skips_bad_ones() -> TestResult {
+        let dir = std::env::temp_dir().join(format!("streams-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("streams.yaml");
+        std::fs::write(&path, REGISTRY)?;
+        let watch = Watch::spawn(&path)?;
+        let wait = || std::thread::sleep(Watch::EVERY * 3);
+        wait();
+        assert!(watch.changed().is_none(), "unchanged");
+        std::fs::write(&path, "services: [not a map\n")?;
+        wait();
+        assert!(watch.changed().is_none(), "a bad version is skipped");
+        let next = REGISTRY.replace(
+            "  engine-an1:",
+            "  md-okx: { port: 40504, region: as1, streams: { md: 2041 } }\n  engine-an1:",
+        );
+        std::fs::write(&path, &next)?;
+        wait();
+        let changed = watch.changed().ok_or("the new version")?;
+        assert_eq!(changed.stream("md-okx", "md")?, 2041);
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_publisher_must_be_on_its_nodes_network() {
+        assert!(node_network(Some("172.18.0.2"), Some("172.18.0.2")).is_ok());
+        assert!(node_network(None, None).is_ok(), "outside Kubernetes");
+        assert!(
+            node_network(Some("10.244.1.7"), Some("172.18.0.2")).is_err(),
+            "an overlay pod IP: its Service would not reach the driver"
+        );
     }
 
     #[test]

@@ -1,0 +1,10 @@
+# Deribit's feed handler, md-deribit, in region ew2.
+resources: [../base]
+nameSuffix: -deribit
+labels:
+  - pairs: { exchange: deribit }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: ew2 } }

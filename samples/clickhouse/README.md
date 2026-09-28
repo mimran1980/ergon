@@ -22,7 +22,7 @@ shared media driver per node, and an engine per region trading on it.
 | `persist-client` | The small library the application links: `record()` for SBE messages, a `tracing` layer for everything else, metrics, traces, a low-latency clock, UDP feeds (`Feed`, `Subscriber`, `Persistent`) and the feed registry. |
 | `persist-server` | The ingester, as a library and the `ingester` binary: replays the archive into ClickHouse tables, checkpoints, purges. |
 | `market` | The lab's SBE codecs: `schema/market.xml` (market data) and `schema/trading.xml` (EMAs, aggregated books, orders, fills). |
-| `md` | A feed handler: public market data from one exchange (Binance, Bybit, OKX, Deribit or Hyperliquid) via NautilusTrader, no API keys, published as SBE on its UDP feeds. |
+| `md` | A feed handler: public market data from one exchange (Binance, Bybit, OKX, Deribit, Hyperliquid or Kraken Futures) via NautilusTrader, no API keys, published as SBE on its UDP feeds. |
 | `engine` | `engine`, a region's trading engine, and `exch-sim`, its dummy exchange. |
 | `aeron-driver` | The C media driver (Aeron 1.52.2, from `rusteron-media-driver`), configured from the environment. |
 
@@ -31,9 +31,7 @@ shared media driver per node, and an engine per region trading on it.
 ```sh
 cd samples/clickhouse
 just up                # kind cluster (4 nodes, 3 regions): ClickHouse, Grafana, JupyterLab, Aeron, the ingesters, every exchange, an engine per region
-just exchange deribit  # (re)deploy an exchange's feed handler: binance bybit okx deribit hyperliquid
-just unexchange okx    # remove one; its data stays
-just engines           # (re)deploy each region's engine and dummy exchange
+just deploy            # apply kustomization.yaml: deploy/ and config/ (after editing either)
 just md                # rebuild + redeploy the feed handlers, engines and ingesters after a code or schema change
 just aeron             # rebuild + redeploy Aeron, then its clients
 just verify            # end-to-end check of the running lab, including moving a feed handler between nodes
@@ -52,25 +50,70 @@ this checkout mounted read-write): run it only on a network you trust.
 | ClickHouse query UI | <http://localhost:8123/play> (user `lab`, password `lab`) |
 | Grafana | <http://localhost:3000>: *Trading* (EMAs, aggregated book, orders, tick-to-trade), *Aeron* (feeds by node, receivers behind senders, MDC destinations, NAKs, re-resolutions), *Market data*, *ClickHouse tables*, *Metrics* and *Traces* |
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb>, then Run All |
-| What is recorded | `config/tables.yaml`: edits apply within a second |
-| Who publishes what | `config/streams.yaml`: every service's port, region and streams |
+| What is recorded | `config/tables.yaml`: `just config` publishes an edit, which applies within about a minute, no restart |
+| Who publishes what | `config/streams.yaml`: every service's port, region and streams, published the same way |
 
 | Pod | Kind | What it runs |
 |---|---|---|
 | `aeron` | DaemonSet, one per node, host network | The C media driver (conductor, sender and receiver threads) and the Java archive as its client. Its directory is on the node's tmpfs, so every pod on the node shares it; the recordings are on the node's disk. |
 | `ingester` | DaemonSet, beside each Aeron | Archive -> ClickHouse. Its checkpoint is on the node's disk. |
-| `md-<exchange>` | Deployment per exchange, host network, in its region | NautilusTrader + persist-client for one exchange (`deploy/md.yaml`). |
-| `engine-<region>`, `exch-sim-<region>` | Deployment per region, host network | The engine and its dummy exchange (`deploy/engine.yaml`). |
+| `md-<exchange>` | Deployment per exchange, host network, in its region | NautilusTrader + persist-client for one exchange (`deploy/md/base/md.yaml`). |
+| `engine-<region>`, `exch-sim-<region>` | Deployment per region, host network | The engine and its dummy exchange (`deploy/trading/base/trading.yaml`). |
 
 `just stop` / `just start` pause the cluster and keep the data;
 `just destroy` deletes it. `just test` leaves a ClickHouse and an Aeron
 driver running for the next run; `just test-stop` frees their memory.
 
+## Deploying
+
+Everything the lab runs is Kubernetes YAML that `kustomization.yaml` lists
+and `just deploy` applies (`kubectl apply -k .`, which needs nothing but
+kubectl):
+
+```text
+kustomization.yaml       lists everything below; builds the ConfigMaps from config/ and clickhouse.xml
+deploy/
+  kind.yaml              the cluster: 4 nodes, 3 regions
+  namespace.yaml
+  infra/                 clickhouse.yaml (+ clickhouse.xml), aeron.yaml, ingester.yaml, grafana.yaml, jupyter.yaml
+  md/
+    base/md.yaml         the feed handler, written once
+    binance/ … kraken/   one small folder per exchange
+  trading/
+    base/trading.yaml    the engine and the dummy exchange, written once
+    an1/ as1/ ew2/       one small folder per region
+docker/                  the images: app (the Rust binaries), aeron (the archive), jupyter, builder
+```
+
+An exchange's folder only names its copy of the base, labels it, and pins it
+to its region. The feed handler reads its exchange from that label, so
+nothing else changes:
+
+```yaml
+# Kraken Futures's feed handler, md-kraken, in region ew2.
+resources: [../base]
+nameSuffix: -kraken
+labels:
+  - pairs: { exchange: kraken }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: ew2 } }
+```
+
+To add an exchange: its line in `config/streams.yaml`, its venue in md's
+`VENUES`, a copy of `deploy/md/binance/` with the exchange and region
+changed, its line in `kustomization.yaml`, then `just deploy`. To run
+without one, take its line out of `kustomization.yaml` and delete its
+Deployment; its data stays. In production Argo CD or Flux applies the same
+files from Git to each region's cluster.
+
 ## Architecture
 
 **Regions.** Each kind node carries `topology.kubernetes.io/region`: `an1`
 (Tokyo, two nodes: Binance, Hyperliquid), `as1` (Singapore: Bybit, OKX) and
-`ew2` (London: Deribit). A feed handler runs in its exchange's region, on
+`ew2` (London: Deribit, Kraken Futures). A feed handler runs in its exchange's region, on
 any node there; each region has one engine and one dummy exchange, which see
 only that region's venues. The global view is ClickHouse.
 
@@ -85,11 +128,21 @@ md-binance: { port: 40501, region: an1, streams: { md: 2011, tob: 2012 } }
 kinds: { md: { reliable: true }, tob: { reliable: false } }
 ```
 
-**Finding a publisher that moves: Kubernetes DNS is the dynamic DNS.** Every
-publisher runs on the host network, so its pod IP is its node's IP, and has a
-headless Service of its own name. `md-binance.lab.svc.cluster.local` so
-always resolves to the node, and the driver, it runs on; Kubernetes
-registers and deregisters it as the pod moves. Publishers bind their
+**Finding a publisher that moves: Kubernetes DNS is the dynamic DNS.** A
+feed's sockets belong to the media driver of the node it is published on,
+not to the publishing pod, so a feed's name must resolve to that node's
+driver. Every publisher has a headless Service of its own name, which
+resolves to its pod's IP, and runs on the node's network
+(`hostNetwork: true`), which makes its pod's IP the node's IP, where the
+node's driver (also on the node's network) listens.
+`md-binance.lab.svc.cluster.local` so always resolves to the driver of the
+node md-binance runs on; Kubernetes registers and deregisters it as the pod
+moves. Nothing here depends on localhost: each kind node is its own
+container with its own address. Two checks keep it true: a publisher
+refuses to start when its pod IP (`POD_IP`) is not its node's (`HOST_IP`),
+which is what a pod off the node's network would resolve to, and
+`just verify` resolves every publisher's name from inside the cluster and
+compares it with the IP of the driver pod on its node. Publishers bind their
 multi-destination-cast (MDC) control socket on their node
 (`control=$HOST_IP:40501|control-mode=dynamic`); subscribers name it
 (`endpoint=$HOST_IP:0|control=md-binance.lab.svc.cluster.local:40501|control-mode=dynamic`).
@@ -150,7 +203,7 @@ again, and the engine applies each fill once. Top of book (`tob`) stays a
 plain best-effort subscription (`Subscriber`).
 
 **Idle strategies are configuration.** The driver's three threads
-(`AERON_{CONDUCTOR,SENDER,RECEIVER}_IDLE_STRATEGY` in `deploy/lab.yaml`) and
+(`AERON_*_IDLE_STRATEGY` in `deploy/infra/aeron.yaml`) and
 every loop the lab owns (`IDLE`: `spin`, `noop`, `yield`, `sleep`) say what
 they do when idle. The lab runs the driver's sender and receiver on `yield`
 and everything else on `sleep`, so four nodes share one laptop; in
@@ -167,9 +220,20 @@ resolution when a publisher moves. Nobody else can use that driver either,
 so there is no node archive to spy-record the feeds. It suits one process
 that owns the box, not this design.
 
+**One configuration, followed live.** `config/` reaches every pod as one
+ConfigMap, `lab-config`, which `just config` publishes. The kubelet swaps a
+changed ConfigMap into the pods within about a minute, and every
+application re-reads it: `tables.yaml` switches tables within a second;
+`streams.yaml` is watched on a thread of its own, so no trading loop reads
+a file, and a service added to it has its feeds recorded by its node's
+ingester and subscribed to by its region's engine, with no restart. A
+changed port or stream id of a running service takes a restart of that
+service. `just verify` fails when the cluster's ConfigMap is not
+`config/`.
+
 **Production.** One Kubernetes cluster per region. Git holds
 `streams.yaml` and `tables.yaml`, and GitOps (Argo CD or Flux) syncs them
-into every cluster as ConfigMaps; names resolve across regions with
+into every cluster as that ConfigMap; names resolve across regions with
 multi-cluster DNS (`*.clusterset.local`), and every region's ingesters write
 to one ClickHouse. Cross-node tick-to-trade stages need PTP-synchronised
 clocks: kind's nodes share one kernel clock, a real cluster does not.
@@ -204,9 +268,23 @@ and `send`. Every tick counts in its stage histograms; one that led to an
 order is kept (`Trace::keep`) under the order's id (`Trace::set_id`), and
 `exch-sim`'s `order_ack` trace of the same order shares it, so Grafana's
 trace view shows both applications in one waterfall. On the lab (loops
-sleeping 1 ms when idle, four nodes on a laptop), medians: decode 3–7 µs,
-book 13–45 µs, EMAs and decision about 1 µs, publishing the order 10–22 µs;
-`feed` dominates at a few ms, most of it the sleeping loops.
+sleeping 1 ms when idle, four nodes on a laptop), medians: feed 1–3 ms,
+most of it the sleeping loops, decode 3–7 µs, book 13–45 µs, EMAs and
+decision about 1 µs, publishing the order 10–22 µs.
+
+Two things the trace must not count. **Clock drift:** `Clock::now` runs
+from one wall-clock reading at start, and the VM's wall clock is corrected
+under it: Docker Desktop steps its VM's clock to the Mac's, here by a few
+ms either way within minutes, and by tens of ms while the Mac was swapping
+(`clock_drift_ns`, per engine, shows it). A
+stage against another process's timestamp (`feed`, the exchange's `wire`,
+md's venue stages) is measured by the wall clock (`Clock::wall`,
+`Clock::from_remote`); stages within a process stay monotonic. Before
+that, `feed` read tens of milliseconds by the time an engine had run for
+twenty minutes. **Replay:** a message caught up from the archive may be a
+minute old. It rebuilds the book, but moves no EMA, decides nothing and is
+no tick-to-trade sample (`Persistent::poll` says whether a message is
+live).
 
 ## Memory
 
@@ -216,7 +294,7 @@ limit; measured in use, 2026-09-27:
 
 | Pod | In use | Limit | How |
 |---|---|---|---|
-| `clickhouse` | 550–700 MiB | 1 GiB | thread pools cut from over 700 threads to about 140 (each thread's allocator cache is memory ClickHouse does not count), a cap at 75% of the limit, small caches, system logs other than the query and part logs off (`deploy/clickhouse-lab.xml`) |
+| `clickhouse` | 550–700 MiB, merges above | 1.25 GiB | caps itself at 80% of the limit; thread pools cut from over 700 threads to about 140 (each thread's allocator cache is memory it does not count); system logs other than the query and part logs off (`deploy/infra/clickhouse.xml`) |
 | `aeron`: driver | 51–57 MiB | 256 MiB | mostly its shared-memory term buffers: feeds use 1 MiB terms |
 | `aeron`: archive | 62–72 MiB | 192 MiB | JVM: 64 MiB heap, 48 MiB direct, C1 only, 16 MiB code cache |
 | `md-<exchange>` | 20–80 MiB | 256 MiB | `MALLOC_ARENA_MAX=2` |
@@ -504,8 +582,9 @@ tables:
 
 - **`enabled`** (default `true`): record it now: `true`, `false`, or
   `{ until: 2026-09-27T18:00:00Z }`, on until that time (UTC) and off after
-  it, with no further edit. The application re-reads the file every second,
-  so switching a table needs no restart.
+  it, with no further edit. Every application re-reads the file every
+  second, so switching a table needs no restart (after `just config`, and
+  the kubelet's minute).
 - **`apps`**: the same values per app, by name (`PERSIST_APP`; each
   feed handler is its exchange). An app not listed takes `enabled`.
 - **`kind: dynamic`**: the table follows the data. A field added to the SBE
@@ -623,13 +702,19 @@ which was not measured here. Earlier runs on a quieter machine measured
 
 Everything NautilusTrader offers for two instruments (BTC and ETH) per venue:
 
-| Table | From | Binance (spot) | Bybit, OKX | Deribit | Hyperliquid |
-|---|---|---|---|---|---|
-| `trade`, `quote`, `book_snapshot`, `book_deltas`, `bar` | SBE | yes | yes | yes | yes |
-| `mark_price`, `index_price`, `funding_rate` | SBE | | yes | yes | yes |
-| `ticker`, `instrument`, `instrument_status`, `spread` | events | yes | yes | yes | yes |
-| `deribit_volatility_index` (DVOL) | events | | | yes | |
-| `hyperliquid_open_interest`, `hyperliquid_public_trade` (with buyer and seller addresses) | events | | | | yes |
+| Table | From | Binance (spot) | Bybit, OKX | Deribit | Hyperliquid | Kraken Futures |
+|---|---|---|---|---|---|---|
+| `trade`, `quote`, `book_snapshot`, `book_deltas`, `instrument_spec` | SBE | yes | yes | yes | yes | yes |
+| `bar` | SBE | yes | yes | yes | yes | |
+| `mark_price`, `index_price`, `funding_rate` | SBE | | yes | yes | yes | yes |
+| `ticker`, `instrument`, `instrument_status`, `spread` | events | yes | yes | yes | yes | yes |
+| `deribit_volatility_index` (DVOL) | events | | | yes | | |
+| `hyperliquid_open_interest`, `hyperliquid_public_trade` (with buyer and seller addresses) | events | | | | yes | |
+
+Kraken Futures (`PF_XBTUSD`, `PF_ETHUSD`, linear perpetuals) streams no bars.
+Venues that call bitcoin XBT have it published as BTC, so the engine
+aggregates it with everyone else's. BitMEX is not here: its perpetuals have
+settled (2026-09-16) and it lists only idle spot pairs.
 
 `ticker` is one row per instrument a second, with the columns the venue has.
 Binance spot has no mark or index price, so those columns are NULL in its
@@ -641,12 +726,14 @@ Decimals stay text, so they are exact; use `toDecimal64(x, 9)` in a query.
 
 ## Things to try
 
-- **Deploy an exchange with different columns.** `just exchange deribit`,
+- **Deploy an exchange with different columns.** Run without Deribit
+  (its line out of `kustomization.yaml`, and delete its Deployment), then
+  with it again (`just deploy`),
   then in ClickHouse:
   `SELECT name, type FROM system.columns WHERE table = 'ticker'`. Within a
   few seconds of Deribit's first row, the ingester logs
   ``applied: ALTER TABLE `market`.`ticker` ADD COLUMN IF NOT EXISTS `volatility_index` Float64``,
-  and `deribit_volatility_index` appears as a new table. `just exchange hyperliquid`
+  and `deribit_volatility_index` appears as a new table. the same for Hyperliquid
   does the same for `open_interest`. Nothing else is redeployed.
 
 - **Turn recording off and on.** Set `book_snapshot: { kind: dynamic, enabled: false }`

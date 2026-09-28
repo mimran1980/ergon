@@ -1,0 +1,59 @@
+# The ingester, one per node beside its Aeron: has the archive record the
+# node's persist stream and every feed of the registry published here,
+# replays them into ClickHouse, checkpoints, purges. It follows
+# streams.yaml: a feed added to it is recorded with no restart. Any archive
+# error ends it; it restarts and resumes from its checkpoint. It ingests
+# every SBE schema in schema/ of this checkout, read at start-up: after
+# adding or changing one, `just ingester` restarts it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ingester
+spec:
+  selector: { matchLabels: { app: ingester } }
+  template:
+    metadata: { labels: { app: ingester } }
+    spec:
+      tolerations: [{ operator: Exists }]
+      initContainers:
+        - name: wait-for-aeron
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [sh, -c, "until [ -f /aeron/driver/cnc.dat ]; do sleep 1; done"]
+          volumeMounts: [{ name: aeron, mountPath: /aeron }]
+      containers:
+        - name: ingester
+          image: lab/app:local
+          imagePullPolicy: Never
+          command: [/usr/local/bin/ingester]
+          env:
+            - { name: AERON_DIR, value: /aeron/driver }
+            - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
+            - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
+            - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
+            - { name: PERSIST_SCHEMAS, value: /lab/schema }
+            - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
+            - { name: PERSIST_INTERVAL, value: 2s }
+            # glibc keeps a heap arena per thread by default: two is plenty.
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          resources: { requests: { memory: 32Mi }, limits: { memory: 256Mi } }
+          volumeMounts:
+            - { name: aeron, mountPath: /aeron }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+            - { name: state, mountPath: /state }
+            - { name: schema, mountPath: /lab/schema, readOnly: true }
+      volumes:
+        - name: aeron
+          hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
+        - name: config
+          configMap: { name: lab-config }
+        - name: state
+          hostPath: { path: /var/lib/lab/ingester, type: DirectoryOrCreate }
+        # schema/ of this checkout, mounted into every node (deploy/kind.yaml).
+        - name: schema
+          hostPath: { path: /lab/schema, type: Directory }

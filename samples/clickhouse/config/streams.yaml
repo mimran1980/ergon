@@ -14,7 +14,7 @@
 # Regions (topology.kubernetes.io/region), by the exchange's matching engine:
 #   an1 Tokyo, as1 Singapore/Hong Kong, ew2 London LD4.
 domain: lab.svc.cluster.local
-# Every node's archive: its control port (deploy/lab.yaml), which a persistent
+# Every node's archive: its control port (deploy/infra/aeron.yaml), which a persistent
 # subscription reaches by its publisher's name.
 archive_port: 8010
 services:
@@ -23,6 +23,7 @@ services:
   md-bybit:       { port: 40503, region: as1, streams: { md: 2031, tob: 2032 } }
   md-okx:         { port: 40504, region: as1, streams: { md: 2041, tob: 2042 } }
   md-deribit:     { port: 40505, region: ew2, streams: { md: 2051, tob: 2052 } }
+  md-kraken:      { port: 40506, region: ew2, streams: { md: 2061, tob: 2062 } }
   # One engine and one dummy exchange per region.
   engine-an1:     { port: 40601, region: an1, streams: { signals: 3011, orders: 3012 } }
   engine-as1:     { port: 40602, region: as1, streams: { signals: 3021, orders: 3022 } }

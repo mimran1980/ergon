@@ -1,0 +1,10 @@
+# Region an1's engine and dummy exchange: engine-an1, exch-sim-an1.
+resources: [../base]
+nameSuffix: -an1
+labels:
+  - pairs: { region: an1 }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: an1 } }

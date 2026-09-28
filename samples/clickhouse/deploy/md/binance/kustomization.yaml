@@ -1,0 +1,10 @@
+# Binance's feed handler, md-binance, in region an1.
+resources: [../base]
+nameSuffix: -binance
+labels:
+  - pairs: { exchange: binance }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: an1 } }

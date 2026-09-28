@@ -1,0 +1,10 @@
+# OKX's feed handler, md-okx, in region as1.
+resources: [../base]
+nameSuffix: -okx
+labels:
+  - pairs: { exchange: okx }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: as1 } }

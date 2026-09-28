@@ -1,5 +1,6 @@
-# What gets recorded into ClickHouse. Edit and save: `enabled` applies within
-# a second, no restart.
+# What gets recorded into ClickHouse. Edit, save and `just config`: every pod
+# sees it within about a minute (the kubelet's ConfigMap sync), and applies
+# it within a second after, with no restart.
 #
 # A table named after a message in schema/ (market.xml, trading.xml) takes
 # its columns from that message. Any other table is recorded from `tracing` events that name

@@ -1,0 +1,37 @@
+# JupyterLab: http://<host>:8888, notebooks/ of this checkout (read-write).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: jupyter } }
+  template:
+    metadata: { labels: { app: jupyter } }
+    spec:
+      containers:
+        - name: jupyter
+          image: lab/jupyter:local
+          imagePullPolicy: Never
+          env:
+            - { name: CLICKHOUSE_HOST, value: clickhouse }
+          ports: [{ containerPort: 8888 }]
+          # pandas frames of query results: raise it for bigger notebooks.
+          resources: { requests: { memory: 64Mi }, limits: { memory: 512Mi } }
+          volumeMounts:
+            - { name: notebooks, mountPath: /lab/notebooks }
+            - { name: config, mountPath: /lab/config, readOnly: true }
+      volumes:
+        - name: notebooks
+          hostPath: { path: /lab/notebooks, type: Directory }
+        - name: config
+          configMap: { name: lab-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter
+spec:
+  type: NodePort
+  selector: { app: jupyter }
+  ports: [{ port: 8888, targetPort: 8888, nodePort: 30888 }]

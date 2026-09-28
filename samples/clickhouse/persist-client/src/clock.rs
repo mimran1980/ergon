@@ -136,6 +136,33 @@ impl Clock {
         self.cached.get()
     }
 
+    /// The wall clock now, as [`Nanos`]: for comparing with another
+    /// process's timestamps (a feed handler's receive time, a venue's
+    /// event time). [`Clock::now`] is this process's monotonic clock from
+    /// its anchor, which is right within the process but drifts from the
+    /// wall clock as that is corrected (a VM's clock resynced from its host,
+    /// NTP): tens of milliseconds after a few minutes here. A vDSO read,
+    /// tens of nanoseconds; not cached.
+    #[inline]
+    #[must_use]
+    pub fn wall(&self) -> Nanos {
+        let epoch_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
+        Nanos::from_epoch(epoch_ns)
+    }
+
+    /// The monotonic time at which a message another process stamped
+    /// `epoch_ns` (by its wall clock) was, given that it is being handled
+    /// at `now` (this clock's): `now` less the wall-clock age. Starting a
+    /// trace here makes its first stage the true age, and every later stage
+    /// monotonic.
+    #[inline]
+    #[must_use]
+    pub fn from_remote(&self, epoch_ns: i64, now: Nanos) -> Nanos {
+        Nanos(now.0 - self.wall().since(Nanos::from_epoch(epoch_ns)))
+    }
+
     /// Read the clock without caching it.
     #[inline]
     #[must_use]
@@ -159,6 +186,17 @@ fn nanos(d: Duration) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_remote_stamp_is_placed_by_its_wall_clock_age() {
+        let clock = Clock::new();
+        let now = clock.now();
+        // Stamped 5 ms ago by another process's wall clock.
+        let stamped = clock.wall().epoch_ns() - 5_000_000;
+        let at = clock.from_remote(stamped, now);
+        let age = now.since(at);
+        assert!((5_000_000..6_000_000).contains(&age), "{age}");
+    }
+
     use super::*;
 
     #[test]

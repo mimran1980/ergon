@@ -1,0 +1,10 @@
+# Kraken Futures's feed handler, md-kraken, in region ew2.
+resources: [../base]
+nameSuffix: -kraken
+labels:
+  - pairs: { exchange: kraken }
+    includeSelectors: true
+patches:
+  - target: { kind: Deployment }
+    patch: |-
+      - { op: add, path: /spec/template/spec/nodeSelector, value: { topology.kubernetes.io/region: ew2 } }

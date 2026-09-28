@@ -357,21 +357,26 @@ impl Settings {
 
     /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`),
     /// `PERSIST_APP` (the app's name, default none), the host from
-    /// [`source::host_name`], and the pod from `POD_NAME`, else `HOSTNAME`
-    /// (which Kubernetes sets to the pod's name).
+    /// [`source::host_name`], the pod from `POD_NAME`, else `HOSTNAME`
+    /// (which Kubernetes sets to the pod's name), and the durations
+    /// `PERSIST_METRICS_INTERVAL` and `PERSIST_SUBSCRIBER_TIMEOUT` (`5s`).
     #[must_use]
     pub fn from_env() -> Self {
+        let duration = |var, default| {
+            std::env::var(var)
+                .ok()
+                .and_then(|v| v.parse::<jiff::SignedDuration>().ok())
+                .and_then(|d| Duration::try_from(d).ok())
+                .unwrap_or(default)
+        };
         Self {
             app: std::env::var("PERSIST_APP").unwrap_or_default(),
             host: source::host_name(),
             pod: std::env::var("POD_NAME")
                 .or_else(|_| std::env::var("HOSTNAME"))
                 .unwrap_or_default(),
-            metrics_interval: std::env::var("PERSIST_METRICS_INTERVAL")
-                .ok()
-                .and_then(|v| v.parse::<jiff::SignedDuration>().ok())
-                .and_then(|d| Duration::try_from(d).ok())
-                .unwrap_or(Duration::from_secs(5)),
+            metrics_interval: duration("PERSIST_METRICS_INTERVAL", Duration::from_secs(5)),
+            subscriber_timeout: duration("PERSIST_SUBSCRIBER_TIMEOUT", Duration::from_secs(10)),
             ..Self::new(
                 std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
             )

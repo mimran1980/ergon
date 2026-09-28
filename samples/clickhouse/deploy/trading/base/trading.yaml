@@ -1,41 +1,29 @@
-# A region's trading engine: its md feeds, aggregated book, EMAs and orders: `just engines` fills in __REGION__ for each region in
-# config/streams.yaml and applies it. Like md, it uses the node's network
-# and has a headless Service of its own name, so its subscribers find it
-# wherever it runs in the region; one replica, recreated rather than rolled.
-apiVersion: v1
-kind: Service
-metadata:
-  name: engine-__REGION__
-  namespace: lab
-  labels: { app: engine, region: __REGION__ }
-spec:
-  clusterIP: None
-  selector: { app: engine, region: __REGION__ }
-  publishNotReadyAddresses: true
+# A region's engine and dummy exchange, written once. deploy/trading/<region>/
+# names them engine-<region> and exch-sim-<region>, labels them with the
+# region (which REGION reads) and pins them to it.
+
 ---
+# A region's trading engine: every feed handler in its region, the aggregated
+# book, EMAs, orders and tick-to-trade, in one loop on one thread.
+#
+# On the node's network, like md (deploy/md/base): its Service's name
+# resolves to its node's media driver. One replica, recreated rather than
+# rolled; on SIGTERM it closes its feeds at once.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: engine-__REGION__
-  namespace: lab
-  labels: { app: engine, region: __REGION__ }
+  name: engine
+  labels: { app: engine }
 spec:
   replicas: 1
   strategy: { type: Recreate }
-  selector: { matchLabels: { app: engine, region: __REGION__ } }
+  selector: { matchLabels: { app: engine } }
   template:
-    metadata: { labels: { app: engine, region: __REGION__ } }
+    metadata: { labels: { app: engine } }
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # SIGTERM closes its feeds at once.
       terminationGracePeriodSeconds: 10
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - { key: topology.kubernetes.io/region, operator: In, values: [__REGION__] }
       tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
       initContainers:
         - name: wait-for-aeron
@@ -49,12 +37,15 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/engine]
           env:
-            - { name: REGION, value: __REGION__ }
+            # From its pod's `region` label, which deploy/trading/<region> sets.
+            - name: REGION
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['region']" } }
+            - { name: PERSIST_APP, value: engine-$(REGION) }
             - { name: AERON_DIR, value: /aeron/driver }
             - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
-            - { name: PERSIST_APP, value: engine-__REGION__ }
+            - { name: PERSIST_SUBSCRIBER_TIMEOUT, value: 60s }
             # Its loop's idle strategy: spin, noop, yield or sleep. The lab
             # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
             # machine; spin on an isolated core for real tick-to-trade.
@@ -62,6 +53,8 @@ spec:
             - { name: MALLOC_ARENA_MAX, value: "1" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: NODE_NAME
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             - name: POD_NAME
@@ -74,46 +67,40 @@ spec:
         - name: aeron
           hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
         - name: config
-          hostPath: { path: /lab/config, type: Directory }
+          configMap: { name: lab-config }
 ---
-# A region's dummy exchange: it fills the engine's orders: `just engines` fills in __REGION__ for each region in
-# config/streams.yaml and applies it. Like md, it uses the node's network
-# and has a headless Service of its own name, so its subscribers find it
-# wherever it runs in the region; one replica, recreated rather than rolled.
+# Its name, engine-<region>.lab.svc.cluster.local: headless, so it resolves
+# to the pod's IP, which is its node's.
 apiVersion: v1
 kind: Service
 metadata:
-  name: exch-sim-__REGION__
-  namespace: lab
-  labels: { app: exch-sim, region: __REGION__ }
+  name: engine
+  labels: { app: engine }
 spec:
   clusterIP: None
-  selector: { app: exch-sim, region: __REGION__ }
+  selector: { app: engine }
   publishNotReadyAddresses: true
 ---
+# A region's dummy exchange: it fills its region's engine's orders.
+#
+# On the node's network, like md (deploy/md/base): its Service's name
+# resolves to its node's media driver. One replica, recreated rather than
+# rolled; on SIGTERM it closes its feeds at once.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: exch-sim-__REGION__
-  namespace: lab
-  labels: { app: exch-sim, region: __REGION__ }
+  name: exch-sim
+  labels: { app: exch-sim }
 spec:
   replicas: 1
   strategy: { type: Recreate }
-  selector: { matchLabels: { app: exch-sim, region: __REGION__ } }
+  selector: { matchLabels: { app: exch-sim } }
   template:
-    metadata: { labels: { app: exch-sim, region: __REGION__ } }
+    metadata: { labels: { app: exch-sim } }
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # SIGTERM closes its feeds at once.
       terminationGracePeriodSeconds: 10
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - { key: topology.kubernetes.io/region, operator: In, values: [__REGION__] }
       tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
       initContainers:
         - name: wait-for-aeron
@@ -127,12 +114,15 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/exch-sim]
           env:
-            - { name: REGION, value: __REGION__ }
+            # From its pod's `region` label, which deploy/trading/<region> sets.
+            - name: REGION
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['region']" } }
+            - { name: PERSIST_APP, value: exch-sim-$(REGION) }
             - { name: AERON_DIR, value: /aeron/driver }
             - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
-            - { name: PERSIST_APP, value: exch-sim-__REGION__ }
+            - { name: PERSIST_SUBSCRIBER_TIMEOUT, value: 60s }
             # Its loop's idle strategy: spin, noop, yield or sleep. The lab
             # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
             # machine; spin on an isolated core for real tick-to-trade.
@@ -140,6 +130,8 @@ spec:
             - { name: MALLOC_ARENA_MAX, value: "1" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: NODE_NAME
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             - name: POD_NAME
@@ -152,4 +144,16 @@ spec:
         - name: aeron
           hostPath: { path: /tmp/lab-aeron, type: DirectoryOrCreate }
         - name: config
-          hostPath: { path: /lab/config, type: Directory }
+          configMap: { name: lab-config }
+---
+# Its name, exch-sim-<region>.lab.svc.cluster.local: headless, so it resolves
+# to the pod's IP, which is its node's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: exch-sim
+  labels: { app: exch-sim }
+spec:
+  clusterIP: None
+  selector: { app: exch-sim }
+  publishNotReadyAddresses: true

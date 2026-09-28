@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         let work = orders.poll(
-            |m, _| {
+            |m, delivery| {
                 if m.get(4..6) != Some(&NewOrderDecoder::SCHEMA_ID.to_le_bytes()[..]) {
                     return; // persist's `Source` messages
                 }
@@ -56,15 +56,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let Ok(asset) = o.asset() else {
                     return;
                 };
-                if clock.now().epoch_ns() - o.ts() as i64 > ORDER_TTL_NS {
+                // The order's age by the wall clock, which stamped it.
+                let now = clock.now();
+                if clock.wall().since(Nanos::from_epoch(o.ts() as i64)) > ORDER_TTL_NS {
                     stale.inc();
                     return;
                 }
                 let mut trace = ack.start(
-                    Nanos::from_epoch(o.ts() as i64),
+                    clock.from_remote(o.ts() as i64, now),
                     TraceId::new(ORDERS, o.order_id()),
                 );
-                trace.mark(clock.now());
+                trace.mark(now);
                 trace.mark(clock.now()); // matching: everything fills
                 for (status, qty) in [
                     (OrderStatus::New, 0),
@@ -88,8 +90,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                 }
                 trace.mark(clock.now());
-                trace.keep();
-                trace.finish();
+                // A replayed order's wire stage is how long this exchange
+                // was down, not a latency: answered, never traced.
+                if delivery.is_live() {
+                    trace.keep();
+                    trace.finish();
+                }
                 filled.inc();
             },
             64,

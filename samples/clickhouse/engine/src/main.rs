@@ -33,7 +33,7 @@ use market::trading::{
 use persist_client::clock::{Clock, Nanos};
 use std::collections::HashMap;
 
-use persist_client::feed::{Feed, Subscriber};
+use persist_client::feed::{Delivery, Feed, Subscriber};
 use persist_client::metrics::{Counter, Gauge, Histogram};
 use persist_client::persistent::Persistent;
 use persist_client::trace::{Trace, TraceId, Tracer};
@@ -62,33 +62,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exchange = format!("exch-sim-{}", app.region);
     let mut exec = app.persist.persistent(s, &exchange, "exec", ip)?;
     let metrics = app.persist.metrics();
-    let mut subs = Vec::new();
-    let mut venues = Vec::new();
-    for (name, _) in s
-        .services
-        .iter()
-        .filter(|(name, service)| name.starts_with("md-") && service.region == app.region)
-    {
-        let tob: Subscriber = app
-            .persist
-            .subscriber(&s.subscription(name, "tob", ip)?, s.stream(name, "tob")?);
-        let md: Persistent = app.persist.persistent(s, name, "md", ip)?;
-        subs.push((md, tob));
-        let label = name.trim_start_matches("md-").to_uppercase();
-        let l = [("venue", label.as_str())];
-        venues.push(Venue {
-            instruments: Vec::new(),
-            sessions: 0,
-            updated: Nanos(0),
-            resyncs: metrics.counter("feed_resyncs", &l),
-            age: metrics.gauge("book_age_ns", &l),
-            live: metrics.gauge("feed_live", &l),
-            tob: metrics.counter("tob_quotes", &l),
-            tob_latency: metrics.histogram("tob_latency_ns", &l),
-            label: venue_label(&label),
-            name: label,
-        });
-    }
+    let (mut subs, mut venues) = (Vec::new(), Vec::new());
+    add_venues(&app, s, &metrics, &mut subs, &mut venues)?;
     log::info!(
         "{service}: {} venues ({}), publishing on {publication}",
         venues.len(),
@@ -98,6 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    // A feed handler added to the registry in this region is subscribed to
+    // within a second or two, with no restart.
+    let watch = persist_client::streams::Watch::spawn(&app.streams_path)?;
     // Held apart from `core`: a trace in flight borrows it.
     let t2t = app.persist.tracer(
         "tick_to_trade",
@@ -115,6 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fills: metrics.counter("fills", &[]),
         expired: metrics.counter("orders_expired", &[]),
         open_gauge: metrics.gauge("orders_open", &[]),
+        drift: metrics.gauge("clock_drift_ns", &[]),
+        live: false,
         open: HashMap::new(),
         metrics: metrics.clone(),
     };
@@ -124,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let mut work = 0;
         for (i, (md, tob)) in subs.iter_mut().enumerate() {
-            work += md.poll(|m, new| core.on_md(&t2t, i, m, new), LIMIT);
+            work += md.poll(|m, delivery| core.on_md(&t2t, i, m, delivery), LIMIT);
             work += tob.poll(|m, _| core.on_tob(i, m), LIMIT);
         }
         work += exec.poll(|m, _| core.on_exec(m), LIMIT);
@@ -133,10 +113,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (venue, (md, _)) in core.venues.iter().zip(&subs) {
                 venue.live.set(f64::from(u8::from(md.is_live())));
             }
+            if let Some(streams) = watch.changed()
+                && let Err(e) = add_venues(&app, &streams, &metrics, &mut subs, &mut core.venues)
+            {
+                log::error!("streams.yaml: {e}");
+            }
         }
         metrics.poll(now);
         app.idle.idle(work);
     }
+}
+
+/// Subscribe to every feed handler of `streams` in this region not yet
+/// subscribed to. Venues are only ever added: one taken out of the registry
+/// just goes quiet.
+fn add_venues(
+    app: &App,
+    streams: &persist_client::streams::Streams,
+    metrics: &persist_client::metrics::Metrics,
+    subs: &mut Vec<(Persistent, Subscriber)>,
+    venues: &mut Vec<Venue>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ip = app.host_ip.as_str();
+    for (name, _) in streams
+        .services
+        .iter()
+        .filter(|(name, service)| name.starts_with("md-") && service.region == app.region)
+    {
+        let label = name.trim_start_matches("md-").to_uppercase();
+        if venues.iter().any(|v| v.name == label) {
+            continue;
+        }
+        let tob = app.persist.subscriber(
+            &streams.subscription(name, "tob", ip)?,
+            streams.stream(name, "tob")?,
+        );
+        let md = app.persist.persistent(streams, name, "md", ip)?;
+        subs.push((md, tob));
+        let l = [("venue", label.as_str())];
+        log::info!("{name}: subscribing");
+        venues.push(Venue {
+            instruments: Vec::new(),
+            sessions: 0,
+            updated: Nanos(0),
+            resyncs: metrics.counter("feed_resyncs", &l),
+            age: metrics.gauge("book_age_ns", &l),
+            live: metrics.gauge("feed_live", &l),
+            replayed: metrics.counter("feed_replayed", &l),
+            tob: metrics.counter("tob_quotes", &l),
+            tob_latency: metrics.histogram("tob_latency_ns", &l),
+            label: venue_label(&label),
+            name: label,
+        });
+    }
+    Ok(())
 }
 
 struct Instrument {
@@ -160,6 +190,8 @@ struct Venue {
     age: Gauge,
     /// 1 on the live stream, 0 replaying (catching up) or finding it.
     live: Gauge,
+    /// Messages caught up from the archive, not live.
+    replayed: Counter,
     tob: Counter,
     tob_latency: Histogram,
 }
@@ -184,6 +216,10 @@ struct Core {
     fills: Counter,
     expired: Counter,
     open_gauge: Gauge,
+    /// The wall clock less this process's monotonic clock, ns.
+    drift: Gauge,
+    /// The message being handled is live, not replayed from the archive.
+    live: bool,
     /// Orders sent and not yet answered, by id: when sent. A fill applies
     /// once, to an order here; a replayed or repeated one is ignored.
     open: HashMap<u64, i64>,
@@ -210,9 +246,10 @@ fn venue_label(name: &str) -> [u8; 12] {
 impl Core {
     /// One message of venue `v`'s `md` stream. Never panics: a panic here
     /// would abort the process inside Aeron's callback.
-    fn on_md(&mut self, t2t: &Tracer, v: usize, m: &[u8], new_session: bool) {
+    fn on_md(&mut self, t2t: &Tracer, v: usize, m: &[u8], delivery: Delivery) {
         let received = self.clock.now();
-        if new_session {
+        self.live = delivery.is_live();
+        if delivery.first {
             self.new_session(v);
         }
         let Some((template, schema)) = header(m) else {
@@ -221,7 +258,13 @@ impl Core {
         if schema != InstrumentSpecDecoder::SCHEMA_ID {
             return; // persist's `Source` messages
         }
-        self.venues[v].updated = received;
+        // A replayed message is old news: it neither makes the book look
+        // fresh nor counts as a tick; it is counted apart.
+        if self.live {
+            self.venues[v].updated = received;
+        } else {
+            self.venues[v].replayed.inc();
+        }
         match template {
             BookDeltasDecoder::TEMPLATE_ID => self.on_deltas(t2t, v, m, received),
             BookSnapshotDecoder::TEMPLATE_ID => self.on_snapshot(t2t, v, m, received),
@@ -305,7 +348,10 @@ impl Core {
         let Ok(d) = BookSnapshotDecoder::decode(m, 0) else {
             return;
         };
-        let mut trace = t2t.start(Nanos::from_epoch(d.ts_init() as i64), t2t.next_id());
+        // md's receive time, by its wall clock: the first stage is the
+        // message's true age whatever this process's clock has drifted.
+        let at = self.clock.from_remote(d.ts_init() as i64, received);
+        let mut trace = t2t.start(at, t2t.next_id());
         trace.mark(received);
         let (Ok(bids), Ok(asks), Ok(symbol)) = (d.bids(), d.asks(), d.symbol()) else {
             return;
@@ -323,7 +369,10 @@ impl Core {
         let Ok(d) = BookDeltasDecoder::decode(m, 0) else {
             return;
         };
-        let mut trace = t2t.start(Nanos::from_epoch(d.ts_init() as i64), t2t.next_id());
+        // md's receive time, by its wall clock: the first stage is the
+        // message's true age whatever this process's clock has drifted.
+        let at = self.clock.from_remote(d.ts_init() as i64, received);
+        let mut trace = t2t.start(at, t2t.next_id());
         trace.mark(received);
         let (Ok(deltas), Ok(symbol)) = (d.deltas(), d.symbol()) else {
             return;
@@ -355,6 +404,12 @@ impl Core {
         let Some(a) = self.venues[v].instruments[i].asset else {
             return;
         };
+        // Catching up from the archive: the book is rebuilt, but a price
+        // that may be a minute old moves no EMA, decides nothing, and is no
+        // tick-to-trade sample.
+        if !self.live {
+            return;
+        }
         let (mut bid, mut ask) = (None, None);
         for instrument in self.venues.iter().flat_map(|v| &v.instruments) {
             if instrument.asset == Some(a) {
@@ -388,7 +443,8 @@ impl Core {
                     Ok::<_, market::trading::sbe_rt::EncodeError>(
                         NewOrderEncoder::wrap_and_apply_header(buf, 0)
                             .fixed(&NewOrderFixedFields {
-                                ts: order_id,
+                                // By the wall clock: the exchange compares it with its own.
+                                ts: self.clock.wall().epoch_ns() as u64,
                                 tick_ts,
                                 order_id,
                                 side: if buy { Side::Buy } else { Side::Sell },
@@ -421,7 +477,7 @@ impl Core {
             venue.tob.inc();
             let age = self
                 .clock
-                .now()
+                .wall()
                 .since(Nanos::from_epoch(q.ts_init() as i64));
             venue.tob_latency.record(age.max(0) as u64);
         }
@@ -472,6 +528,7 @@ impl Core {
             .retain(|_, sent| now.epoch_ns() - *sent < ORDER_TIMEOUT_NS);
         self.expired.add((before - self.open.len()) as u64);
         self.open_gauge.set(self.open.len() as f64);
+        self.drift.set(self.clock.wall().since(now) as f64);
         for venue in &self.venues {
             venue.age.set(now.since(venue.updated) as f64);
         }

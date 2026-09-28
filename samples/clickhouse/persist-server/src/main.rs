@@ -41,6 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or_else(|| format!("PERSIST_INTERVAL={v}: expected a duration such as 2s"))
     })?;
     let mut ingester = Ingester::connect(&schemas, Settings::from_env()?)?;
+    // A service added to the registry is recorded from the next tick.
+    let streams = std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into());
+    if std::path::Path::new(&streams).exists() {
+        ingester.follow(streams)?;
+    }
     // SIGTERM stops it between ticks, its last inserts checkpointed. As a
     // container's first process it would otherwise ignore the signal and
     // wait out the grace period.

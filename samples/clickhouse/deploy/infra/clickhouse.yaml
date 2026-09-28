@@ -1,0 +1,50 @@
+# ClickHouse. Query UI: http://<host>:8123/play (user lab, password lab).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector: { matchLabels: { app: clickhouse } }
+  template:
+    metadata: { labels: { app: clickhouse } }
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.8
+          env:
+            - { name: CLICKHOUSE_USER, value: lab }
+            - { name: CLICKHOUSE_PASSWORD, value: lab }
+            - { name: CLICKHOUSE_DB, value: market }
+            - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
+          ports: [{ containerPort: 8123 }]
+          # ClickHouse sizes its caches to what it may use: without a limit,
+          # that is most of Docker's memory. clickhouse.xml keeps its
+          # caches, thread pools and own logs small.
+          # With every exchange (1,600 quotes a second) it sits at 550-700
+          # MiB and merges push it past 768: it caps itself at 80% of this.
+          resources: { requests: { memory: 512Mi }, limits: { memory: 1280Mi } }
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/clickhouse }
+            - { name: settings, mountPath: /etc/clickhouse-server/config.d/lab.xml, subPath: lab.xml, readOnly: true }
+      volumes:
+        - name: settings
+          configMap: { name: clickhouse-settings }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 20Gi } }
+---
+# NodePort 30123, mapped to the host's 8123 by deploy/kind.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+spec:
+  type: NodePort
+  selector: { app: clickhouse }
+  ports: [{ port: 8123, targetPort: 8123, nodePort: 30123 }]
