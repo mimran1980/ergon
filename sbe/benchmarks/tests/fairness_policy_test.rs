@@ -19,10 +19,29 @@ fn function_source<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     let signature = format!("fn {name}(");
     let start = source.find(&signature)?;
     let rest = &source[start..];
-    let end = rest[signature.len()..]
-        .find("\nfn ")
-        .map_or(rest.len(), |offset| signature.len() + offset);
+    let tail = &rest[signature.len()..];
+    let mut end = rest.len();
+    for marker in ["\nfn ", "\npub fn ", "\npub(crate) fn "] {
+        if let Some(offset) = tail.find(marker) {
+            end = end.min(signature.len() + offset);
+        }
+    }
     Some(&rest[..end])
+}
+
+/// A gated function's own body must assert. An assert earlier in the file,
+/// before the first timed case, does not count.
+fn gated_function_preflight(source: &str, name: &str) -> Result<(), String> {
+    let body = function_source(source, name).ok_or_else(|| format!("{name} missing"))?;
+    if !body.contains("assert_eq!") {
+        return Err(format!(
+            "{name} has no assert_eq! inside the function; a file-level assert is not enough"
+        ));
+    }
+    if !body.contains("BATCH_SIZE") {
+        return Err(format!("{name} does not tie its preflight to BATCH_SIZE"));
+    }
+    Ok(())
 }
 
 fn get_source(source: &'static str, fn_name: &str) -> Result<&'static str, String> {
@@ -60,6 +79,73 @@ fn maintained_bench_sources_have_a_correctness_preflight() -> Result<(), Box<dyn
         );
     }
     Ok(())
+}
+
+#[test]
+fn gated_throughput_functions_assert_inside_the_function() {
+    for name in ["bench_encode_throughput", "bench_throughput_batch"] {
+        gated_function_preflight(PERF_PARITY, name).unwrap_or_else(|err| panic!("{err}"));
+    }
+    // A file-level assert does not cover a gated function that has none.
+    let file_level_only = "\nfn setup() {\n    assert_eq!(1, 1);\n}\nfn bench_encode_throughput() {\n    let _ = BATCH_SIZE;\n}\n";
+    assert!(
+        gated_function_preflight(file_level_only, "bench_encode_throughput").is_err(),
+        "a file-level assert must not satisfy the per-function check"
+    );
+    let real =
+        function_source(PERF_PARITY, "bench_encode_throughput").expect("bench_encode_throughput");
+    let stripped = format!(
+        "\nfn setup() {{ assert_eq!(1, 1); }}\n{}\nfn after() {{}}\n",
+        real.replace("assert_eq!", "let _kept = ")
+    );
+    assert!(
+        gated_function_preflight(&stripped, "bench_encode_throughput").is_err(),
+        "removing the assert from bench_encode_throughput must fail the policy"
+    );
+}
+
+#[test]
+fn throughput_preflight_matches_bytes_and_batch_totals() {
+    use ergo_sbe_benchmarks::{
+        THROUGHPUT_SLOT, sample_decode_throughput, sample_encode_throughput,
+    };
+
+    let encoded = sample_encode_throughput(10_000);
+    assert_eq!(
+        encoded.one_year,
+        u64::from(ergo_sbe_benchmarks::THROUGHPUT_YEAR)
+    );
+    assert_eq!(encoded.one_ergo, encoded.one_tool);
+    assert_eq!(encoded.batch_ergo, encoded.batch_tool);
+    assert_eq!(
+        &encoded.batch_ergo[..THROUGHPUT_SLOT],
+        &encoded.one_ergo[..]
+    );
+    assert_eq!(encoded.year_total, 10_000 * encoded.one_year);
+    assert_eq!(encoded.batch_ergo.len(), 10_000 * THROUGHPUT_SLOT);
+
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let msg_len = baseline.len();
+    let mut buf = vec![0u8; 10_000 * msg_len];
+    for chunk in buf.chunks_mut(msg_len) {
+        chunk.copy_from_slice(baseline);
+    }
+    let block_length = u16::from_le_bytes(baseline[0..2].try_into().unwrap()) as usize;
+    let version = u16::from_le_bytes(baseline[6..8].try_into().unwrap());
+    let decoded = sample_decode_throughput(
+        &buf,
+        msg_len,
+        10_000,
+        block_length,
+        version,
+        block_length as u16,
+        version,
+    );
+    assert_eq!(&buf[..msg_len], &baseline[..]);
+    assert_eq!(decoded.ergo_serial, decoded.tool_serial);
+    assert_eq!(decoded.ergo_year, decoded.tool_year);
+    assert_eq!(decoded.ergo_serial, 10_000 * decoded.one_serial);
+    assert_eq!(decoded.ergo_year, 10_000 * decoded.one_year);
 }
 
 #[test]
@@ -287,6 +373,45 @@ fn strip_line_comments(src: &str) -> String {
         .join("\n")
 }
 
+const BENCH_LIB: &str = include_str!("../src/lib.rs");
+
+fn helper_names(arm: &str) -> Vec<String> {
+    let code = strip_line_comments(arm);
+    let bytes = code.as_bytes();
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'(' {
+                let name = &code[start..i];
+                if name.starts_with("throughput_") {
+                    names.push(name.to_string());
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    names
+}
+
+/// Header writes count when they are in the arm or in the `throughput_*`
+/// helper the arm calls. Other callees stay ignored so an unrelated helper
+/// cannot reclassify a body-only arm.
+fn writes_message_header(arm: &str) -> bool {
+    if arm_writes_message_header(arm) {
+        return true;
+    }
+    helper_names(arm)
+        .into_iter()
+        .any(|name| function_source(BENCH_LIB, &name).is_some_and(arm_writes_message_header))
+}
+
 fn arm_writes_message_header(arm: &str) -> bool {
     // Ignore // comments — body-only arms may mention header(0) in notes.
     let code = strip_line_comments(arm);
@@ -389,8 +514,8 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             .ok_or_else(|| format!("{fn_name}/{ergo_label}: timed arm not found"))?;
         let tool = timed_arm_body(fn_src, tool_label)
             .ok_or_else(|| format!("{fn_name}/{tool_label}: timed arm not found"))?;
-        let ergo_hdr = arm_writes_message_header(ergo);
-        let tool_hdr = arm_writes_message_header(tool);
+        let ergo_hdr = writes_message_header(ergo);
+        let tool_hdr = writes_message_header(tool);
         match *mode {
             "header" => {
                 assert!(

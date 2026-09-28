@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Fixed
+- **The gated 10k encode and decode benchmarks had no per-function
+  correctness check.** Both arms now share one per-message body with an
+  untimed preflight: the encode buffers match byte for byte, and the decode
+  totals equal 10_000 times the single baseline message. A file-level assert
+  no longer counts as that check.
 - **`verify` walked repeating groups at the compiled block length and
   version 0.** A wire block longer than the schema was rejected because the
   next tail was read out of the extension padding, and a nested group whose

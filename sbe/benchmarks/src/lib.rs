@@ -153,3 +153,149 @@ pub fn assert_encode_extent(buf: &[u8], needed_with_header: usize) {
         buf.len()
     );
 }
+
+/// Bytes reserved per message in the gated 10k encode pair.
+pub const THROUGHPUT_SLOT: usize = 64;
+/// Model year both arms of that pair write.
+pub const THROUGHPUT_YEAR: u16 = 2013;
+
+/// One header-plus-scalars encode. Shared by the timed 10k loop and the
+/// untimed byte check, so the assert describes the measured work.
+#[inline(always)]
+pub fn throughput_encode_ergo(buf: &mut [u8], serial: u64) -> u8 {
+    use crate::ergo_car::CarEncoder;
+
+    CarEncoder::wrap_and_apply_header(buf, 0)
+        .serial_number(serial)
+        .model_year(THROUGHPUT_YEAR);
+    buf[8]
+}
+
+/// sbe-tool arm of [`throughput_encode_ergo`]. `header(0)` runs before the
+/// body setters, matching the official order.
+#[inline(always)]
+pub fn throughput_encode_tool(buf: &mut [u8], serial: u64) -> u8 {
+    use sbe_tool_car::sbe_tool::{WriteBuf, car_codec::encoder::CarEncoder};
+
+    CarEncoder::default()
+        .wrap(WriteBuf::new(buf), 8)
+        .header(0)
+        .parent()
+        .unwrap()
+        .serial_number(serial)
+        .model_year(THROUGHPUT_YEAR);
+    buf[8]
+}
+
+/// One unchecked scalar decode. The caller has already proved the extent.
+#[inline(always)]
+pub fn throughput_decode_ergo(
+    buf: &[u8],
+    off: usize,
+    block_length: usize,
+    version: u16,
+) -> (u64, u64) {
+    use crate::ergo_car::CarDecoder;
+
+    // SAFETY: `assert_stream_wrap_extent` proved this message's header and body.
+    let car = unsafe { CarDecoder::wrap_unchecked(buf, off, block_length, version) };
+    (car.serial_number(), car.model_year() as u64)
+}
+
+/// sbe-tool arm of [`throughput_decode_ergo`].
+#[inline(always)]
+pub fn throughput_decode_tool(
+    buf: &[u8],
+    off: usize,
+    block_length: u16,
+    version: u16,
+) -> (u64, u64) {
+    let car = sbe_tool_car_body_decoder(buf, off, block_length, version);
+    (car.serial_number(), car.model_year() as u64)
+}
+
+/// Untimed encode sample: one message and `count` messages, both arms.
+pub struct EncodeThroughputSample {
+    pub one_ergo: [u8; THROUGHPUT_SLOT],
+    pub one_tool: [u8; THROUGHPUT_SLOT],
+    pub batch_ergo: Vec<u8>,
+    pub batch_tool: Vec<u8>,
+    pub one_year: u64,
+    pub year_total: u64,
+}
+
+/// Build the encode preflight from the same per-message body the timed loop uses.
+pub fn sample_encode_throughput(count: usize) -> EncodeThroughputSample {
+    let mut one_ergo = [0u8; THROUGHPUT_SLOT];
+    let mut one_tool = [0u8; THROUGHPUT_SLOT];
+    throughput_encode_ergo(&mut one_ergo, 0);
+    throughput_encode_tool(&mut one_tool, 0);
+    let (block_length, version) = (
+        u16::from_le_bytes(one_ergo[0..2].try_into().unwrap()) as usize,
+        u16::from_le_bytes(one_ergo[6..8].try_into().unwrap()),
+    );
+    let (_, one_year) = throughput_decode_ergo(&one_ergo, 0, block_length, version);
+    let mut batch_ergo = vec![0u8; count * THROUGHPUT_SLOT];
+    let mut batch_tool = vec![0u8; count * THROUGHPUT_SLOT];
+    let mut year_total = 0u64;
+    for i in 0..count {
+        let off = i * THROUGHPUT_SLOT;
+        throughput_encode_ergo(&mut batch_ergo[off..off + THROUGHPUT_SLOT], i as u64);
+        throughput_encode_tool(&mut batch_tool[off..off + THROUGHPUT_SLOT], i as u64);
+        let (_, year) = throughput_decode_ergo(&batch_ergo, off, block_length, version);
+        year_total += year;
+    }
+    EncodeThroughputSample {
+        one_ergo,
+        one_tool,
+        batch_ergo,
+        batch_tool,
+        one_year,
+        year_total,
+    }
+}
+
+/// Totals from walking `count` identical frames with both decode arms.
+pub struct DecodeThroughputSample {
+    pub one_serial: u64,
+    pub one_year: u64,
+    pub ergo_serial: u64,
+    pub ergo_year: u64,
+    pub tool_serial: u64,
+    pub tool_year: u64,
+}
+
+/// Build the decode preflight from the same per-message body the timed loop uses.
+pub fn sample_decode_throughput(
+    buf: &[u8],
+    msg_len: usize,
+    count: usize,
+    block_length: usize,
+    version: u16,
+    tool_block_length: u16,
+    tool_version: u16,
+) -> DecodeThroughputSample {
+    let (one_serial, one_year) = throughput_decode_ergo(buf, 0, block_length, version);
+    let mut ergo_serial = 0u64;
+    let mut ergo_year = 0u64;
+    let mut tool_serial = 0u64;
+    let mut tool_year = 0u64;
+    let mut off = 0;
+    for _ in 0..count {
+        let (serial, year) = throughput_decode_ergo(buf, off, block_length, version);
+        ergo_serial += serial;
+        ergo_year += year;
+        let (serial, year) = throughput_decode_tool(buf, off, tool_block_length, tool_version);
+        tool_serial += serial;
+        tool_year += year;
+        off += msg_len;
+    }
+    DecodeThroughputSample {
+        one_serial,
+        one_year,
+        ergo_serial,
+        ergo_year,
+        tool_serial,
+        tool_year,
+    }
+}
