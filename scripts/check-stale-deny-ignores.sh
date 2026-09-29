@@ -1,37 +1,33 @@
 #!/usr/bin/env bash
-# An ignored cargo-deny advisory is stale when the first crate named in its
-# reason is absent from every Cargo.lock. Putting the ignore back fails this.
+# An ignored cargo-deny advisory is stale when its crate is absent from every
+# Cargo.lock. Explicit advisory mappings keep human-written reasons out of the
+# decision; an unfamiliar advisory requires a mapping before it can pass.
 set -euo pipefail
 
 root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
 
 python3 - "$root" <<'PY'
-import pathlib, re, sys
+import os, pathlib, sys, tomllib
 
 root = pathlib.Path(sys.argv[1])
-deny = root / "deny.toml"
-text = deny.read_text() if deny.exists() else ""
-locks = [p.read_text(errors="replace") for p in root.rglob("Cargo.lock") if "target" not in p.parts]
-blocks = re.findall(
-    r'\{\s*id\s*=\s*"([^"]+)"\s*,\s*reason\s*=\s*"([^"]+)"',
-    text,
-    re.S,
-)
-stop = {
-    "the", "and", "this", "that", "from", "with", "for", "not", "are", "was",
-    "optional", "feature", "never", "enables", "verified", "absent", "every",
-    "build", "graph", "both", "published", "crates",
-}
+advisory_crates = {"RUSTSEC-2026-0235": "rkyv"}
+with (root / "deny.toml").open("rb") as handle:
+    ignores = tomllib.load(handle).get("advisories", {}).get("ignore", [])
+packages = set()
+for directory, dirs, files in os.walk(root):
+    dirs[:] = [name for name in dirs if name not in {"target", ".git"}]
+    if "Cargo.lock" in files:
+        with (pathlib.Path(directory) / "Cargo.lock").open("rb") as handle:
+            packages.update(p["name"] for p in tomllib.load(handle).get("package", []))
 failed = False
-for advisory, reason in blocks:
-    names = re.findall(r"\b([a-z][a-z0-9_]*(?:-[a-z0-9_]+)*)\b", reason)
-    crate = next((name for name in names if name not in stop and len(name) > 2), None)
+for entry in ignores:
+    advisory = entry.get("id") if isinstance(entry, dict) else entry
+    crate = advisory_crates.get(advisory) if isinstance(advisory, str) else None
     if crate is None:
-        print(f"check-stale-deny-ignores: FAIL — {advisory} reason names no crate")
+        print(f"check-stale-deny-ignores: FAIL — no crate mapping for {advisory!r}")
         failed = True
         continue
-    needle = f'name = "{crate}"'
-    if not any(needle in lock for lock in locks):
+    if crate not in packages:
         print(
             f"check-stale-deny-ignores: FAIL — {advisory} ignores {crate}, "
             "which is in no Cargo.lock"
@@ -39,5 +35,5 @@ for advisory, reason in blocks:
         failed = True
 if failed:
     sys.exit(1)
-print(f"check-stale-deny-ignores: PASS ({len(blocks)} ignores)")
+print(f"check-stale-deny-ignores: PASS ({len(ignores)} ignores)")
 PY
