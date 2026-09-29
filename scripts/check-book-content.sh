@@ -4,14 +4,15 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+book_src=${BOOK_CONTENT_ROOT:-$root/book/src}
 rc=0
 
 check_pattern() {
     local pattern="$1"
     local message="$2"
-    if grep -rn "$pattern" "$root/book/src/" --include='*.md' | grep -v 'check-book-content\|allowlist' > /dev/null 2>&1; then
+    if grep -rn "$pattern" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist' > /dev/null 2>&1; then
         echo "  FAIL: $message"
-        grep -rn "$pattern" "$root/book/src/" --include='*.md' | grep -v 'check-book-content\|allowlist'
+        grep -rn "$pattern" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist'
         rc=1
     fi
 }
@@ -26,9 +27,41 @@ check_pattern 'NaiveDateTime::from_timestamp_opt' \
 check_pattern 'naive.*\.timestamp()' \
     'NaiveDateTime::timestamp() is deprecated — use .and_utc().timestamp()'
 
-# Old API: with_domain_objects(bool) inside code fences (not prose)
-check_pattern '\`\`\`.*\n.*with_domain_objects(true)' \
-    'with_domain_objects(true) is obsolete — use with_domain_objects(DomainVarData::Bytes)'
+# Old API inside a fence. A line-oriented grep cannot see this: the call is
+# not required to sit on the line after the opening fence, and macOS grep
+# has no multiline mode. Prose mentioning the call is not a failure.
+if ! python3 - "$book_src" <<'PY'
+import pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+failed = False
+for path in sorted(root.rglob("*.md")):
+    lines = path.read_text(errors="replace").splitlines()
+    in_fence = False
+    body = []
+    start = 0
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith("```"):
+            if in_fence:
+                if "with_domain_objects(true)" in "\n".join(body):
+                    print(f"  FAIL: {path}:{start}: with_domain_objects(true) inside a fence")
+                    failed = True
+                body = []
+                in_fence = False
+            else:
+                in_fence = True
+                start = number
+                body = []
+        elif in_fence:
+            body.append(line)
+    if in_fence and "with_domain_objects(true)" in "\n".join(body):
+        print(f"  FAIL: {path}:{start}: with_domain_objects(true) inside a fence")
+        failed = True
+sys.exit(1 if failed else 0)
+PY
+then
+    rc=1
+fi
 
 # CString::new in code fences — must use c"…" literals
 check_pattern 'CString::new' \

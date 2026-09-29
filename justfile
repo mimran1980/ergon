@@ -37,6 +37,7 @@ policy:
     bash scripts/tests/test-bench-historic.sh
     bash scripts/tests/test-stale-deny-ignores.sh
     bash scripts/tests/test-cluster-ergo-sbe-features.sh
+    bash scripts/tests/test-book-content.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
     ./scripts/check-stale-deny-ignores.sh
@@ -78,6 +79,7 @@ preflight:
     bash scripts/tests/test-bench-historic.sh
     bash scripts/tests/test-stale-deny-ignores.sh
     bash scripts/tests/test-cluster-ergo-sbe-features.sh
+    bash scripts/tests/test-book-content.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
