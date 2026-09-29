@@ -23,4 +23,5 @@ samples/sbe-feature-tour/tests/*.rs	samples	cd samples/sbe-feature-tour && cargo
 samples/clickhouse/persist-client/src/*.rs	samples	cd samples/clickhouse && just test
 samples/clickhouse/persist-server/src/*.rs	samples	cd samples/clickhouse && just test
 samples/clickhouse/persist-server/tests/*.rs	samples	cd samples/clickhouse && just test
-samples/clickhouse/recorder/src/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/engine/src/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/md/src/*.rs	samples	cd samples/clickhouse && just test
