@@ -211,6 +211,8 @@ sbe_rt::enum VerifyError::HeaderTooShort
 sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
 sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
 sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
+sbe_rt::fn fn decode_fixed_text < 'a > (field : & 'static str , bytes : & 'a [u8] , ascii : bool ,) -> Result < & 'a str , DecodeError >
+sbe_rt::fn fn encode_fixed_text < const N : usize > (field : & 'static str , src : & str , ascii : bool ,) -> Result < [u8 ; N] , EncodeError >
 sbe_rt::struct Attached {  }
 sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }

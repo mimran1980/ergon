@@ -332,6 +332,7 @@ CarDecoder::fn skip_fuel_figures (self ,) -> Result < CarDecoderAfterFuelFigures
 CarDecoder::fn try_available_bool (& self) -> Result < bool , sbe_rt :: DecodeError >
 CarDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
 CarDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+CarDecoder::fn vehicle_code_as_str (& self) -> Result < & str , sbe_rt :: DecodeError >
 CarDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 CarDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 CarDecoder::unsafe fn activation_code_as_str_unchecked (& self ,) -> Result < & 'a str , sbe_rt :: DecodeError >
@@ -799,6 +800,8 @@ sbe_rt::enum VerifyError::HeaderTooShort
 sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
 sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
 sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
+sbe_rt::fn fn decode_fixed_text < 'a > (field : & 'static str , bytes : & 'a [u8] , ascii : bool ,) -> Result < & 'a str , DecodeError >
+sbe_rt::fn fn encode_fixed_text < const N : usize > (field : & 'static str , src : & str , ascii : bool ,) -> Result < [u8 ; N] , EncodeError >
 sbe_rt::struct Attached {  }
 sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
