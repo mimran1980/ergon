@@ -75,9 +75,9 @@ book/src/sbe/recipes/domain-dtos.md:29 — deliberate; see page context
 book/src/sbe/recipes/schema-rustdoc.md:7 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:19 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:43 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:70 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:81 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:135 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:159 — deliberate; see page context
-book/src/sbe/recipes/timestamps.md:214 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:87 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:98 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:152 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:176 — deliberate; see page context
+book/src/sbe/recipes/timestamps.md:231 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
