@@ -187,9 +187,19 @@ pub fn throughput_encode_tool(buf: &mut [u8], serial: u64) -> u8 {
     buf[8]
 }
 
-/// One unchecked scalar decode. The caller has already proved the extent.
+/// One unchecked scalar decode after an external extent proof.
+///
+/// # Safety
+/// `off + CarDecoder::HEADER_LENGTH + max(block_length,
+/// CarDecoder::min_readable_fixed_extent(version))` must not overflow and
+/// must be at most `buf.len()`. [`assert_baseline_wrap_extent`] proves this.
+///
+/// Calling it without an unsafe block must not compile:
+/// ```compile_fail,E0133
+/// ergo_sbe_benchmarks::throughput_decode_ergo(&[], 0, 0, 0);
+/// ```
 #[inline(always)]
-pub fn throughput_decode_ergo(
+pub unsafe fn throughput_decode_ergo(
     buf: &[u8],
     off: usize,
     block_length: usize,
@@ -197,7 +207,7 @@ pub fn throughput_decode_ergo(
 ) -> (u64, u64) {
     use crate::ergo_car::CarDecoder;
 
-    // SAFETY: `assert_stream_wrap_extent` proved this message's header and body.
+    // SAFETY: the caller guarantees the header and version-aware body extent.
     let car = unsafe { CarDecoder::wrap_unchecked(buf, off, block_length, version) };
     (car.serial_number(), car.model_year() as u64)
 }
@@ -234,7 +244,9 @@ pub fn sample_encode_throughput(count: usize) -> EncodeThroughputSample {
         u16::from_le_bytes(one_ergo[0..2].try_into().unwrap()) as usize,
         u16::from_le_bytes(one_ergo[6..8].try_into().unwrap()),
     );
-    let (_, one_year) = throughput_decode_ergo(&one_ergo, 0, block_length, version);
+    assert_baseline_wrap_extent(&one_ergo, 0, block_length, version);
+    // SAFETY: the preceding assertion proves the frame's fixed extent.
+    let (_, one_year) = unsafe { throughput_decode_ergo(&one_ergo, 0, block_length, version) };
     let mut batch_ergo = vec![0u8; count * THROUGHPUT_SLOT];
     let mut batch_tool = vec![0u8; count * THROUGHPUT_SLOT];
     let mut year_total = 0u64;
@@ -242,7 +254,9 @@ pub fn sample_encode_throughput(count: usize) -> EncodeThroughputSample {
         let off = i * THROUGHPUT_SLOT;
         throughput_encode_ergo(&mut batch_ergo[off..off + THROUGHPUT_SLOT], i as u64);
         throughput_encode_tool(&mut batch_tool[off..off + THROUGHPUT_SLOT], i as u64);
-        let (_, year) = throughput_decode_ergo(&batch_ergo, off, block_length, version);
+        assert_baseline_wrap_extent(&batch_ergo, off, block_length, version);
+        // SAFETY: the preceding assertion proves this frame's fixed extent.
+        let (_, year) = unsafe { throughput_decode_ergo(&batch_ergo, off, block_length, version) };
         year_total += year;
     }
     EncodeThroughputSample {
@@ -275,14 +289,19 @@ pub fn sample_decode_throughput(
     tool_block_length: u16,
     tool_version: u16,
 ) -> DecodeThroughputSample {
-    let (one_serial, one_year) = throughput_decode_ergo(buf, 0, block_length, version);
+    assert_stream_wrap_extent(buf, msg_len, count, block_length, version);
+    // A baseline sample is read even when count is zero.
+    assert_baseline_wrap_extent(buf, 0, block_length, version);
+    // SAFETY: the baseline assertion proves the first frame's fixed extent.
+    let (one_serial, one_year) = unsafe { throughput_decode_ergo(buf, 0, block_length, version) };
     let mut ergo_serial = 0u64;
     let mut ergo_year = 0u64;
     let mut tool_serial = 0u64;
     let mut tool_year = 0u64;
     let mut off = 0;
     for _ in 0..count {
-        let (serial, year) = throughput_decode_ergo(buf, off, block_length, version);
+        // SAFETY: the stream assertion proves every strided frame's extent.
+        let (serial, year) = unsafe { throughput_decode_ergo(buf, off, block_length, version) };
         ergo_serial += serial;
         ergo_year += year;
         let (serial, year) = throughput_decode_tool(buf, off, tool_block_length, tool_version);

@@ -528,7 +528,7 @@ fn bench_throughput_batch(c: &mut Criterion) {
                 // SAFETY: `buf` is a prebuilt concat of full baseline frames;
                 // each `off` is a message start with proven header+body extent.
                 let (serial, year) =
-                    throughput_decode_ergo(black_box(buf.as_slice()), off, bl_e, ver_e);
+                    unsafe { throughput_decode_ergo(black_box(buf.as_slice()), off, bl_e, ver_e) };
                 total += serial;
                 total_year += year;
                 off += msg_len;

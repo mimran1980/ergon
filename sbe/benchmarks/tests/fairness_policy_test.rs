@@ -21,7 +21,7 @@ fn function_source<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     let rest = &source[start..];
     let tail = &rest[signature.len()..];
     let mut end = rest.len();
-    for marker in ["\nfn ", "\npub fn ", "\npub(crate) fn "] {
+    for marker in ["\nfn ", "\npub fn ", "\npub(crate) fn ", "\npub unsafe fn "] {
         if let Some(offset) = tail.find(marker) {
             end = end.min(signature.len() + offset);
         }
@@ -82,9 +82,10 @@ fn maintained_bench_sources_have_a_correctness_preflight() -> Result<(), Box<dyn
 }
 
 #[test]
-fn gated_throughput_functions_assert_inside_the_function() {
+fn gated_throughput_functions_assert_inside_the_function() -> Result<(), Box<dyn std::error::Error>>
+{
     for name in ["bench_encode_throughput", "bench_throughput_batch"] {
-        gated_function_preflight(PERF_PARITY, name).unwrap_or_else(|err| panic!("{err}"));
+        gated_function_preflight(PERF_PARITY, name)?;
     }
     // A file-level assert does not cover a gated function that has none.
     let file_level_only = "\nfn setup() {\n    assert_eq!(1, 1);\n}\nfn bench_encode_throughput() {\n    let _ = BATCH_SIZE;\n}\n";
@@ -93,7 +94,7 @@ fn gated_throughput_functions_assert_inside_the_function() {
         "a file-level assert must not satisfy the per-function check"
     );
     let real =
-        function_source(PERF_PARITY, "bench_encode_throughput").expect("bench_encode_throughput");
+        function_source(PERF_PARITY, "bench_encode_throughput").ok_or("bench_encode_throughput")?;
     let stripped = format!(
         "\nfn setup() {{ assert_eq!(1, 1); }}\n{}\nfn after() {{}}\n",
         real.replace("assert_eq!", "let _kept = ")
@@ -102,6 +103,7 @@ fn gated_throughput_functions_assert_inside_the_function() {
         gated_function_preflight(&stripped, "bench_encode_throughput").is_err(),
         "removing the assert from bench_encode_throughput must fail the policy"
     );
+    Ok(())
 }
 
 #[test]
@@ -130,15 +132,15 @@ fn throughput_preflight_matches_bytes_and_batch_totals() {
     for chunk in buf.chunks_mut(msg_len) {
         chunk.copy_from_slice(baseline);
     }
-    let block_length = u16::from_le_bytes(baseline[0..2].try_into().unwrap()) as usize;
-    let version = u16::from_le_bytes(baseline[6..8].try_into().unwrap());
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
     let decoded = sample_decode_throughput(
         &buf,
         msg_len,
         10_000,
-        block_length,
+        usize::from(block_length),
         version,
-        block_length as u16,
+        block_length,
         version,
     );
     assert_eq!(&buf[..msg_len], &baseline[..]);
@@ -146,6 +148,55 @@ fn throughput_preflight_matches_bytes_and_batch_totals() {
     assert_eq!(decoded.ergo_year, decoded.tool_year);
     assert_eq!(decoded.ergo_serial, 10_000 * decoded.one_serial);
     assert_eq!(decoded.ergo_year, 10_000 * decoded.one_year);
+}
+
+#[test]
+#[should_panic(expected = "a zero-length message would never advance")]
+fn decode_preflight_rejects_zero_stride() {
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
+    // The backing frame is complete even before the fix, so this negative
+    // test never attempts an out-of-bounds read on the unsound implementation.
+    ergo_sbe_benchmarks::sample_decode_throughput(
+        baseline,
+        0,
+        1,
+        usize::from(block_length),
+        version,
+        block_length,
+        version,
+    );
+}
+
+#[test]
+fn decode_preflight_rejects_missing_or_truncated_frames() {
+    use ergo_sbe_benchmarks::sample_decode_throughput;
+
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
+    for (buf, stride, count) in [
+        (&[][..], baseline.len(), 0),
+        (&baseline[..8], baseline.len(), 1),
+        (&baseline[..], baseline.len(), 2),
+        (&baseline[..], usize::MAX, 2),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                sample_decode_throughput(
+                    buf,
+                    stride,
+                    count,
+                    usize::from(block_length),
+                    version,
+                    block_length,
+                    version,
+                )
+            })
+            .is_err()
+        );
+    }
 }
 
 #[test]
