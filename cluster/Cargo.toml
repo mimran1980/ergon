@@ -29,6 +29,7 @@ autobenches = false
 rusteron-client = { workspace = true }
 thiserror = "2"
 # Runtime dep for `sbe_mod!` (generated codecs live in OUT_DIR).
+# fancy is disabled on the workspace dependency; Cargo rejects it on this line.
 ergo-sbe = { workspace = true }
 
 [features]

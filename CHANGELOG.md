@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Fixed
+- **The cluster crate enabled ergo-sbe's default `fancy` feature on both
+  the runtime dependency and the build dependency.** That pulls miette's
+  graphical renderer into the cluster build and changes no codec API.
+  `default-features = false` is set on the workspace dependency both edges
+  inherit. Cargo 1.95 rejects that key on an inherited dependency, and
+  leaving either edge on its own defaults keeps `fancy` through feature
+  unification.
 - **The gated 10k encode and decode benchmarks had no per-function
   correctness check.** Both arms now share one per-message body with an
   untimed preflight: the encode buffers match byte for byte, and the decode

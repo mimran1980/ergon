@@ -36,9 +36,11 @@ policy:
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
     bash scripts/tests/test-stale-deny-ignores.sh
+    bash scripts/tests/test-cluster-ergo-sbe-features.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
     ./scripts/check-stale-deny-ignores.sh
+    ./scripts/check-cluster-ergo-sbe-features.sh
 
 # Every cheap correctness gate in one pass — the ones that otherwise only run
 # inside `just release`.
@@ -75,6 +77,7 @@ preflight:
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
     bash scripts/tests/test-stale-deny-ignores.sh
+    bash scripts/tests/test-cluster-ergo-sbe-features.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -90,6 +93,7 @@ preflight:
     @echo "=== config ==="
     ./scripts/check-mutation-config.sh
     ./scripts/check-stale-deny-ignores.sh
+    ./scripts/check-cluster-ergo-sbe-features.sh
     @echo ""
     @echo "audit: all cheap gates pass"
 
