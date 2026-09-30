@@ -46,6 +46,28 @@ write_repo '{ path = "sbe", default-features = false }' \
     '{ workspace = true }' '{ path = "../sbe" }'
 expect_failure '[build-dependencies] ergo-sbe keeps default features'
 
+# An inheriting edge can explicitly opt back into defaults.
+write_repo '{ path = "sbe", default-features = false }' \
+    '{ workspace = true, default-features = true }' '{ workspace = true }'
+expect_failure '[dependencies] ergo-sbe keeps default features'
+write_repo '{ path = "sbe", default-features = false }' \
+    '{ workspace = true }' '{ workspace = true, default-features = true }'
+expect_failure '[build-dependencies] ergo-sbe keeps default features'
+
+# Explicit features are additive, on the workspace or either local edge.
+for feature in fancy default; do
+    write_repo "{ path = \"sbe\", default-features = false, features = [\"$feature\"] }" \
+        '{ workspace = true }' '{ workspace = true }'
+    expect_failure '[dependencies] ergo-sbe keeps default features'
+    expect_failure '[build-dependencies] ergo-sbe keeps default features'
+    write_repo '{ path = "sbe", default-features = false }' \
+        "{ workspace = true, features = [\"$feature\"] }" '{ workspace = true }'
+    expect_failure '[dependencies] ergo-sbe keeps default features'
+    write_repo '{ path = "sbe", default-features = false }' \
+        '{ workspace = true }' "{ workspace = true, features = [\"$feature\"] }"
+    expect_failure '[build-dependencies] ergo-sbe keeps default features'
+done
+
 write_repo '{ path = "sbe", default-features = false }' \
     '{ workspace = true }' '{ workspace = true }'
 "$checker" "$fixture" >/dev/null

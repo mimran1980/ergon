@@ -2,7 +2,8 @@
 # Cluster's ergo-sbe edges must not enable default features. The default is
 # miette's fancy renderer. Cargo 1.95 rejects default-features on an inherited
 # dependency, so the flag lives on the workspace dependency both edges inherit.
-# Leaving either edge on its own defaults keeps fancy through unification.
+# Leaving either edge on defaults or explicitly enabling default/fancy keeps
+# the renderer through feature unification.
 set -euo pipefail
 
 root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
@@ -19,22 +20,26 @@ inherited = (
     .get("ergo-sbe")
 )
 
-def keeps_defaults(dep):
-    if isinstance(dep, dict) and dep.get("default-features") is False:
-        return False
-    if isinstance(dep, dict) and dep.get("workspace") is True:
-        return not (
-            isinstance(inherited, dict) and inherited.get("default-features") is False
-        )
-    return True
+def enables_fancy(dep):
+    if not isinstance(dep, dict):
+        return True
+    features = set(dep.get("features", []))
+    if dep.get("workspace") is True:
+        if not isinstance(inherited, dict):
+            return True
+        features.update(inherited.get("features", []))
+        defaults = inherited.get("default-features", True) or dep.get("default-features", False)
+    else:
+        defaults = dep.get("default-features", True)
+    return defaults or bool(features & {"default", "fancy"})
 
 failed = False
 for table in ("dependencies", "build-dependencies"):
     dep = (cluster.get(table) or {}).get("ergo-sbe")
-    if dep is None or keeps_defaults(dep):
+    if dep is None or enables_fancy(dep):
         print(
             f"check-cluster-ergo-sbe-features: FAIL — [{table}] ergo-sbe "
-            "keeps default features"
+            "keeps default features or enables fancy explicitly"
         )
         failed = True
 if failed:
