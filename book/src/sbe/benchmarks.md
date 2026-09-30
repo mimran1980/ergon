@@ -14,10 +14,9 @@ Ratios are ergon / sbe-tool. Target is **`1.00`**.
 
 | Comparison | no-LTO | LTO |
 |---|---:|---:|
-| SBE `optional_enum_nullify` | 1.01 | 1.01 |
 | Cluster session-message-header decode | 1.01 | 1.01 |
 | Cluster session-event decode | 1.05 | 1.01 |
-| All other maintained comparisons | 1.00 | 1.00 |
+| All other maintained comparisons, including SBE `optional_enum_nullify` | 1.00 | 1.00 |
 
 A gate pass is not literal `1.00` everywhere. Read the printed ratios.
 A ceiling above `1.00` records a repeatable sbe-tool win; it is not permission

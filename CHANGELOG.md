@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **`optional_enum_nullify` is gated at 1.00 in both profiles.** Both arms
+  keep four independent totals of the same three decoded fields, so the row
+  measures decode throughput. The 1.01 allowance was for a single running
+  total, which measured loop latency.
+
 ### Fixed
 - **The cluster crate enabled ergo-sbe's default `fancy` feature on both
   the runtime dependency and the build dependency.** That pulls miette's

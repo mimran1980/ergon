@@ -26,9 +26,10 @@ Each `just bench` invocation owns one unique result root under
 
 The gate reads only that root. It fails closed on missing, incomplete, stale, or
 mixed-run results, so a release can never pass on evidence from another run. Both
-profiles (LTO and no-LTO) are blocking. The SBE target is `1.00`; the current
-script permits `1.01` for `optional_enum_nullify` without LTO. Check actual
-ratios as well as the pass/fail result.
+profiles (LTO and no-LTO) are blocking. Every maintained SBE comparison,
+including `optional_enum_nullify`, has a ceiling of `1.00`. Cluster decode
+ceilings are listed in the book's gate table. Check actual ratios as well
+as the pass/fail result.
 
 Quote a result by naming its run id, commit, and host — or do not quote it.
 
@@ -92,11 +93,11 @@ exists, not at runtime.
 
 ### SBE codec gate — `just bench`
 
-Ratios are ergon / sbe-tool. The project target is **`1.00`**. The current
-script permits `1.01` for SBE `optional_enum_nullify` without LTO; other SBE
-cases use `1.00`. Cluster decode also has explicit `1.01` / `1.05` exceptions,
-listed in the [book's gate table](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
-These are existing allowances, not proof of literal parity. Inspect actual
+Ratios are ergon / sbe-tool. The project target is **`1.00`** for every
+maintained SBE comparison, including `optional_enum_nullify`. Cluster decode
+has explicit `1.01` / `1.05` exceptions, listed in the
+[book's gate table](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
+Those cluster allowances are not proof of literal parity. Inspect actual
 ratios and profile-specific ceilings before treating a passing gate as evidence
 that every case meets `1.00`.
 On Linux, `scripts/run-sbe-instruction-probes.sh` fails when any registered

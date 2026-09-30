@@ -350,11 +350,6 @@ const NOISE_FLOOR_CEILING_EXCEPTIONS: &[&str] = &[
     "cluster_decode_session_message_header",
     // also carries a no-LTO-only override; see PROFILE_SCOPED_OVERRIDE_MAX
     "cluster_decode_session_event",
-    // Both profiles since 2026-09-25: the pairs table declares 1.01, which
-    // `no_maintained_ceiling_exceeds_one` bounds at 1.01. LTO measured
-    // 1.0032 / 0.9976 / 1.0002 / 1.0018 that day; no-LTO carried the same
-    // allowance before (observed 1.0011-1.0062).
-    "extended_optional_enum_nullify",
 ];
 
 /// Documented maximum for each profile-scoped override, per label. Each entry
@@ -476,58 +471,55 @@ fn tree_with_ratio(
 
 const NULLIFY: &str = "parity_extended_optional_enum_nullify";
 
-/// `extended_optional_enum_nullify` carries a documented 1.01 allowance in
-/// both profiles: the pair is decided by code placement at ~0.8 ns/op, and
-/// measured a tie (1.0011-1.0062 no-LTO; 0.9976-1.0032 LTO on 2026-09-25).
-/// The sbe-tool arm is not stable across build sessions (1002 ns vs 777 ns
-/// with byte-identical source), so do not tighten it from a single green run.
-/// See the rationale block in `scripts/check-bench-gate.sh`.
+/// `extended_optional_enum_nullify` is literal 1.00 in both profiles. The
+/// arms share four independent totals of the same three reads, so a ratio
+/// above 1.00 is a real loss, not the old single-total placement tie.
 #[test]
-fn nullify_within_the_allowance_passes_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_above_one_fails_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.005)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
-        output.status.success(),
-        "nullify at 1.005 is inside the documented 1.01 no-LTO allowance:\n{}",
+        !output.status.success(),
+        "nullify at 1.005 must fail the 1.00 no-LTO ceiling:\n{}",
         describe(&output)
     );
     Ok(())
 }
 
-/// The allowance is bounded — it admits a tie, not a regression.
+/// A wider miss fails the same way.
 #[test]
-fn nullify_beyond_the_allowance_fails_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_further_above_one_fails_under_no_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("no-lto", NULLIFY, 1.02)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
         !output.status.success(),
-        "nullify at 1.02 exceeds the 1.01 no-LTO allowance and must fail:\n{}",
+        "nullify at 1.02 must fail the 1.00 no-LTO ceiling:\n{}",
         describe(&output)
     );
     Ok(())
 }
 
-/// The allowance holds under LTO too, where the pair measured the same tie.
+/// LTO uses the same 1.00 ceiling as no-LTO.
 #[test]
-fn nullify_within_the_allowance_passes_under_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_above_one_fails_under_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("lto", NULLIFY, 1.005)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
-        output.status.success(),
-        "nullify at 1.005 is inside the documented 1.01 allowance under LTO:\n{}",
+        !output.status.success(),
+        "nullify at 1.005 must fail the 1.00 LTO ceiling:\n{}",
         describe(&output)
     );
     Ok(())
 }
 
-/// Under LTO it is bounded the same way: a tie passes, a regression fails.
+/// A wider LTO miss fails the same way.
 #[test]
-fn nullify_beyond_the_allowance_fails_under_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn nullify_further_above_one_fails_under_lto() -> Result<(), Box<dyn std::error::Error>> {
     let criterion = tree_with_ratio("lto", NULLIFY, 1.02)?;
     let output = run_gate(&criterion.0, &[])?;
     assert!(
         !output.status.success(),
-        "nullify at 1.02 exceeds the 1.01 allowance and must fail under LTO:\n{}",
+        "nullify at 1.02 must fail the 1.00 LTO ceiling:\n{}",
         describe(&output)
     );
     Ok(())

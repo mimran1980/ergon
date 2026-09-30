@@ -84,10 +84,9 @@ not raise them further:
 
 | Comparison | no-LTO | LTO |
 |---|---:|---:|
-| SBE `optional_enum_nullify` | 1.01 | 1.01 |
 | Cluster session-message-header decode | 1.01 | 1.01 |
 | Cluster session-event decode | 1.05 | 1.01 |
-| All other maintained comparisons | 1.00 | 1.00 |
+| All other maintained comparisons, including SBE `optional_enum_nullify` | 1.00 | 1.00 |
 
 A gate pass is not literal `1.00` everywhere. A ceiling above `1.00` records a
 repeatable sbe-tool win on a placement-sensitive micro-op; it is not permission

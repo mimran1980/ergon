@@ -687,13 +687,12 @@ fn group_with_data_timed_arms_both_read_entry_fields_and_var_data()
 #[test]
 fn optional_enum_nullify_arms_make_the_same_values_opaque() -> Result<(), Box<dyn std::error::Error>>
 {
-    // Both codecs compile this scenario to the same three member loads, so the
-    // pair is a near-tie decided by what the harness adds around them. Ergon's
-    // arm once black-boxed its message offset while sbe-tool's passed a literal
-    // body offset: ergon alone paid a per-iteration stack store/reload, and
-    // code placement then decided the LTO verdict (a crate version bump with no
-    // code change moved the ratio from 0.77 to 1.01). Every value one arm makes
-    // opaque, the other must too.
+    // Both codecs compile one message to the same three member loads. A single
+    // running total makes those loads a latency chain, which is not the
+    // throughput the row gates: each arm keeps four independent totals and
+    // calls the same per-message fold. Ergon's arm once black-boxed its
+    // message offset while sbe-tool's passed a literal body offset. Every
+    // value one arm makes opaque, the other must too.
     let source = get_source(PERF_PARITY_EXTENDED, "bench_optional_enum_nullify")?;
     let ergo = strip_line_comments(
         timed_arm_body(source, "ergo-sbe").ok_or("missing ergo optional-enum-nullify arm")?,
@@ -719,7 +718,26 @@ fn optional_enum_nullify_arms_make_the_same_values_opaque() -> Result<(), Box<dy
                 "{label} optional-enum-nullify arm must read {member} exactly once per message"
             );
         }
+        assert_eq!(
+            arm.matches(".wrapping_add(fold_message(encoded").count(),
+            4,
+            "{label} optional-enum-nullify arm must keep four independent totals"
+        );
+        assert!(
+            arm.contains("for _ in 0..(AMP / INDEPENDENT_SUMS)"),
+            "{label} optional-enum-nullify amplification must be split across the independent totals"
+        );
+        assert_eq!(
+            arm.matches("black_box(s0.wrapping_add(s1).wrapping_add(s2).wrapping_add(s3))")
+                .count(),
+            1,
+            "{label} must observe every independent total"
+        );
     }
+    assert!(
+        PERF_PARITY_EXTENDED.contains("const INDEPENDENT_SUMS: usize = 4;"),
+        "optional-enum-nullify independent-total count drifted from the four folds"
+    );
     assert_eq!(
         ergo.matches("black_box(").count(),
         tool.matches("black_box(").count(),

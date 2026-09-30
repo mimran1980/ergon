@@ -30,29 +30,20 @@ use ergo_sbe_benchmarks::parity_optional_enum_nullify::{
 use std::hint::black_box;
 
 const AMP: usize = 1024;
+// One running total makes the amplified loop a single dependency chain. On
+// that shape sbe-tool's predicted length checks cover the `black_box` spill
+// and can beat ergon's shorter unchecked body. Four totals are the same
+// three reads per message, overlapped, which is the throughput this row gates.
+const INDEPENDENT_SUMS: usize = 4;
+const _: () = assert!(AMP % INDEPENDENT_SUMS == 0);
 
 // Both arms decode the same three members: two enums and the optional
-// composite's counter.
-//
-// Under LTO both codecs compile this to the same three member loads; sbe-tool
-// additionally pays three well-predicted length checks, and its composite
-// flyweight (`optional_composite_decoder`) costs nothing once inlined. The
-// scenario is a near-tie whose wall-clock ratio is decided by code placement:
-// bumping the crate version from 0.1.27 to 0.1.28, with no code change,
-// moved sbe-tool's arm from ~1008 ns to ~777 ns and the LTO ratio from 0.77
-// to 1.01, while the timed loops stayed instruction-for-instruction identical
-// between the green and red builds. The ~0.78 "margin" once credited to the
-// flyweight was placement, not API work.
-//
-// That makes harness symmetry load-bearing. Both arms make the encoded buffer
-// opaque once per message and pass a literal offset (ergon's message offset
-// 0, sbe-tool's body offset 8), as the `perf_probe` mechanism probes do.
-// Ergon's arm once black-boxed its offset too, paying a per-iteration stack
-// store/reload sbe-tool never did; `fairness_policy_test` rejects any value
-// made opaque in one arm only. Instruction-probe Ir/op
-// (`just bench-instructions`) is a Linux-only mechanism check, not a
-// substitute for this ceiling. Re-run `just bench` on an idle machine if
-// wall-clock flips.
+// composite's counter. Each message makes the encoded buffer opaque once and
+// passes a literal offset (ergon's message offset 0, sbe-tool's body offset
+// 8). Harness symmetry is load-bearing: black-boxing only ergon's offset
+// made that arm alone spill a register every iteration, and placement then
+// swung the LTO ratio from 0.77 to 1.01. `fairness_policy_test` rejects any
+// value made opaque in one arm only.
 fn bench_optional_enum_nullify(c: &mut Criterion) {
     let mut group = c.benchmark_group("parity_extended/optional_enum_nullify");
     group.throughput(Throughput::Elements(AMP as u64));
@@ -89,52 +80,75 @@ fn bench_optional_enum_nullify(c: &mut Criterion) {
             ergo.required_enum_from_optional_type() as u32,
             tool.required_enum_from_optional_type() as u32
         );
+        assert_eq!(
+            ergo.optional_composite().optional_counter(),
+            tool.optional_composite_decoder().optional_counter()
+        );
     }
 
     group.bench_function("ergo-sbe", |b| {
         b.iter(|| {
-            let mut count: u32 = 0;
-            for _ in 0..AMP {
+            #[inline(always)]
+            fn fold_message(encoded: &[u8], block_length: usize, version: u16) -> u32 {
                 let dec = unsafe {
                     OptionalEnumNullifyDecoder::wrap_unchecked(
                         black_box(encoded),
                         0,
-                        oe_bl,
-                        oe_version,
+                        block_length,
+                        version,
                     )
                 };
-                count = count.wrapping_add(dec.optional_enum() as u32);
-                count = count.wrapping_add(dec.required_enum_from_optional_type() as u32);
-                count = count
-                    .wrapping_add(dec.optional_composite().optional_counter().unwrap_or(0) as u32);
+                (dec.optional_enum() as u32)
+                    .wrapping_add(dec.required_enum_from_optional_type() as u32)
+                    .wrapping_add(dec.optional_composite().optional_counter().unwrap_or(0) as u32)
             }
-            black_box(count);
+            let mut s0: u32 = 0;
+            let mut s1: u32 = 0;
+            let mut s2: u32 = 0;
+            let mut s3: u32 = 0;
+            for _ in 0..(AMP / INDEPENDENT_SUMS) {
+                s0 = s0.wrapping_add(fold_message(encoded, oe_bl, oe_version));
+                s1 = s1.wrapping_add(fold_message(encoded, oe_bl, oe_version));
+                s2 = s2.wrapping_add(fold_message(encoded, oe_bl, oe_version));
+                s3 = s3.wrapping_add(fold_message(encoded, oe_bl, oe_version));
+            }
+            black_box(s0.wrapping_add(s1).wrapping_add(s2).wrapping_add(s3));
         });
     });
 
     group.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use sbe_tool_optional_enum_nullify::{
-                ReadBuf,
-                optional_enum_nullify_codec::decoder::OptionalEnumNullifyDecoder as StDecoder,
-            };
-            let mut count: u32 = 0;
-            for _ in 0..AMP {
+            #[inline(always)]
+            fn fold_message(encoded: &[u8]) -> u32 {
+                use sbe_tool_optional_enum_nullify::{
+                    ReadBuf,
+                    optional_enum_nullify_codec::decoder::OptionalEnumNullifyDecoder as StDecoder,
+                };
                 let dec = StDecoder::default().wrap(
                     ReadBuf::new(black_box(encoded)),
                     8,
                     OptionalEnumNullifyDecoder::BLOCK_LENGTH as u16,
                     OptionalEnumNullifyDecoder::SCHEMA_VERSION,
                 );
-                count = count.wrapping_add(dec.optional_enum() as u32);
-                count = count.wrapping_add(dec.required_enum_from_optional_type() as u32);
-                count = count.wrapping_add(
-                    dec.optional_composite_decoder()
-                        .optional_counter()
-                        .unwrap_or(0) as u32,
-                );
+                (dec.optional_enum() as u32)
+                    .wrapping_add(dec.required_enum_from_optional_type() as u32)
+                    .wrapping_add(
+                        dec.optional_composite_decoder()
+                            .optional_counter()
+                            .unwrap_or(0) as u32,
+                    )
             }
-            black_box(count);
+            let mut s0: u32 = 0;
+            let mut s1: u32 = 0;
+            let mut s2: u32 = 0;
+            let mut s3: u32 = 0;
+            for _ in 0..(AMP / INDEPENDENT_SUMS) {
+                s0 = s0.wrapping_add(fold_message(encoded));
+                s1 = s1.wrapping_add(fold_message(encoded));
+                s2 = s2.wrapping_add(fold_message(encoded));
+                s3 = s3.wrapping_add(fold_message(encoded));
+            }
+            black_box(s0.wrapping_add(s1).wrapping_add(s2).wrapping_add(s3));
         });
     });
 
