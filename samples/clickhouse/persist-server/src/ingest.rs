@@ -10,7 +10,8 @@
 //! table remembers the last 1000 inserts.
 //!
 //! An archive error from [`Ingester::tick`] means this connection is dead.
-//! A new process resumes from the checkpoints.
+//! A new process resumes from the checkpoints. A crash drops at most the
+//! open 5 s histogram window.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -171,8 +172,9 @@ impl Ingester {
             record_feeds(&self.archive, &streams, &self.host_ip, &mut self.feeds)?;
         }
         self.open_replays(&mut report)?;
+        let mut caught_up = false;
         if self.pending.is_none() {
-            self.poll(true)?;
+            caught_up = self.poll(true)?;
             if self.polled != self.checkpoints {
                 // The token is this file. An insert before it is durable can
                 // be replayed as a different batch and land twice.
@@ -192,7 +194,10 @@ impl Ingester {
                 self.writer.log(&report);
                 return Ok(report);
             }
+            caught_up = true;
         }
+        self.writer
+            .flush_elapsed_histograms(Self::unix_now_ns(), caught_up);
         if let Some(pending) = &self.pending {
             self.writer.set_dedup_token(&dedup_token(pending));
         } else {
@@ -329,14 +334,18 @@ impl Ingester {
 
     /// Hand replayed messages to the writer, a batch from each recording in
     /// turn, until it holds `max_queued` bytes; the rest waits in the archive.
-    fn poll(&mut self, capped: bool) -> Result<(), Error> {
+    /// `true` when every subscription returned nothing. Hitting the cap is
+    /// `false` even when that same poll also emptied them.
+    fn poll(&mut self, capped: bool) -> Result<bool, Error> {
         let max_queued = self.max_queued;
         let writer = &mut self.writer;
         let mut finished = Vec::new();
+        let mut caught_up = true;
         loop {
             let mut any = false;
             for (&recording, replay) in &mut self.replays {
                 if capped && writer.queued_bytes() >= max_queued {
+                    caught_up = false;
                     break;
                 }
                 let feed = replay.feed;
@@ -362,6 +371,9 @@ impl Ingester {
                 any |= polled > 0;
             }
             if !any || (capped && writer.queued_bytes() >= max_queued) {
+                if capped && writer.queued_bytes() >= max_queued {
+                    caught_up = false;
+                }
                 break;
             }
         }
@@ -379,7 +391,15 @@ impl Ingester {
                 let _ = self.archive.stop_replay(replay.session);
             }
         }
-        Ok(())
+        Ok(caught_up)
+    }
+
+    fn unix_now_ns() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+            })
     }
 
     fn clear_pending(&mut self, report: &mut Report) {

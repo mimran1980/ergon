@@ -276,9 +276,9 @@ impl Source {
             Self::Metrics => {
                 metrics::write_metrics(message, include, origin, dict.defs, out).map(|n| (n, 0))
             }
-            Self::Histograms => {
-                metrics::write_histogram(message, include, origin, dict.defs, out).map(|n| (n, 0))
-            }
+            Self::Histograms => Err(table::DecodeError(
+                "histogram rows are written from the 5 s fold, not from the queued message",
+            )),
             Self::Traces => {
                 traces::write_trace(message, include, origin, who, dict.traces, out).map(|n| (n, 0))
             }
@@ -432,6 +432,8 @@ pub struct Writer {
     origins: HashMap<u64, Origin>,
     /// Metric series by id, from `MetricDef` messages (and the saved file).
     defs: HashMap<u64, MetricDef>,
+    /// Open 5 s histogram windows, and the rows waiting to be inserted.
+    hist: metrics::Fold,
     /// Traces by id, from `TraceDef` messages (and the saved file).
     trace_defs: HashMap<u64, TraceDef>,
     /// Rows whose source id no `Source` message has named yet.
@@ -486,6 +488,7 @@ impl Writer {
             shapes: HashMap::new(),
             origins: HashMap::new(),
             defs: HashMap::new(),
+            hist: metrics::Fold::default(),
             trace_defs: HashMap::new(),
             unknown_origins: 0,
             shapes_path: None,
@@ -630,9 +633,9 @@ impl Writer {
         true
     }
 
-    /// Queue a `Metrics` or `Histogram` message, or hold it until the
-    /// `MetricDef` of every series in it has arrived (each is sent every
-    /// interval), as event rows wait for their shape.
+    /// Queue a `Metrics` message, or fold a `Histogram` message into its 5 s
+    /// window. Hold either until the `MetricDef` of every series in it has
+    /// arrived (each is sent every interval), as event rows wait for their shape.
     fn push_metrics(&mut self, message: &[u8], source: u64, counters: bool) -> bool {
         match metrics::unknown_series(message, &self.defs) {
             None => {
@@ -641,7 +644,7 @@ impl Writer {
                 true
             }
             Some(0) if counters => self.queue(Source::Metrics, message, source),
-            Some(0) => self.queue(Source::Histograms, message, source),
+            Some(0) => self.fold_histogram(message, source),
             Some(_) => {
                 self.queued_bytes += message.len();
                 self.pending
@@ -649,6 +652,32 @@ impl Writer {
                 true
             }
         }
+    }
+
+    /// Fold one known `Histogram` message. The open window is not charged:
+    /// counting it would hold the checkpoint until the window closed.
+    fn fold_histogram(&mut self, message: &[u8], source: u64) -> bool {
+        let before = self.hist.ready.len();
+        if let Err(err) = self.hist.push_message(message, source, self.feed) {
+            self.shape_errors
+                .push(format!("a malformed Histogram message, skipped: {}", err.0));
+            return true;
+        }
+        self.charge_ready(before);
+        true
+    }
+
+    fn charge_ready(&mut self, before: usize) {
+        self.queued_bytes += (self.hist.ready.len() - before) * metrics::HIST_ROW_BYTES;
+    }
+
+    /// Close histogram windows the wall clock has passed. `caught_up` is
+    /// false while a replay is still short of its batch or the queue is at
+    /// its cap, so a partial read does not publish a window early.
+    pub(crate) fn flush_elapsed_histograms(&mut self, now: u64, caught_up: bool) {
+        let before = self.hist.ready.len();
+        self.hist.flush_elapsed(now, caught_up);
+        self.charge_ready(before);
     }
 
     /// Keep every event shape and source in `path` (each a `u32` LE
@@ -985,12 +1014,113 @@ impl Writer {
         }
     }
 
+    /// Insert histogram rows the fold has closed. A failed insert puts the
+    /// attempted rows back and leaves them charged, so the checkpoint waits.
+    fn flush_histograms(&mut self, report: &mut Report) {
+        if self.hist.ready.is_empty() {
+            return;
+        }
+        let Some(index) = self
+            .tables
+            .iter()
+            .position(|state| matches!(state.source, Source::Histograms))
+        else {
+            return;
+        };
+        let Some(include_all) = self.tables[index].include.clone() else {
+            return;
+        };
+        let charged = self.hist.ready.len();
+        let ready = std::mem::take(&mut self.hist.ready);
+        let (include, origin_flags) =
+            include_all.split_at(include_all.len() - ORIGIN_COLUMNS.len());
+        let config = self.tables[index].config.clone();
+        let now = jiff::Timestamp::now();
+        self.rows.clear();
+        let mut attempted = Vec::new();
+        let mut dropped = 0usize;
+        for row in ready {
+            let known = self
+                .origins
+                .get(&row.source)
+                .map(|origin| (origin.host.clone(), origin.pod.clone(), origin.app.clone()));
+            if known.is_none() && row.source != 0 {
+                self.unknown_origins += 1;
+            }
+            let (host, pod, app) = known.unwrap_or_default();
+            if row.feed && !config.as_ref().is_some_and(|c| c.is_on(&app, now)) {
+                dropped += 1;
+                continue;
+            }
+            let Some(def) = self.defs.get(&row.series).cloned() else {
+                report.errors.push(format!(
+                    "{}: series {} has no MetricDef, dropped",
+                    metrics::HISTOGRAMS,
+                    row.series
+                ));
+                dropped += 1;
+                continue;
+            };
+            let mut origin = Vec::new();
+            for (name, keep) in [&host, &pod, &app].into_iter().zip(origin_flags) {
+                if *keep {
+                    table::write_string(name.as_bytes(), &mut origin);
+                }
+            }
+            metrics::write_ready(&row, include, &origin, &def, &mut self.rows);
+            attempted.push(row);
+        }
+        let written = attempted.len();
+        debug_assert_eq!(charged, written + dropped);
+        let columns = self.tables[index].columns.clone();
+        let column_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
+        let inserted = if written == 0 {
+            Ok(())
+        } else {
+            self.ch.insert_token(
+                metrics::HISTOGRAMS,
+                &column_refs,
+                &self.rows,
+                &self.dedup_token,
+            )
+        };
+        match inserted {
+            Ok(()) => {
+                if written > 0 {
+                    report
+                        .inserted
+                        .insert(metrics::HISTOGRAMS.to_string(), written);
+                    *self
+                        .totals
+                        .entry(metrics::HISTOGRAMS.to_string())
+                        .or_default() += written as u64;
+                }
+                self.queued_bytes -= (written + dropped) * metrics::HIST_ROW_BYTES;
+            }
+            Err(e) => {
+                report.errors.push(format!(
+                    "{}: insert failed, keeping {} records to retry: {e}",
+                    metrics::HISTOGRAMS,
+                    attempted.len()
+                ));
+                self.queued_bytes -= dropped * metrics::HIST_ROW_BYTES;
+                self.hist.ready = attempted;
+                let state = &mut self.tables[index];
+                state.include = None;
+                state.retry_at = Instant::now();
+                self.database_ready = false;
+            }
+        }
+    }
+
     fn flush(&mut self, report: &mut Report) {
+        self.flush_histograms(report);
         for state in &mut self.tables {
             let Some(include) = &state.include else {
                 continue; // re-synced first; the messages wait
             };
-            if state.queued_count == 0 {
+            // Histogram rows come from the 5 s fold, not from a queued message.
+            if state.queued_count == 0 || matches!(state.source, Source::Histograms) {
                 continue;
             }
             self.rows.clear();

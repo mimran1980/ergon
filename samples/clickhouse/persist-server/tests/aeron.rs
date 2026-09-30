@@ -669,27 +669,19 @@ fn metrics_reach_their_tables_every_interval() -> TestResult {
         )?,
         "1000\t1000\t1000000\t500500000\tdecode"
     );
-    // Within the buckets' 2^-5 of the true values, from the row's own
-    // percentiles and from merging buckets.
-    let near = |got: &str, want: f64| -> TestResult {
-        let got: f64 = got.parse()?;
-        if (got - want).abs() > want / 32.0 {
-            return Err(format!("{got} is not within 3.1% of {want}").into());
-        }
-        Ok(())
-    };
-    near(
-        &lab.query("SELECT p50 FROM DB.metrics_histogram")?,
-        500_000.0,
-    )?;
-    near(
-        &lab.query("SELECT p99 FROM DB.metrics_histogram")?,
-        990_000.0,
-    )?;
-    near(
-        &lab.query("SELECT quantileExactWeighted(0.99)(le, c) FROM DB.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c")?,
-        990_000.0,
-    )?;
+    let avg: f64 = lab.query("SELECT avg FROM DB.metrics_histogram")?.parse()?;
+    assert_eq!(avg, 500_500.0);
+    let p50: f64 = lab.query("SELECT p50 FROM DB.metrics_histogram")?.parse()?;
+    let p99: f64 = lab.query("SELECT p99 FROM DB.metrics_histogram")?.parse()?;
+    assert_eq!(p50, p99);
+    let scale = 500_500.0;
+    if (p50 - scale).abs() > scale * 0.001 {
+        return Err(format!("{p50} is not within 0.1% of {scale}").into());
+    }
+    let p9999: f64 = lab
+        .query("SELECT p9999 FROM DB.metrics_histogram")?
+        .parse()?;
+    assert_eq!(p9999, 1_000_000.0);
     Ok(())
 }
 

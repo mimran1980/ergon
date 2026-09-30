@@ -287,7 +287,7 @@ loop {
     sent.inc();
     depth.set(12.0);
     t2t.record(850);
-    metrics.poll(now); // one compare until the 5 s boundary, then one message
+    metrics.poll(now); // one compare until the next millisecond or the 5 s boundary
 }
 ```
 
@@ -303,19 +303,30 @@ tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
 tracing::info!(histogram = "tick_to_trade_ns", value = 850u64);
 ```
 
-Histograms are log-linear: 32 buckets per power of two, within 3.1%, from 0
-to `u64::MAX`. Buckets add across intervals. Percentiles of a single interval
-do not. Merge the buckets:
+A histogram records the count, the sum, the minimum, and the maximum. Every
+millisecond that had samples, `poll` publishes that summary. An empty
+millisecond publishes nothing. Counters and gauges stay on the 5 s interval.
+
+The ingester keeps an HdrHistogram of 3 significant figures for each series
+and folds each summary into the 5 s window: the minimum, the maximum, and
+the mean of the rest. A busy millisecond pulls the percentiles toward that
+mean. The row stores `count`, `sum`, `min`, `max`, `avg`, `p50`, `p75`,
+`p90`, `p99`, `p999`, `p9999`, and `p99999`. `avg` is the exact sum divided
+by the count. `min` and `max` stay exact. `interval_ns` is 5 s.
+
+Percentiles do not merge across rows. Weight them by count:
 
 ```sql
-SELECT quantileExactWeighted(0.99)(le, c) / 1e3 AS p99_us
-FROM market.metrics_histogram ARRAY JOIN buckets.le AS le, buckets.count AS c
-WHERE name = 'record_ns' AND ts > now() - INTERVAL 1 HOUR
+SELECT sum(p99 * count) / sum(count)
+FROM market.metrics_histogram
+WHERE name = 'tick_to_trade_ns' AND ts > now() - INTERVAL 1 HOUR
 ```
 
 `metrics` is `ts`, `name`, `kind`, `series`, `labels`, `value`, `delta`.
-`metrics_histogram` is `count`, `sum`, `min`, `max`, `p50`…`p9999`, and
-`buckets.le` / `buckets.count`.
+`metrics_histogram` is `ts`, `name`, `series`, `labels`, `interval_ns`,
+`count`, `sum`, `min`, `max`, `avg`, then the percentiles above. An existing
+`metrics_histogram` does not gain a column until you run the `ALTER` the
+ingester logs, or drop the table. A missing column is skipped.
 
 ## Traces
 
@@ -444,6 +455,11 @@ per sample, divided back to one. Nothing was dropped.
 | checkpoint trace, off / unsampled / published | 42 / 41 / 83 ns | 84 / 84 / 333 ns | 625 ns / 500 ns / 1.5 µs |
 | `tracing` span, off / on | 83 ns / 250 ns | 209 ns / 667 ns | 1.8 µs / 5.9 µs |
 
+The histogram figure of 1.7 ns includes the old per-value bucket update.
+`record` now touches count, sum, min, and max only. That row has not been
+remeasured. With a histogram registered, `poll` is due every 1 ms. The idle
+poll figure was measured before that.
+
 `Clock::now` here is `mach_absolute_time`. On x86-64 Linux it is `rdtsc`,
 which this run did not measure.
 
@@ -475,6 +491,7 @@ interest and public trades. Venue-specific decimals stay text.
 - Two publications on one stream must use the same channel parameters.
 - Metrics of a process that exits before the next `poll` are lost. A counter's `delta` survives a restart. Its `value` starts again at 0.
 - A histogram read from another thread while it is being updated can disagree on `sum` and count. Poll from the recording thread.
+- A crash can drop the histogram window still open in the ingester, at most 5 s.
 - A heartbeat round sends one dictionary message per `record` until it is done. A quiet process finishes it only as fast as it records.
 - A persistent subscription can replay only the segments the ingester has not yet purged.
 - The kind VM clock can lag the venues by 100–400 ms. `venue_to_local_ns` then reads 0.

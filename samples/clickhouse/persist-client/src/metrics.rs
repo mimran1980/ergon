@@ -14,8 +14,8 @@
 //!     let now = clock.now();
 //!     sent.inc(); // a load and a store
 //!     depth.set(12.0); // a store
-//!     t2t.record(850); // a bucket index, three load/stores, two compares
-//!     metrics.poll(now); // one compare, until the interval ends
+//!     t2t.record(850); // count, sum, min, and max
+//!     metrics.poll(now); // one compare, until the next millisecond or the 5 s boundary
 //! #   break;
 //! }
 //! # Ok(()) }
@@ -35,18 +35,19 @@
 //!   That path allocates the label strings and shares one cell across threads.
 //!   [`Metrics::poll`] still publishes it. A handle and a tracing event for
 //!   the same counter or histogram are two cells, added together.
-//! * A **histogram** keeps log-linear buckets (as HdrHistogram does): each
-//!   power of two is split into `2^PRECISION` equal buckets, so a value is
-//!   known to within `2^-PRECISION` (3.1%) of itself, from 0 to `u64::MAX`.
-//!   Buckets merge exactly across intervals, threads and applications.
+//! * A **histogram** handle records only the count, the sum, the minimum, and
+//!   the maximum. Every millisecond that had samples, [`Metrics::poll`]
+//!   publishes that summary. The ingester folds those summaries into a 5 s
+//!   HdrHistogram. [`PRECISION`] is the public log-linear layout; handles do
+//!   not update it, and the ingester does not use it.
 //!
-//! Every interval (5 s by default, aligned to multiples of it in UNIX time,
-//! so applications line up), [`Metrics::poll`] publishes each series' name
-//! and labels (`MetricDef`, keyed by a hash of them), then the counters and
-//! gauges (`Metrics`), then one `Histogram` per series that had samples. A
-//! call publishes at most one message, and the next call continues, so no
-//! call costs more than one publish. Call it from the thread's loop with
-//! the time it already has; any thread may call it.
+//! Counters and gauges publish every interval (5 s by default, aligned to
+//! multiples of it in UNIX time, so applications line up): each series' name
+//! and labels (`MetricDef`, keyed by a hash of them), then the values
+//! (`Metrics`). A histogram summary uses the same `MetricDef` and its own
+//! 1 ms deadline. A call publishes at most one message, and the next call
+//! continues, so no call costs more than one publish. Call it from the
+//! thread's loop with the time it already has; any thread may call it.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -65,9 +66,14 @@ pub const METRICS_TEMPLATE_ID: u16 = codec::MetricsEncoder::TEMPLATE_ID;
 /// Template id of the `Histogram` message.
 pub const HISTOGRAM_TEMPLATE_ID: u16 = codec::HistogramEncoder::TEMPLATE_ID;
 
-/// Sub-bucket bits of a histogram: every value is within `2^-5` (3.1%) of
-/// its bucket's bounds.
+/// Sub-bucket bits of the log-linear layout [`bucket`] describes. A value is
+/// within `2^-5` (3.1%) of its bucket's bounds. Handles do not update
+/// buckets. The ingester estimates a 5 s HdrHistogram from the 1 ms summaries
+/// and does not use this layout.
 pub const PRECISION: u8 = 5;
+
+/// Nanoseconds in the histogram summary a [`Metrics::poll`] publishes.
+const HISTOGRAM_MS: i64 = 1_000_000;
 
 /// Buckets of a histogram with `precision` sub-bucket bits, over all `u64`.
 #[must_use]
@@ -128,7 +134,7 @@ impl MetricKind {
 pub struct MetricDef {
     pub series: u64,
     pub kind: MetricKind,
-    /// A histogram's sub-bucket bits.
+    /// Carried on `MetricDef`. The ingester does not bucket with it.
     pub precision: u8,
     pub name: String,
     /// Sorted by key.
@@ -240,25 +246,31 @@ struct GaugeCell {
     bits: AtomicU64,
 }
 
+/// One millisecond's count, sum, minimum, and maximum. Copied out of a cell.
+#[derive(Clone, Copy)]
+struct HistSample {
+    count: u64,
+    sum: u64,
+    min: u64,
+    max: u64,
+}
+
 #[repr(align(128))]
 struct HistogramCell {
+    count: AtomicU64,
     sum: AtomicU64,
     /// Since the last poll: [`Metrics::poll`] swaps them back.
     min: AtomicU64,
     max: AtomicU64,
-    /// Totals since the cell was made.
-    buckets: Box<[AtomicU64]>,
 }
 
 impl HistogramCell {
     fn new() -> Self {
         Self {
+            count: AtomicU64::new(0),
             sum: AtomicU64::new(0),
             min: AtomicU64::new(u64::MAX),
             max: AtomicU64::new(0),
-            buckets: (0..bucket_count(PRECISION))
-                .map(|_| AtomicU64::new(0))
-                .collect(),
         }
     }
 }
@@ -319,26 +331,29 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    /// Values recorded into this cell, all time.
+    /// Values recorded into this cell since it was made, until the next poll
+    /// swaps the count back to zero.
     #[cfg(test)]
     pub(crate) fn cell_count(&self) -> u64 {
-        self.cell.buckets.iter().map(|b| b.load(Relaxed)).sum()
+        self.cell.count.load(Relaxed)
     }
 
-    /// Record one value: its bucket, the sum, the minimum and the maximum,
-    /// each a relaxed load and store.
+    /// Record one value: the count, the sum, the minimum, and the maximum.
+    /// Each is a relaxed load and store. One writer at a time, so no locked
+    /// instruction.
     #[inline]
     pub fn record(&self, value: u64) {
         let c = &*self.cell;
-        if let Some(b) = c.buckets.get(bucket(value, PRECISION)) {
-            b.store(b.load(Relaxed) + 1, Relaxed);
-        }
-        c.sum
-            .store(c.sum.load(Relaxed).wrapping_add(value), Relaxed);
-        if value > c.max.load(Relaxed) {
+        let count = &c.count;
+        count.store(count.load(Relaxed).wrapping_add(1), Relaxed);
+        let sum = &c.sum;
+        sum.store(sum.load(Relaxed).wrapping_add(value), Relaxed);
+        let max = c.max.load(Relaxed);
+        if value > max {
             c.max.store(value, Relaxed);
         }
-        if value < c.min.load(Relaxed) {
+        let min = c.min.load(Relaxed);
+        if value < min {
             c.min.store(value, Relaxed);
         }
     }
@@ -372,7 +387,7 @@ impl std::fmt::Debug for Metrics {
 enum Source {
     Counter(Arc<CounterCell>),
     Gauge(Arc<GaugeCell>),
-    Histogram(Arc<HistogramCell>, Box<[u64]>, u64),
+    Histogram(Arc<HistogramCell>),
     /// Read at each poll: an atomic kept elsewhere.
     Sampled(Box<dyn Fn() -> u64 + Send>),
 }
@@ -391,8 +406,9 @@ struct Def {
     last_total: u64,
     /// A gauge's one cell.
     gauge: Option<Arc<GaugeCell>>,
-    /// A histogram's interval being merged from its cells.
-    hist: Option<Box<Snap>>,
+    /// Its `MetricDef` has been published ahead of a histogram summary.
+    /// The 5 s cycle publishes every def again either way.
+    announced: bool,
     /// The cell [`Metrics::add_counter`] reuses. A [`Counter`] handle stays
     /// its own cell, so a tracing event does not race that handle's add.
     shared_counter: Option<Arc<CounterCell>>,
@@ -400,73 +416,24 @@ struct Def {
     shared_histogram: Option<Arc<HistogramCell>>,
 }
 
-/// One histogram series over one interval.
-struct Snap {
-    count: u64,
-    sum: u64,
-    min: u64,
-    max: u64,
-    buckets: Box<[u64]>,
-    /// Lowest and highest bucket with counts, to skip the empty rest.
-    low: usize,
-    high: usize,
-}
-
-impl Snap {
-    fn new() -> Box<Self> {
-        Box::new(Self {
-            count: 0,
-            sum: 0,
-            min: u64::MAX,
-            max: 0,
-            buckets: vec![0; bucket_count(PRECISION)].into_boxed_slice(),
-            low: usize::MAX,
-            high: 0,
-        })
-    }
-
-    fn clear(&mut self) {
-        if self.low <= self.high {
-            self.buckets[self.low..=self.high].fill(0);
-        }
-        (self.count, self.sum, self.min, self.max) = (0, 0, u64::MAX, 0);
-        (self.low, self.high) = (usize::MAX, 0);
-    }
-
-    /// The non-empty buckets at `precision` (at most [`PRECISION`]):
-    /// `(index, count)` in order. Coarser buckets merge finer ones.
-    fn buckets(&self, precision: u8) -> impl Iterator<Item = (usize, u64)> + '_ {
-        let range = self.low..self.high.max(self.low.saturating_sub(1)) + 1;
-        let range = range.start.min(self.buckets.len())..range.end.min(self.buckets.len());
-        let mut merged = self.buckets[range.clone()]
-            .iter()
-            .zip(range)
-            .filter(|(c, _)| **c > 0)
-            .map(move |(c, i)| (bucket(bucket_bounds(i, PRECISION).0, precision), *c))
-            .peekable();
-        std::iter::from_fn(move || {
-            let (index, mut count) = merged.next()?;
-            while let Some((_, more)) = merged.next_if(|(i, _)| *i == index) {
-                count += more;
-            }
-            Some((index, count))
-        })
-    }
-}
-
 /// The messages one interval still has to publish, in order.
 #[derive(Default)]
 struct Cycle {
-    /// UNIX ns of the interval's end.
+    /// UNIX ns of the counter/gauge interval's end.
     ts: u64,
     next_def: usize,
     counters: Vec<(u64, u64, u64)>,
     gauges: Vec<(u64, f64)>,
     next_counter: usize,
     next_gauge: usize,
-    /// Series indexes with a histogram to publish.
-    histograms: Vec<usize>,
-    next_histogram: usize,
+    /// UNIX ns of the histogram summary's end, and how long it covers.
+    hist_ts: u64,
+    hist_interval: u64,
+    samples: Vec<(u64, HistSample)>,
+    next_sample: usize,
+    /// Histogram series whose `MetricDef` has not been sent yet.
+    hist_defs: Vec<usize>,
+    next_hist_def: usize,
 }
 
 /// One message to publish. [`State::next`] has already moved past it, so
@@ -478,9 +445,8 @@ enum Next {
         gauges: std::ops::Range<usize>,
     },
     Histogram {
-        def: usize,
-        precision: u8,
-        buckets: usize,
+        start: usize,
+        len: usize,
     },
 }
 
@@ -491,7 +457,18 @@ struct State {
     /// The interval being published, while `active`. Reused, so polling
     /// allocates nothing once every series has been seen.
     cycle: Cycle,
+    /// A counter/gauge interval is being published.
     active: bool,
+    /// A histogram summary is being published.
+    hist_open: bool,
+    /// `Nanos` of the next histogram millisecond. `i64::MAX` until a
+    /// histogram series exists.
+    next_hist: i64,
+    /// `Nanos` of the next counter/gauge interval. `i64::MAX` until
+    /// [`Metrics::start`].
+    next_metrics: i64,
+    /// UNIX ns of the last histogram millisecond closed.
+    last_hist_end: u64,
     /// A counter series' total over its cells, by series index; reused.
     totals: Vec<Option<u64>>,
 }
@@ -527,6 +504,10 @@ impl Metrics {
                     cells: Vec::new(),
                     cycle: Cycle::default(),
                     active: false,
+                    hist_open: false,
+                    next_hist: i64::MAX,
+                    next_metrics: i64::MAX,
+                    last_hist_end: 0,
                     totals: Vec::new(),
                 }),
             }),
@@ -545,9 +526,57 @@ impl Metrics {
     /// with [`Metrics::published_by`] polls.
     pub(crate) fn start(&self) {
         let now = crate::clock::Clock::new().now();
-        self.registry
-            .next_due
-            .store(self.next_boundary(now).0, Relaxed);
+        let metrics_due = self.next_boundary(now).0;
+        let mut state = self.state();
+        state.next_metrics = metrics_due;
+        if state.next_hist != i64::MAX {
+            // Registered before publishing started: the first summary is the
+            // next millisecond, not a deadline that passed while connecting.
+            self.arm_locked(&mut state, now);
+        }
+        let due = if state.next_hist == i64::MAX {
+            metrics_due
+        } else {
+            state.next_hist.min(metrics_due)
+        };
+        drop(state);
+        self.registry.next_due.store(due, Relaxed);
+    }
+
+    /// The first histogram series: publish its summaries on the millisecond.
+    fn arm_histogram(&self) {
+        let mut state = self.state();
+        if state.next_hist != i64::MAX {
+            return;
+        }
+        let now = crate::clock::Clock::new().now();
+        self.arm_locked(&mut state, now);
+        let due = self.registry.next_due.load(Relaxed);
+        if due != i64::MIN {
+            let next = if due == i64::MAX {
+                state.next_hist
+            } else {
+                due.min(state.next_hist)
+            };
+            self.registry.next_due.store(next, Relaxed);
+        }
+    }
+
+    fn arm_locked(&self, state: &mut State, now: Nanos) {
+        let end = now.epoch_ns().div_euclid(HISTOGRAM_MS) * HISTOGRAM_MS;
+        state.last_hist_end = u64::try_from(end).unwrap_or(0);
+        state.next_hist = Nanos::from_epoch(end + HISTOGRAM_MS).0;
+    }
+
+    fn store_due(&self, state: &State) {
+        let due = if state.next_hist == i64::MAX {
+            state.next_metrics
+        } else if state.next_metrics == i64::MAX {
+            state.next_hist
+        } else {
+            state.next_hist.min(state.next_metrics)
+        };
+        self.registry.next_due.store(due, Relaxed);
     }
 
     /// This registry, published through `persist` when polled.
@@ -600,12 +629,9 @@ impl Metrics {
     pub fn histogram(&self, name: &str, labels: &[(&str, &str)]) -> Histogram {
         let cell = Arc::new(HistogramCell::new());
         self.register(name, MetricKind::Histogram, labels, |_| {
-            Source::Histogram(
-                Arc::clone(&cell),
-                vec![0; bucket_count(PRECISION)].into_boxed_slice(),
-                0,
-            )
+            Source::Histogram(Arc::clone(&cell))
         });
+        self.arm_histogram();
         Histogram {
             cell,
             _one_writer: PhantomData,
@@ -634,9 +660,7 @@ impl Metrics {
     /// [`Self::poll`] merges them. Building `labels` allocates.
     pub fn record_histogram(&self, name: &str, labels: &[(&str, &str)], value: u64) {
         let cell = self.shared_histogram(name, labels);
-        if let Some(bucket) = cell.buckets.get(bucket(value, PRECISION)) {
-            bucket.fetch_add(1, Relaxed);
-        }
+        cell.count.fetch_add(1, Relaxed);
         cell.sum.fetch_add(value, Relaxed);
         cell.max.fetch_max(value, Relaxed);
         cell.min.fetch_min(value, Relaxed);
@@ -667,12 +691,10 @@ impl Metrics {
         state.defs[index].shared_histogram = Some(Arc::clone(&cell));
         state.cells.push(Cellref {
             def: index,
-            source: Source::Histogram(
-                Arc::clone(&cell),
-                vec![0; bucket_count(PRECISION)].into_boxed_slice(),
-                0,
-            ),
+            source: Source::Histogram(Arc::clone(&cell)),
         });
+        drop(state);
+        self.arm_histogram();
         cell
     }
 
@@ -724,7 +746,7 @@ impl Metrics {
             message,
             last_total: 0,
             gauge: None,
-            hist: None,
+            announced: false,
             shared_counter: None,
             shared_histogram: None,
         });
@@ -762,7 +784,7 @@ impl Metrics {
         }
     }
 
-    /// [`Metrics::poll`] once the interval is due: publish one message
+    /// [`Metrics::poll`] once a deadline is due: publish one message
     /// through `publish(len, write)`.
     fn poll_with(
         &self,
@@ -774,44 +796,87 @@ impl Metrics {
         let Ok(mut state) = self.registry.state.try_lock() else {
             return;
         };
-        if !state.active {
-            let i = self.registry.interval_ns;
-            let end = now.epoch_ns().div_euclid(i) * i;
-            state.snapshot(u64::try_from(end).unwrap_or(0));
+        if !state.hist_open && !state.active {
+            if now.0 < self.registry.next_due.load(Relaxed) {
+                return;
+            }
+            if state.next_hist != i64::MAX && now.0 >= state.next_hist {
+                state.open_histogram(now);
+            }
+            if !state.hist_open && state.next_metrics != i64::MAX && now.0 >= state.next_metrics {
+                let i = self.registry.interval_ns;
+                let end = now.epoch_ns().div_euclid(i) * i;
+                state.snapshot_metrics(u64::try_from(end).unwrap_or(0));
+            }
+            if !state.hist_open && !state.active {
+                self.store_due(&state);
+                return;
+            }
             self.registry.next_due.store(i64::MIN, Relaxed);
         }
-        match state.next(max_payload) {
+        let interval = self.registry.interval_ns;
+        let next = if state.hist_open {
+            state.next_histogram(max_payload)
+        } else if state.active {
+            state.next_metrics(max_payload)
+        } else {
+            None
+        };
+        match next {
             Some(next) => {
                 let len = state.len(&next);
-                publish(len, &mut |buf| {
-                    state.encode(&next, self.registry.interval_ns, buf).is_ok()
-                });
-                state.done(&next);
+                publish(len, &mut |buf| state.encode(&next, interval, buf).is_ok());
+                state.finish_publish(&next);
+                if !state.hist_open && !state.active {
+                    self.store_due(&state);
+                }
+            }
+            None if state.hist_open => {
+                state.hist_open = false;
+                if !state.active {
+                    self.store_due(&state);
+                }
             }
             None => {
                 state.active = false;
-                self.registry
-                    .next_due
-                    .store(self.next_boundary(now).0, Relaxed);
+                state.next_metrics = self.next_boundary(now).0;
+                self.store_due(&state);
             }
         }
     }
 
-    /// Take the interval now and return every message it makes, encoded:
-    /// what [`Metrics::poll`] publishes over successive calls.
+    /// Take the histogram summaries and the counter interval ending at
+    /// `end_ns` (UNIX ns) and return every message they make.
     #[cfg(test)]
     fn drain(&self, end_ns: u64, max_payload: usize) -> Vec<Vec<u8>> {
         let mut state = self.state();
-        state.snapshot(end_ns);
         let mut out = Vec::new();
-        while let Some(next) = state.next(max_payload) {
+        let now = Nanos::from_epoch(i64::try_from(end_ns).unwrap_or(i64::MAX));
+        if state.open_histogram(now) {
+            while state.hist_open {
+                let Some(next) = state.next_histogram(max_payload) else {
+                    state.hist_open = false;
+                    break;
+                };
+                let mut buf = vec![0; state.len(&next)];
+                assert!(
+                    state
+                        .encode(&next, self.registry.interval_ns, &mut buf)
+                        .is_ok()
+                );
+                state.finish_publish(&next);
+                out.push(buf);
+            }
+        }
+        state.snapshot_metrics(end_ns);
+        while let Some(next) = state.next_metrics(max_payload) {
             let mut buf = vec![0; state.len(&next)];
             assert!(
                 state
                     .encode(&next, self.registry.interval_ns, &mut buf)
                     .is_ok()
             );
-            state.done(&next);
+            state.finish_publish(&next);
             out.push(buf);
         }
         state.active = false;
@@ -865,11 +930,7 @@ impl Metrics {
             .iter()
             .filter(|cell| cell.def == index)
             .map(|cell| match &cell.source {
-                Source::Histogram(histogram, _, _) => histogram
-                    .buckets
-                    .iter()
-                    .map(|bucket| bucket.load(Relaxed))
-                    .sum(),
+                Source::Histogram(histogram) => histogram.count.load(Relaxed),
                 _ => 0,
             })
             .sum()
@@ -877,14 +938,93 @@ impl Metrics {
 }
 
 impl State {
-    /// Read every cell into the interval ending at `ts` (UNIX ns).
-    fn snapshot(&mut self, ts: u64) {
+    /// Swap every histogram cell into one summary per series. Empty cells
+    /// stay for the next millisecond. `false` when nothing was recorded.
+    fn open_histogram(&mut self, now: Nanos) -> bool {
+        if !self
+            .cells
+            .iter()
+            .any(|cell| matches!(cell.source, Source::Histogram(_)))
+        {
+            return false;
+        }
+        let end_i = now.epoch_ns().div_euclid(HISTOGRAM_MS) * HISTOGRAM_MS;
+        let end = u64::try_from(end_i).unwrap_or(0);
+        if self.last_hist_end != 0 && end <= self.last_hist_end {
+            return false;
+        }
+        let interval = end.saturating_sub(self.last_hist_end);
+        self.last_hist_end = end;
+        self.next_hist = Nanos::from_epoch(end_i.saturating_add(HISTOGRAM_MS)).0;
+        let samples = self.take_histogram_samples();
+        if samples.is_empty() {
+            return false;
+        }
+        let mut hist_defs = Vec::new();
+        for &(series, _) in &samples {
+            let Some(&index) = self.by_series.get(&series) else {
+                continue;
+            };
+            if !self.defs[index].announced && !self.defs[index].message.is_empty() {
+                hist_defs.push(index);
+            }
+        }
+        self.cycle.hist_ts = end;
+        self.cycle.hist_interval = if interval == 0 {
+            u64::try_from(HISTOGRAM_MS).unwrap_or(0)
+        } else {
+            interval
+        };
+        self.cycle.samples = samples;
+        self.cycle.next_sample = 0;
+        self.cycle.hist_defs = hist_defs;
+        self.cycle.next_hist_def = 0;
+        self.hist_open = true;
+        true
+    }
+
+    fn take_histogram_samples(&mut self) -> Vec<(u64, HistSample)> {
+        let mut merged: Vec<Option<HistSample>> = vec![None; self.defs.len()];
+        let mut order = Vec::new();
+        for cell in &self.cells {
+            let Source::Histogram(histogram) = &cell.source else {
+                continue;
+            };
+            // Count first: a record that starts after this swap belongs to
+            // the next summary. Poll from the recording thread.
+            let count = histogram.count.swap(0, Relaxed);
+            if count == 0 {
+                continue;
+            }
+            let sample = HistSample {
+                count,
+                sum: histogram.sum.swap(0, Relaxed),
+                min: histogram.min.swap(u64::MAX, Relaxed),
+                max: histogram.max.swap(0, Relaxed),
+            };
+            if let Some(acc) = &mut merged[cell.def] {
+                acc.count = acc.count.wrapping_add(sample.count);
+                acc.sum = acc.sum.wrapping_add(sample.sum);
+                acc.min = acc.min.min(sample.min);
+                acc.max = acc.max.max(sample.max);
+            } else {
+                merged[cell.def] = Some(sample);
+                order.push(cell.def);
+            }
+        }
+        order
+            .into_iter()
+            .filter_map(|index| merged[index].map(|sample| (self.defs[index].def.series, sample)))
+            .collect()
+    }
+
+    /// Read counters and gauges into the interval ending at `ts` (UNIX ns).
+    fn snapshot_metrics(&mut self, ts: u64) {
         let cycle = &mut self.cycle;
         (cycle.ts, cycle.next_def) = (ts, 0);
-        (cycle.next_counter, cycle.next_gauge, cycle.next_histogram) = (0, 0, 0);
+        (cycle.next_counter, cycle.next_gauge) = (0, 0);
         cycle.counters.clear();
         cycle.gauges.clear();
-        cycle.histograms.clear();
         let totals = &mut self.totals;
         totals.clear();
         totals.resize(self.defs.len(), None);
@@ -902,34 +1042,7 @@ impl State {
                 Source::Gauge(g) => cycle
                     .gauges
                     .push((def.def.series, f64::from_bits(g.bits.load(Relaxed)))),
-                Source::Histogram(h, seen, seen_sum) => {
-                    // Swapped first: a value recorded after the swap is in
-                    // the next interval's range.
-                    let min = h.min.swap(u64::MAX, Relaxed);
-                    let max = h.max.swap(0, Relaxed);
-                    if min > max {
-                        continue; // nothing recorded
-                    }
-                    let snap = def.hist.get_or_insert_with(Snap::new);
-                    if snap.low == usize::MAX {
-                        cycle.histograms.push(cell.def);
-                    }
-                    let (low, high) = (bucket(min, PRECISION), bucket(max, PRECISION));
-                    for i in low..=high {
-                        let total = h.buckets[i].load(Relaxed);
-                        let delta = total.wrapping_sub(seen[i]);
-                        seen[i] = total;
-                        snap.buckets[i] += delta;
-                        snap.count += delta;
-                    }
-                    let sum = h.sum.load(Relaxed);
-                    snap.sum = snap.sum.wrapping_add(sum.wrapping_sub(*seen_sum));
-                    *seen_sum = sum;
-                    snap.min = snap.min.min(min);
-                    snap.max = snap.max.max(max);
-                    snap.low = snap.low.min(low);
-                    snap.high = snap.high.max(high);
-                }
+                Source::Histogram(_) => {}
             }
         }
         for (def, total) in self.defs.iter_mut().zip(totals.iter()) {
@@ -943,8 +1056,41 @@ impl State {
         self.active = true;
     }
 
-    /// The next message of the interval, `None` once all are out.
-    fn next(&mut self, max_payload: usize) -> Option<Next> {
+    /// The next message of the open histogram summary.
+    fn next_histogram(&mut self, max_payload: usize) -> Option<Next> {
+        if self.cycle.next_hist_def < self.cycle.hist_defs.len() {
+            let def = self.cycle.hist_defs[self.cycle.next_hist_def];
+            self.cycle.next_hist_def += 1;
+            self.defs[def].announced = true;
+            return Some(Next::Def(def));
+        }
+        let left = self
+            .cycle
+            .samples
+            .len()
+            .saturating_sub(self.cycle.next_sample);
+        if left == 0 {
+            return None;
+        }
+        let base = codec::HistogramEncoder::compute_length_with_header(0);
+        let per = codec::HistogramEncoder::compute_length_with_header(1)
+            .saturating_sub(base)
+            .max(1);
+        let n = left
+            .min(max_payload.saturating_sub(base) / per)
+            .min(usize::from(u16::MAX));
+        if n == 0 {
+            log::error!("metrics: a {max_payload}-byte message holds no histogram; dropped");
+            self.cycle.next_sample = self.cycle.samples.len();
+            return None;
+        }
+        let start = self.cycle.next_sample;
+        self.cycle.next_sample += n;
+        Some(Next::Histogram { start, len: n })
+    }
+
+    /// The next message of the counter/gauge interval, `None` once all are out.
+    fn next_metrics(&mut self, max_payload: usize) -> Option<Next> {
         let defs = self.defs.len();
         if !self.active {
             return None;
@@ -954,6 +1100,7 @@ impl State {
             cycle.next_def += 1;
             let def = cycle.next_def - 1;
             if !self.defs[def].message.is_empty() {
+                self.defs[def].announced = true;
                 return Some(Next::Def(def));
             }
         }
@@ -981,25 +1128,6 @@ impl State {
                 });
             }
         }
-        while cycle.next_histogram < cycle.histograms.len() {
-            let def = cycle.histograms[cycle.next_histogram];
-            cycle.next_histogram += 1;
-            let Some(snap) = self.defs[def].hist.as_deref() else {
-                continue;
-            };
-            // Coarser buckets until they fit one message.
-            for precision in (0..=PRECISION).rev() {
-                let buckets = snap.buckets(precision).count();
-                if codec::HistogramEncoder::compute_length_with_header(buckets) <= max_payload {
-                    return Some(Next::Histogram {
-                        def,
-                        precision,
-                        buckets,
-                    });
-                }
-            }
-            log::error!("metrics: a {max_payload}-byte message holds no histogram; dropped");
-        }
         None
     }
 
@@ -1009,22 +1137,24 @@ impl State {
             Next::Metrics { counters, gauges } => {
                 codec::MetricsEncoder::compute_length_with_header(counters.len(), gauges.len())
             }
-            Next::Histogram { buckets, .. } => {
-                codec::HistogramEncoder::compute_length_with_header(*buckets)
+            Next::Histogram { len, .. } => {
+                codec::HistogramEncoder::compute_length_with_header(*len)
             }
         }
     }
 
-    /// `next` was published, or could not be: a histogram starts again.
-    fn done(&mut self, next: &Next) {
-        if let Next::Histogram { def, .. } = *next
-            && let Some(snap) = self.defs[def].hist.as_deref_mut()
+    /// `next` was published, or could not be.
+    fn finish_publish(&mut self, next: &Next) {
+        if let Next::Histogram { .. } = next
+            && self.cycle.next_sample >= self.cycle.samples.len()
+            && self.cycle.next_hist_def >= self.cycle.hist_defs.len()
         {
-            snap.clear();
+            self.hist_open = false;
+            self.cycle.samples.clear();
         }
     }
 
-    /// Write `next` into `buf`, exactly [`State::len`] bytes, and move past it.
+    /// Write `next` into `buf`, exactly [`State::len`] bytes.
     fn encode(
         &self,
         next: &Next,
@@ -1066,30 +1196,21 @@ impl State {
                 debug_assert_eq!(len, buf.len());
                 Ok(())
             }
-            &Next::Histogram {
-                def,
-                precision,
-                buckets,
-            } => {
-                let def = &self.defs[def];
-                let Some(snap) = def.hist.as_deref() else {
-                    return Ok(());
-                };
+            &Next::Histogram { start, len: n } => {
+                let samples = &self.cycle.samples[start..start + n];
                 let len = codec::HistogramEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&codec::HistogramFixedFields {
-                        ts,
-                        interval,
-                        series: def.def.series,
-                        count: snap.count,
-                        sum: snap.sum,
-                        min: snap.min,
-                        max: snap.max,
-                        precision,
+                        ts: self.cycle.hist_ts,
+                        interval: self.cycle.hist_interval,
                     })
-                    .buckets(buckets as u16, |group| {
-                        for (index, count) in snap.buckets(precision) {
+                    .samples(n as u16, |group| {
+                        for (series, sample) in samples {
                             group.add(|e| {
-                                e.index(index as u16).count(count);
+                                e.series(*series)
+                                    .count(sample.count)
+                                    .sum(sample.sum)
+                                    .min(sample.min)
+                                    .max(sample.max);
                                 Ok(())
                             })?;
                         }
@@ -1150,14 +1271,21 @@ mod tests {
         }
     }
 
-    /// (series, count, sum, min, max, precision, buckets)
-    type Hist = (u64, u64, u64, u64, u64, u8, Vec<(u16, u64)>);
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct Hist {
+        series: u64,
+        count: u64,
+        sum: u64,
+        min: u64,
+        max: u64,
+        ts: u64,
+        interval: u64,
+    }
 
     struct Decoded {
         defs: Vec<MetricDef>,
         counters: Vec<(u64, u64, u64)>,
         gauges: Vec<(u64, f64)>,
-        /// (series, count, sum, min, max, precision, buckets)
         histograms: Vec<Hist>,
         ts: Vec<u64>,
     }
@@ -1185,20 +1313,19 @@ mod tests {
                 }
                 HISTOGRAM_TEMPLATE_ID => {
                     let h = codec::HistogramDecoder::decode(m, 0)?;
-                    d.ts.push(h.ts());
-                    let mut buckets = Vec::new();
-                    for e in h.buckets()? {
-                        buckets.push((e.index(), e.count()));
+                    let ts = h.ts();
+                    let interval = h.interval();
+                    for e in h.samples()? {
+                        d.histograms.push(Hist {
+                            series: e.series(),
+                            count: e.count(),
+                            sum: e.sum(),
+                            min: e.min(),
+                            max: e.max(),
+                            ts,
+                            interval,
+                        });
                     }
-                    d.histograms.push((
-                        h.series(),
-                        h.count(),
-                        h.sum(),
-                        h.min(),
-                        h.max(),
-                        h.precision(),
-                        buckets,
-                    ));
                 }
                 other => return Err(format!("template {other}").into()),
             }
@@ -1278,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn histograms_publish_each_interval_exactly_once() -> TestResult {
+    fn histograms_publish_the_millisecond_summary_once() -> TestResult {
         let metrics = Metrics::detached();
         let h = metrics.histogram("lat", &[]);
         let other_thread = metrics.histogram("lat", &[]);
@@ -1286,40 +1413,49 @@ mod tests {
             h.record(v);
         }
         other_thread.record(7);
-        let d = decode(&metrics.drain(1, 64 * 1024))?;
-        let [(_, count, sum, min, max, precision, buckets)] = d.histograms.as_slice() else {
-            return Err(format!("{:?}", d.histograms.len()).into());
+        // `histogram()` arms the clock at the real time. These drains use
+        // small UNIX timestamps, so the window starts at 0.
+        {
+            let mut state = metrics.state();
+            state.last_hist_end = 0;
+        }
+        let d = decode(&metrics.drain(1_000_000, 64 * 1024))?;
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
         };
         assert_eq!(
-            (*count, *sum, *min, *max, *precision),
-            (6, 1_005_308, 7, 1_000_000, PRECISION)
+            (sample.count, sample.sum, sample.min, sample.max),
+            (6, 1_005_308, 7, 1_000_000)
         );
-        assert_eq!(buckets.iter().map(|b| b.1).sum::<u64>(), 6);
-        // 100 and 101 share a bucket: at 64..128 each is two values wide.
-        assert_eq!(bucket(101, PRECISION), bucket(100, PRECISION));
-        assert!(
-            buckets.contains(&(bucket(100, PRECISION) as u16, 3)),
-            "{buckets:?}"
-        );
-        assert!(
-            buckets.windows(2).all(|w| w[0].0 < w[1].0),
-            "in order: {buckets:?}"
+        assert_eq!(sample.ts, 1_000_000);
+        assert_eq!(sample.interval, 1_000_000);
+        assert_eq!(
+            sample.series,
+            MetricDef::new("lat", MetricKind::Histogram, &[]).series
         );
 
-        // Nothing new: no histogram message at all.
-        assert!(decode(&metrics.drain(2, 64 * 1024))?.histograms.is_empty());
+        assert!(
+            decode(&metrics.drain(2_000_000, 64 * 1024))?
+                .histograms
+                .is_empty()
+        );
 
-        // Only what came after the last poll.
         h.record(42);
-        let d = decode(&metrics.drain(3, 64 * 1024))?;
-        assert_eq!(d.histograms.len(), 1);
-        assert_eq!(&d.histograms[0].1..=&d.histograms[0].4, &1..=&42);
-        assert_eq!(d.histograms[0].6, [(bucket(42, PRECISION) as u16, 1)]);
+        let d = decode(&metrics.drain(3_000_000, 64 * 1024))?;
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
+        };
+        assert_eq!(
+            (sample.count, sample.sum, sample.min, sample.max),
+            (1, 42, 42, 42)
+        );
+        assert_eq!(sample.ts, 3_000_000);
+        assert_eq!(sample.interval, 1_000_000);
         Ok(())
     }
 
     #[test]
-    fn what_does_not_fit_one_message_is_split_or_coarsened() -> TestResult {
+    fn what_does_not_fit_one_message_is_split() -> TestResult {
         let metrics = Metrics::detached();
         let counters: Vec<Counter> = (0..100)
             .map(|i| metrics.counter("c", &[("i", &i.to_string())]))
@@ -1327,13 +1463,17 @@ mod tests {
         for (i, c) in counters.iter().enumerate() {
             c.add(i as u64);
         }
-        let h = metrics.histogram("wide", &[]);
-        for shift in 0..40 {
-            for k in 0..32 {
-                h.record((1u64 << shift) + k * ((1u64 << shift) / 32));
-            }
+        let histograms: Vec<Histogram> = (0..40)
+            .map(|i| metrics.histogram("h", &[("i", &i.to_string())]))
+            .collect();
+        for h in &histograms {
+            h.record(1);
         }
-        let messages = metrics.drain(1, 1024);
+        {
+            let mut state = metrics.state();
+            state.last_hist_end = 0;
+        }
+        let messages = metrics.drain(1_000_000, 1024);
         assert!(messages.iter().all(|m| m.len() <= 1024));
         let d = decode(&messages)?;
         assert_eq!(
@@ -1341,16 +1481,9 @@ mod tests {
             100,
             "every counter, over several messages"
         );
-        let [(_, count, .., precision, buckets)] = d.histograms.as_slice() else {
-            return Err("one histogram".into());
-        };
-        assert!(*precision < PRECISION, "coarsened to fit");
-        assert_eq!(
-            buckets.iter().map(|b| b.1).sum::<u64>(),
-            *count,
-            "no count lost"
-        );
-        assert_eq!(*count, 40 * 32);
+        assert_eq!(d.histograms.len(), 40);
+        assert!(d.histograms.iter().all(|h| h.count == 1));
+        assert_eq!(d.histograms.iter().map(|h| h.count).sum::<u64>(), 40);
         Ok(())
     }
 
@@ -1362,37 +1495,81 @@ mod tests {
         let h = metrics.histogram("h", &[]);
         c.inc();
         h.record(5);
-        let due = metrics.registry.next_due.load(Relaxed);
+        // The next millisecond and the next 5 s boundary can be the same
+        // instant. Pin them apart so the histogram summary is not also the
+        // counter interval.
+        let hist_due = {
+            let mut state = metrics.state();
+            let boundary = Nanos(state.next_hist).epoch_ns();
+            state.next_metrics = Nanos::from_epoch(boundary + 5_000_000_000).0;
+            state.next_hist
+        };
+        metrics.registry.next_due.store(hist_due, Relaxed);
         let mut published = Vec::new();
-        let mut poll = |at: i64| {
-            let mut sent = 0;
-            // `poll`, with a publisher that keeps what it is given.
+        let poll = |at: i64| {
+            let mut sent = Vec::new();
             if at < metrics.registry.next_due.load(Relaxed) {
                 return sent;
             }
             metrics.poll_with(Nanos(at), 64 * 1024, |len, write| {
                 let mut buf = vec![0; len];
                 assert!(write(&mut buf));
-                published.push(buf);
-                sent += 1;
+                sent.push(buf);
             });
             sent
         };
-        assert_eq!(poll(due - 1), 0, "not yet due");
-        // Two defs, one Metrics, one Histogram: one per call, then done.
-        let sent: Vec<i32> = (0..6).map(|_| poll(due)).collect();
-        assert_eq!(sent, [1, 1, 1, 1, 0, 0]);
-        assert!(
-            metrics.registry.next_due.load(Relaxed) > due,
-            "the next interval"
-        );
+        assert!(poll(hist_due - 1).is_empty(), "not yet due");
+        published.extend(poll(hist_due));
+        assert_eq!(published.len(), 1, "the histogram def");
+        published.extend(poll(hist_due));
+        assert_eq!(published.len(), 2, "the summary");
+        assert!(poll(hist_due).is_empty(), "that millisecond is out");
         let d = decode(&published)?;
+        assert_eq!(d.defs.len(), 1);
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
+        };
+        assert_eq!((sample.count, sample.min, sample.max), (1, 5, 5));
+        assert_eq!(sample.ts, u64::try_from(Nanos(hist_due).epoch_ns())?);
+
+        published.clear();
+        h.record(9);
+        published.extend(poll(hist_due + 1_000_000));
+        assert_eq!(published.len(), 1);
+        let d = decode(&published)?;
+        assert!(d.defs.is_empty(), "the series was already announced");
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
+        };
+        let series = MetricDef::new("h", MetricKind::Histogram, &[]).series;
         assert_eq!(
-            (d.defs.len(), d.counters.len(), d.histograms.len()),
-            (2, 1, 1)
+            (
+                sample.series,
+                sample.count,
+                sample.sum,
+                sample.min,
+                sample.max
+            ),
+            (series, 1, 9, 9, 9)
         );
-        let end = u64::try_from(Nanos(due).epoch_ns())?;
-        assert!(d.ts.iter().all(|&ts| ts == end), "{:?} != {end}", d.ts);
+
+        published.clear();
+        let metrics_due = metrics.state().next_metrics;
+        metrics.registry.next_due.store(metrics_due, Relaxed);
+        let mut sent = Vec::new();
+        for _ in 0..6 {
+            let batch = poll(metrics_due);
+            sent.push(batch.len());
+            published.extend(batch);
+        }
+        assert_eq!(sent, [1, 1, 1, 0, 0, 0]);
+        let d = decode(&published)?;
+        assert!(
+            d.histograms.is_empty(),
+            "counters do not republish histograms"
+        );
+        assert_eq!(d.defs.len(), 2);
+        assert_eq!(d.counters.len(), 1);
         Ok(())
     }
 

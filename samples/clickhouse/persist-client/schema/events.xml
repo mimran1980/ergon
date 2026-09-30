@@ -96,7 +96,8 @@
 
     <!-- A metric series: its name and labels, once, keyed by `series` (a hash
          of all of it). Sent before the first sample of it, and again every
-         interval. `precision` is a histogram's sub-bucket bits. -->
+         interval. `precision` is carried for a histogram; the ingester does
+         not bucket with it. -->
     <sbe:message name="MetricDef" id="4">
         <field name="series" id="1" type="uint64"/>
         <field name="kind" id="2" type="MetricKind"/>
@@ -126,21 +127,19 @@
         </group>
     </sbe:message>
 
-    <!-- One histogram series over one interval: the non-empty buckets of
-         log-linear buckets with `precision` sub-bucket bits (fewer than the
-         series records at when that many did not fit one message). -->
+    <!-- One millisecond of histogram summaries: each series' count, sum, min
+         and max. `ts` is the end of that millisecond (UNIX ns). An empty
+         millisecond is not sent. Split over several messages when the series
+         do not fit one. -->
     <sbe:message name="Histogram" id="6">
         <field name="ts" id="1" type="uint64"/>
         <field name="interval" id="2" type="uint64"/>
-        <field name="series" id="3" type="uint64"/>
-        <field name="count" id="4" type="uint64"/>
-        <field name="sum" id="5" type="uint64"/>
-        <field name="min" id="6" type="uint64"/>
-        <field name="max" id="7" type="uint64"/>
-        <field name="precision" id="8" type="uint8"/>
-        <group name="buckets" id="9" dimensionType="groupSizeEncoding">
-            <field name="index" id="10" type="uint16"/>
-            <field name="count" id="11" type="uint64"/>
+        <group name="samples" id="3" dimensionType="groupSizeEncoding">
+            <field name="series" id="4" type="uint64"/>
+            <field name="count" id="5" type="uint64"/>
+            <field name="sum" id="6" type="uint64"/>
+            <field name="min" id="7" type="uint64"/>
+            <field name="max" id="8" type="uint64"/>
         </group>
     </sbe:message>
 

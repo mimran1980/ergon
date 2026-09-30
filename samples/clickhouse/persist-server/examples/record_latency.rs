@@ -18,8 +18,9 @@
 //! The metric and clock arms are below the timer's resolution, so each
 //! sample times 100 of them (`x100` in the output).
 //! * `clock-now` `Clock::now`; `clock-cached` `Clock::cached`; `system-time` `SystemTime::now`
-//! * `poll-idle` `Metrics::poll` between intervals; `poll-due` with a 1 ms interval,
-//!   so every interval publishes, one message a call
+//! * `poll-idle` `Metrics::poll` between the 5 s interval. A histogram makes
+//!   poll due every 1 ms. `poll-due` uses a 1 ms metrics interval, so every
+//!   call also publishes counters, one message a call
 //! * `trace-off`, `trace-unsampled`, `trace-sampled`  a 4-stage checkpoint trace
 //!   (start, 4 marks, an attribute, finish) with `otel_traces` off, on but not
 //!   sampled, and every one published
@@ -173,6 +174,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = std::hint::black_box(std::time::SystemTime::now());
                 }
                 "poll-idle" | "poll-due" => {
+                    // A histogram makes poll due every 1 ms. poll-due still
+                    // publishes counters on its 1 ms metrics interval.
                     others[0].inc();
                     histogram.record(850);
                     metrics.poll(clock.cached());
