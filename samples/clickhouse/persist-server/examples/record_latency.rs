@@ -12,7 +12,8 @@
 //! * `value-nested` `record_value` of a struct with a nested struct and five levels
 //! * `event-off` the same event for a disabled table
 //! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
-//! * `counter`, `gauge`, `histogram`  one update of a metric
+//! * `counter`, `gauge`, `histogram`  one update of a metric handle. The
+//!   `tracing` metric events are slower and are not timed here.
 //!
 //! The metric and clock arms are below the timer's resolution, so each
 //! sample times 100 of them (`x100` in the output).

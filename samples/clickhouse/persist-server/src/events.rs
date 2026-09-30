@@ -1,7 +1,8 @@
-//! Tables fed by `tracing` events and `record_row` (`persist_client::event`).
-//! There is no schema: the columns are the fields of the rows' shapes, each
-//! typed by the first shape that has it, after a `ts DateTime64(9, 'UTC')`
-//! column.
+//! Tables fed by `tracing` events that name a table, and by `record_row`
+//! (`persist_client::event`). A `counter`, `gauge`, or `histogram` field is a
+//! metric message, not a row of one of these tables. There is no schema: the
+//! columns are the fields of the rows' shapes, each typed by the first shape
+//! that has it, after a `ts DateTime64(9, 'UTC')` column.
 //!
 //! | field value              | ClickHouse          |
 //! |--------------------------|---------------------|

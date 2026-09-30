@@ -154,7 +154,9 @@ do not stack `with_conversion` on the same selector.
 
 Record live market data, or any `tracing` event, into ClickHouse from a
 low-latency application: a small client publishes to Aeron, and a separate
-ingester replays the Aeron Archive into ClickHouse. See
+ingester replays the Aeron Archive into ClickHouse. `schema::AnySchemaMessage`
+decodes a frame that may be either compiled schema. Counters, gauges, and
+histograms can be `tracing` events as well as handles. See
 [`clickhouse/README.md`](clickhouse/README.md).
 
 ## Rules

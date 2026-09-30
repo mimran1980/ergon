@@ -18,9 +18,9 @@ node (one of four, three regions)
 
 | Crate | Role |
 |---|---|
-| `persist-client` | What the application links: `record()`, a `tracing` layer, metrics, traces, a clock, UDP feeds. |
-| `persist-server` | The ingester. Replays the archive into ClickHouse, checkpoints, purges. |
-| `schema` | `market.xml`, `trading.xml`, and the codecs generated from them. |
+| `persist-client` | What the application links: `record()`, a `tracing` layer for rows and for counters, gauges, and histograms, metric handles, traces, a clock, UDP feeds. |
+| `persist-server` | The ingester. Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
+| `schema` | `market.xml`, `trading.xml`, the codecs generated from them, and `AnySchemaMessage` for a buffer that may be either. |
 | `md` | One exchange's public market data, via NautilusTrader. No API keys. |
 | `engine` | One region's engine, and `exch-sim`, its dummy exchange. |
 | `aeron-driver` | Aeron's C media driver (1.52.2), configured from the environment. |
@@ -173,7 +173,7 @@ about 8 GiB, not the whole machine.
 
 ## Record
 
-**SBE.** Add the message to `schema/market.xml`, list it in `tables.yaml`,
+**SBE.** Add the message to `schema/market.xml` or `schema/trading.xml`, list it in `tables.yaml`,
 and encode into the Aeron claim. The table name is the message name in
 snake_case. `encode` is not called when the table is off. `record` returns
 `Ok` when Aeron drops the message; the drop is counted.
@@ -195,7 +195,8 @@ installed, `record` does nothing. `connect` waits up to 10 seconds for a
 subscriber (`subscriber_timeout`).
 
 **Tracing event.** For a row with no schema. Slower than `record`, so the
-sample does it once a second, not on every quote. The quote path sets a gauge.
+sample does it once a second, not on every quote. The quote path sets a gauge
+with the handle below, not with this macro.
 
 ```rust
 gauge.set(bps);
@@ -239,6 +240,35 @@ checkpointed past it.
 Put another application's schema in `schema/`, list its tables, and run
 `just md`. Keep one version of each schema. The newest decodes older records.
 
+## Several schemas
+
+`market::AnyMessage` is every message of `market.xml`. `trading::AnyMessage`
+is every message of `trading.xml`. Template ids start at 1 in each file, so
+they do not identify a message on their own. A buffer that might be either
+is `schema::AnySchemaMessage`: it reads the header schema id and decodes with
+that enum. A schema id that is neither (persist events, metrics, traces) is
+`Other`, not an error.
+
+```rust
+match schema::AnySchemaMessage::decode(frame, 0)? {
+    schema::AnySchemaMessage::Market(schema::market::AnyMessage::Trade(trade)) => {
+        trade.symbol_as_str()?;
+    }
+    schema::AnySchemaMessage::Trading(schema::trading::AnyMessage::Ema(ema)) => {
+        ema.asset_as_str()?;
+    }
+    schema::AnySchemaMessage::Other { schema_id, template_id } => {
+        let _ = (schema_id, template_id);
+    }
+    _ => {}
+}
+```
+
+The ingester does not use this enum. It loads every `.xml` it is given and
+routes a frame by that same schema id and template id. A schema that was not
+compiled into the `schema` crate still persists. The engine's book stream is
+already one schema, so it keeps calling `market::AnyMessage` directly.
+
 Every row ends with `host`, `pod`, and `app`. The Aeron frame header carries
 the source id. A `Source` message names it.
 
@@ -259,6 +289,18 @@ loop {
     t2t.record(850);
     metrics.poll(now); // one compare until the 5 s boundary, then one message
 }
+```
+
+The same registry accepts `tracing` events when `Persist::layer` is installed.
+Use that off the hot path. A counter with no `value` adds 1. Other fields are
+labels. `poll` still publishes them. These events allocate the label strings
+and take the registry lock; the handles above do not. A handle and a tracing
+event for the same counter or histogram are two cells, added at `poll`.
+
+```rust
+tracing::info!(counter = "orders_sent", venue = "binance");
+tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
+tracing::info!(histogram = "tick_to_trade_ns", value = 850u64);
 ```
 
 Histograms are log-linear: 32 buckets per power of two, within 3.1%, from 0
@@ -303,8 +345,11 @@ The same trace id in two processes is one waterfall. At most 16 stages and 8
 numeric attributes. A stage that ends before it began is 0 in the histogram
 and counted in `trace_clamped`.
 
-`tracing` spans (`info_span!`, `#[instrument]`) are recorded only while
-`otel_traces` is on. Leave them off the book loop.
+`tracing` spans (`info_span!`, `#[instrument]`) are the same kind of trace
+through `Persist::layer`, recorded only while `otel_traces` is on. A span
+costs the `tracing` registry and an allocation. Leave both spans and the
+metric events above off the book loop. The checkpoint tracer is the path
+that stays on the stack.
 
 ## Clock
 

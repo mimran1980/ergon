@@ -23,6 +23,11 @@
 //! # Ok(()) }
 //! ```
 //!
+//! The same waterfall from code that is not on the hot path is a `tracing`
+//! span (`info_span!`, `#[instrument]`). [`crate::Persist::layer`] records
+//! those while `otel_traces` is on. A span costs the registry, a few hundred
+//! nanoseconds, and an allocation; this module does not.
+//!
 //! [`Trace::finish`] always records each stage, and the whole, into the
 //! histogram `trace_ns{trace, stage}`: every event is counted. It publishes
 //! the trace itself only when `otel_traces` is on for this app in

@@ -8,6 +8,13 @@
 //! a `tracing` event (`events.rs`). [`Writer`] inserts one RowBinary batch per
 //! table per tick.
 //!
+//! A frame is routed by the schema id and template id in its header. That is
+//! the same pair `schema::AnySchemaMessage` matches when an application has
+//! the generated market and trading codecs. This ingester does not call that
+//! enum. It reads every `.xml` under `PERSIST_SCHEMAS` and builds the table
+//! from the schema text, so a schema that was not compiled into the `schema`
+//! crate still persists.
+//!
 //! `tables.yaml` is re-read while running:
 //!
 //! ```yaml

@@ -27,6 +27,14 @@
 //!   thread, say) gives another cell; [`Metrics::poll`] adds them up.
 //! * A **gauge** is `Sync` and `Clone`: every handle of a series shares one
 //!   cell, and the last value set wins.
+//! * Off the hot path the same series can be updated from a `tracing` event,
+//!   once [`crate::Persist::layer`] is installed:
+//!   `tracing::info!(counter = "orders_sent", venue = "binance")`,
+//!   `tracing::info!(gauge = "book_depth", value = 12.0)`,
+//!   `tracing::info!(histogram = "tick_to_trade_ns", value = 850)`.
+//!   That path allocates the label strings and shares one cell across threads.
+//!   [`Metrics::poll`] still publishes it. A handle and a tracing event for
+//!   the same counter or histogram are two cells, added together.
 //! * A **histogram** keeps log-linear buckets (as HdrHistogram does): each
 //!   power of two is split into `2^PRECISION` equal buckets, so a value is
 //!   known to within `2^-PRECISION` (3.1%) of itself, from 0 to `u64::MAX`.
@@ -384,6 +392,11 @@ struct Def {
     gauge: Option<Arc<GaugeCell>>,
     /// A histogram's interval being merged from its cells.
     hist: Option<Box<Snap>>,
+    /// The cell [`Metrics::add_counter`] reuses. A [`Counter`] handle stays
+    /// its own cell, so a tracing event does not race that handle's add.
+    shared_counter: Option<Arc<CounterCell>>,
+    /// The cell [`Metrics::record_histogram`] reuses, for the same reason.
+    shared_histogram: Option<Arc<HistogramCell>>,
 }
 
 /// One histogram series over one interval.
@@ -598,6 +611,70 @@ impl Metrics {
         }
     }
 
+    /// Add `n` to counter `name`. Calls for one series share one cell and use
+    /// `fetch_add`, so more than one thread may call this. A [`Counter`] from
+    /// [`Self::counter`] is a different cell: [`Self::poll`] adds the two.
+    /// Building `labels` allocates; the handle does not.
+    pub fn add_counter(&self, name: &str, labels: &[(&str, &str)], n: u64) {
+        self.shared_counter(name, labels)
+            .value
+            .fetch_add(n, Relaxed);
+    }
+
+    /// Set gauge `name` to `value`. Every call for the series is the same
+    /// cell as [`Self::gauge`], and the last store wins. Building `labels`
+    /// allocates.
+    pub fn set_gauge(&self, name: &str, labels: &[(&str, &str)], value: f64) {
+        self.gauge(name, labels).set(value);
+    }
+
+    /// Record `value` in histogram `name`. Calls for one series share one
+    /// cell. A [`Histogram`] from [`Self::histogram`] is a different cell, and
+    /// [`Self::poll`] merges them. Building `labels` allocates.
+    pub fn record_histogram(&self, name: &str, labels: &[(&str, &str)], value: u64) {
+        let cell = self.shared_histogram(name, labels);
+        if let Some(bucket) = cell.buckets.get(bucket(value, PRECISION)) {
+            bucket.fetch_add(1, Relaxed);
+        }
+        cell.sum.fetch_add(value, Relaxed);
+        cell.max.fetch_max(value, Relaxed);
+        cell.min.fetch_min(value, Relaxed);
+    }
+
+    fn shared_counter(&self, name: &str, labels: &[(&str, &str)]) -> Arc<CounterCell> {
+        let mut state = self.state();
+        let index = self.def(&mut state, name, MetricKind::Counter, labels);
+        if let Some(cell) = &state.defs[index].shared_counter {
+            return Arc::clone(cell);
+        }
+        let cell = Arc::new(CounterCell::default());
+        state.defs[index].shared_counter = Some(Arc::clone(&cell));
+        state.cells.push(Cellref {
+            def: index,
+            source: Source::Counter(cell.clone()),
+        });
+        cell
+    }
+
+    fn shared_histogram(&self, name: &str, labels: &[(&str, &str)]) -> Arc<HistogramCell> {
+        let mut state = self.state();
+        let index = self.def(&mut state, name, MetricKind::Histogram, labels);
+        if let Some(cell) = &state.defs[index].shared_histogram {
+            return Arc::clone(cell);
+        }
+        let cell = Arc::new(HistogramCell::new());
+        state.defs[index].shared_histogram = Some(Arc::clone(&cell));
+        state.cells.push(Cellref {
+            def: index,
+            source: Source::Histogram(
+                Arc::clone(&cell),
+                vec![0; bucket_count(PRECISION)].into_boxed_slice(),
+                0,
+            ),
+        });
+        cell
+    }
+
     /// A counter whose total `read` returns at each poll, such as an atomic
     /// that something else increments.
     pub fn counter_fn(
@@ -647,6 +724,8 @@ impl Metrics {
             last_total: 0,
             gauge: None,
             hist: None,
+            shared_counter: None,
+            shared_histogram: None,
         });
         state.defs.len() - 1
     }
@@ -736,6 +815,63 @@ impl Metrics {
         }
         state.active = false;
         out
+    }
+
+    /// How many cells [`Self::add_counter`] and [`Self::counter`] have for the series.
+    #[cfg(test)]
+    pub(crate) fn counter_cells(&self, name: &str, labels: &[(&str, &str)]) -> usize {
+        let state = self.state();
+        let series = MetricDef::new(name, MetricKind::Counter, labels).series;
+        let Some(&index) = state.by_series.get(&series) else {
+            return 0;
+        };
+        state
+            .cells
+            .iter()
+            .filter(|cell| cell.def == index && matches!(cell.source, Source::Counter(_)))
+            .count()
+    }
+
+    /// The total [`Self::add_counter`] and any [`Counter`] handles have added.
+    #[cfg(test)]
+    pub(crate) fn counter_total(&self, name: &str, labels: &[(&str, &str)]) -> u64 {
+        let state = self.state();
+        let series = MetricDef::new(name, MetricKind::Counter, labels).series;
+        let Some(&index) = state.by_series.get(&series) else {
+            return 0;
+        };
+        state
+            .cells
+            .iter()
+            .filter(|cell| cell.def == index)
+            .map(|cell| match &cell.source {
+                Source::Counter(counter) => counter.value.load(Relaxed),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Samples recorded by [`Self::record_histogram`] and any [`Histogram`] handles.
+    #[cfg(test)]
+    pub(crate) fn histogram_samples(&self, name: &str, labels: &[(&str, &str)]) -> u64 {
+        let state = self.state();
+        let series = MetricDef::new(name, MetricKind::Histogram, labels).series;
+        let Some(&index) = state.by_series.get(&series) else {
+            return 0;
+        };
+        state
+            .cells
+            .iter()
+            .filter(|cell| cell.def == index)
+            .map(|cell| match &cell.source {
+                Source::Histogram(histogram, _, _) => histogram
+                    .buckets
+                    .iter()
+                    .map(|bucket| bucket.load(Relaxed))
+                    .sum(),
+                _ => 0,
+            })
+            .sum()
     }
 }
 
@@ -1102,6 +1238,26 @@ mod tests {
             "{:?}",
             second.counters
         );
+        Ok(())
+    }
+
+    #[test]
+    fn tracing_counter_reuses_one_cell_and_publishes_the_sum() -> TestResult {
+        let metrics = Metrics::detached();
+        metrics.add_counter("orders_sent", &[("venue", "binance")], 1);
+        metrics.add_counter("orders_sent", &[("venue", "binance")], 4);
+        let handle = metrics.counter("orders_sent", &[("venue", "binance")]);
+        handle.inc();
+        assert_eq!(
+            metrics.counter_cells("orders_sent", &[("venue", "binance")]),
+            2,
+            "the shared tracing cell stays separate from a one-writer handle"
+        );
+        let decoded = decode(&metrics.drain(5_000_000_000, 64 * 1024))?;
+        let series =
+            MetricDef::new("orders_sent", MetricKind::Counter, &[("venue", "binance")]).series;
+        assert_eq!(decoded.defs.len(), 1);
+        assert!(decoded.counters.contains(&(series, 6, 6)));
         Ok(())
     }
 

@@ -4,7 +4,14 @@
 //!
 //! ```text
 //! tracing::info!(table = "signal", instrument = %id, edge = 0.25);
+//! tracing::info!(counter = "orders_sent", venue = "binance");
+//! tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
+//! tracing::info!(histogram = "tick_to_trade_ns", value = 850);
 //! ```
+//!
+//! A counter, gauge, or histogram event updates [`crate::metrics`], not a
+//! table. `value` is optional on a counter and then means 1. Other fields
+//! are labels. The handles in that module stay the path that does not allocate.
 //!
 //! Each kind of row, a [`Shape`] (the table, and its fields with their kinds
 //! in order), is published once as a `Shape` message of `schema/events.xml`
@@ -21,9 +28,10 @@
 //! A shape's id is a hash of the shape, so every application on the stream
 //! gives it the same id without coordinating. All little-endian.
 //!
-//! A `tracing` event costs one visit of its fields, a lookup of its call site
+//! A table event costs one visit of its fields, a lookup of its call site
 //! in a thread-local cache, and one `try_claim` written in place: no lock, no
-//! allocation, and no field name copied.
+//! allocation, and no field name copied. A counter, gauge, or histogram event
+//! does not take that path: it locks the metrics registry and copies its labels.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -56,6 +64,141 @@ pub const ROW_TEMPLATE_ID: u16 = codec::RowEncoder::TEMPLATE_ID;
 
 /// The field that names the table.
 pub const TABLE: &str = "table";
+/// The field that names a counter. Other fields are labels; `value` is how
+/// many to add, or 1 when it is absent.
+pub const COUNTER: &str = "counter";
+/// The field that names a gauge. `value` is the `f64` to store.
+pub const GAUGE: &str = "gauge";
+/// The field that names a histogram. `value` is the `u64` sample.
+pub const HISTOGRAM: &str = "histogram";
+/// The numeric field of a counter, gauge, or histogram event.
+pub(crate) const VALUE: &str = "value";
+
+/// An event [`Persist::layer`](crate::Persist::layer) records: a table row,
+/// or a counter, gauge, or histogram.
+#[must_use]
+pub(crate) fn layer_wants(meta: &tracing::Metadata<'_>) -> bool {
+    meta.fields()
+        .iter()
+        .any(|field| matches!(field.name(), TABLE | COUNTER | GAUGE | HISTOGRAM))
+}
+
+fn metric_field(meta: &tracing::Metadata<'_>) -> Option<&'static str> {
+    meta.fields().iter().find_map(|field| match field.name() {
+        COUNTER | GAUGE | HISTOGRAM => Some(field.name()),
+        _ => None,
+    })
+}
+
+/// Apply a `tracing` counter, gauge, or histogram event to `metrics`.
+/// A table event, or an event with none of those fields, does nothing.
+pub(crate) fn record_metric_event(metrics: &crate::metrics::Metrics, event: &Event<'_>) {
+    let Some(which) = metric_field(event.metadata()) else {
+        return;
+    };
+    let mut collect = MetricCollect {
+        which,
+        name: None,
+        integer: None,
+        float: None,
+        labels: Vec::new(),
+    };
+    event.record(&mut collect);
+    collect.apply(metrics);
+}
+
+/// One visit of a metric event.
+struct MetricCollect {
+    which: &'static str,
+    name: Option<String>,
+    integer: Option<u64>,
+    float: Option<f64>,
+    labels: Vec<(String, String)>,
+}
+
+impl MetricCollect {
+    fn apply(self, metrics: &crate::metrics::Metrics) {
+        let Some(name) = self.name.as_deref() else {
+            return;
+        };
+        let labels: Vec<(&str, &str)> = self
+            .labels
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        match self.which {
+            COUNTER => {
+                if self.float.is_some() && self.integer.is_none() {
+                    return;
+                }
+                metrics.add_counter(name, &labels, self.integer.unwrap_or(1));
+            }
+            GAUGE => {
+                if let Some(value) = self.float {
+                    metrics.set_gauge(name, &labels, value);
+                }
+            }
+            HISTOGRAM => {
+                if let Some(value) = self.integer {
+                    metrics.record_histogram(name, &labels, value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn label(&mut self, field: &Field, text: &str) {
+        if field.name() == self.which {
+            self.name = Some(text.to_owned());
+        } else if field.name() != VALUE {
+            self.labels.push((field.name().to_owned(), text.to_owned()));
+        }
+    }
+
+    fn number(&mut self, field: &Field, integer: Option<u64>, float: f64) {
+        if field.name() == VALUE {
+            self.integer = integer;
+            self.float = Some(float);
+        } else if field.name() == self.which {
+            self.name = Some(match integer {
+                Some(value) => value.to_string(),
+                None => float.to_string(),
+            });
+        } else {
+            let text = match integer {
+                Some(value) => value.to_string(),
+                None => float.to_string(),
+            };
+            self.labels.push((field.name().to_owned(), text));
+        }
+    }
+}
+
+impl Visit for MetricCollect {
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.number(field, u64::try_from(value).ok(), value as f64);
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.number(field, Some(value), value as f64);
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.number(field, None, value);
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.label(field, if value { "true" } else { "false" });
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.label(field, value);
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.label(field, &format!("{value:?}"));
+    }
+}
 
 pub(crate) const HEADER: usize = 8;
 /// A row's block before the presence bits: shape id and timestamp.
@@ -833,6 +976,10 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for PersistLayer {
 
     fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
         let meta = event.metadata();
+        if metric_field(meta).is_some() {
+            record_metric_event(&self.persist.metrics(), event);
+            return;
+        }
         let key = (
             self.persist.inner.id as usize,
             std::ptr::from_ref(meta) as usize,
@@ -938,8 +1085,48 @@ impl Visit for Collect<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::layer::SubscriberExt;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    struct Take(
+        crate::metrics::Metrics,
+        std::sync::Arc<std::sync::atomic::AtomicU64>,
+    );
+
+    impl<S: Subscriber> Layer<S> for Take {
+        fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+            if layer_wants(event.metadata()) {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                record_metric_event(&self.0, event);
+            }
+        }
+    }
+
+    #[test]
+    fn tracing_macros_update_the_metric_registry() {
+        let metrics = crate::metrics::Metrics::detached();
+        let admitted = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let subscriber = tracing_subscriber::registry()
+            .with(Take(metrics.clone(), std::sync::Arc::clone(&admitted)));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(counter = "orders_sent", venue = "binance");
+            tracing::info!(counter = "orders_sent", venue = "binance", value = 4u64);
+            tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
+            tracing::info!(histogram = "tick_to_trade_ns", value = 850u64);
+            tracing::info!(table = "spread", bps = 1.0);
+            tracing::info!(ignored = 1u64);
+        });
+        assert_eq!(
+            metrics.counter_total("orders_sent", &[("venue", "binance")]),
+            5
+        );
+        assert_eq!(metrics.gauge("book_depth", &[("side", "bid")]).get(), 12.0);
+        assert_eq!(metrics.histogram_samples("tick_to_trade_ns", &[]), 1);
+        // The table event is admitted and then ignored by the metric path.
+        // The plain event is not admitted.
+        assert_eq!(admitted.load(std::sync::atomic::Ordering::Relaxed), 5);
+    }
 
     fn flat(table: &str, fields: &[(&str, Kind)]) -> Result<Shape, String> {
         Shape::new(

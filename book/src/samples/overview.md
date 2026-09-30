@@ -15,7 +15,7 @@ implementations — they move with experimental APIs on purpose.
 | Later | [Cluster Tutorial](cluster-tutorial.md) | Connect, offer, poll, keep-alive, close |
 | Later | [Cluster HA Orderbook](cluster-ha-orderbook.md) | Claim-based Cluster publishing + HA-shaped book |
 | Later | [Cluster RFQ](cluster-rfq.md) | RFQ / auction codecs over Cluster |
-| Lab | [ClickHouse](https://github.com/mimran1980/ergon/tree/main/samples/clickhouse) | Record SBE messages and `tracing` events into ClickHouse via Aeron; see `samples/clickhouse/README.md` |
+| Lab | [ClickHouse](https://github.com/mimran1980/ergon/tree/main/samples/clickhouse) | Record SBE messages, `tracing` events, and `tracing` metric events into ClickHouse via Aeron; `AnySchemaMessage` covers both compiled schemas. See `samples/clickhouse/README.md` |
 
 ```sh
 # 1 — always start here

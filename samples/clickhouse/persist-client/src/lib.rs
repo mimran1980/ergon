@@ -3,9 +3,11 @@
 //!
 //! * [`Persist::record`] encodes an SBE message into the Aeron term. The table
 //!   is the message name.
-//! * [`Persist::layer`] records `tracing` events that set `table`. Columns are
-//!   the fields. See [`event`].
-//! * [`mod@metrics`], [`trace`], and [`clock`] are the hot-path tools.
+//! * [`Persist::layer`] records `tracing` events that set `table`, and
+//!   `counter`, `gauge`, or `histogram`. Columns and labels are the other
+//!   fields. See [`event`].
+//! * [`mod@metrics`], [`trace`], and [`clock`] are the hot-path tools. The
+//!   same metrics and span traces can also be emitted with the `tracing` macros.
 //!
 //! [`Persist::install`] one handle per process. The free functions then work
 //! from any thread. With nothing installed they do nothing and do not call
@@ -681,7 +683,10 @@ impl Persist {
     }
 
     /// This application's metrics: make counters, gauges and histograms
-    /// from it, and call [`metrics::Metrics::poll`] from the loop.
+    /// from it, and call [`metrics::Metrics::poll`] from the loop. With
+    /// [`Self::layer`] installed, `tracing` counter, gauge, and histogram
+    /// events update the same registry. The handles are the path that does
+    /// not allocate.
     #[must_use]
     pub fn metrics(&self) -> metrics::Metrics {
         self.inner.metrics.published_by(self.clone())
@@ -758,6 +763,8 @@ impl Persist {
 
     /// A `tracing` layer that records events naming an enabled table
     /// (`tracing::info!(table = "signal", instrument = %id, edge = 0.25)`),
+    /// counter, gauge, and histogram events
+    /// (`tracing::info!(counter = "orders_sent", venue = "binance")`),
     /// and, while `otel_traces` is on for this app, spans at INFO and above
     /// (below INFO: libraries' internals).
     /// Add it to the application's subscriber. Its filter is its own: it
@@ -769,8 +776,6 @@ impl Persist {
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
         let shared = Arc::clone(&self.inner.shared);
-        let names_table =
-            |meta: &tracing::Metadata<'_>| meta.fields().field(event::TABLE).is_some();
         event::PersistLayer {
             persist: self.clone(),
         }
@@ -779,7 +784,7 @@ impl Persist {
                 if meta.is_span() {
                     shared.spans_on.load(Ordering::Relaxed)
                 } else {
-                    names_table(meta)
+                    event::layer_wants(meta)
                 }
             })
             // A span's answer changes with `tables.yaml`, so it is asked
@@ -789,7 +794,7 @@ impl Persist {
                 // internals (h2, hyper, tokio) are DEBUG and TRACE spans.
                 if meta.is_span() && *meta.level() <= tracing::Level::INFO {
                     tracing::subscriber::Interest::sometimes()
-                } else if names_table(meta) {
+                } else if event::layer_wants(meta) {
                     tracing::subscriber::Interest::always()
                 } else {
                     tracing::subscriber::Interest::never()

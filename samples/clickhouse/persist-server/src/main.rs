@@ -4,10 +4,13 @@
 //! is merged away: a longer interval means fewer, larger parts.
 //!
 //! `PERSIST_SCHEMAS` (`schema/`) is a directory of SBE schemas, one `.xml`
-//! each: every message the applications record with them is ingested. It is
-//! read at start-up, so after adding or updating a schema, restart the
-//! ingester; it resumes from its checkpoint. The rest of the settings come
-//! from [`Settings::from_env`].
+//! each. It is read at start-up, so after adding or updating a schema,
+//! restart the ingester; it resumes from its checkpoint. Each frame is
+//! matched by the schema id and template id in its header against that XML.
+//! Application code decodes the compiled schemas with `AnySchemaMessage`.
+//! This process does not: it builds tables from the XML. The rest of the
+//! settings come from [`Settings::from_env`].
+//!
 //! An archive failure ends the process with an error: whatever restarts it
 //! (Kubernetes, here) reconnects, and it resumes from its checkpoints.
 

@@ -79,8 +79,10 @@ fn aeron(e: impl std::fmt::Display) -> Error {
 }
 
 impl Ingester {
-    /// Load the schemas and `tables.yaml`, connect to the archive, and make
-    /// sure it records the persist stream and every feed published here.
+    /// Load each schema's XML and `tables.yaml`, connect to the archive, and
+    /// make sure it records the persist stream and every feed published here.
+    /// A frame is matched later by the schema id and template id in its
+    /// header. This crate does not decode with generated codecs.
     pub fn connect(schemas: &[&str], settings: Settings) -> Result<Self, Error> {
         let mut writer = Writer::new(
             schemas,

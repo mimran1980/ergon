@@ -121,6 +121,14 @@ mod fills {
 }
 ```
 
+`AnyMessage` is generated once per schema module. Template ids are not unique
+across schemas, so a combined match has to read `schemaId` first and then call
+that module's `AnyMessage::decode`. The ClickHouse lab does this in
+`schema::AnySchemaMessage` for `market.xml` (id 88) and `trading.xml` (id 89).
+A header with any other schema id is `Other`, not a decode error. The ingester
+does not use the enum: it loads schema XML and routes on the same two header
+fields, so a schema that was never compiled in still persists.
+
 See also:
 [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples)
 (reusable generator setup),
