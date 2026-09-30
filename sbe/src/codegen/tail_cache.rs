@@ -97,28 +97,16 @@ pub(crate) fn emit_tail_offsets(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(self.buf, start);
                 let header = #dn_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#cf_ident() as u64,
-                )?;
-                let block_len = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bf_ident() as u64,
-                )?;
                 // Same short-block rule as the group constructors. `verify`
                 // reaches nested groups through this walk, and a wire
                 // block length of 0 with a positive count would otherwise
                 // skip the entry bytes the getters still read.
-                let min_fixed = <#group_dec_ident::<'_, sbe_rt::Detached>>::min_readable_fixed_extent(
-                    self.acting_version,
-                );
-                if count > 0 && block_len < min_fixed {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #gn_lit,
-                        needed: min_fixed,
-                        available: block_len,
-                    });
-                }
+                let (count, block_len) = sbe_rt::checked_group_dimensions(
+                    #gn_lit,
+                    header.#cf_ident() as u64,
+                    header.#bf_ident() as u64,
+                    #group_dec_ident::min_readable_fixed_extent(self.acting_version),
+                )?;
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {

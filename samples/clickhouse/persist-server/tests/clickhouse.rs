@@ -85,6 +85,46 @@ mod tick {
 const TICK: &str = include_str!("schemas/tick.xml");
 
 #[test]
+fn standalone_writer_flushes_its_last_elapsed_histogram_window() -> TestResult {
+    use persist_client::event::codec;
+    use persist_client::metrics::{MetricDef, MetricKind};
+
+    let lab = Lab::new("last_histogram", "tables: {}\n")?;
+    let mut writer = lab.writer(TICK)?;
+    let def = MetricDef::new("latency", MetricKind::Histogram, &[]);
+    assert!(writer.push(&def.message()?, 0));
+    let mut bytes = [0; codec::HistogramEncoder::compute_length_with_header(1)];
+    let len = codec::HistogramEncoder::wrap_and_apply_header(&mut bytes, 0)
+        .fixed(&codec::HistogramFixedFields {
+            ts: 1_700_000_001_000_000_000,
+            interval: 1_000_000,
+        })
+        .samples(1, |group| {
+            group.add(|entry| {
+                entry.series(def.series).count(2).sum(20).min(7).max(13);
+                Ok(())
+            })
+        })?
+        .encoded_length_with_header();
+    assert!(writer.push(&bytes[..len], 0));
+    let report = writer.tick();
+    // Source 0 intentionally has no origin dictionary.
+    assert!(
+        report
+            .errors
+            .iter()
+            .all(|error| error.contains("no host, pod or app")),
+        "{:?}",
+        report.errors
+    );
+    assert_eq!(
+        lab.query("SELECT count, sum, min, max FROM DB.metrics_histogram FORMAT TSV")?,
+        "2\t20\t7\t13"
+    );
+    Ok(())
+}
+
+#[test]
 fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
     let lab = Lab::new(
         "schemas",

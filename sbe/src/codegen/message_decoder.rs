@@ -1487,24 +1487,12 @@ pub(crate) fn generate_message_decoder(
             )
         };
         let wire_block = quote::quote! {
-            let group_block_length = match sbe_rt::checked_header_usize(
-                "blockLength",
+            let (count, group_block_length) = sbe_rt::checked_group_dimensions(
+                #g_snake,
+                dim.#cf_ident() as u64,
                 dim.#bf_ident() as u64,
-            ) {
-                Ok(v) => v,
-                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-            };
-            let min_fixed = <#group_dec_ident::<'_, sbe_rt::Detached>>::min_readable_fixed_extent(
-                acting_version,
-            );
-            if count > 0 && group_block_length < min_fixed {
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: #g_snake,
-                    needed: min_fixed,
-                    available: group_block_length,
-                }
-                .into());
-            }
+                #group_dec_ident::min_readable_fixed_extent(acting_version),
+            )?;
         };
         if has_tails {
             verify_stmts.push(quote::quote! {
@@ -1517,13 +1505,6 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = match sbe_rt::checked_group_count(
-                        "numInGroup",
-                        dim.#cf_ident() as u64,
-                    ) {
-                        Ok(count) => count,
-                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-                    };
                     #wire_block
                     let mut entry_offset = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
@@ -1554,13 +1535,6 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = match sbe_rt::checked_group_count(
-                        "numInGroup",
-                        dim.#cf_ident() as u64,
-                    ) {
-                        Ok(count) => count,
-                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-                    };
                     #wire_block
                     let dim_end = match offset.checked_add(#ds_lit) {
                         Some(v) => v,

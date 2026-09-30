@@ -1,5 +1,5 @@
 //! Metrics: counters, gauges and histograms, declared once with labels and
-//! updated from the hot path with plain loads and stores.
+//! updated through handles or `tracing` events.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,9 +22,10 @@
 //! ```
 //!
 //! * A **counter** or **histogram** handle has one writer at a time: it is
-//!   `Send` but not `Sync`, so an increment is a relaxed load and store, no
-//!   locked instruction. Asking for the same series again (on another
-//!   thread, say) gives another cell; [`Metrics::poll`] adds them up.
+//!   `Send` but not `Sync`. Counter increments use a relaxed load and store.
+//!   Histogram updates lock their cell so polling from another thread takes
+//!   a complete count/sum/min/max summary. Asking for the same series again
+//!   gives another cell; [`Metrics::poll`] adds them up.
 //! * A **gauge** is `Sync` and `Clone`: every handle of a series shares one
 //!   cell, and the last value set wins.
 //! * Off the hot path the same series can be updated from a `tracing` event,
@@ -255,23 +256,42 @@ struct HistSample {
     max: u64,
 }
 
+impl Default for HistSample {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            sum: 0,
+            min: u64::MAX,
+            max: 0,
+        }
+    }
+}
+
 #[repr(align(128))]
 struct HistogramCell {
-    count: AtomicU64,
-    sum: AtomicU64,
-    /// Since the last poll: [`Metrics::poll`] swaps them back.
-    min: AtomicU64,
-    max: AtomicU64,
+    // Polling resets the summary, so it is a second writer even when the
+    // handle itself has one producer. All four values must move together.
+    sample: Mutex<HistSample>,
 }
 
 impl HistogramCell {
     fn new() -> Self {
         Self {
-            count: AtomicU64::new(0),
-            sum: AtomicU64::new(0),
-            min: AtomicU64::new(u64::MAX),
-            max: AtomicU64::new(0),
+            sample: Mutex::new(HistSample::default()),
         }
+    }
+
+    fn sample(&self) -> std::sync::MutexGuard<'_, HistSample> {
+        self.sample.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[inline]
+    fn record(&self, value: u64) {
+        let mut sample = self.sample();
+        sample.count = sample.count.wrapping_add(1);
+        sample.sum = sample.sum.wrapping_add(value);
+        sample.min = sample.min.min(value);
+        sample.max = sample.max.max(value);
     }
 }
 
@@ -335,27 +355,14 @@ impl Histogram {
     /// swaps the count back to zero.
     #[cfg(test)]
     pub(crate) fn cell_count(&self) -> u64 {
-        self.cell.count.load(Relaxed)
+        self.cell.sample().count
     }
 
     /// Record one value: the count, the sum, the minimum, and the maximum.
-    /// Each is a relaxed load and store. One writer at a time, so no locked
-    /// instruction.
+    /// Locks this cell so a concurrent poll cannot split or repeat a sample.
     #[inline]
     pub fn record(&self, value: u64) {
-        let c = &*self.cell;
-        let count = &c.count;
-        count.store(count.load(Relaxed).wrapping_add(1), Relaxed);
-        let sum = &c.sum;
-        sum.store(sum.load(Relaxed).wrapping_add(value), Relaxed);
-        let max = c.max.load(Relaxed);
-        if value > max {
-            c.max.store(value, Relaxed);
-        }
-        let min = c.min.load(Relaxed);
-        if value < min {
-            c.min.store(value, Relaxed);
-        }
+        self.cell.record(value);
     }
 }
 
@@ -454,8 +461,8 @@ struct State {
     defs: Vec<Def>,
     by_series: HashMap<u64, usize>,
     cells: Vec<Cellref>,
-    /// The interval being published, while `active`. Reused, so polling
-    /// allocates nothing once every series has been seen.
+    /// The interval being published, while `active`. Counter/gauge buffers
+    /// are reused; histogram snapshots allocate their merged summaries.
     cycle: Cycle,
     /// A counter/gauge interval is being published.
     active: bool,
@@ -660,10 +667,7 @@ impl Metrics {
     /// [`Self::poll`] merges them. Building `labels` allocates.
     pub fn record_histogram(&self, name: &str, labels: &[(&str, &str)], value: u64) {
         let cell = self.shared_histogram(name, labels);
-        cell.count.fetch_add(1, Relaxed);
-        cell.sum.fetch_add(value, Relaxed);
-        cell.max.fetch_max(value, Relaxed);
-        cell.min.fetch_min(value, Relaxed);
+        cell.record(value);
     }
 
     fn shared_counter(&self, name: &str, labels: &[(&str, &str)]) -> Arc<CounterCell> {
@@ -800,9 +804,13 @@ impl Metrics {
             if now.0 < self.registry.next_due.load(Relaxed) {
                 return;
             }
-            if state.next_hist != i64::MAX && now.0 >= state.next_hist {
+            if state.next_hist != i64::MAX
+                && now.0 >= state.next_hist
+                && state.next_hist < state.next_metrics
+            {
                 state.open_histogram(now);
             }
+            // An empty histogram interval does not consume a publishing call.
             if !state.hist_open && state.next_metrics != i64::MAX && now.0 >= state.next_metrics {
                 let i = self.registry.interval_ns;
                 let end = now.epoch_ns().div_euclid(i) * i;
@@ -930,7 +938,7 @@ impl Metrics {
             .iter()
             .filter(|cell| cell.def == index)
             .map(|cell| match &cell.source {
-                Source::Histogram(histogram) => histogram.count.load(Relaxed),
+                Source::Histogram(histogram) => histogram.sample().count,
                 _ => 0,
             })
             .sum()
@@ -990,18 +998,10 @@ impl State {
             let Source::Histogram(histogram) = &cell.source else {
                 continue;
             };
-            // Count first: a record that starts after this swap belongs to
-            // the next summary. Poll from the recording thread.
-            let count = histogram.count.swap(0, Relaxed);
-            if count == 0 {
+            let sample = std::mem::take(&mut *histogram.sample());
+            if sample.count == 0 {
                 continue;
             }
-            let sample = HistSample {
-                count,
-                sum: histogram.sum.swap(0, Relaxed),
-                min: histogram.min.swap(u64::MAX, Relaxed),
-                max: histogram.max.swap(0, Relaxed),
-            };
             if let Some(acc) = &mut merged[cell.def] {
                 acc.count = acc.count.wrapping_add(sample.count);
                 acc.sum = acc.sum.wrapping_add(sample.sum);
@@ -1484,6 +1484,123 @@ mod tests {
         assert_eq!(d.histograms.len(), 40);
         assert!(d.histograms.iter().all(|h| h.count == 1));
         assert_eq!(d.histograms.iter().map(|h| h.count).sum::<u64>(), 40);
+        Ok(())
+    }
+
+    #[test]
+    fn busy_histograms_do_not_starve_counters_or_gauges() -> TestResult {
+        let metrics = Metrics::detached();
+        let counter = metrics.counter("sent", &[]);
+        let gauge = metrics.gauge("depth", &[]);
+        let histogram = metrics.histogram("latency", &[]);
+        counter.add(3);
+        gauge.set(12.0);
+        let start = 10_000_000_000;
+        {
+            let mut state = metrics.state();
+            state.last_hist_end = start;
+            state.next_hist = Nanos::from_epoch(start as i64 + HISTOGRAM_MS).0;
+            state.next_metrics = Nanos::from_epoch(start as i64 + 5 * HISTOGRAM_MS).0;
+            metrics.store_due(&state);
+        }
+        let mut messages = Vec::new();
+        for millisecond in 1..=20 {
+            histogram.record(7);
+            metrics.poll_with(
+                Nanos::from_epoch(start as i64 + millisecond * HISTOGRAM_MS),
+                64 * 1024,
+                |len, write| {
+                    let mut bytes = vec![0; len];
+                    assert!(write(&mut bytes));
+                    messages.push(bytes);
+                },
+            );
+        }
+        let decoded = decode(&messages)?;
+        assert_eq!(
+            decoded.counters.len(),
+            1,
+            "counter deadline must be serviced"
+        );
+        assert_eq!(decoded.counters[0].1, 3);
+        assert_eq!(decoded.gauges.len(), 1);
+        assert_eq!(decoded.gauges[0].1, 12.0);
+        assert!(!decoded.histograms.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn short_counter_intervals_do_not_starve_histograms() -> TestResult {
+        let metrics = Metrics::new(std::time::Duration::from_millis(1));
+        let counter = metrics.counter("sent", &[]);
+        let histogram = metrics.histogram("latency", &[]);
+        let start = 10_000_000_000;
+        {
+            let mut state = metrics.state();
+            state.last_hist_end = start;
+            let next = Nanos::from_epoch(start as i64 + HISTOGRAM_MS).0;
+            state.next_hist = next;
+            state.next_metrics = next;
+            metrics.store_due(&state);
+        }
+        let mut messages = Vec::new();
+        for millisecond in 1..=20 {
+            counter.inc();
+            histogram.record(7);
+            metrics.poll_with(
+                Nanos::from_epoch(start as i64 + millisecond * HISTOGRAM_MS),
+                64 * 1024,
+                |len, write| {
+                    let mut bytes = vec![0; len];
+                    assert!(write(&mut bytes));
+                    messages.push(bytes);
+                },
+            );
+        }
+        let decoded = decode(&messages)?;
+        assert!(!decoded.counters.is_empty());
+        assert!(
+            !decoded.histograms.is_empty(),
+            "histogram deadline must be serviced"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_histogram_polling_preserves_complete_samples() -> TestResult {
+        let metrics = Metrics::detached();
+        let histogram = metrics.histogram("latency", &[]);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let mut count = 0;
+        let mut inconsistent = false;
+        std::thread::scope(|scope| {
+            let done = &done;
+            scope.spawn(move || {
+                for _ in 0..100_000 {
+                    histogram.record(7);
+                }
+                done.store(true, std::sync::atomic::Ordering::Release);
+            });
+            loop {
+                for (_, sample) in metrics.state().take_histogram_samples() {
+                    count += sample.count;
+                    inconsistent |=
+                        sample.sum != sample.count * 7 || sample.min != 7 || sample.max != 7;
+                }
+                if done.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+            }
+        });
+        for (_, sample) in metrics.state().take_histogram_samples() {
+            count += sample.count;
+            inconsistent |= sample.sum != sample.count * 7 || sample.min != 7 || sample.max != 7;
+        }
+        assert!(
+            !inconsistent,
+            "polling must take count/sum/min/max together"
+        );
+        assert_eq!(count, 100_000, "each observation must be published once");
         Ok(())
     }
 

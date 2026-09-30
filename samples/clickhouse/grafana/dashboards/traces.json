@@ -48,7 +48,7 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "Stage latency p50 / p99 (µs), every event",
+      "title": "Stage latency p50 / p99 (µs), every event (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -67,7 +67,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS p50, sum(p99 * count) / sum(count) / 1e3 AS p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY time, stage ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY time, stage ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -84,7 +84,7 @@
         },
         "overrides": []
       },
-      "description": "From the always-on stage histograms: every event, sampled or not."
+      "description": "Count-weighted averages of estimated percentiles from individual 5 s windows. These are not combined percentiles of all samples. From the always-on stage histograms: every event, sampled or not."
     },
     {
       "id": 2,

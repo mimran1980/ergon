@@ -243,7 +243,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Tick to trade, per stage: p50 / p99 (µs), every tick",
+      "title": "Tick to trade, per stage: p50 / p99 (µs), every tick (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -262,7 +262,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS p50, sum(p99 * count) / sum(count) / 1e3 AS p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -279,7 +279,7 @@
         },
         "overrides": []
       },
-      "description": "From the feed handler's receive time: feed (to the engine), decode, book, signal (EMAs), decide, send (the order published). The lab's loops sleep when idle, so feed includes up to 1 ms of that; spin for real numbers."
+      "description": "Count-weighted averages of estimated percentiles from individual 5 s windows. These are not combined percentiles of all samples. From the feed handler's receive time: feed (to the engine), decode, book, signal (EMAs), decide, send (the order published). The lab's loops sleep when idle, so feed includes up to 1 ms of that; spin for real numbers."
     },
     {
       "id": 7,

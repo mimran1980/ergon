@@ -44,9 +44,9 @@
 // ergon generated code
 
 use ergo_sbe_benchmarks::{
-    THROUGHPUT_SLOT, assert_encode_extent, assert_stream_wrap_extent, ergo_car::*,
-    sample_decode_throughput, sample_encode_throughput, sbe_tool_car_body_decoder,
-    throughput_decode_ergo, throughput_decode_tool, throughput_encode_ergo, throughput_encode_tool,
+    THROUGHPUT_SLOT, assert_stream_wrap_extent, ergo_car::*, sample_decode_throughput,
+    sample_encode_throughput, sbe_tool_car_body_decoder, throughput_decode_ergo,
+    throughput_decode_tool, throughput_encode_ergo, throughput_encode_tool,
 };
 
 // sbe-tool Rust SBE generated code (patched for module inclusion)
@@ -63,6 +63,41 @@ use common::BASELINE;
 // Criterion iteration so maintained ratios measure codec work.
 const MICRO_BATCH_SIZE: usize = 1_024;
 const BATCH_SIZE: usize = 10_000;
+
+/// Keep repeated codec reads/writes observable without black-box stack spills.
+#[inline(always)]
+fn clobber_memory() {
+    unsafe { core::arch::asm!("", options(nostack, preserves_flags)) };
+}
+
+const SCALAR_FRAME_SIZE: usize = CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH;
+
+/// # Safety
+/// Every frame must hold at least `SCALAR_FRAME_SIZE` bytes.
+#[inline(always)]
+unsafe fn encode_scalar_bodies_ergo(frames: &mut [&mut [u8]], serial: u64, year: u16) {
+    for frame in frames {
+        // SAFETY: the caller proves every frame's fixed extent before timing.
+        unsafe { CarEncoder::wrap_unchecked(frame, 0) }
+            .serial_number(serial)
+            .model_year(year);
+        clobber_memory();
+    }
+}
+
+#[inline(always)]
+fn encode_scalar_bodies_tool(frames: &mut [&mut [u8]], serial: u64, year: u16) {
+    use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+        WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
+    };
+    for frame in frames {
+        ToolCarEncoder::default()
+            .wrap(WriteBuf::new(frame), 8)
+            .serial_number(serial)
+            .model_year(year);
+        clobber_memory();
+    }
+}
 
 // Header bytes for sbe-tool decoder construction
 fn sbe_tool_block_length() -> u16 {
@@ -338,11 +373,6 @@ fn bench_decode_scalar(c: &mut Criterion) {
     // the getter under 1024 pointer store/reloads — LTO then ties (~1.004)
     // because sbe-tool's never-taken bounds checks hide in that traffic.
     // Empty asm is a memory clobber without that extra stack round-trip.
-    #[inline(always)]
-    fn clobber_memory() {
-        unsafe { core::arch::asm!("", options(nostack, preserves_flags)) };
-    }
-
     // First arm in a group pays a position penalty (same class as encode/scalar
     // `warmup_body_only`). Throwaway; the gate matches `ergo-sbe` / `sbe-tool`.
     group.bench_function("warmup", |b| {
@@ -671,6 +701,25 @@ fn bench_encode_scalar(c: &mut Criterion) {
         assert_eq!(&ergon[..18], &sbe_tool[..18], "scalar header+body bytes");
     }
 
+    // The timed body-only helpers write successive fixed-block destinations.
+    // Check every destination, including untouched bytes.
+    {
+        let mut ergo_slab = vec![0xA5; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut tool_slab = ergo_slab.clone();
+        let mut ergo_frames: Vec<_> = ergo_slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
+        let mut tool_frames: Vec<_> = tool_slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
+        // SAFETY: chunks_exact_mut gives every frame its full fixed extent.
+        unsafe { encode_scalar_bodies_ergo(&mut ergo_frames, 1234, 2013) };
+        encode_scalar_bodies_tool(&mut tool_frames, 1234, 2013);
+        for (ergo, tool) in ergo_frames.iter().zip(&tool_frames) {
+            assert_eq!(ergo, tool, "scalar body-only frame bytes");
+            assert_eq!(&ergo[..8], &[0xA5; 8], "body-only leaves the header alone");
+            assert_eq!(&ergo[8..16], &1234u64.to_le_bytes());
+            assert_eq!(&ergo[16..18], &2013u16.to_le_bytes());
+            assert!(ergo[18..].iter().all(|byte| *byte == 0xA5));
+        }
+    }
+
     // Header-inclusive API comparison.
     group.bench_function("ergo-sbe_header_and_body", |b| {
         let mut buf = [0u8; 512];
@@ -733,58 +782,49 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
     // no extent check — use wrap_unchecked so the gated pair is equal work
     // (same unfairness class as batch decode; product bare wrap still proves).
-    // Fairness: the first benchmark measured in a group pays a one-off
-    // position penalty (CPU frequency ramp, icache/branch-predictor cold start).
-    // Measured at 1.0-1.6% — the same magnitude as the entire ergo/sbe-tool
-    // margin on this scenario, and it always landed on ergo because ergo was
-    // listed first. This throwaway arm absorbs it so neither implementation is
-    // measured cold. It is not a gated pair (check-bench-gate.sh matches the
-    // `*_body_only` names explicitly).
+    // Write a stream of preallocated fixed-block destinations, with one opaque
+    // descriptor per destination. Inputs are opaque once per batch; a memory
+    // clobber keeps each frame's stores observable without black-box spills.
+    // Reusing one destination instead lets bounds checks hoist out of the loop
+    // and produces identical hot instructions: useful diagnostic evidence, but
+    // it does not model a stream of outgoing destinations.
+    // Both arms and the throwaway warmup use identical opacity; the gate
+    // matches only the two named codec arms.
     group.bench_function("warmup_body_only", |b| {
-        let mut buf = [0u8; 512];
-        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                // SAFETY: extent asserted directly above.
-                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            // SAFETY: every preallocated chunk has its complete fixed extent.
+            unsafe { encode_scalar_bodies_ergo(frames, serial, year) };
+            black_box(frames);
         });
     });
 
     group.bench_function("ergo-sbe_body_only", |b| {
-        let mut buf = [0u8; 512];
-        // Untimed: prove the buffer holds a complete frame before the timed
-        // region wraps it unchecked.
-        // This arm writes only the fixed block, so header + block length is the
-        // exact extent the timed region touches.
-        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                // SAFETY: extent asserted directly above.
-                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            // SAFETY: every preallocated chunk has its complete fixed extent.
+            unsafe { encode_scalar_bodies_ergo(frames, serial, year) };
+            black_box(frames);
         });
     });
 
     group.bench_function("sbe-tool_body_only", |b| {
-        let mut buf = [0u8; 512];
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default()
-                    .wrap(
-                        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(black_box(&mut buf)),
-                        8,
-                    )
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            encode_scalar_bodies_tool(frames, serial, year);
+            black_box(frames);
         });
     });
 

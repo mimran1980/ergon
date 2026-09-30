@@ -15,12 +15,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use rusteron_archive::{
     Aeron, AeronArchive, AeronArchiveAsyncConnect, AeronArchiveContext, AeronArchiveErrorCode,
-    AeronArchiveReplayParams, AeronContext, AeronSubscription, Handlers, IntoCString,
-    SOURCE_LOCATION_LOCAL,
+    AeronArchiveReplayParams, AeronContext, AeronImage, AeronSubscription,
+    AeronUnavailableImageCallback, Handler, Handlers, IntoCString, SOURCE_LOCATION_LOCAL,
 };
 
 use crate::aeron_stats::AeronStats;
@@ -31,6 +33,8 @@ const CONTROL: &std::ffi::CStr = c"aeron:ipc?term-length=64k";
 
 struct Replay {
     session: i64,
+    /// Consumed position, including padding and a removed image's final position.
+    position: Arc<AtomicI64>,
     subscription: AeronSubscription,
     opened: Instant,
     connected: bool,
@@ -40,6 +44,14 @@ struct Replay {
     start: i64,
     term_length: i32,
     segment_length: i32,
+}
+
+struct ReplayPosition(Arc<AtomicI64>);
+
+impl AeronUnavailableImageCallback for ReplayPosition {
+    fn handle_aeron_on_unavailable_image(&mut self, _: AeronSubscription, image: AeronImage) {
+        self.0.fetch_max(image.position(), Ordering::Relaxed);
+    }
 }
 
 /// Moves recorded messages into ClickHouse. Call [`Ingester::tick`] about
@@ -194,7 +206,8 @@ impl Ingester {
                 self.writer.log(&report);
                 return Ok(report);
             }
-            caught_up = true;
+            // Reaching this retry's bounded endpoint does not prove we have
+            // read the rest of a historical histogram window in the archive.
         }
         self.writer
             .flush_elapsed_histograms(Self::unix_now_ns(), caught_up);
@@ -299,13 +312,15 @@ impl Ingester {
                     }
                     Err(e) => return Err(aeron(e)),
                 };
+            let position = Arc::new(AtomicI64::new(from));
+            let unavailable = Handler::new(ReplayPosition(Arc::clone(&position)));
             let subscription = self
                 .aeron
                 .async_add_subscription(
                     &format!("aeron:ipc?session-id={}", session as i32).into_c_string(),
                     replay_stream,
                     Handlers::NONE,
-                    Handlers::NONE,
+                    Some(&unavailable),
                 )
                 .map_err(aeron)?
                 .poll_blocking(Duration::from_secs(10))
@@ -315,10 +330,14 @@ impl Ingester {
                 d.id,
                 d.stream_id
             );
+            // An empty recording is already consumed through its replay start,
+            // even though it will never invoke a message callback.
+            self.polled.entry(d.id).or_insert(from);
             self.replays.insert(
                 d.id,
                 Replay {
                     session,
+                    position,
                     subscription,
                     opened: Instant::now(),
                     connected: false,
@@ -334,9 +353,10 @@ impl Ingester {
 
     /// Hand replayed messages to the writer, a batch from each recording in
     /// turn, until it holds `max_queued` bytes; the rest waits in the archive.
-    /// `true` when every subscription returned nothing. Hitting the cap is
-    /// `false` even when that same poll also emptied them.
+    /// `true` after reading through each recording's current archive position.
+    /// An empty transport poll alone does not prove a replay has caught up.
     fn poll(&mut self, capped: bool) -> Result<bool, Error> {
+        let recordings: Vec<_> = self.replays.keys().copied().collect();
         let max_queued = self.max_queued;
         let writer = &mut self.writer;
         let mut finished = Vec::new();
@@ -368,6 +388,17 @@ impl Ingester {
                 if let Some(position) = last {
                     self.polled.insert(recording, position);
                 }
+                // Padding advances the subscriber position without invoking
+                // the fragment handler. Include it in catch-up/checkpoints.
+                replay.subscription.for_each_image(|image| {
+                    replay
+                        .position
+                        .fetch_max(image.position(), Ordering::Relaxed);
+                });
+                let position = replay.position.load(Ordering::Relaxed);
+                self.polled
+                    .entry(recording)
+                    .and_modify(|last| *last = (*last).max(position));
                 any |= polled > 0;
             }
             if !any || (capped && writer.queued_bytes() >= max_queued) {
@@ -390,6 +421,17 @@ impl Ingester {
             if let Some(replay) = self.replays.remove(&recording) {
                 let _ = self.archive.stop_replay(replay.session);
             }
+        }
+        if caught_up {
+            let mut ends = BTreeMap::new();
+            for recording in recordings {
+                let end = self
+                    .archive
+                    .get_max_recorded_position(recording)
+                    .map_err(aeron)?;
+                ends.insert(recording, end);
+            }
+            caught_up = replay_caught_up(&self.polled, &ends);
         }
         Ok(caught_up)
     }
@@ -473,6 +515,12 @@ impl Drop for Ingester {
             let _ = self.archive.stop_replay(replay.session);
         }
     }
+}
+
+/// A replay is caught up only after it has delivered all archived messages.
+fn replay_caught_up(polled: &BTreeMap<i64, i64>, ends: &BTreeMap<i64, i64>) -> bool {
+    ends.iter()
+        .all(|(id, end)| polled.get(id).is_some_and(|position| position >= end))
 }
 
 /// `pending` when one of its positions is still ahead of `checkpoints`.
@@ -572,6 +620,22 @@ fn record_feeds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_replay_batch_does_not_close_historical_histograms() {
+        let archive_ends = BTreeMap::from([(3, 8192), (7, 128)]);
+        let pending_end = BTreeMap::from([(3, 4096), (7, 128)]);
+        assert!(!replay_caught_up(&pending_end, &archive_ends));
+        assert!(!replay_caught_up(
+            &BTreeMap::from([(3, 8192)]),
+            &archive_ends
+        ));
+        assert!(replay_caught_up(&archive_ends, &archive_ends));
+        assert!(replay_caught_up(
+            &BTreeMap::from([(3, 9000), (7, 128)]),
+            &archive_ends
+        ));
+    }
 
     #[test]
     fn checkpoints_round_trip_one_line_per_recording() -> Result<(), Box<dyn std::error::Error>> {

@@ -16,10 +16,13 @@
 //! Each millisecond records its minimum, its maximum, and the mean of the
 //! rest (3 significant figures). `avg` is the exact sum divided by the
 //! count. A busy millisecond pulls the percentiles toward that mean. Min and
-//! max stay exact. Rows have no buckets, so percentiles do not merge:
+//! max stay exact. Percentiles estimate the reconstructed distribution, not
+//! the original samples. Rows have no buckets, so percentiles do not merge.
+//! Counts, sums, minima, and maxima do:
 //!
 //! ```sql
-//! SELECT sum(p99 * count) / sum(count)
+//! SELECT sum(count) AS sample_count, sum(sum) / sum(count) AS mean,
+//!        min(min) AS minimum, max(max) AS maximum
 //! FROM metrics_histogram
 //! WHERE name = 'tick_to_trade_ns' AND ts > now() - INTERVAL 1 HOUR
 //! ```

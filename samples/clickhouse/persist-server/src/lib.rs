@@ -872,9 +872,15 @@ impl Writer {
         self.dedup_token.push_str(token);
     }
 
-    /// Reload `tables.yaml` if it changed, sync tables, insert what is queued.
+    /// Close elapsed histogram windows, reload `tables.yaml` if it changed,
+    /// sync tables, and insert what is queued.
+    ///
+    /// Call after delivering all available live messages. Archive ingestion
+    /// checks replay positions before closing windows and uses its own tick.
     pub fn tick(&mut self) -> Report {
         let mut report = Report::default();
+        let now = persist_client::clock::Clock::new().wall().epoch_ns();
+        self.flush_elapsed_histograms(u64::try_from(now).unwrap_or(0), true);
         self.run(&mut report);
         self.log(&report);
         report

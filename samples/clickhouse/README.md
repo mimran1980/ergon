@@ -180,7 +180,7 @@ snake_case. `encode` is not called when the table is off. `record` returns
 
 ```rust
 let len = TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
+persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
     Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
         .fixed(&TradeFixedFields { ts_event, ts_init, price: d9(price)?, size: d9(size)?, aggressor })
         .symbol(symbol)?
@@ -273,6 +273,7 @@ so the persistence writer accepts the combined enum without re-encoding:
 ```rust
 let message = schema::AnySchemaMessage::decode(frame, 0)?;
 writer.push(message.as_bytes(), source_id);
+writer.tick(); // deliver all available live frames before flushing elapsed windows
 ```
 
 The archive ingester loads every `.xml` it is given and routes a frame by that
@@ -285,9 +286,10 @@ the source id. A `Source` message names it.
 
 ## Metrics
 
-One writer per counter or histogram (`Send`, not `Sync`): a relaxed load and
-store. The same series on another thread is another cell, added at `poll`.
-A gauge is shared. The last write wins.
+One writer per counter or histogram handle (`Send`, not `Sync`). Counters use
+a relaxed load and store. Histograms lock their own cell so a poll on another
+thread takes count, sum, min, and max together. The same series on another
+thread is another cell, added at `poll`. A gauge is shared. The last write wins.
 
 ```rust
 let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
@@ -344,13 +346,21 @@ The ingester keeps an HdrHistogram of 3 significant figures for each series
 and folds each summary into the 5 s window: the minimum, the maximum, and
 the mean of the rest. A busy millisecond pulls the percentiles toward that
 mean. The row stores `count`, `sum`, `min`, `max`, `avg`, `p50`, `p75`,
-`p90`, `p99`, `p999`, `p9999`, and `p99999`. `avg` is the exact sum divided
+`p90`, `p99`, `p999`, `p9999`, and `p99999`. These percentiles estimate the
+reconstructed distribution; the summaries cannot recover the original one.
+For example, a millisecond containing values 1 through 1000 reconstructs most
+values near 500, even though the original p99 is near 990.
+`avg` is the exact sum divided
 by the count. `min` and `max` stay exact. `interval_ns` is 5 s.
 
-Percentiles do not merge across rows. Weight them by count:
+Percentiles do not merge across rows. Query each stored window's estimates
+separately. A count-weighted average of p99 values is an average of window
+estimates, not the p99 of all samples; the dashboards label it accordingly.
+Counts, sums, minima, and maxima do combine across windows:
 
 ```sql
-SELECT sum(p99 * count) / sum(count)
+SELECT sum(count) AS sample_count, sum(sum) / sum(count) AS mean,
+       min(min) AS minimum, max(max) AS maximum
 FROM market.metrics_histogram
 WHERE name = 'tick_to_trade_ns' AND ts > now() - INTERVAL 1 HOUR
 ```
@@ -489,9 +499,11 @@ per sample, divided back to one. Nothing was dropped.
 | `tracing` span, off / on | 83 ns / 250 ns | 209 ns / 667 ns | 1.8 µs / 5.9 µs |
 
 The histogram figure of 1.7 ns includes the old per-value bucket update.
-`record` now touches count, sum, min, and max only. That row has not been
-remeasured. With a histogram registered, `poll` is due every 1 ms. The idle
-poll figure was measured before that.
+`Histogram::record` now locks its cell and updates count, sum, min, and max.
+The histogram and checkpoint-trace rows have not been remeasured with that
+lock. With a histogram registered, `poll` is due every 1 ms. The idle poll
+figure was measured before that. Due counter/gauge and histogram cycles run in
+deadline order so neither can starve the other.
 
 `Clock::now` here is `mach_absolute_time`. On x86-64 Linux it is `rdtsc`,
 which this run did not measure.

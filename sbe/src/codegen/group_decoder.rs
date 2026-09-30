@@ -114,15 +114,14 @@ pub(crate) fn generate_group_decoder(
     // prove this group's wire block length can hold the fields its getters
     // then read unchecked. `min_fixed` stays in scope for the dynamic-extent
     // store below.
-    let short_block = quote::quote! {
-        let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: #g_name_lit,
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
+    let dimensions = quote::quote! {
+        let min_fixed = #decoder_ident::min_readable_fixed_extent(acting_version);
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            #g_name_lit,
+            header.#count_field_ident() as u64,
+            header.#bl_field_ident() as u64,
+            min_fixed,
+        )?;
     };
 
     // Dynamic groups have no constant stride, so the whole region cannot be
@@ -270,16 +269,8 @@ pub(crate) fn generate_group_decoder(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, offset);
                 let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_length = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
+                #dimensions
                 let entries_start = offset + #dim_size_lit;
-                #short_block
                 #dyn_extent_decl
                 #fixed_extent_validation
                 Ok(#decoder_ident {
@@ -419,15 +410,9 @@ pub(crate) fn generate_group_decoder(
                 self.remaining_entries()
             }
 
-            /// Dimension wrap after the caller has proven the dimension
-            /// header (and, for fixed groups, the full entry region) is
-            /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
-            ///
-            /// The caller's extent proof does not cover a wire `blockLength`
-            /// shorter than the fixed fields active at `acting_version`. That
-            /// check is the same one [`Self::wrap_with_parent`] runs, and it
-            /// runs here too: a nested group reached through a warm parent
-            /// cache would otherwise hand out getters that read past `buf`.
+            /// Wrap a proven dimension header and fixed-stride entry region.
+            /// Still rejects strides too short for the acting-version fields.
+            /// Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
             ///
             /// # Safety
             /// `offset + dimension_header_size` must not overflow and must be
@@ -441,15 +426,7 @@ pub(crate) fn generate_group_decoder(
             ) -> Result<Self, sbe_rt::DecodeError> {
                 let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, offset) };
                 let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_length = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
-                #short_block
+                #dimensions
                 #dyn_extent_decl
                 Ok(Self {
                     buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,

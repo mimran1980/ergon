@@ -560,6 +560,25 @@ pub mod sbe_rt {
         }
         checked_header_usize(field, value)
     }
+    /// Validate a group's wire dimensions before any entry can be read.
+    #[inline]
+    pub(crate) fn checked_group_dimensions(
+        field: &'static str,
+        wire_count: u64,
+        wire_block_length: u64,
+        min_fixed: usize,
+    ) -> Result<(usize, usize), DecodeError> {
+        let count = checked_group_count("numInGroup", wire_count)?;
+        let block_length = checked_header_usize("blockLength", wire_block_length)?;
+        if count > 0 && block_length < min_fixed {
+            return Err(DecodeError::BufferTooShort {
+                field,
+                needed: min_fixed,
+                available: block_length,
+            });
+        }
+        Ok((count, block_length))
+    }
     /// Progressive cache of dynamic-tail *end* offsets.
     ///
     /// Slot `i` is the absolute (or compact-relative) end of tail `i`
@@ -2743,25 +2762,12 @@ impl<'a> CarDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let (count, block_len) = sbe_rt::checked_group_dimensions(
+            "fuelFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_len = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            FuelFiguresDecoder::min_readable_fixed_extent(self.acting_version),
         )?;
-        let min_fixed = <FuelFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(self.acting_version);
-        if count > 0 && block_len < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: min_fixed,
-                available: block_len,
-            });
-        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -2786,25 +2792,12 @@ impl<'a> CarDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let (count, block_len) = sbe_rt::checked_group_dimensions(
+            "performanceFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_len = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            PerformanceFiguresDecoder::min_readable_fixed_extent(self.acting_version),
         )?;
-        let min_fixed = <PerformanceFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(self.acting_version);
-        if count > 0 && block_len < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: min_fixed,
-                available: block_len,
-            });
-        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -3211,34 +3204,12 @@ impl<'a> CarDecoder<'a> {
             }
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
-            let count = match sbe_rt::checked_group_count(
-                "numInGroup",
+            let (count, group_block_length) = sbe_rt::checked_group_dimensions(
+                "fuel_figures",
                 dim.num_in_group() as u64,
-            ) {
-                Ok(count) => count,
-                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-            };
-            let group_block_length = match sbe_rt::checked_header_usize(
-                "blockLength",
                 dim.block_length() as u64,
-            ) {
-                Ok(v) => v,
-                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-            };
-            let min_fixed = <FuelFiguresDecoder<
-                '_,
-                sbe_rt::Detached,
-            >>::min_readable_fixed_extent(acting_version);
-            if count > 0 && group_block_length < min_fixed {
-                return Err(
-                    sbe_rt::DecodeError::BufferTooShort {
-                        field: "fuel_figures",
-                        needed: min_fixed,
-                        available: group_block_length,
-                    }
-                        .into(),
-                );
-            }
+                FuelFiguresDecoder::min_readable_fixed_extent(acting_version),
+            )?;
             let mut entry_offset = match offset.checked_add(4) {
                 Some(v) => v,
                 None => {
@@ -3270,34 +3241,12 @@ impl<'a> CarDecoder<'a> {
             }
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let dim = GroupSizeEncoding(bytes);
-            let count = match sbe_rt::checked_group_count(
-                "numInGroup",
+            let (count, group_block_length) = sbe_rt::checked_group_dimensions(
+                "performance_figures",
                 dim.num_in_group() as u64,
-            ) {
-                Ok(count) => count,
-                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-            };
-            let group_block_length = match sbe_rt::checked_header_usize(
-                "blockLength",
                 dim.block_length() as u64,
-            ) {
-                Ok(v) => v,
-                Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-            };
-            let min_fixed = <PerformanceFiguresDecoder<
-                '_,
-                sbe_rt::Detached,
-            >>::min_readable_fixed_extent(acting_version);
-            if count > 0 && group_block_length < min_fixed {
-                return Err(
-                    sbe_rt::DecodeError::BufferTooShort {
-                        field: "performance_figures",
-                        needed: min_fixed,
-                        available: group_block_length,
-                    }
-                        .into(),
-                );
-            }
+                PerformanceFiguresDecoder::min_readable_fixed_extent(acting_version),
+            )?;
             let mut entry_offset = match offset.checked_add(4) {
                 Some(v) => v,
                 None => {
@@ -3559,26 +3508,14 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = FuelFiguresDecoder::min_readable_fixed_extent(acting_version);
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "fuelFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
         let entries_start = offset + 4;
-        let min_fixed = <FuelFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -3711,15 +3648,9 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven the dimension
-    /// header (and, for fixed groups, the full entry region) is
-    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
-    ///
-    /// The caller's extent proof does not cover a wire `blockLength`
-    /// shorter than the fixed fields active at `acting_version`. That
-    /// check is the same one [`Self::wrap_with_parent`] runs, and it
-    /// runs here too: a nested group reached through a warm parent
-    /// cache would otherwise hand out getters that read past `buf`.
+    /// Wrap a proven dimension header and fixed-stride entry region.
+    /// Still rejects strides too short for the acting-version fields.
+    /// Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -3736,25 +3667,13 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = FuelFiguresDecoder::min_readable_fixed_extent(acting_version);
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "fuelFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
-        let min_fixed = <FuelFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "fuelFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -4622,26 +4541,16 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = PerformanceFiguresDecoder::min_readable_fixed_extent(
+            acting_version,
+        );
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "performanceFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
         let entries_start = offset + 4;
-        let min_fixed = <PerformanceFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -4774,15 +4683,9 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven the dimension
-    /// header (and, for fixed groups, the full entry region) is
-    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
-    ///
-    /// The caller's extent proof does not cover a wire `blockLength`
-    /// shorter than the fixed fields active at `acting_version`. That
-    /// check is the same one [`Self::wrap_with_parent`] runs, and it
-    /// runs here too: a nested group reached through a warm parent
-    /// cache would otherwise hand out getters that read past `buf`.
+    /// Wrap a proven dimension header and fixed-stride entry region.
+    /// Still rejects strides too short for the acting-version fields.
+    /// Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -4799,25 +4702,15 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = PerformanceFiguresDecoder::min_readable_fixed_extent(
+            acting_version,
+        );
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "performanceFigures",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
-        let min_fixed = <PerformanceFiguresDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "performanceFigures",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         let min_entry_extent = if block_length > min_fixed {
             block_length
         } else {
@@ -5121,25 +5014,14 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let (count, block_len) = sbe_rt::checked_group_dimensions(
+            "acceleration",
             header.num_in_group() as u64,
-        )?;
-        let block_len = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent(
+                self.acting_version,
+            ),
         )?;
-        let min_fixed = <PerformanceFiguresAccelerationDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(self.acting_version);
-        if count > 0 && block_len < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: min_fixed,
-                available: block_len,
-            });
-        }
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
@@ -5313,26 +5195,16 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
         }
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent(
+            acting_version,
+        );
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "acceleration",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
         let entries_start = offset + 4;
-        let min_fixed = <PerformanceFiguresAccelerationDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         let entries_length = count
             .checked_mul(block_length)
             .ok_or(sbe_rt::DecodeError::BufferTooShort {
@@ -5471,15 +5343,9 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     pub const fn remaining(&self) -> usize {
         self.remaining_entries()
     }
-    /// Dimension wrap after the caller has proven the dimension
-    /// header (and, for fixed groups, the full entry region) is
-    /// in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
-    ///
-    /// The caller's extent proof does not cover a wire `blockLength`
-    /// shorter than the fixed fields active at `acting_version`. That
-    /// check is the same one [`Self::wrap_with_parent`] runs, and it
-    /// runs here too: a nested group reached through a warm parent
-    /// cache would otherwise hand out getters that read past `buf`.
+    /// Wrap a proven dimension header and fixed-stride entry region.
+    /// Still rejects strides too short for the acting-version fields.
+    /// Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
     ///
     /// # Safety
     /// `offset + dimension_header_size` must not overflow and must be
@@ -5496,25 +5362,15 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     ) -> Result<Self, sbe_rt::DecodeError> {
         let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = GroupSizeEncoding(bytes);
-        let count = sbe_rt::checked_group_count(
-            "numInGroup",
+        let min_fixed = PerformanceFiguresAccelerationDecoder::min_readable_fixed_extent(
+            acting_version,
+        );
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            "acceleration",
             header.num_in_group() as u64,
-        )?;
-        let block_length = sbe_rt::checked_header_usize(
-            "blockLength",
             header.block_length() as u64,
+            min_fixed,
         )?;
-        let min_fixed = <PerformanceFiguresAccelerationDecoder<
-            '_,
-            sbe_rt::Detached,
-        >>::min_readable_fixed_extent(acting_version);
-        if count > 0 && block_length < min_fixed {
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: min_fixed,
-                available: block_length,
-            });
-        }
         Ok(Self {
             buf,
             offset: offset + 4,

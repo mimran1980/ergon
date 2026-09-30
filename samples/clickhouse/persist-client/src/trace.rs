@@ -12,7 +12,7 @@
 //! let t2t = persist.tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
 //! const MD: u64 = TraceId::namespace("md");
 //!
-//! // Per event: no heap, no lock.
+//! // Stamps stay on the stack; finish locks each stage's histogram cell.
 //! let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(MD, seq));
 //! t.mark(clock.now()); // wire: the venue's time to ours
 //! t.mark(clock.now()); // decode
@@ -25,8 +25,9 @@
 //!
 //! The same waterfall from code that is not on the hot path is a `tracing`
 //! span (`info_span!`, `#[instrument]`). [`crate::Persist::layer`] records
-//! those while `otel_traces` is on. A span costs the registry, a few hundred
-//! nanoseconds, and an allocation; this module does not.
+//! those while `otel_traces` is on. Spans use the tracing registry and allocate;
+//! checkpoint stamps stay on the stack. Finishing a checkpoint trace locks
+//! its histogram cells to preserve complete summaries during concurrent polls.
 //!
 //! [`Trace::finish`] always records each stage, and the whole, into the
 //! histogram `trace_ns{trace, stage}`: every event is counted. It publishes

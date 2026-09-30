@@ -64,9 +64,19 @@ sbe-tool's unchecked `wrap`. Making the column uniform would break the pairing.
 sbe-tool `encoded_length()` is body-only. Never invent `8 + encoded_length()`
 to “prove” a header was written.
 
-Timed paths: one pre-sized buffer, no alloc inside `b.iter`,
+Timed paths: pre-sized buffers, no alloc inside `b.iter`,
 `std::hint::black_box` on inputs, byte/value asserts before timing.
 `fairness_policy_test` enforces this.
+
+Scalar body encoding uses 1,024 successive fixed-block destinations in one
+preallocated slab. Both arms traverse identical descriptors sized for the header
+and fixed block, and write the same two fields. Inputs become opaque once per
+batch; a compiler memory clobber preserves every destination's stores without repeating black-box stack
+spills for each setter. Untimed checks compare every destination, including
+the unchanged header and unwritten fields. Reusing one destination is a useful
+diagnostic, but its LTO hot loops reduce to identical instructions and do not
+model encoding successive outbound destinations. This body-only case omits the
+header write and dynamic tails; it does not encode complete Car messages.
 
 Maintained encode/decode use `*_unchecked` constructors so both arms skip
 extent proofs. Checked constructors have separately labelled diagnostic arms;

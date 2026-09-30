@@ -7,12 +7,20 @@
   and borrowed frames for persistence, including unknown schemas and templates.
 
 ### Changed
+- Scalar body encode benchmarks write successive preallocated destinations with
+  symmetric input opacity, instead of measuring repeated black-box stack spills.
 - **`optional_enum_nullify` is gated at 1.00 in both profiles.** Both arms
   keep four independent totals of the same three decoded fields, so the row
   measures decode throughput. The 1.01 allowance was for a single running
   total, which measured loop latency.
 
 ### Fixed
+- Restore the Full Car generated-source budget to 450,000 bytes by sharing
+  wire-dimension validation, including when optional string adapters are enabled.
+- Preserve complete histogram samples during concurrent recording and polling,
+  and publish overdue counters and gauges during continuous histogram traffic.
+- Flush a standalone persistence writer's final elapsed histogram window and
+  check archive replay positions before flushing historical windows.
 - A tracing counter whose `value` is present but not a nonnegative integer is ignored, instead of counting as one.
 - **The cluster crate enabled ergo-sbe's default `fancy` feature on both
   the runtime dependency and the build dependency.** That pulls miette's

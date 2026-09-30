@@ -537,6 +537,26 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 checked_header_usize(field, value)
             }
 
+            /// Validate a group's wire dimensions before any entry can be read.
+            #[inline]
+            pub(crate) fn checked_group_dimensions(
+                field: &'static str,
+                wire_count: u64,
+                wire_block_length: u64,
+                min_fixed: usize,
+            ) -> Result<(usize, usize), DecodeError> {
+                let count = checked_group_count("numInGroup", wire_count)?;
+                let block_length = checked_header_usize("blockLength", wire_block_length)?;
+                if count > 0 && block_length < min_fixed {
+                    return Err(DecodeError::BufferTooShort {
+                        field,
+                        needed: min_fixed,
+                        available: block_length,
+                    });
+                }
+                Ok((count, block_length))
+            }
+
             #tail_boundary_cache
 
 

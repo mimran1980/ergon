@@ -440,7 +440,7 @@ fn helper_names(arm: &str) -> Vec<String> {
             }
             if i < bytes.len() && bytes[i] == b'(' {
                 let name = &code[start..i];
-                if name.starts_with("throughput_") {
+                if name.starts_with("throughput_") || name.starts_with("encode_scalar_bodies_") {
                     names.push(name.to_string());
                 }
             }
@@ -451,16 +451,39 @@ fn helper_names(arm: &str) -> Vec<String> {
     names
 }
 
-/// Header writes count when they are in the arm or in the `throughput_*`
-/// helper the arm calls. Other callees stay ignored so an unrelated helper
-/// cannot reclassify a body-only arm.
-fn writes_message_header(arm: &str) -> bool {
-    if arm_writes_message_header(arm) {
-        return true;
+/// Inspect direct encoding work and the known codec helpers an arm calls.
+/// Missing helpers must fail rather than silently evade the header policy.
+fn encoding_work(source: &str, arm: &str) -> Result<String, String> {
+    let mut work = arm.to_string();
+    for name in helper_names(arm) {
+        let helper_source = if name.starts_with("throughput_") {
+            BENCH_LIB
+        } else {
+            source
+        };
+        let helper = function_source(helper_source, &name)
+            .ok_or_else(|| format!("encoding helper {name} missing"))?;
+        work.push_str(helper);
     }
-    helper_names(arm)
-        .into_iter()
-        .any(|name| function_source(BENCH_LIB, &name).is_some_and(arm_writes_message_header))
+    Ok(work)
+}
+
+#[test]
+fn scalar_helper_header_work_cannot_evade_policy() -> Result<(), Box<dyn std::error::Error>> {
+    let arm = "unsafe { encode_scalar_bodies_ergo(frames, serial, year) };";
+    let work = encoding_work(PERF_PARITY, arm)?;
+    assert!(arm_is_body_only_encode(&work));
+    assert!(!arm_writes_message_header(&work));
+    let changed = PERF_PARITY.replacen(
+        "CarEncoder::wrap_unchecked(frame, 0)",
+        "CarEncoder::wrap_and_apply_header_unchecked(frame, 0)",
+        1,
+    );
+    let work = encoding_work(&changed, arm)?;
+    assert!(arm_writes_message_header(&work));
+    assert!(!arm_is_body_only_encode(&work));
+    assert!(encoding_work("", arm).is_err());
+    Ok(())
 }
 
 fn arm_writes_message_header(arm: &str) -> bool {
@@ -565,8 +588,10 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             .ok_or_else(|| format!("{fn_name}/{ergo_label}: timed arm not found"))?;
         let tool = timed_arm_body(fn_src, tool_label)
             .ok_or_else(|| format!("{fn_name}/{tool_label}: timed arm not found"))?;
-        let ergo_hdr = writes_message_header(ergo);
-        let tool_hdr = writes_message_header(tool);
+        let ergo = encoding_work(source, ergo)?;
+        let tool = encoding_work(source, tool)?;
+        let ergo_hdr = arm_writes_message_header(&ergo);
+        let tool_hdr = arm_writes_message_header(&tool);
         match *mode {
             "header" => {
                 assert!(
@@ -583,7 +608,7 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             }
             "body" => {
                 assert!(
-                    !ergo_hdr && arm_is_body_only_encode(ergo),
+                    !ergo_hdr && arm_is_body_only_encode(&ergo),
                     "{fn_name}/{ergo_label} must be body-only (wrap without header write)"
                 );
                 assert!(

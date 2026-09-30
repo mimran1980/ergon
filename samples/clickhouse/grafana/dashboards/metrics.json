@@ -108,7 +108,7 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Venue to us, p50 / p99 (ms)",
+      "title": "Venue to us, p50 / p99 (ms) (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -127,7 +127,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(p50 * count) / sum(count) / 1e6 AS p50, sum(p99 * count) / sum(count) / 1e6 AS p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(p50 * count) / sum(count) / 1e6 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e6 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -144,12 +144,12 @@
         },
         "overrides": []
       },
-      "description": "Percentiles come from an HdrHistogram filled with each millisecond's min, max, and the mean of the rest. Exact min and max are columns. A busy millisecond pulls percentiles toward that mean. Zero when the venue's clock is ahead of ours (see Clamped)."
+      "description": "Count-weighted averages of estimated percentiles from individual 5 s windows. These are not combined percentiles of all samples. Percentiles come from an HdrHistogram filled with each millisecond's min, max, and the mean of the rest. Exact min and max are columns. A busy millisecond pulls percentiles toward that mean. Zero when the venue's clock is ahead of ours (see Clamped)."
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "record() p50 / p99 / p99.9 (µs)",
+      "title": "record() p50 / p99 / p99.9 (µs) (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -168,7 +168,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, app, sum(p50 * count) / sum(count) / 1e3 AS p50, sum(p99 * count) / sum(count) / 1e3 AS p99, sum(p999 * count) / sum(count) / 1e3 AS p999 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, app, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p999 * count) / sum(count) / 1e3 AS avg_window_p999 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -184,12 +184,13 @@
           "unit": "µs"
         },
         "overrides": []
-      }
+      },
+      "description": "Count-weighted averages of estimated percentiles from individual 5 s windows. These are not combined percentiles of all samples."
     },
     {
       "id": 5,
       "type": "barchart",
-      "title": "record() latency distribution (last interval)",
+      "title": "record() estimated latency distribution (last interval)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -219,7 +220,7 @@
           "placement": "bottom"
         }
       },
-      "description": "Percentiles of the latest 5 s interval."
+      "description": "Percentiles reconstructed from millisecond count/sum/min/max summaries; the original distribution is not retained."
     },
     {
       "id": 6,
