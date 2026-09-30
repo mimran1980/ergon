@@ -80,6 +80,8 @@ pub enum Error {
     Aeron(String),
     /// A background thread could not be started.
     Thread(String),
+    /// A source, metric, or trace dictionary message could not be encoded.
+    Encode(event::codec::sbe_rt::EncodeError),
 }
 
 impl std::fmt::Display for Error {
@@ -89,11 +91,25 @@ impl std::fmt::Display for Error {
             Self::Config(m) => write!(f, "tables.yaml: {m}"),
             Self::Aeron(m) => write!(f, "aeron: {m}"),
             Self::Thread(m) => write!(f, "thread: {m}"),
+            Self::Encode(err) => write!(f, "encode: {err}"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Encode(err) => Some(err),
+            Self::Schema(_) | Self::Config(_) | Self::Aeron(_) | Self::Thread(_) => None,
+        }
+    }
+}
+
+impl From<event::EncodeError> for Error {
+    fn from(err: event::EncodeError) -> Self {
+        Self::Encode(err)
+    }
+}
 
 /// Whether the ingester may change a table's columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -574,7 +590,7 @@ impl Persist {
             publish(&settings).map_err(|e| Error::Aeron(format!("{}: {e}", settings.channel)))?;
         let mut source = source::Source::new(&settings.host, &settings.pod, &settings.app);
         source.client = aeron.client_id();
-        let source_message = source.message().map_err(Error::Config)?;
+        let source_message = source.message()?;
         let max_payload = publication
             .max_payload_length()
             .map_err(|e| Error::Aeron(e.to_string()))?;

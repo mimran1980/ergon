@@ -54,8 +54,7 @@ fn a_group_char_field_reads_and_writes_text() -> Result<(), Box<dyn std::error::
         "group_char_text",
         &src,
         r#"
-        let len = BookEncoder::compute_length_with_header(1);
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; BookEncoder::compute_length_with_header(1)];
         let written = BookEncoder::wrap_and_apply_header(&mut buf, 0)
             .fixed(&BookFixedFields {})
             .bids(1, |g| {
@@ -66,7 +65,8 @@ fn a_group_char_field_reads_and_writes_text() -> Result<(), Box<dyn std::error::
                 Ok(())
             })?
             .encoded_length_with_header();
-        let msg = AnyMessage::decode(&buf[..written], 0)?;
+        assert_eq!(written, buf.len());
+        let msg = AnyMessage::decode(&buf, 0)?;
         let AnyMessage::Book(book) = msg else { panic!("book") };
         let mut bids = book.bids()?;
         let entry = bids.next().unwrap();

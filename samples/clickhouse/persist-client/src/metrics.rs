@@ -162,36 +162,37 @@ impl MetricDef {
     }
 
     /// This series as a `MetricDef` message, header included.
-    pub fn message(&self) -> Result<Vec<u8>, String> {
-        let count = u16::try_from(self.labels.len()).map_err(|_| "over 65535 labels")?;
+    ///
+    /// # Errors
+    ///
+    /// More labels than a group header can count, or a name the codec rejects.
+    pub fn message(&self) -> Result<Vec<u8>, crate::event::EncodeError> {
+        let count = crate::event::group_count(self.labels.len())?;
         let len = codec::MetricDefEncodedLength::new()
             .labels_ragged(count, |g| {
                 for (k, v) in &self.labels {
                     g.add()?.key(k.len())?.value(v.len())?;
                 }
                 Ok(())
-            })
-            .and_then(|l| l.name(self.name.len()))
-            .map_err(|e| e.to_string())?
+            })?
+            .name(self.name.len())?
             .encoded_length_with_header();
-        let mut message = vec![0; len];
-        let written = codec::MetricDefEncoder::wrap_and_apply_header(&mut message, 0)
-            .fixed(&codec::MetricDefFixedFields {
-                series: self.series,
-                kind: self.kind.wire(),
-                precision: self.precision,
-            })
-            .labels(count, |g| {
-                for (k, v) in &self.labels {
-                    g.add(|e| e.key(k.as_bytes())?.value(v.as_bytes()))?;
-                }
-                Ok(())
-            })
-            .and_then(|m| m.name(self.name.as_bytes()))
-            .map_err(|e| e.to_string())?
-            .encoded_length_with_header();
-        debug_assert_eq!(written, len);
-        Ok(message)
+        crate::event::owned_frame(len, |message| {
+            Ok(codec::MetricDefEncoder::wrap_and_apply_header(message, 0)
+                .fixed(&codec::MetricDefFixedFields {
+                    series: self.series,
+                    kind: self.kind.wire(),
+                    precision: self.precision,
+                })
+                .labels(count, |g| {
+                    for (k, v) in &self.labels {
+                        g.add(|e| e.key(k.as_bytes())?.value(v.as_bytes()))?;
+                    }
+                    Ok(())
+                })?
+                .name(self.name.as_bytes())?
+                .encoded_length_with_header())
+        })
     }
 
     /// A series from its `MetricDef` message; `None` when malformed.

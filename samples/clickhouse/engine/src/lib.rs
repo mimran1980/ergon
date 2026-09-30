@@ -229,6 +229,49 @@ impl Strategy {
     }
 }
 
+/// Why [`App::start`] could not bring a process up.
+#[derive(Debug)]
+pub enum Error {
+    /// The node check, the persist connection, or the stream registry failed.
+    Persist(persist_client::Error),
+    /// `SIGTERM` could not be registered.
+    Signal(std::io::Error),
+    /// `IDLE` is not `spin`, `noop`, `yield`, or `sleep`.
+    Idle(String),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Persist(err) => write!(f, "{err}"),
+            Self::Signal(err) => write!(f, "SIGTERM: {err}"),
+            Self::Idle(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Persist(err) => Some(err),
+            Self::Signal(err) => Some(err),
+            Self::Idle(_) => None,
+        }
+    }
+}
+
+impl From<persist_client::Error> for Error {
+    fn from(err: persist_client::Error) -> Self {
+        Self::Persist(err)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::Signal(err)
+    }
+}
+
 /// What both binaries start with: logging, the persist handle, the feed
 /// registry, their idle strategy, and SIGTERM.
 pub struct App {
@@ -246,7 +289,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn start(schema: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Logging, the persist handle, the feed registry, the idle strategy,
+    /// and `SIGTERM`.
+    ///
+    /// # Errors
+    ///
+    /// The node check, the persist connection, the stream file, `IDLE`, or
+    /// registering `SIGTERM` failed.
+    pub fn start(schema: &str) -> Result<Self, Error> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
         persist_client::streams::check_node_network()?;
         let persist = Persist::connect(schema, Settings::from_env())?;
@@ -262,7 +312,7 @@ impl App {
             region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
             // Lab default: yield. For the best latency, spin (or noop) on an
             // isolated core.
-            idle: Idle::from_env("IDLE", Idle::Yield)?,
+            idle: Idle::from_env("IDLE", Idle::Yield).map_err(Error::Idle)?,
             stop,
         })
     }

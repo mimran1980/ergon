@@ -90,6 +90,7 @@ impl From<persist_client::Error> for Error {
             persist_client::Error::Schema(m) => Self::Schema(m),
             persist_client::Error::Config(m) => Self::Config(m),
             persist_client::Error::Aeron(m) | persist_client::Error::Thread(m) => Self::Aeron(m),
+            persist_client::Error::Encode(err) => Self::Schema(err.to_string()),
         }
     }
 }

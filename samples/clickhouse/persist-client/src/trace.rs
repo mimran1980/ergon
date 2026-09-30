@@ -134,49 +134,47 @@ impl TraceDef {
     }
 
     /// This trace as a `TraceDef` message, header included.
-    pub fn message(&self) -> Result<Vec<u8>, String> {
-        let count = |n: usize| u16::try_from(n).map_err(|_| "over 65535 stages or attributes");
-        let (stages, attrs) = (count(self.stages.len())?, count(self.attrs.len())?);
+    ///
+    /// # Errors
+    ///
+    /// More stages or attributes than a group header can count, or a name
+    /// the codec rejects.
+    pub fn message(&self) -> Result<Vec<u8>, crate::event::EncodeError> {
+        let stages = crate::event::group_count(self.stages.len())?;
+        let attrs = crate::event::group_count(self.attrs.len())?;
         let len = codec::TraceDefEncodedLength::new()
             .stages_ragged(stages, |g| {
                 for s in &self.stages {
                     g.add()?.name(s.len())?;
                 }
                 Ok(())
-            })
-            .and_then(|l| {
-                l.attrs_ragged(attrs, |g| {
-                    for a in &self.attrs {
-                        g.add()?.name(a.len())?;
-                    }
-                    Ok(())
-                })
-            })
-            .and_then(|l| l.name(self.name.len()))
-            .map_err(|e| e.to_string())?
-            .encoded_length_with_header();
-        let mut message = vec![0; len];
-        let written = codec::TraceDefEncoder::wrap_and_apply_header(&mut message, 0)
-            .fixed(&codec::TraceDefFixedFields { def: self.def })
-            .stages(stages, |g| {
-                for s in &self.stages {
-                    g.add(|e| e.name(s.as_bytes()))?;
+            })?
+            .attrs_ragged(attrs, |g| {
+                for a in &self.attrs {
+                    g.add()?.name(a.len())?;
                 }
                 Ok(())
-            })
-            .and_then(|m| {
-                m.attrs(attrs, |g| {
+            })?
+            .name(self.name.len())?
+            .encoded_length_with_header();
+        crate::event::owned_frame(len, |message| {
+            Ok(codec::TraceDefEncoder::wrap_and_apply_header(message, 0)
+                .fixed(&codec::TraceDefFixedFields { def: self.def })
+                .stages(stages, |g| {
+                    for s in &self.stages {
+                        g.add(|e| e.name(s.as_bytes()))?;
+                    }
+                    Ok(())
+                })?
+                .attrs(attrs, |g| {
                     for a in &self.attrs {
                         g.add(|e| e.name(a.as_bytes()))?;
                     }
                     Ok(())
-                })
-            })
-            .and_then(|m| m.name(self.name.as_bytes()))
-            .map_err(|e| e.to_string())?
-            .encoded_length_with_header();
-        debug_assert_eq!(written, len);
-        Ok(message)
+                })?
+                .name(self.name.as_bytes())?
+                .encoded_length_with_header())
+        })
     }
 
     /// A trace from its `TraceDef` message; `None` when malformed.

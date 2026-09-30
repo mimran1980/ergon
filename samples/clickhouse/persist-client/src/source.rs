@@ -49,26 +49,28 @@ impl Source {
     }
 
     /// This source as a `Source` message, header included.
-    pub fn message(&self) -> Result<Vec<u8>, String> {
+    ///
+    /// # Errors
+    ///
+    /// The codec rejected a name.
+    pub fn message(&self) -> Result<Vec<u8>, crate::event::EncodeError> {
         let len = codec::SourceEncoder::compute_length_with_header(
             self.host.len(),
             self.pod.len(),
             self.app.len(),
         );
-        let mut message = vec![0; len];
-        let written = codec::SourceEncoder::wrap_and_apply_header(&mut message, 0)
-            .fixed(&codec::SourceFixedFields {
-                source: self.id,
-                started: self.started,
-                client: self.client,
-            })
-            .host(self.host.as_bytes())
-            .and_then(|m| m.pod(self.pod.as_bytes()))
-            .and_then(|m| m.app(self.app.as_bytes()))
-            .map_err(|e| e.to_string())?
-            .encoded_length_with_header();
-        debug_assert_eq!(written, len);
-        Ok(message)
+        crate::event::owned_frame(len, |message| {
+            Ok(codec::SourceEncoder::wrap_and_apply_header(message, 0)
+                .fixed(&codec::SourceFixedFields {
+                    source: self.id,
+                    started: self.started,
+                    client: self.client,
+                })
+                .host(self.host.as_bytes())
+                .and_then(|m| m.pod(self.pod.as_bytes()))
+                .and_then(|m| m.app(self.app.as_bytes()))?
+                .encoded_length_with_header())
+        })
     }
 
     /// A source from its `Source` message (header included); `None` when

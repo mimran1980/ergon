@@ -55,6 +55,28 @@ pub mod codec {
     include!(concat!(env!("OUT_DIR"), "/events.rs"));
 }
 
+/// Why encoding a source, metric, trace, or shape message failed.
+pub type EncodeError = codec::sbe_rt::EncodeError;
+
+/// A group count that fits the SBE `numInGroup` header.
+pub(crate) fn group_count(n: usize) -> Result<u16, EncodeError> {
+    u16::try_from(n).map_err(|_| EncodeError::GroupCountOverflow {
+        maximum: u32::from(u16::MAX),
+        actual: u32::try_from(n).unwrap_or(u32::MAX),
+    })
+}
+
+/// `write` fills an exact-length buffer. The codec error is returned as itself.
+pub(crate) fn owned_frame(
+    len: usize,
+    write: impl FnOnce(&mut [u8]) -> Result<usize, EncodeError>,
+) -> Result<Vec<u8>, EncodeError> {
+    let mut message = vec![0; len];
+    let written = write(&mut message)?;
+    debug_assert_eq!(written, len);
+    Ok(message)
+}
+
 /// The schema id of `schema/events.xml`: marks a shape or a row.
 pub const SCHEMA_ID: u16 = codec::ShapeEncoder::SCHEMA_ID;
 /// Template id of the `Shape` message.
@@ -332,6 +354,52 @@ pub(crate) struct Level {
     pub(crate) block: usize,
 }
 
+/// [`Shape::new`] rejected the fields before they could be encoded.
+#[derive(Debug)]
+pub enum ShapeError {
+    /// `field`'s parent index is not an earlier group field.
+    Parent {
+        /// The field that named the bad parent.
+        field: String,
+        /// The parent index it named.
+        parent: usize,
+    },
+    /// The row's fixed block does not fit in a `u16` block length.
+    Block {
+        /// Bytes the row block would occupy.
+        bytes: usize,
+    },
+    /// The `Shape` message itself could not be encoded.
+    Encode(EncodeError),
+}
+
+impl std::fmt::Display for ShapeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parent { field, parent } => {
+                write!(f, "field {field}: parent {parent} is not an earlier group")
+            }
+            Self::Block { bytes } => write!(f, "row block over 65535 bytes ({bytes})"),
+            Self::Encode(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ShapeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Encode(err) => Some(err),
+            Self::Parent { .. } | Self::Block { .. } => None,
+        }
+    }
+}
+
+impl From<EncodeError> for ShapeError {
+    fn from(err: EncodeError) -> Self {
+        Self::Encode(err)
+    }
+}
+
 /// The layout of one kind of row: its table, and its fields in order.
 #[derive(Debug)]
 pub struct Shape {
@@ -357,12 +425,16 @@ pub struct Shape {
 impl Shape {
     /// The shape of rows of `table` with these fields, in this order. A
     /// field's parent must be an earlier `Group` field.
-    pub fn new(table: &str, fields: Vec<FieldDef>) -> Result<Self, String> {
+    ///
+    /// # Errors
+    ///
+    /// A parent that is not an earlier group, a row block that does not fit
+    /// a `u16`, or a `Shape` message the codec rejects.
+    pub fn new(table: &str, fields: Vec<FieldDef>) -> Result<Self, ShapeError> {
         let id = shape_id(
             table,
             fields.iter().map(|f| (f.name.as_str(), f.kind, f.parent)),
         );
-        let count = u16::try_from(fields.len()).map_err(|_| "more than 65535 fields")?;
         let mut levels = vec![Level {
             fields: Vec::new(),
             presence: ROW_START,
@@ -376,10 +448,10 @@ impl Shape {
                 None => 0,
                 Some(p) if p < i && fields[p].kind == Kind::Group => entries[p],
                 Some(p) => {
-                    return Err(format!(
-                        "field {}: parent {p} is not an earlier group",
-                        f.name
-                    ));
+                    return Err(ShapeError::Parent {
+                        field: f.name.clone(),
+                        parent: p,
+                    });
                 }
             };
             levels[level].fields.push(i);
@@ -423,36 +495,40 @@ impl Shape {
                 .collect();
             level.block = at;
         }
-        u16::try_from(levels[0].block).map_err(|_| "row block over 65535 bytes")?;
+        let block = levels[0].block;
+        if u16::try_from(block).is_err() {
+            return Err(ShapeError::Block { bytes: block });
+        }
+        let count = group_count(fields.len())?;
         let len = codec::ShapeEncodedLength::new()
             .fields_ragged(count, |g| {
                 for f in &fields {
                     g.add()?.name(f.name.len())?;
                 }
                 Ok(())
-            })
-            .and_then(|l| l.table(table.len()))
-            .map_err(|e| e.to_string())?
+            })?
+            .table(table.len())?
             .encoded_length_with_header();
-        let mut message = vec![0; len];
-        let written = codec::ShapeEncoder::wrap_and_apply_header(&mut message, 0)
-            .fixed(&codec::ShapeFixedFields { shape: id })
-            .fields(count, |g| {
-                for f in &fields {
-                    g.add(|mut e| {
-                        e.kind(f.kind.wire()).parent(
-                            f.parent
-                                .map_or(codec::ShapeFieldsEntryDecoder::PARENT_NULL, |p| p as u16),
-                        );
-                        e.name(f.name.as_bytes())
-                    })?;
-                }
-                Ok(())
-            })
-            .and_then(|m| m.table(table.as_bytes()))
-            .map_err(|e| e.to_string())?
-            .encoded_length_with_header();
-        debug_assert_eq!(written, len);
+        let message = owned_frame(len, |message| {
+            Ok(codec::ShapeEncoder::wrap_and_apply_header(message, 0)
+                .fixed(&codec::ShapeFixedFields { shape: id })
+                .fields(count, |g| {
+                    for f in &fields {
+                        g.add(|mut e| {
+                            e.kind(f.kind.wire()).parent(
+                                f.parent
+                                    .map_or(codec::ShapeFieldsEntryDecoder::PARENT_NULL, |p| {
+                                        p as u16
+                                    }),
+                            );
+                            e.name(f.name.as_bytes())
+                        })?;
+                    }
+                    Ok(())
+                })?
+                .table(table.as_bytes())?
+                .encoded_length_with_header())
+        })?;
         Ok(Self {
             id,
             table: table.to_owned(),
@@ -1128,7 +1204,7 @@ mod tests {
         assert_eq!(admitted.load(std::sync::atomic::Ordering::Relaxed), 5);
     }
 
-    fn flat(table: &str, fields: &[(&str, Kind)]) -> Result<Shape, String> {
+    fn flat(table: &str, fields: &[(&str, Kind)]) -> Result<Shape, ShapeError> {
         Shape::new(
             table,
             fields
@@ -1138,7 +1214,7 @@ mod tests {
         )
     }
 
-    fn signal() -> Result<Shape, String> {
+    fn signal() -> Result<Shape, ShapeError> {
         flat(
             "signal",
             &[
