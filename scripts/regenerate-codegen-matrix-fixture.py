@@ -27,6 +27,7 @@ SHAPES = [
     ("sOptPlain",  "OptPlain",  "",                            "optional scalar, unmapped"),
     ("aDom",       "Tag",       'semanticType="TagText"',     "fixed array, domain-mapped (domain not applied)"),
     ("aPlain",     "TagPlain",  "",                            "fixed array, unmapped"),
+    ("aCollision", "TagPlain",  "",                            "fixed text with a schema-owned string accessor name"),
     ("cDom",       "Money",     "",                            "composite, domain-mapped via NamedType"),
     ("cPlain",     "Pair",      "",                            "composite, unmapped"),
     ("eBool",      "BooleanType", "",                          "bool enum, required"),
@@ -56,6 +57,9 @@ def fields(start_id, indent):
             a = f" {attrs}" if attrs else ""
             out.append(f'{indent}<field name="{prefix}V{v}" id="{fid}" type="{ty}"{a}{since}/>')
             fid += 1
+            if prefix == "aCollision":
+                out.append(f'{indent}<field name="{prefix}V{v}AsStr" id="{fid}" type="uint32"{since}/>')
+                fid += 1
     # Not a shape: a Rust keyword name, so every location takes the
     # keyword-append rename (with_keyword_append_token).
     out.append(f"{indent}<!-- Rust keyword name -->")

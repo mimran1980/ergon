@@ -15,6 +15,11 @@
   total, which measured loop latency.
 
 ### Fixed
+- Collect the complete pending archive batch before inserting after a restart,
+  so partial replay delivery cannot consume its deduplication token.
+- Let fixed-text decoder helpers yield to schema field names at every depth.
+- Respect fixed fields' `sinceVersion` when ingesting padded message and group blocks.
+- Pause and resume every kind cluster node, including workers.
 - Restore the Full Car generated-source budget to 450,000 bytes by sharing
   wire-dimension validation, including when optional string adapters are enabled.
 - Preserve complete histogram samples during concurrent recording and polling,

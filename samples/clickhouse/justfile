@@ -149,6 +149,7 @@ verify:
 
 # Unit + integration tests; starts a throwaway ClickHouse and Aeron archive driver.
 test: _test-clickhouse _test-aeron
+    bash scripts/test-cluster-lifecycle.sh
     cargo test --workspace
 
 _test-clickhouse:
@@ -204,10 +205,18 @@ lint:
     cargo fmt --check
 
 stop:
-    docker stop {{cluster}}-control-plane
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nodes=$(kind get nodes --name {{cluster}})
+    test -n "$nodes"
+    docker stop $nodes
 
 start:
-    docker start {{cluster}}-control-plane
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nodes=$(kind get nodes --name {{cluster}})
+    test -n "$nodes"
+    docker start $nodes
 
 # Deletes the cluster, including all recorded data.
 destroy:

@@ -58,6 +58,7 @@ const SHAPES: &[(&str, &str, &str)] = &[
     // Fixed arrays keep the wire type even when a selector matches.
     ("a_dom", "[u8; 4]", "[u8; 4]"),
     ("a_plain", "[u8; 4]", "[u8; 4]"),
+    ("a_collision", "[u8; 4]", "[u8; 4]"),
     (
         "c_dom",
         "rust_decimal::Decimal",

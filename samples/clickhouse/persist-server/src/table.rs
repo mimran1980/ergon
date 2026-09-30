@@ -66,6 +66,7 @@ pub struct Shape {
 struct Field {
     column: String,
     offset: usize,
+    since_version: u16,
     prim: PrimitiveType,
     kind: Kind,
     /// Null sentinel for optional fields.
@@ -266,7 +267,7 @@ impl Table {
         let mut col = 0;
         for f in &self.fields {
             if include[col] {
-                f.write(msg, body, body + acting_block, out)?;
+                f.write(msg, body, body + acting_block, version, out)?;
             }
             col += 1;
         }
@@ -294,7 +295,7 @@ impl Table {
                     write_varint(count as u64, out);
                     for e in 0..count {
                         let entry = first + e * block;
-                        f.write(msg, entry, entry + block, out)?;
+                        f.write(msg, entry, entry + block, version, out)?;
                     }
                 }
                 col += 1;
@@ -346,6 +347,7 @@ impl Field {
         msg: &[u8],
         start: usize,
         end: usize,
+        version: u16,
         out: &mut Vec<u8>,
     ) -> Result<(), DecodeError> {
         let at = start + self.offset;
@@ -353,8 +355,8 @@ impl Field {
             Kind::Chars(n) => n,
             _ => self.prim.size(),
         };
-        // Past the message's own block: the field is newer than the message.
-        if at + width > end {
+        // Padding can fit a newer field without making it present on the wire.
+        if version < self.since_version || at + width > end {
             self.write_absent(out);
             return Ok(());
         }
@@ -481,6 +483,7 @@ fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
     Ok(Some(Field {
         column: snake_case(&t.name),
         offset,
+        since_version: t.encoding.since_version,
         prim,
         kind,
         null,
@@ -691,6 +694,85 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn versioned_fields_ignore_padding_in_message_and_group_blocks() -> TestResult {
+        let xml = r#"<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="padding" id="7" version="1" byteOrder="littleEndian">
+        <types>
+            <composite name="messageHeader">
+                <type name="blockLength" primitiveType="uint16"/>
+                <type name="templateId" primitiveType="uint16"/>
+                <type name="schemaId" primitiveType="uint16"/>
+                <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+                <type name="blockLength" primitiveType="uint16"/>
+                <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <type name="Code" primitiveType="char" length="4"/>
+            <enum name="State" encodingType="uint8"><validValue name="Active">1</validValue></enum>
+        </types>
+        <sbe:message name="Padded" id="1" blockLength="20">
+            <field name="old" id="1" type="uint32"/>
+            <field name="added" id="2" type="uint32" sinceVersion="1"/>
+            <field name="maybe" id="3" type="uint32" presence="optional" sinceVersion="1"/>
+            <field name="code" id="4" type="Code" sinceVersion="1"/>
+            <field name="state" id="5" type="State" sinceVersion="1"/>
+            <group name="entries" id="6" dimensionType="groupSizeEncoding" blockLength="20">
+                <field name="old" id="7" type="uint32"/>
+                <field name="added" id="8" type="uint32" sinceVersion="1"/>
+                <field name="maybe" id="9" type="uint32" presence="optional" sinceVersion="1"/>
+                <field name="code" id="10" type="Code" sinceVersion="1"/>
+                <field name="state" id="11" type="State" sinceVersion="1"/>
+            </group>
+        </sbe:message>
+        </sbe:messageSchema>"#;
+        let table = tables_from_schema(xml)?.pop().ok_or("missing table")?;
+        let mut frame = [0u8; HEADER_LEN + 20 + 4 + 20];
+        frame[..8].copy_from_slice(&[20, 0, 1, 0, 7, 0, 0, 0]);
+        frame[8..12].copy_from_slice(&1u32.to_le_bytes());
+        frame[12..16].copy_from_slice(&123u32.to_le_bytes());
+        frame[16..20].copy_from_slice(&124u32.to_le_bytes());
+        frame[20..24].copy_from_slice(b"TEXT");
+        frame[24] = 1;
+        frame[28..32].copy_from_slice(&[20, 0, 1, 0]);
+        frame[32..36].copy_from_slice(&2u32.to_le_bytes());
+        frame[36..40].copy_from_slice(&123u32.to_le_bytes());
+        frame[40..44].copy_from_slice(&124u32.to_le_bytes());
+        frame[44..48].copy_from_slice(b"GRUP");
+        frame[48] = 1;
+        let mut row = Vec::new();
+        table
+            .write_row(&frame, &[true; 10], &mut row)
+            .map_err(|e| format!("{e:?}"))?;
+        assert_eq!(
+            row,
+            [
+                1, 0, 0, 0, // old
+                0, 0, 0, 0, // absent added
+                1, 0, 0, // absent nullable, text, enum
+                1, 2, 0, 0, 0, // entries.old
+                1, 0, 0, 0, 0, // entries.added
+                1, 1, // entries.maybe: one null
+                1, 0, // entries.code: one empty string
+                1, 0, // entries.state: one empty string
+            ]
+        );
+        frame[6] = 1;
+        row.clear();
+        table
+            .write_row(&frame, &[true; 10], &mut row)
+            .map_err(|e| format!("{e:?}"))?;
+        assert_eq!(
+            row,
+            [
+                1, 0, 0, 0, 123, 0, 0, 0, 0, 124, 0, 0, 0, 4, b'T', b'E', b'X', b'T', 6, b'A',
+                b'c', b't', b'i', b'v', b'e', 1, 2, 0, 0, 0, 1, 123, 0, 0, 0, 1, 0, 124, 0, 0, 0,
+                1, 4, b'G', b'R', b'U', b'P', 1, 6, b'A', b'c', b't', b'i', b'v', b'e',
+            ]
+        );
+        Ok(())
+    }
 
     #[test]
     fn varint_matches_leb128() -> TestResult {

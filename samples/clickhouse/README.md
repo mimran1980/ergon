@@ -37,7 +37,7 @@ just verify    # check the running lab, including moving a feed between nodes
 just logs
 just test      # unit and integration tests; leaves ClickHouse and an Aeron driver up
 just test-stop
-just stop      # pause the cluster, keep the data
+just stop      # pause every cluster node, keep the data
 just destroy   # delete the cluster and the data
 ```
 
@@ -465,8 +465,9 @@ The mantissa or tick count is stored as-is. `Decimal9` is nine decimal places,
 ±9.2 billion. `d9()` errors instead of rounding. Other composites, sets,
 non-`char` arrays, nested groups, and big-endian schemas are rejected.
 
-Add fields at the end of the block. New groups and var-data need `sinceVersion`.
-Old records still decode. Then `just md`.
+Add fields at the end of the block with their `sinceVersion`. New groups and
+var-data need `sinceVersion` too. A newer fixed field is absent in old records
+even when its bytes fit in the old block's padding. Then `just md`.
 
 ## Durability
 
@@ -474,6 +475,8 @@ If ClickHouse is down, the ingester stops and the archive holds the data.
 After a successful insert the ingester saves `recording position` and deletes
 the segments behind it. A crash before that save replays the same batch.
 The insert's token is those positions, and ClickHouse drops the repeat.
+Recovery collects the entire pending batch before inserting, even when replay
+delivery takes several ticks. A prefix cannot consume the full batch's token.
 Each table remembers the last 1000 inserts. An older retry can land twice.
 
 One failed table holds that recording's checkpoint, so the archive grows until

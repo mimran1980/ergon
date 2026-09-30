@@ -79,31 +79,36 @@
         <!-- fixed array, unmapped -->
         <field name="aPlainV0" id="11" type="TagPlain"/>
         <field name="aPlainV1" id="12" type="TagPlain" sinceVersion="1"/>
+        <!-- fixed text with a schema-owned string accessor name -->
+        <field name="aCollisionV0" id="13" type="TagPlain"/>
+        <field name="aCollisionV0AsStr" id="14" type="uint32"/>
+        <field name="aCollisionV1" id="15" type="TagPlain" sinceVersion="1"/>
+        <field name="aCollisionV1AsStr" id="16" type="uint32" sinceVersion="1"/>
         <!-- composite, domain-mapped via NamedType -->
-        <field name="cDomV0" id="13" type="Money"/>
-        <field name="cDomV1" id="14" type="Money" sinceVersion="1"/>
+        <field name="cDomV0" id="17" type="Money"/>
+        <field name="cDomV1" id="18" type="Money" sinceVersion="1"/>
         <!-- composite, unmapped -->
-        <field name="cPlainV0" id="15" type="Pair"/>
-        <field name="cPlainV1" id="16" type="Pair" sinceVersion="1"/>
+        <field name="cPlainV0" id="19" type="Pair"/>
+        <field name="cPlainV1" id="20" type="Pair" sinceVersion="1"/>
         <!-- bool enum, required -->
-        <field name="eBoolV0" id="17" type="BooleanType"/>
-        <field name="eBoolV1" id="18" type="BooleanType" sinceVersion="1"/>
+        <field name="eBoolV0" id="21" type="BooleanType"/>
+        <field name="eBoolV1" id="22" type="BooleanType" sinceVersion="1"/>
         <!-- bool enum, optional (field-level presence) -->
-        <field name="eBoolOptV0" id="19" type="BooleanType" presence="optional"/>
-        <field name="eBoolOptV1" id="20" type="BooleanType" presence="optional" sinceVersion="1"/>
+        <field name="eBoolOptV0" id="23" type="BooleanType" presence="optional"/>
+        <field name="eBoolOptV1" id="24" type="BooleanType" presence="optional" sinceVersion="1"/>
         <!-- non-bool enum -->
-        <field name="eNormV0" id="21" type="Model"/>
-        <field name="eNormV1" id="22" type="Model" sinceVersion="1"/>
+        <field name="eNormV0" id="25" type="Model"/>
+        <field name="eNormV1" id="26" type="Model" sinceVersion="1"/>
         <!-- bitset -->
-        <field name="setOptV0" id="23" type="Opts"/>
-        <field name="setOptV1" id="24" type="Opts" sinceVersion="1"/>
+        <field name="setOptV0" id="27" type="Opts"/>
+        <field name="setOptV1" id="28" type="Opts" sinceVersion="1"/>
         <!-- deprecated scalar (with_deprecated_attrs) -->
-        <field name="sDepV0" id="25" type="uint32" deprecated="2"/>
-        <field name="sDepV1" id="26" type="uint32" deprecated="2" sinceVersion="1"/>
+        <field name="sDepV0" id="29" type="uint32" deprecated="2"/>
+        <field name="sDepV1" id="30" type="uint32" deprecated="2" sinceVersion="1"/>
         <!-- Rust keyword name -->
-        <field name="type" id="27" type="uint8"/>
+        <field name="type" id="31" type="uint8"/>
         <!-- constant: excluded from the DTO entirely -->
-        <field name="kConst" id="28" type="Model" presence="constant" valueRef="Model.B"/>
+        <field name="kConst" id="32" type="Model" presence="constant" valueRef="Model.B"/>
         <data name="note" id="900" type="varStringEncoding"/>
     </sbe:message>
 
@@ -111,88 +116,98 @@
         <field name="seq" id="800" type="uint32"/>
         <group name="rows" id="810" dimensionType="groupSizeEncoding">
             <!-- primitive scalar, domain-mapped -->
-            <field name="sDomV0" id="29" type="Scaled" semanticType="ScaledPrice"/>
-            <field name="sDomV1" id="30" type="Scaled" semanticType="ScaledPrice" sinceVersion="1"/>
+            <field name="sDomV0" id="33" type="Scaled" semanticType="ScaledPrice"/>
+            <field name="sDomV1" id="34" type="Scaled" semanticType="ScaledPrice" sinceVersion="1"/>
             <!-- primitive scalar, unmapped -->
-            <field name="sPlainV0" id="31" type="uint32"/>
-            <field name="sPlainV1" id="32" type="uint32" sinceVersion="1"/>
+            <field name="sPlainV0" id="35" type="uint32"/>
+            <field name="sPlainV1" id="36" type="uint32" sinceVersion="1"/>
             <!-- optional scalar, domain-mapped (domain not applied) -->
-            <field name="sOptDomV0" id="33" type="OptScaled" semanticType="ScaledPrice"/>
-            <field name="sOptDomV1" id="34" type="OptScaled" semanticType="ScaledPrice" sinceVersion="1"/>
+            <field name="sOptDomV0" id="37" type="OptScaled" semanticType="ScaledPrice"/>
+            <field name="sOptDomV1" id="38" type="OptScaled" semanticType="ScaledPrice" sinceVersion="1"/>
             <!-- optional scalar, unmapped -->
-            <field name="sOptPlainV0" id="35" type="OptPlain"/>
-            <field name="sOptPlainV1" id="36" type="OptPlain" sinceVersion="1"/>
+            <field name="sOptPlainV0" id="39" type="OptPlain"/>
+            <field name="sOptPlainV1" id="40" type="OptPlain" sinceVersion="1"/>
             <!-- fixed array, domain-mapped (domain not applied) -->
-            <field name="aDomV0" id="37" type="Tag" semanticType="TagText"/>
-            <field name="aDomV1" id="38" type="Tag" semanticType="TagText" sinceVersion="1"/>
+            <field name="aDomV0" id="41" type="Tag" semanticType="TagText"/>
+            <field name="aDomV1" id="42" type="Tag" semanticType="TagText" sinceVersion="1"/>
             <!-- fixed array, unmapped -->
-            <field name="aPlainV0" id="39" type="TagPlain"/>
-            <field name="aPlainV1" id="40" type="TagPlain" sinceVersion="1"/>
+            <field name="aPlainV0" id="43" type="TagPlain"/>
+            <field name="aPlainV1" id="44" type="TagPlain" sinceVersion="1"/>
+            <!-- fixed text with a schema-owned string accessor name -->
+            <field name="aCollisionV0" id="45" type="TagPlain"/>
+            <field name="aCollisionV0AsStr" id="46" type="uint32"/>
+            <field name="aCollisionV1" id="47" type="TagPlain" sinceVersion="1"/>
+            <field name="aCollisionV1AsStr" id="48" type="uint32" sinceVersion="1"/>
             <!-- composite, domain-mapped via NamedType -->
-            <field name="cDomV0" id="41" type="Money"/>
-            <field name="cDomV1" id="42" type="Money" sinceVersion="1"/>
+            <field name="cDomV0" id="49" type="Money"/>
+            <field name="cDomV1" id="50" type="Money" sinceVersion="1"/>
             <!-- composite, unmapped -->
-            <field name="cPlainV0" id="43" type="Pair"/>
-            <field name="cPlainV1" id="44" type="Pair" sinceVersion="1"/>
+            <field name="cPlainV0" id="51" type="Pair"/>
+            <field name="cPlainV1" id="52" type="Pair" sinceVersion="1"/>
             <!-- bool enum, required -->
-            <field name="eBoolV0" id="45" type="BooleanType"/>
-            <field name="eBoolV1" id="46" type="BooleanType" sinceVersion="1"/>
+            <field name="eBoolV0" id="53" type="BooleanType"/>
+            <field name="eBoolV1" id="54" type="BooleanType" sinceVersion="1"/>
             <!-- bool enum, optional (field-level presence) -->
-            <field name="eBoolOptV0" id="47" type="BooleanType" presence="optional"/>
-            <field name="eBoolOptV1" id="48" type="BooleanType" presence="optional" sinceVersion="1"/>
+            <field name="eBoolOptV0" id="55" type="BooleanType" presence="optional"/>
+            <field name="eBoolOptV1" id="56" type="BooleanType" presence="optional" sinceVersion="1"/>
             <!-- non-bool enum -->
-            <field name="eNormV0" id="49" type="Model"/>
-            <field name="eNormV1" id="50" type="Model" sinceVersion="1"/>
+            <field name="eNormV0" id="57" type="Model"/>
+            <field name="eNormV1" id="58" type="Model" sinceVersion="1"/>
             <!-- bitset -->
-            <field name="setOptV0" id="51" type="Opts"/>
-            <field name="setOptV1" id="52" type="Opts" sinceVersion="1"/>
+            <field name="setOptV0" id="59" type="Opts"/>
+            <field name="setOptV1" id="60" type="Opts" sinceVersion="1"/>
             <!-- deprecated scalar (with_deprecated_attrs) -->
-            <field name="sDepV0" id="53" type="uint32" deprecated="2"/>
-            <field name="sDepV1" id="54" type="uint32" deprecated="2" sinceVersion="1"/>
+            <field name="sDepV0" id="61" type="uint32" deprecated="2"/>
+            <field name="sDepV1" id="62" type="uint32" deprecated="2" sinceVersion="1"/>
             <!-- Rust keyword name -->
-            <field name="type" id="55" type="uint8"/>
+            <field name="type" id="63" type="uint8"/>
             <group name="cells" id="820" dimensionType="groupSizeEncoding">
                 <!-- primitive scalar, domain-mapped -->
-                <field name="sDomV0" id="56" type="Scaled" semanticType="ScaledPrice"/>
-                <field name="sDomV1" id="57" type="Scaled" semanticType="ScaledPrice" sinceVersion="1"/>
+                <field name="sDomV0" id="64" type="Scaled" semanticType="ScaledPrice"/>
+                <field name="sDomV1" id="65" type="Scaled" semanticType="ScaledPrice" sinceVersion="1"/>
                 <!-- primitive scalar, unmapped -->
-                <field name="sPlainV0" id="58" type="uint32"/>
-                <field name="sPlainV1" id="59" type="uint32" sinceVersion="1"/>
+                <field name="sPlainV0" id="66" type="uint32"/>
+                <field name="sPlainV1" id="67" type="uint32" sinceVersion="1"/>
                 <!-- optional scalar, domain-mapped (domain not applied) -->
-                <field name="sOptDomV0" id="60" type="OptScaled" semanticType="ScaledPrice"/>
-                <field name="sOptDomV1" id="61" type="OptScaled" semanticType="ScaledPrice" sinceVersion="1"/>
+                <field name="sOptDomV0" id="68" type="OptScaled" semanticType="ScaledPrice"/>
+                <field name="sOptDomV1" id="69" type="OptScaled" semanticType="ScaledPrice" sinceVersion="1"/>
                 <!-- optional scalar, unmapped -->
-                <field name="sOptPlainV0" id="62" type="OptPlain"/>
-                <field name="sOptPlainV1" id="63" type="OptPlain" sinceVersion="1"/>
+                <field name="sOptPlainV0" id="70" type="OptPlain"/>
+                <field name="sOptPlainV1" id="71" type="OptPlain" sinceVersion="1"/>
                 <!-- fixed array, domain-mapped (domain not applied) -->
-                <field name="aDomV0" id="64" type="Tag" semanticType="TagText"/>
-                <field name="aDomV1" id="65" type="Tag" semanticType="TagText" sinceVersion="1"/>
+                <field name="aDomV0" id="72" type="Tag" semanticType="TagText"/>
+                <field name="aDomV1" id="73" type="Tag" semanticType="TagText" sinceVersion="1"/>
                 <!-- fixed array, unmapped -->
-                <field name="aPlainV0" id="66" type="TagPlain"/>
-                <field name="aPlainV1" id="67" type="TagPlain" sinceVersion="1"/>
+                <field name="aPlainV0" id="74" type="TagPlain"/>
+                <field name="aPlainV1" id="75" type="TagPlain" sinceVersion="1"/>
+                <!-- fixed text with a schema-owned string accessor name -->
+                <field name="aCollisionV0" id="76" type="TagPlain"/>
+                <field name="aCollisionV0AsStr" id="77" type="uint32"/>
+                <field name="aCollisionV1" id="78" type="TagPlain" sinceVersion="1"/>
+                <field name="aCollisionV1AsStr" id="79" type="uint32" sinceVersion="1"/>
                 <!-- composite, domain-mapped via NamedType -->
-                <field name="cDomV0" id="68" type="Money"/>
-                <field name="cDomV1" id="69" type="Money" sinceVersion="1"/>
+                <field name="cDomV0" id="80" type="Money"/>
+                <field name="cDomV1" id="81" type="Money" sinceVersion="1"/>
                 <!-- composite, unmapped -->
-                <field name="cPlainV0" id="70" type="Pair"/>
-                <field name="cPlainV1" id="71" type="Pair" sinceVersion="1"/>
+                <field name="cPlainV0" id="82" type="Pair"/>
+                <field name="cPlainV1" id="83" type="Pair" sinceVersion="1"/>
                 <!-- bool enum, required -->
-                <field name="eBoolV0" id="72" type="BooleanType"/>
-                <field name="eBoolV1" id="73" type="BooleanType" sinceVersion="1"/>
+                <field name="eBoolV0" id="84" type="BooleanType"/>
+                <field name="eBoolV1" id="85" type="BooleanType" sinceVersion="1"/>
                 <!-- bool enum, optional (field-level presence) -->
-                <field name="eBoolOptV0" id="74" type="BooleanType" presence="optional"/>
-                <field name="eBoolOptV1" id="75" type="BooleanType" presence="optional" sinceVersion="1"/>
+                <field name="eBoolOptV0" id="86" type="BooleanType" presence="optional"/>
+                <field name="eBoolOptV1" id="87" type="BooleanType" presence="optional" sinceVersion="1"/>
                 <!-- non-bool enum -->
-                <field name="eNormV0" id="76" type="Model"/>
-                <field name="eNormV1" id="77" type="Model" sinceVersion="1"/>
+                <field name="eNormV0" id="88" type="Model"/>
+                <field name="eNormV1" id="89" type="Model" sinceVersion="1"/>
                 <!-- bitset -->
-                <field name="setOptV0" id="78" type="Opts"/>
-                <field name="setOptV1" id="79" type="Opts" sinceVersion="1"/>
+                <field name="setOptV0" id="90" type="Opts"/>
+                <field name="setOptV1" id="91" type="Opts" sinceVersion="1"/>
                 <!-- deprecated scalar (with_deprecated_attrs) -->
-                <field name="sDepV0" id="80" type="uint32" deprecated="2"/>
-                <field name="sDepV1" id="81" type="uint32" deprecated="2" sinceVersion="1"/>
+                <field name="sDepV0" id="92" type="uint32" deprecated="2"/>
+                <field name="sDepV1" id="93" type="uint32" deprecated="2" sinceVersion="1"/>
                 <!-- Rust keyword name -->
-                <field name="type" id="82" type="uint8"/>
+                <field name="type" id="94" type="uint8"/>
             </group>
             <data name="rowNote" id="901" type="varStringEncoding"/>
         </group>

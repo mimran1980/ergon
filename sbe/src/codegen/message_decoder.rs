@@ -691,11 +691,11 @@ pub(crate) fn generate_message_decoder(
                     if prim_size == 1
                         && let Some(kind) =
                             fixed_array_text_kind(*prim, f.character_encoding.as_deref())
-                    {
-                        let as_str = syn::Ident::new(
+                        && let Some(as_str) = named_accessor_ident(
                             &format!("{fname_snake}_as_str"),
-                            proc_macro2::Span::call_site(),
-                        );
+                            &taken_accessor_names,
+                        )
+                    {
                         let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                         let ascii = matches!(kind, FixedArrayTextKind::Ascii);
                         let absent = if since > 0 {

@@ -12,8 +12,8 @@ use crate::structured_ir::{
 
 use super::conversion_helpers::{
     FixedArrayTextKind, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
-    find_domain_type, fixed_array_from_bulk_bytes, fixed_array_text_kind, owner_accessor_names,
-    tail_accessor_ident,
+    find_domain_type, fixed_array_from_bulk_bytes, fixed_array_text_kind, named_accessor_ident,
+    owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
@@ -1014,11 +1014,11 @@ pub(crate) fn generate_group_decoder(
                     if prim_size == 1
                         && let Some(kind) =
                             fixed_array_text_kind(*prim, f.character_encoding.as_deref())
-                    {
-                        let as_str = syn::Ident::new(
+                        && let Some(as_str) = named_accessor_ident(
                             &format!("{}_as_str", to_snake_case(&f.name)),
-                            proc_macro2::Span::call_site(),
-                        );
+                            &taken_entry_accessors,
+                        )
+                    {
                         let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                         let ascii = matches!(kind, FixedArrayTextKind::Ascii);
                         let since_check = if f.since_version > 0 {

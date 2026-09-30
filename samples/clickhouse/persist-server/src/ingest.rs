@@ -197,7 +197,7 @@ impl Ingester {
                 }
                 self.pending = Some(self.polled.clone());
             }
-        } else if self.writer.queued_bytes() == 0 && !self.pending_reached() {
+        } else if !self.pending_reached() {
             // The restart replay is bounded by `pending`, so this reads the
             // uncommitted batch and stops. Insert once it is all in hand:
             // a prefix would consume the token and ClickHouse would drop the rest.

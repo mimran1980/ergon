@@ -16,6 +16,73 @@ fn generate_demo() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn fixed_text_helpers_yield_to_schema_fields_at_every_depth()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="collision" id="1" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <type name="Code" primitiveType="char" length="4"/>
+    </types>
+    <sbe:message name="Collision" id="1">
+        <field name="code" id="1" type="Code"/>
+        <field name="codeAsStr" id="2" type="uint32"/>
+        <group name="entries" id="3" dimensionType="groupSizeEncoding">
+            <field name="code" id="4" type="Code"/>
+            <field name="codeAsStr" id="5" type="uint32"/>
+            <group name="levels" id="6" dimensionType="groupSizeEncoding">
+                <field name="code" id="7" type="Code"/>
+                <field name="codeAsStr" id="8" type="uint32"/>
+            </group>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>"#;
+    let mut ir = ergo_sbe::parse(xml)?;
+    ergo_sbe::resolve_schema(&mut ir, Some(xml))?;
+    let (modules, _) = Generator::new(GenerationConfig::new("collision"))
+        .generate(&Schema::from_ir(ir))?
+        .into_parts();
+    let src = modules.into_iter().next().ok_or("no module")?.source;
+    compile_and_run(
+        "fixed_text_collision",
+        &src,
+        r#"
+        // Header + 8-byte body + group dimensions + 8-byte entry + nested dimensions + 8-byte entry.
+        let mut frame = [0u8; 40];
+        frame[..8].copy_from_slice(&[8, 0, 1, 0, 1, 0, 0, 0]);
+        frame[8..12].copy_from_slice(b"ROOT");
+        frame[12..16].copy_from_slice(&11u32.to_le_bytes());
+        frame[16..20].copy_from_slice(&[8, 0, 1, 0]);
+        frame[20..24].copy_from_slice(b"GRUP");
+        frame[24..28].copy_from_slice(&22u32.to_le_bytes());
+        frame[28..32].copy_from_slice(&[8, 0, 1, 0]);
+        frame[32..36].copy_from_slice(b"LEAF");
+        frame[36..40].copy_from_slice(&33u32.to_le_bytes());
+        let message = CollisionDecoder::try_from(frame.as_slice())?;
+        assert_eq!(message.code(), *b"ROOT");
+        assert_eq!(message.code_as_str(), 11u32);
+        let mut entries = message.entries()?;
+        let entry = entries.next().ok_or("missing entry")??;
+        assert_eq!(entry.code(), *b"GRUP");
+        assert_eq!(entry.code_as_str(), 22u32);
+        let mut levels = entry.levels()?;
+        let level = levels.next().ok_or("missing level")?;
+        assert_eq!(level.code(), *b"LEAF");
+        assert_eq!(level.code_as_str(), 33u32);
+        "#,
+    );
+    Ok(())
+}
+
+#[test]
 fn a_group_char_field_reads_and_writes_text() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="g" id="1" version="0" byteOrder="littleEndian">

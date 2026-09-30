@@ -237,6 +237,65 @@ fn a_replayed_batch_is_inserted_once() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn a_large_pending_batch_is_replayed_completely_before_inserting() -> TestResult {
+    use rusteron_archive::{
+        Aeron, AeronArchiveAsyncConnect, AeronArchiveContext, AeronContext, IntoCString,
+    };
+
+    let lab = Lab::new(
+        "aeron_pending_prefix",
+        "tables:\n  shapes: { kind: dynamic }\n",
+    )?;
+    let stream_id = stream(28);
+    let recorder = ingester(&lab, lab.ch.clone(), stream_id)?;
+    let persist = client(&lab, stream_id)?;
+    wait_until("the archive to record the stream", || {
+        Ok(persist.is_connected())
+    })?;
+    record(&persist, 300_000)?;
+    drop(persist);
+    drop(recorder);
+
+    let ctx = AeronContext::new()?;
+    ctx.set_dir(&aeron_dir().into_c_string())?;
+    let aeron = Aeron::new(&ctx)?;
+    aeron.start()?;
+    let archive_ctx = AeronArchiveContext::new()?;
+    archive_ctx.set_aeron(&aeron)?;
+    archive_ctx.set_control_request_channel(c"aeron:ipc?term-length=64k")?;
+    archive_ctx.set_control_response_channel(c"aeron:ipc?term-length=64k")?;
+    let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &aeron)?
+        .poll_blocking(Duration::from_secs(10))?;
+    let mut pending = None;
+    wait_until("the complete recording to stop", || {
+        archive.list_recordings_fn(&mut 0, 0, i32::MAX, |d| {
+            if d.stream_id() == stream_id && d.stop_position() > 0 {
+                pending = Some(format!("{} {}\n", d.recording_id(), d.stop_position()));
+            }
+        })?;
+        Ok(pending.is_some())
+    })?;
+    // Crash after saving the full batch identity, before sending its insert.
+    let pending_path = lab.dir.join("checkpoint.pending");
+    std::fs::write(&pending_path, pending.ok_or("missing recording endpoint")?)?;
+    let mut recovery = ingester(&lab, lab.ch.clone(), stream_id)?;
+    wait_until("the complete pending batch to be committed", || {
+        let report = recovery.tick()?;
+        lab::clean(&report)?;
+        let count = lab
+            .query("SELECT count() FROM DB.shapes")
+            .unwrap_or_default();
+        assert!(
+            count.is_empty() || count == "0" || count == "300000",
+            "a partial insert consumes the full batch's deduplication token: {count} rows"
+        );
+        Ok(!pending_path.exists())
+    })?;
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "300000");
+    Ok(())
+}
+
 /// One call site, used twice.
 fn emit_signal(edge: f64) {
     tracing::info!(table = "signal", edge);
