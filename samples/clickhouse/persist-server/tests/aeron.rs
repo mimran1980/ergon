@@ -600,6 +600,7 @@ fn a_table_is_switched_per_app_until_a_time() -> TestResult {
 #[test]
 fn metrics_reach_their_tables_every_interval() -> TestResult {
     use persist_client::clock::Clock;
+    use tracing_subscriber::layer::SubscriberExt;
 
     let lab = Lab::new("aeron_metrics", "tables:\n  shapes: { kind: dynamic }\n")?;
     let stream_id = stream(14);
@@ -623,11 +624,20 @@ fn metrics_reach_their_tables_every_interval() -> TestResult {
     let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
     let depth = metrics.gauge("depth", &[]);
     let latency = metrics.histogram("latency_ns", &[("stage", "decode")]);
-    sent.add(5);
+    sent.add(3);
     depth.set(2.5);
-    for v in 1..=1000 {
+    for v in 1..=500 {
         latency.record(v * 1000);
     }
+    // Instance ownership: no Persist::install or global metric handle.
+    // Macro updates and ordinary handles share the same published registry.
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(persist.layer()), || {
+        tracing::info!(counter = "orders_sent", venue = "binance", value = 2u64);
+        tracing::info!(gauge = "depth", value = 2.5);
+        for v in 501..=1000u64 {
+            tracing::info!(histogram = "latency_ns", stage = "decode", value = v * 1000);
+        }
+    });
 
     // The application's loop: poll with the time it has, one message a call.
     let clock = Clock::new();

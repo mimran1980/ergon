@@ -509,6 +509,10 @@ impl Writer {
     /// that recorded it, or 0 for none. `false` when its table is not in
     /// `tables.yaml`: the message is skipped, and counted in the next
     /// tick's errors.
+    ///
+    /// A generated cross-schema enum can supply this slice with
+    /// `writer.push(message.as_bytes(), source)`. This writer uses the loaded
+    /// XML, so it also accepts schema ids outside that enum's configured set.
     pub fn push(&mut self, message: &[u8], source: u64) -> bool {
         self.push_message(message, source)
     }

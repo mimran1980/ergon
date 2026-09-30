@@ -9,7 +9,12 @@
 //! * [`mod@metrics`], [`trace`], and [`clock`] are the hot-path tools. The
 //!   same metrics and span traces can also be emitted with the `tracing` macros.
 //!
-//! [`Persist::install`] one handle per process. The free functions then work
+//! Keep a [`Persist`] instance and use its methods, [`Persist::metrics`],
+//! [`Persist::tracer`], and [`Persist::layer`] without installing a static.
+//! The layer owns a clone of that instance; tracing macros use its registry.
+//! Poll that instance's metrics to publish macro updates.
+//!
+//! Optionally [`Persist::install`] one handle per process. The free functions then work
 //! from any thread. With nothing installed they do nothing and do not call
 //! `encode`.
 //!

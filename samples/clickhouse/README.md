@@ -190,8 +190,9 @@ persist_client::record(TradeEncoder::TEMPLATE_ID, len, |buf| {
 })?;
 ```
 
-Install once: `Persist::connect(schema, settings)?.install()`. With nothing
-installed, `record` does nothing. `connect` waits up to 10 seconds for a
+Keep an instance with `let persist = Persist::connect(schema, settings)?` and
+call `persist.record(...)`. Optional `persist.install()` enables the free functions.
+With nothing installed, the free `record` does nothing. `connect` waits up to 10 seconds for a
 subscriber (`subscriber_timeout`).
 
 **Tracing event.** For a row with no schema. Slower than `record`, so the
@@ -199,9 +200,9 @@ sample does it once a second, not on every quote. The quote path sets a gauge
 with the handle below, not with this macro.
 
 ```rust
+tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
 gauge.set(bps);
 tracing::info!(table = "spread", instrument = %id, bps);
-tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
 ```
 
 Columns come from the fields. Integers are `Int64`/`UInt64`, floats `Float64`,
@@ -245,27 +246,37 @@ Put another application's schema in `schema/`, list its tables, and run
 `market::AnyMessage` is every message of `market.xml`. `trading::AnyMessage`
 is every message of `trading.xml`. Template ids start at 1 in each file, so
 they do not identify a message on their own. A buffer that might be either
-is `schema::AnySchemaMessage`: it reads the header schema id and decodes with
-that enum. A schema id that is neither (persist events, metrics, traces) is
+is `schema::AnySchemaMessage`. The build generates it with
+`Generator::generate_schema_dispatch` over every configured codec module. It reads
+the header schema id and decodes with that module's enum. A schema id that is neither (persist events, metrics, traces) is
 `Other`, not an error.
 
 ```rust
 match schema::AnySchemaMessage::decode(frame, 0)? {
-    schema::AnySchemaMessage::Market(schema::market::AnyMessage::Trade(trade)) => {
+    schema::AnySchemaMessage::Market(schema::market::AnyMessage::Trade(trade), _) => {
         trade.symbol_as_str()?;
     }
-    schema::AnySchemaMessage::Trading(schema::trading::AnyMessage::Ema(ema)) => {
+    schema::AnySchemaMessage::Trading(schema::trading::AnyMessage::Ema(ema), _) => {
         ema.asset_as_str()?;
     }
-    schema::AnySchemaMessage::Other { schema_id, template_id } => {
+    schema::AnySchemaMessage::Other { schema_id, template_id, .. } => {
         let _ = (schema_id, template_id);
     }
     _ => {}
 }
 ```
 
-The ingester does not use this enum. It loads every `.xml` it is given and
-routes a frame by that same schema id and template id. A schema that was not
+Bound `frame` to one transport message; unknown schemas and templates retain
+that complete byte range. `message.as_bytes()` borrows the SBE header and body,
+so the persistence writer accepts the combined enum without re-encoding:
+
+```rust
+let message = schema::AnySchemaMessage::decode(frame, 0)?;
+writer.push(message.as_bytes(), source_id);
+```
+
+The archive ingester loads every `.xml` it is given and routes a frame by that
+same schema id and template id. A schema that was not
 compiled into the `schema` crate still persists. The engine's book stream is
 already one schema, so it keeps calling `market::AnyMessage` directly.
 
@@ -292,7 +303,8 @@ loop {
 ```
 
 The same registry accepts `tracing` events when `Persist::layer` is installed.
-Use that off the hot path. A counter with no `value` adds 1. Other fields are
+Use that off the hot path. A counter with no `value` adds 1. An explicit value must be a nonnegative integer;
+invalid values are ignored. Other fields are
 labels. `poll` still publishes them. These events allocate the label strings
 and take the registry lock; the handles above do not. A handle and a tracing
 event for the same counter or histogram are two cells, added at `poll`.
@@ -302,6 +314,27 @@ tracing::info!(counter = "orders_sent", venue = "binance");
 tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
 tracing::info!(histogram = "tick_to_trade_ns", value = 850u64);
 ```
+
+The layer owns a clone of the `Persist` instance. No `Persist::install` or
+static metric/tracer is needed. A scoped subscriber works too:
+
+```rust
+use tracing_subscriber::layer::SubscriberExt;
+let persist = Persist::connect(schema, settings)?;
+let metrics = persist.metrics();
+let subscriber = tracing_subscriber::registry().with(persist.layer());
+tracing::subscriber::with_default(subscriber, || {
+    tracing::info_span!("send_order", venue = "binance").in_scope(|| {
+        tracing::info!(counter = "orders_sent", venue = "binance");
+        tracing::info!(histogram = "send_ns", value = 850u64);
+    });
+});
+metrics.poll(clock.now()); // keep polling in the application loop
+```
+
+`info_span!` and `#[tracing::instrument]` produce span traces while `otel_traces`
+is enabled. Metric events update immediately but publish only when `poll` runs.
+Use `persist.tracer(...)` for instance-owned checkpoint traces on the hot path.
 
 A histogram records the count, the sum, the minimum, and the maximum. Every
 millisecond that had samples, `poll` publishes that summary. An empty

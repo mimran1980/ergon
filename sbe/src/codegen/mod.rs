@@ -68,6 +68,7 @@ pub(crate) use message_header_template::*;
 pub(crate) mod nullification;
 pub(crate) use nullification::*;
 pub(crate) mod runtime;
+mod schema_dispatch;
 use quote::format_ident;
 pub(crate) use runtime::*;
 pub(crate) mod group_encoder;
@@ -644,6 +645,39 @@ impl Generator {
             }
             self.generate_multi_inner(schemas, &effective)
         })
+    }
+
+    /// Generate an opt-in cross-schema dispatcher alongside existing codecs.
+    ///
+    /// Each entry names a sibling module generated with dispatch enabled.
+    /// The returned module exposes AnySchemaMessage, whose variants wrap each
+    /// module's AnyMessage, and SchemaDecodeError. Unknown schema ids retain
+    /// the supplied frame in Other; as_bytes() forwards frames without allocating.
+    ///
+    /// Schema ids must be unique and headers must have identical layouts and
+    /// byte order, with a non-constant schemaId. This rejects ambiguous dispatch
+    /// instead of guessing a header layout. Existing codec generation is unaffected.
+    ///
+    /// # Errors
+    ///
+    /// [GenerateError] for an empty or ambiguous schema set, invalid or
+    /// colliding module/variant names, invalid headers, or disabled dispatch.
+    pub fn generate_schema_dispatch(
+        &self,
+        schemas: &[(&Schema, &str)],
+        module_name: &str,
+    ) -> Result<GeneratedModule, GenerateError> {
+        if !self.config.enable_dispatch {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "schema_dispatch".into(),
+                value: module_name.into(),
+                reason: "schema modules must be generated with dispatch enabled".into(),
+            });
+        }
+        for (schema, _) in schemas {
+            self.validate_header_values(schema)?;
+        }
+        schema_dispatch::generate(schemas, module_name)
     }
 
     fn generate_multi_inner(

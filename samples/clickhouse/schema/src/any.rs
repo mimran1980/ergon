@@ -1,148 +1,11 @@
-//! One decode for a buffer that may belong to either compiled schema.
-//!
-//! [`crate::market::AnyMessage`] is every message of `market.xml`.
-//! [`crate::trading::AnyMessage`] is every message of `trading.xml`. Template
-//! ids start again at 1 in each file, so a match on template id alone is the
-//! wrong message. The header's schema id picks the enum.
+//! One generated decoder for all of this crate's configured schemas.
 
-use std::fmt;
-
-use crate::{market, trading};
-
-const HEADER: usize = market::MESSAGE_HEADER_ENCODED_LENGTH;
-const _: () = assert!(trading::MESSAGE_HEADER_ENCODED_LENGTH == HEADER);
-
-/// A frame from `market.xml` or `trading.xml`, or a header from some other schema.
-#[non_exhaustive]
-pub enum AnySchemaMessage<'a> {
-    /// Schema id [`market::SCHEMA_ID`].
-    Market(market::AnyMessage<'a>),
-    /// Schema id [`trading::SCHEMA_ID`].
-    Trading(trading::AnyMessage<'a>),
-    /// The header is complete and its schema id is neither of those two.
-    /// Event, metric, and trace frames use the persist-client schema and land
-    /// here. The body length is not known from the header, so the caller keeps
-    /// `buf`.
-    Other {
-        /// Wire `schemaId`.
-        schema_id: u16,
-        /// Wire `templateId`.
-        template_id: u16,
-    },
-}
-
-/// [`AnySchemaMessage::decode`] failed before a schema enum could take the frame.
-#[derive(Debug)]
-pub enum SchemaDecodeError {
-    /// Fewer than 8 bytes from `offset`.
-    BufferTooShort {
-        /// Bytes a message header occupies.
-        needed: usize,
-        /// Bytes left in `buf` at `offset`.
-        available: usize,
-    },
-    /// `market.xml` rejected the frame.
-    Market(market::sbe_rt::DecodeError),
-    /// `trading.xml` rejected the frame.
-    Trading(trading::sbe_rt::DecodeError),
-}
-
-impl fmt::Display for SchemaDecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BufferTooShort { needed, available } => {
-                write!(
-                    f,
-                    "message header needs {needed} bytes, {available} available"
-                )
-            }
-            Self::Market(err) => write!(f, "{err}"),
-            Self::Trading(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for SchemaDecodeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Market(err) => Some(err),
-            Self::Trading(err) => Some(err),
-            Self::BufferTooShort { .. } => None,
-        }
-    }
-}
-
-impl From<market::sbe_rt::DecodeError> for SchemaDecodeError {
-    fn from(err: market::sbe_rt::DecodeError) -> Self {
-        Self::Market(err)
-    }
-}
-
-impl From<trading::sbe_rt::DecodeError> for SchemaDecodeError {
-    fn from(err: trading::sbe_rt::DecodeError) -> Self {
-        Self::Trading(err)
-    }
-}
-
-impl fmt::Debug for AnySchemaMessage<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Market(_) => f.write_str("Market(..)"),
-            Self::Trading(_) => f.write_str("Trading(..)"),
-            Self::Other {
-                schema_id,
-                template_id,
-            } => f
-                .debug_struct("Other")
-                .field("schema_id", schema_id)
-                .field("template_id", template_id)
-                .finish(),
-        }
-    }
-}
-
-impl<'a> AnySchemaMessage<'a> {
-    /// Read the header at `offset` and decode with the schema it names.
-    ///
-    /// # Errors
-    ///
-    /// A short buffer, or a known schema rejecting the frame. An unknown
-    /// schema id is [`Self::Other`], not an error.
-    #[inline]
-    pub fn decode(buf: &'a [u8], offset: usize) -> Result<Self, SchemaDecodeError> {
-        let available = buf.len().saturating_sub(offset);
-        if available < HEADER {
-            return Err(SchemaDecodeError::BufferTooShort {
-                needed: HEADER,
-                available,
-            });
-        }
-        let schema_id = u16::from_le_bytes([buf[offset + 4], buf[offset + 5]]);
-        match schema_id {
-            market::SCHEMA_ID => Ok(Self::Market(market::AnyMessage::decode(buf, offset)?)),
-            trading::SCHEMA_ID => Ok(Self::Trading(trading::AnyMessage::decode(buf, offset)?)),
-            _ => Ok(Self::Other {
-                schema_id,
-                template_id: u16::from_le_bytes([buf[offset + 2], buf[offset + 3]]),
-            }),
-        }
-    }
-
-    /// The header's schema id.
-    #[inline]
-    #[must_use]
-    pub fn schema_id(&self) -> u16 {
-        match self {
-            Self::Market(_) => market::SCHEMA_ID,
-            Self::Trading(_) => trading::SCHEMA_ID,
-            Self::Other { schema_id, .. } => *schema_id,
-        }
-    }
-}
+include!(concat!(env!("OUT_DIR"), "/any_schema.rs"));
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{market, trading};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -170,7 +33,7 @@ mod tests {
         );
         assert_eq!(u16::from_le_bytes([trade[4], trade[5]]), market::SCHEMA_ID);
 
-        let AnySchemaMessage::Market(market::AnyMessage::Trade(decoded)) =
+        let AnySchemaMessage::Market(market::AnyMessage::Trade(decoded), _) =
             AnySchemaMessage::decode(&trade, 0)?
         else {
             return Err("trade decoded as another schema".into());
@@ -195,7 +58,7 @@ mod tests {
         assert_eq!(written, EMA);
         let decoded = AnySchemaMessage::decode(&ema, 0)?;
         assert_eq!(decoded.schema_id(), trading::SCHEMA_ID);
-        let AnySchemaMessage::Trading(trading::AnyMessage::Ema(ema)) = decoded else {
+        let AnySchemaMessage::Trading(trading::AnyMessage::Ema(ema), _) = decoded else {
             return Err("ema decoded as another schema".into());
         };
         assert_eq!(ema.asset_as_str()?, "ETH");
@@ -211,11 +74,10 @@ mod tests {
             AnySchemaMessage::Other {
                 schema_id: 7,
                 template_id: 9,
+                ..
             } => Ok(()),
             AnySchemaMessage::Other { .. } => Err("other header fields were misread".into()),
-            AnySchemaMessage::Market(_) | AnySchemaMessage::Trading(_) => {
-                Err("an unknown schema id was decoded as a known schema".into())
-            }
+            _ => Err("an unknown schema id was decoded as a known schema".into()),
         }
     }
 

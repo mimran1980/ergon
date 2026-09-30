@@ -22,5 +22,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_domain_type(decimal9, "rust_decimal::Decimal"),
         &out,
     )?;
+    let market = ergo_sbe::Schema::from_ir(ergo_sbe::parse_file("market.xml")?);
+    let trading = ergo_sbe::Schema::from_ir(ergo_sbe::parse_file("trading.xml")?);
+    let dispatcher = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("market"))
+        .generate_schema_dispatch(&[(&market, "market"), (&trading, "trading")], "any_schema")?;
+    std::fs::write(
+        std::path::Path::new(&std::env::var("OUT_DIR")?).join(dispatcher.path),
+        dispatcher.source,
+    )?;
     Ok(())
 }

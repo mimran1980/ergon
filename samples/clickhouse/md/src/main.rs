@@ -13,14 +13,6 @@ use std::num::NonZeroUsize;
 
 use arrayvec::ArrayVec;
 
-use schema::market::{
-    BarEncoder, BarFixedFields, BookAction, BookDeltasDeltasEntry, BookDeltasEncoder,
-    BookDeltasFixedFields, BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder,
-    BookSnapshotFixedFields, Decimal9, FundingRateEncoder, FundingRateFixedFields,
-    IndexPriceEncoder, IndexPriceFixedFields, InstrumentSpecEncoder, InstrumentSpecFixedFields,
-    MarkPriceEncoder, MarkPriceFixedFields, QuoteEncoder, QuoteFixedFields, Rate, Side,
-    TradeEncoder, TradeFixedFields, TryToSbe,
-};
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
 use nautilus_bybit::common::enums::BybitProductType;
@@ -58,6 +50,14 @@ use persist_client::trace::Tracer;
 use persist_client::{Persist, Settings};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use schema::market::{
+    BarEncoder, BarFixedFields, BookAction, BookDeltasDeltasEntry, BookDeltasEncoder,
+    BookDeltasFixedFields, BookSnapshotAsksEntry, BookSnapshotBidsEntry, BookSnapshotEncoder,
+    BookSnapshotFixedFields, Decimal9, FundingRateEncoder, FundingRateFixedFields,
+    IndexPriceEncoder, IndexPriceFixedFields, InstrumentSpecEncoder, InstrumentSpecFixedFields,
+    MarkPriceEncoder, MarkPriceFixedFields, QuoteEncoder, QuoteFixedFields, Rate, Side,
+    TradeEncoder, TradeFixedFields, TryToSbe,
+};
 use tracing_subscriber::layer::SubscriberExt;
 
 /// Levels per side in each `book_snapshot` row.

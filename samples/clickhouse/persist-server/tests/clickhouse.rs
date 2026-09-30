@@ -628,7 +628,7 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
     };
     let lab = Lab::new(
         "trading",
-        "tables:\n  agg_book: { kind: dynamic }\n  new_order: { kind: static }\n",
+        "tables:\n  trade: { kind: static }\n  agg_book: { kind: dynamic }\n  new_order: { kind: static }\n",
     )?;
     let mut writer = Writer::new(
         &[schema::MARKET_SCHEMA, schema::TRADING_SCHEMA],
@@ -670,7 +670,10 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
         })?
         .asset(b"BTC")?
         .encoded_length_with_header();
-    assert!(writer.push(&buf[..len], 0));
+    assert!(writer.push(
+        schema::AnySchemaMessage::decode(&buf[..len], 0)?.as_bytes(),
+        0
+    ));
     let mut buf = [0u8; NewOrderEncoder::compute_length_with_header(3)];
     let len = NewOrderEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&NewOrderFixedFields {
@@ -683,8 +686,32 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
         })
         .asset(b"BTC")?
         .encoded_length_with_header();
-    assert!(writer.push(&buf[..len], 0));
+    assert!(writer.push(
+        schema::AnySchemaMessage::decode(&buf[..len], 0)?.as_bytes(),
+        0
+    ));
+    let mut trade = [0u8; schema::market::TradeEncoder::compute_length_with_header(3, 4, 1)];
+    let len = schema::market::TradeEncoder::wrap_and_apply_header(&mut trade, 0)
+        .fixed(&schema::market::TradeFixedFields {
+            ts_event: 1_700_000_000_000_000_000,
+            ts_init: 1_700_000_000_000_001_000,
+            price: schema::market::Decimal9::new(100_000_000_000),
+            size: schema::market::Decimal9::new(1_000_000_000),
+            aggressor: schema::market::Side::Buy,
+        })
+        .symbol(b"BTC")?
+        .venue(b"XNAS")?
+        .trade_id(b"1")?
+        .encoded_length_with_header();
+    assert!(writer.push(
+        schema::AnySchemaMessage::decode(&trade[..len], 0)?.as_bytes(),
+        0
+    ));
     clean(&writer.tick())?;
+    assert_eq!(
+        lab.query("SELECT symbol, venue, price, size FROM DB.trade FORMAT TSV")?,
+        "BTC\tXNAS\t100\t1"
+    );
     assert_eq!(
         lab.query("SELECT bids.price, bids.size, bids.venue, asks.venue, asset FROM DB.agg_book FORMAT TSV")?,
         "[100,99]\t[1.5,2]\t['BINANCE','HYPERLIQUID']\t['BINANCE']\tBTC"

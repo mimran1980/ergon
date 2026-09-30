@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Generate an opt-in cross-schema AnySchemaMessage dispatcher with typed errors
+  and borrowed frames for persistence, including unknown schemas and templates.
+
 ### Changed
 - **`optional_enum_nullify` is gated at 1.00 in both profiles.** Both arms
   keep four independent totals of the same three decoded fields, so the row
@@ -9,6 +13,7 @@
   total, which measured loop latency.
 
 ### Fixed
+- A tracing counter whose `value` is present but not a nonnegative integer is ignored, instead of counting as one.
 - **The cluster crate enabled ergo-sbe's default `fancy` feature on both
   the runtime dependency and the build dependency.** That pulls miette's
   graphical renderer into the cluster build and changes no codec API.

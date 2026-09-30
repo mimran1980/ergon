@@ -9,7 +9,7 @@
 //! tracing::info!(histogram = "tick_to_trade_ns", value = 850);
 //! ```
 //!
-//! A counter, gauge, or histogram event updates [`crate::metrics`], not a
+//! A counter, gauge, or histogram event updates [`crate::metrics::Metrics`], not a
 //! table. `value` is optional on a counter and then means 1. Other fields
 //! are labels. The handles in that module stay the path that does not allocate.
 //!
@@ -121,6 +121,7 @@ pub(crate) fn record_metric_event(metrics: &crate::metrics::Metrics, event: &Eve
     let mut collect = MetricCollect {
         which,
         name: None,
+        value_present: false,
         integer: None,
         float: None,
         labels: Vec::new(),
@@ -133,6 +134,7 @@ pub(crate) fn record_metric_event(metrics: &crate::metrics::Metrics, event: &Eve
 struct MetricCollect {
     which: &'static str,
     name: Option<String>,
+    value_present: bool,
     integer: Option<u64>,
     float: Option<f64>,
     labels: Vec<(String, String)>,
@@ -150,7 +152,7 @@ impl MetricCollect {
             .collect();
         match self.which {
             COUNTER => {
-                if self.float.is_some() && self.integer.is_none() {
+                if self.value_present && self.integer.is_none() {
                     return;
                 }
                 metrics.add_counter(name, &labels, self.integer.unwrap_or(1));
@@ -170,7 +172,9 @@ impl MetricCollect {
     }
 
     fn label(&mut self, field: &Field, text: &str) {
-        if field.name() == self.which {
+        if field.name() == VALUE {
+            self.value_present = true;
+        } else if field.name() == self.which {
             self.name = Some(text.to_owned());
         } else if field.name() != VALUE {
             self.labels.push((field.name().to_owned(), text.to_owned()));
@@ -179,6 +183,7 @@ impl MetricCollect {
 
     fn number(&mut self, field: &Field, integer: Option<u64>, float: f64) {
         if field.name() == VALUE {
+            self.value_present = true;
             self.integer = integer;
             self.float = Some(float);
         } else if field.name() == self.which {
@@ -1202,6 +1207,25 @@ mod tests {
         // The table event is admitted and then ignored by the metric path.
         // The plain event is not admitted.
         assert_eq!(admitted.load(std::sync::atomic::Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn invalid_counter_values_do_not_turn_into_default_increments() {
+        let metrics = crate::metrics::Metrics::detached();
+        let subscriber = tracing_subscriber::registry().with(Take(
+            metrics.clone(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        ));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(counter = "requests", value = "invalid");
+            tracing::info!(counter = "requests", value = true);
+            tracing::info!(counter = "requests", value = ?Some(1));
+            tracing::info!(counter = "requests", value = -1);
+            tracing::info!(counter = "requests", value = 1.5);
+            tracing::info!(counter = "requests", value = 0u64);
+            tracing::info!(counter = "requests");
+        });
+        assert_eq!(metrics.counter_total("requests", &[]), 1);
     }
 
     fn flat(table: &str, fields: &[(&str, Kind)]) -> Result<Shape, ShapeError> {
