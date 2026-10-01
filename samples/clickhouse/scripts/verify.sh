@@ -157,9 +157,9 @@ ok "$checked Grafana panel queries (per-table panels over all $(wc -w <<<"$table
 
 # 4. Metrics, traces and Aeron's counters: recent, and attributed
 apps=$( (tr A-Z a-z <<<"$expected" | tr , '\n'; "${KUBE[@]}" get deploy -l 'app in (engine,exch-sim)' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}') | sort | paste -sd, -)
-for table in metrics metrics_histogram otel_traces aeron_counters; do
-    ts=$([[ $table == otel_traces ]] && echo Timestamp || echo ts)
-    n=$(sql "SELECT count() FROM market.$table WHERE $ts > now() - INTERVAL 1 MINUTE AND host != '' AND pod != ''")
+for table in metrics.metrics metrics.metrics_histogram tracing.otel_traces metrics.aeron_counters; do
+    ts=$([[ $table == *otel_traces ]] && echo Timestamp || echo ts)
+    n=$(sql "SELECT count() FROM $table WHERE $ts > now() - INTERVAL 1 MINUTE AND host != '' AND pod != ''")
     (( n > 0 )) || fail "$table: no rows with a host and pod in the last minute"
 done
 got=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(app)), ',') FROM metrics.metrics WHERE ts > now() - INTERVAL 1 MINUTE AND app != ''")
