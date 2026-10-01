@@ -48,6 +48,30 @@ impl ClickHouse {
         }
     }
 
+    /// The same server and user, in `database`.
+    #[must_use]
+    pub fn in_database(&self, database: &str) -> Self {
+        Self {
+            database: database.to_string(),
+            ..self.clone()
+        }
+    }
+
+    /// `CREATE VIEW IF NOT EXISTS name AS SELECT * FROM table WHERE name = 'name'`
+    /// in [`Self::database`]: one metric's rows under its own name. Returns
+    /// the DDL. A table or view already called `name` is left as it is.
+    pub(crate) fn create_metric_view(&self, name: &str, table: &str) -> Result<String, Error> {
+        let ddl = format!(
+            "CREATE VIEW IF NOT EXISTS {db}.{} AS SELECT * FROM {db}.{} WHERE name = '{}'",
+            quote(name),
+            quote(table),
+            name.replace('\\', "\\\\").replace('\'', "\\'"),
+            db = quote(&self.database),
+        );
+        self.query(&ddl)?;
+        Ok(ddl)
+    }
+
     /// `CREATE DATABASE IF NOT EXISTS` for [`Self::database`].
     pub(crate) fn create_database(&self) -> Result<(), Error> {
         let sql = format!("CREATE DATABASE IF NOT EXISTS {}", quote(&self.database));

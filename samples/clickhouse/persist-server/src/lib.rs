@@ -38,7 +38,8 @@ mod metrics;
 mod table;
 mod traces;
 
-use std::collections::{BTreeMap, HashMap};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -151,7 +152,8 @@ impl Settings {
 
     /// [`Settings::new`] from `CLICKHOUSE_URL` (`http://localhost:8123`),
     /// `CLICKHOUSE_USER` (`lab`), `CLICKHOUSE_PASSWORD` (`lab`),
-    /// `CLICKHOUSE_DATABASE` (`market`), `PERSIST_CONFIG`
+    /// `CLICKHOUSE_DATABASE` (`md`; a table's `database:` in `tables.yaml`
+    /// overrides it), `PERSIST_CONFIG`
     /// (`config/tables.yaml`), `PERSIST_CHECKPOINT` (`persist.checkpoint`),
     /// `PERSIST_STREAMS` (`config/streams.yaml`, if it exists) and `HOST_IP`
     /// (`127.0.0.1`).
@@ -177,7 +179,7 @@ impl Settings {
                 &var("CLICKHOUSE_URL", "http://localhost:8123"),
                 &var("CLICKHOUSE_USER", "lab"),
                 &var("CLICKHOUSE_PASSWORD", "lab"),
-                &var("CLICKHOUSE_DATABASE", "market"),
+                &var("CLICKHOUSE_DATABASE", "md"),
             ),
             var("PERSIST_CONFIG", "config/tables.yaml"),
             var("PERSIST_CHECKPOINT", "persist.checkpoint"),
@@ -293,7 +295,27 @@ fn fixed_config() -> TableConfig {
         enabled: persist_client::Switch::On,
         apps: BTreeMap::new(),
         traces: BTreeMap::new(),
+        database: None,
     }
+}
+
+/// The client for a table kept in `database` (its `tables.yaml` entry's
+/// `database:`), or in the default database when that names none. Every
+/// create, compare and insert of a table goes through here.
+fn client_in<'a>(ch: &'a ClickHouse, database: Option<&str>) -> Cow<'a, ClickHouse> {
+    match database {
+        Some(db) if db != ch.database => Cow::Owned(ch.in_database(db)),
+        _ => Cow::Borrowed(ch),
+    }
+}
+
+/// `CREATE DATABASE` for `ch`'s database once, remembered in `created`.
+fn ensure_database(created: &mut BTreeSet<String>, ch: &ClickHouse) -> Result<(), Error> {
+    if !created.contains(&ch.database) {
+        ch.create_database()?;
+        created.insert(ch.database.clone());
+    }
+    Ok(())
 }
 
 /// The columns every table ends with: who recorded the row. The ingester
@@ -334,6 +356,11 @@ impl TableState {
             queued: Vec::new(),
             queued_count: 0,
         }
+    }
+
+    /// `tables.yaml`'s `database:` for this table, if it names one.
+    fn database(&self) -> Option<&str> {
+        self.config.as_ref().and_then(|c| c.database.as_deref())
     }
 }
 
@@ -412,7 +439,15 @@ fn records(mut rest: &[u8]) -> impl Iterator<Item = (u64, bool, &[u8])> {
 /// schema and `tables.yaml`, and inserts what [`Writer::push`] queued.
 pub struct Writer {
     ch: ClickHouse,
-    database_ready: bool,
+    /// Databases known to exist. Cleared when an insert fails: one may
+    /// have been dropped.
+    databases: BTreeSet<String>,
+    /// `tables.yaml`'s `database:` for persistence's own tables, by name.
+    own_databases: BTreeMap<String, String>,
+    /// Metric views made, by database then metric name: the table each reads.
+    views: BTreeMap<String, BTreeMap<String, &'static str>>,
+    /// A metric, or a metric table, is new since views were last made.
+    views_due: bool,
     tables: Vec<TableState>,
     config_path: PathBuf,
     config_text: String,
@@ -469,7 +504,10 @@ impl Writer {
         });
         let mut writer = Self {
             ch: clickhouse,
-            database_ready: false,
+            databases: BTreeSet::new(),
+            own_databases: BTreeMap::new(),
+            views: BTreeMap::new(),
+            views_due: true,
             tables: load_schemas(schemas)?
                 .into_iter()
                 .map(|t| TableState::new(Source::Sbe(t)))
@@ -783,6 +821,7 @@ impl Writer {
         }
         self.save(message);
         self.defs.insert(def.series, def);
+        self.views_due = true;
         self.repush([METRICS_TEMPLATE_ID, HISTOGRAM_TEMPLATE_ID]);
     }
 
@@ -842,8 +881,10 @@ impl Writer {
         self.shape_wait = wait;
     }
 
-    pub(crate) fn clickhouse(&self) -> &ClickHouse {
-        &self.ch
+    /// The client for one of persistence's own tables that is not a source
+    /// here (`aeron_*`), in the database `tables.yaml` gives it.
+    pub(crate) fn clickhouse_for(&self, table: &str) -> ClickHouse {
+        client_in(&self.ch, self.own_databases.get(table).map(String::as_str)).into_owned()
     }
 
     /// Each recording application's name by its Aeron client id, from its
@@ -936,16 +977,28 @@ impl Writer {
 
     fn apply_config(&mut self, text: String) -> Result<(), Error> {
         let mut config = parse_config(&text)?;
+        self.own_databases = RESERVED_TABLES
+            .iter()
+            .filter_map(|name| Some(((*name).to_owned(), config.get(*name)?.database.clone()?)))
+            .collect();
         for state in &mut self.tables {
-            if matches!(
+            let new = if matches!(
                 state.source,
                 Source::Metrics | Source::Histograms | Source::Traces
             ) {
-                continue; // persistence's own: always there
-            }
-            let new = config.remove(state.source.name());
-            if new.as_ref().map(|c| c.kind) != state.config.as_ref().map(|c| c.kind) {
-                state.include = None; // kind changed: compare with ClickHouse again
+                // Persistence's own: always there; only its database is set here.
+                Some(TableConfig {
+                    database: self.own_databases.get(state.source.name()).cloned(),
+                    ..fixed_config()
+                })
+            } else {
+                config.remove(state.source.name())
+            };
+            let placement =
+                |c: &Option<TableConfig>| c.as_ref().map(|c| (c.kind, c.database.clone()));
+            if placement(&new) != placement(&state.config) {
+                // Kind or database changed: compare with ClickHouse again.
+                state.include = None;
                 state.retry_at = Instant::now();
             }
             state.config = new;
@@ -967,15 +1020,6 @@ impl Writer {
     /// Create/compare every table named in `tables.yaml`, enabled or not, so
     /// a disabled table exists (empty) and queries against it still work.
     fn sync_tables(&mut self, report: &mut Report) {
-        if !self.database_ready {
-            match self.ch.create_database() {
-                Ok(()) => self.database_ready = true,
-                Err(e) => {
-                    report.errors.push(e.to_string());
-                    return;
-                }
-            }
-        }
         let now = Instant::now();
         for state in &mut self.tables {
             let Some(kind) = state.config.as_ref().map(|c| c.kind) else {
@@ -992,8 +1036,15 @@ impl Writer {
                 continue;
             };
             shape.columns.extend(origin_columns());
-            match self.ch.sync(&shape, kind) {
+            let ch = client_in(&self.ch, state.database());
+            if let Err(e) = ensure_database(&mut self.databases, &ch) {
+                // ClickHouse is unreachable: one error, not one per table.
+                report.errors.push(e.to_string());
+                return;
+            }
+            match ch.sync(&shape, kind) {
                 Ok(sync) => {
+                    self.views_due |= matches!(state.source, Source::Metrics | Source::Histograms);
                     report.applied.extend(sync.applied);
                     if sync.problems.is_empty() && !state.problems.is_empty() {
                         log::info!("{}: fixed, writing every column", state.source.name());
@@ -1019,6 +1070,62 @@ impl Writer {
                 Err(e) => {
                     report.errors.push(format!("{}: {e}", state.source.name()));
                     state.retry_at = now + Duration::from_secs(5);
+                }
+            }
+        }
+        self.sync_views(report);
+    }
+
+    /// A view per metric name beside `metrics` and `metrics_histogram`,
+    /// when `tables.yaml` gives those a database of their own:
+    /// `SELECT * FROM metrics.tick_to_trade_ns` reads that metric's rows.
+    /// A metric named like a table gets none; when a counter and a histogram
+    /// share a name, the first one seen keeps it. Both are reported.
+    fn sync_views(&mut self, report: &mut Report) {
+        if !std::mem::take(&mut self.views_due) {
+            return;
+        }
+        for state in &self.tables {
+            let table = match state.source {
+                Source::Metrics => metrics::METRICS,
+                Source::Histograms => metrics::HISTOGRAMS,
+                _ => continue,
+            };
+            // Only in a database of their own, once the table is there.
+            let (Some(database), Some(_)) = (state.database(), &state.include) else {
+                continue;
+            };
+            let ch = client_in(&self.ch, Some(database));
+            let made = self.views.entry(database.to_owned()).or_default();
+            for def in self
+                .defs
+                .values()
+                .filter(|d| metrics::table_of(d.kind) == table)
+            {
+                let name = def.name.as_str();
+                if RESERVED_TABLES.contains(&name)
+                    || self.tables.iter().any(|s| s.source.name() == name)
+                {
+                    report.problems.push(format!(
+                        "{database}.{name}: metric {name} has no view; a table has that name"
+                    ));
+                    continue;
+                }
+                match made.get(name) {
+                    Some(t) if *t == table => {}
+                    Some(t) => report.problems.push(format!(
+                        "{database}.{name}: the view shows {t}; {name}'s {table} rows have no view"
+                    )),
+                    None => match ch.create_metric_view(name, table) {
+                        Ok(ddl) => {
+                            report.applied.push(ddl);
+                            made.insert(name.to_owned(), table);
+                        }
+                        Err(e) => {
+                            report.errors.push(format!("{database}.{name}: {e}"));
+                            self.views_due = true;
+                        }
+                    },
                 }
             }
         }
@@ -1087,7 +1194,7 @@ impl Writer {
         let inserted = if written == 0 {
             Ok(())
         } else {
-            self.ch.insert_token(
+            client_in(&self.ch, self.tables[index].database()).insert_token(
                 metrics::HISTOGRAMS,
                 &column_refs,
                 &self.rows,
@@ -1118,7 +1225,8 @@ impl Writer {
                 let state = &mut self.tables[index];
                 state.include = None;
                 state.retry_at = Instant::now();
-                self.database_ready = false;
+                self.databases.clear();
+                self.views.clear();
             }
         }
     }
@@ -1193,8 +1301,12 @@ impl Writer {
             let inserted = if rows == 0 {
                 Ok(())
             } else {
-                self.ch
-                    .insert_token(state.source.name(), &columns, &self.rows, &self.dedup_token)
+                client_in(&self.ch, state.database()).insert_token(
+                    state.source.name(),
+                    &columns,
+                    &self.rows,
+                    &self.dedup_token,
+                )
             };
             match inserted {
                 Ok(()) => {
@@ -1221,7 +1333,8 @@ impl Writer {
                     // since it was synced: compare it again before retrying.
                     state.include = None;
                     state.retry_at = Instant::now();
-                    self.database_ready = false;
+                    self.databases.clear();
+                    self.views.clear();
                 }
             }
         }

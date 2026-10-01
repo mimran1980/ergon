@@ -186,6 +186,10 @@ pub struct TableConfig {
     /// listed publishes every one while the table is on.
     #[serde(default)]
     pub traces: BTreeMap<String, TraceConfig>,
+    /// The ClickHouse database the ingester keeps the table in; `None` is
+    /// its default (`CLICKHOUSE_DATABASE`). Applications ignore it.
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 /// The table traces are published to, and switched by.
@@ -1420,6 +1424,16 @@ mod tests {
         ] {
             assert!(parse_config(bad).is_err(), "accepted {bad}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_table_names_its_database_or_takes_the_default() -> TestResult {
+        let config = parse_config(
+            "tables:\n  trade: { kind: static, database: md }\n  ema: { kind: dynamic }\n",
+        )?;
+        assert_eq!(config["trade"].database.as_deref(), Some("md"));
+        assert_eq!(config["ema"].database, None);
         Ok(())
     }
 

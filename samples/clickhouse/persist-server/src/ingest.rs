@@ -228,7 +228,7 @@ impl Ingester {
             let clients = self.writer.client_names();
             report
                 .errors
-                .extend(stats.sample(self.writer.clickhouse(), now, &clients));
+                .extend(stats.sample(|t| self.writer.clickhouse_for(t), now, &clients));
         }
         self.writer.log(&report);
         Ok(report)

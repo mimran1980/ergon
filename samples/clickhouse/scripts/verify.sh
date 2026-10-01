@@ -41,9 +41,9 @@ ok "the cluster's ConfigMap lab-config is config/"
 # 2. Live data from every deployed exchange
 expected=$("${KUBE[@]}" get deploy -l app=md -o jsonpath='{range .items[*]}{.metadata.labels.exchange}{"\n"}{end}' | tr a-z A-Z | sort | paste -sd, -)
 [[ -n $expected ]] || fail "no feed handler is deployed (just deploy)"
-venues=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(venue)), ',') FROM market.trade WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
+venues=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(venue)), ',') FROM md.trade WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 [[ $venues == "$expected" ]] || fail "trades in the last minute came from '$venues', expected $expected"
-quotes=$(sql "SELECT count() FROM market.quote WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
+quotes=$(sql "SELECT count() FROM md.quote WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL 1 MINUTE")
 (( quotes > 0 )) || fail "no quotes in the last minute"
 ok "trades from $venues and $quotes quotes in the last minute"
 
@@ -79,13 +79,13 @@ for engine in $engines; do
     has_md=$(sed -n "s/^  md-\([a-z]*\): .*region: $region[,} ].*/\1/p" config/streams.yaml \
         | while read -r x; do "${KUBE[@]}" get deploy "md-$x" -o name 2>/dev/null; done)
     [[ -n $has_md ]] || continue # no feed deployed in its region
-    n=$(sql "SELECT uniqExact(asset) FROM market.ema WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE")
+    n=$(sql "SELECT uniqExact(asset) FROM engine.ema WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE")
     (( n >= 2 )) || fail "$engine: EMAs for $n assets in the last minute, expected BTC and ETH"
-    n=$(sql "SELECT count() FROM market.agg_book WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE AND length(bids.price) > 0 AND length(asks.price) > 0")
+    n=$(sql "SELECT count() FROM engine.agg_book WHERE app = '$engine' AND ts > now() - INTERVAL 1 MINUTE AND length(bids.price) > 0 AND length(asks.price) > 0")
     (( n > 0 )) || fail "$engine: no aggregated book in the last minute"
 done
 ok "engines publishing EMAs and aggregated books: $(paste -sd' ' - <<<"$engines")"
-orders=$(sql "SELECT count() FROM market.new_order WHERE ts > now() - INTERVAL 1 HOUR AND ts < now() - INTERVAL 30 SECOND")
+orders=$(sql "SELECT count() FROM orders.new_order WHERE ts > now() - INTERVAL 1 HOUR AND ts < now() - INTERVAL 30 SECOND")
 (( orders > 0 )) || fail "no orders in the last hour (the strategy trades a 5m EMA cross at most every 30 s)"
 # An order sent while its exchange was down is lost (plain subscriptions,
 # no catch-up): judge those sent since both were last started.
@@ -93,11 +93,11 @@ unfilled=0
 for engine in $engines; do
     since=$("${KUBE[@]}" get pod -l "app in (engine,exch-sim),region=${engine#engine-}" -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.running.startedAt}{"\n"}{end}' | sort | tail -1)
     [[ -n $since ]] || continue
-    n=$(sql "SELECT count() FROM market.new_order WHERE app = '$engine' AND ts > parseDateTime64BestEffort('$since') AND ts < now() - INTERVAL 30 SECOND AND order_id NOT IN (SELECT order_id FROM market.execution_report WHERE status = 'Filled')")
+    n=$(sql "SELECT count() FROM orders.new_order WHERE app = '$engine' AND ts > parseDateTime64BestEffort('$since') AND ts < now() - INTERVAL 30 SECOND AND order_id NOT IN (SELECT order_id FROM orders.execution_report WHERE status = 'Filled')")
     unfilled=$((unfilled + n))
 done
 [[ $unfilled == 0 ]] || fail "$unfilled orders sent while their engine and exchange were both up have no fill"
-joined=$(sql "SELECT count() FROM (SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND SpanName IN ('tick_to_trade', 'order_ack') AND SpanAttributes['why'] = 'kept' AND Timestamp > now() - INTERVAL 1 HOUR GROUP BY TraceId HAVING uniqExact(SpanName) = 2)")
+joined=$(sql "SELECT count() FROM (SELECT TraceId FROM tracing.otel_traces WHERE ParentSpanId = '' AND SpanName IN ('tick_to_trade', 'order_ack') AND SpanAttributes['why'] = 'kept' AND Timestamp > now() - INTERVAL 1 HOUR GROUP BY TraceId HAVING uniqExact(SpanName) = 2)")
 (( joined > 0 )) || fail "no order's tick_to_trade trace shares its id with the exchange's order_ack"
 ok "$orders orders in the last hour, every one sent to a running exchange filled; $joined traced from tick to exchange ack under one id"
 
@@ -105,8 +105,9 @@ ok "$orders orders in the last hour, every one sent to a running exchange filled
 uids=$(curl -sf "$GRAFANA/api/search?type=dash-db" | jq -r '.[].uid')
 [[ -n $uids ]] || fail "Grafana has no dashboards"
 checked=0
-tables=$(sql "SELECT name FROM system.tables WHERE database = 'market' ORDER BY name")
-disabled() { grep -Eq "^  $1: .*enabled: false" config/tables.yaml; }
+tables=$(sql "SELECT database || '.' || name FROM system.tables WHERE database IN ('md', 'engine', 'orders', 'tracing', 'metrics') ORDER BY 1")
+# A table's name without its database: md.trade -> trade.
+disabled() { grep -Eq "^  ${1#*.}: .*enabled: false" config/tables.yaml; }
 for uid in $uids; do
     dash=$(curl -sf "$GRAFANA/api/dashboards/uid/$uid" | jq '.dashboard')
     adhoc=$(echo "$dash" | jq -r '.templating.list[]? | select(.name=="sql") | .query // empty')
@@ -143,14 +144,14 @@ for uid in $uids; do
             [[ $rows -gt 0 ]] || disabled "$table" || { [[ $title == *book_snapshot* ]] && disabled book_snapshot; } \
                 || [[ $title == "Distinct errors" || $title == "Data loss" ]] \
                 || [[ $title == "Schema changes (CREATE / ALTER)" ]] \
-                || [[ $table == aeron_errors || $table == aeron_loss ]] \
+                || [[ $table == metrics.aeron_errors || $table == metrics.aeron_loss ]] \
                 || fail "Grafana panel '$title' [$table] ($uid) returned no rows"
             checked=$((checked + 1))
         done
     done < <(echo "$dash" | jq -c '.panels[] | {title, rawSql: .targets[0].rawSql, format: .targets[0].format}')
 done
 # A deliberately broken query must be reported, or the loop above proves nothing.
-bad=$(curl -s -H 'Content-Type: application/json' "$GRAFANA/api/ds/query" -d '{"queries":[{"refId":"A","datasource":{"type":"grafana-clickhouse-datasource","uid":"clickhouse"},"editorType":"sql","rawSql":"SELECT no_such_column FROM market.trade","format":1}],"from":"now-5m","to":"now"}')
+bad=$(curl -s -H 'Content-Type: application/json' "$GRAFANA/api/ds/query" -d '{"queries":[{"refId":"A","datasource":{"type":"grafana-clickhouse-datasource","uid":"clickhouse"},"editorType":"sql","rawSql":"SELECT no_such_column FROM md.trade","format":1}],"from":"now-5m","to":"now"}')
 [[ -n $(echo "$bad" | jq -r '.results.A.error // empty') ]] || fail "Grafana did not report an error for a bad query"
 ok "$checked Grafana panel queries (per-table panels over all $(wc -w <<<"$tables" | tr -d ' ') tables) run without error and return rows"
 
@@ -161,7 +162,7 @@ for table in metrics metrics_histogram otel_traces aeron_counters; do
     n=$(sql "SELECT count() FROM market.$table WHERE $ts > now() - INTERVAL 1 MINUTE AND host != '' AND pod != ''")
     (( n > 0 )) || fail "$table: no rows with a host and pod in the last minute"
 done
-got=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(app)), ',') FROM market.metrics WHERE ts > now() - INTERVAL 1 MINUTE AND app != ''")
+got=$(sql "SELECT arrayStringConcat(arraySort(groupUniqArray(app)), ',') FROM metrics.metrics WHERE ts > now() - INTERVAL 1 MINUTE AND app != ''")
 [[ $got == "$apps" ]] || fail "metrics in the last minute came from '$got', expected $apps"
 ok "metrics, histograms, traces and Aeron counters arriving, with host and pod, from $got"
 
@@ -170,15 +171,15 @@ ok "metrics, histograms, traces and Aeron counters arriving, with host and pod, 
     || fail "notebooks/verify.ipynb failed (open http://localhost:8888 to see where)"
 ok "notebooks/verify.ipynb runs clean"
 
-# 6. Live toggle of a dynamic table, through the cluster's ConfigMap: the
-# kubelet takes up to about a minute to update it in the pods.
+# 6. Live toggle of a dynamic table, through the cluster's ConfigMap.
+# `just config` has the kubelet update it in the pods within seconds.
 config=config/tables.yaml
 saved=$(cat "$config")
 push_config() { just config >/dev/null; }
 restore() { printf "%s\n" "$saved" > "$config"; push_config; }
 trap restore EXIT
 set_book() { sed -E "s/^(  book_snapshot: \{ kind: dynamic, enabled: )(true|false)( \})/\1$1\3/" <<<"$saved" > "$config"; push_config; }
-recent_books() { sql "SELECT count() FROM market.book_snapshot WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL $1 SECOND" 2>/dev/null || echo 0; }
+recent_books() { sql "SELECT count() FROM md.book_snapshot WHERE ts_event > now() - INTERVAL 10 MINUTE AND inserted_at > now() - INTERVAL $1 SECOND" 2>/dev/null || echo 0; }
 set_book true
 for _ in $(seq 150); do (( $(recent_books 5) > 0 )) && break; sleep 1; done
 (( $(recent_books 5) > 0 )) || fail "book_snapshot enabled but no rows arrived within 150 s"
@@ -186,9 +187,9 @@ ok "book_snapshot on: rows arriving without a restart"
 set_book false
 stopped=
 for _ in $(seq 25); do
-    before=$(sql "SELECT count() FROM market.book_snapshot")
+    before=$(sql "SELECT count() FROM md.book_snapshot")
     sleep 6
-    after=$(sql "SELECT count() FROM market.book_snapshot")
+    after=$(sql "SELECT count() FROM md.book_snapshot")
     [[ $before == "$after" ]] && { stopped=1; break; }
 done
 [[ -n $stopped ]] || fail "book_snapshot disabled but rows kept arriving 150 s later ($before -> $after)"
@@ -204,7 +205,7 @@ mover=md-binance other=HYPERLIQUID engine=engine-an1
 if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     old_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{.items[0].metadata.name}')
     old_node=$("${KUBE[@]}" get pod "$old_pod" -o jsonpath='{.spec.nodeName}')
-    metric() { sql "SELECT argMax(value, ts) FROM market.metrics WHERE app = '$engine' AND name = '$1' AND labels['venue'] = '$2'"; }
+    metric() { sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = '$1' AND labels['venue'] = '$2'"; }
     resyncs=$(metric feed_resyncs BINANCE)
     started=$(sql "SELECT now64(9)")
     kubectl --context kind-clickhouse-lab cordon "$old_node" >/dev/null
@@ -228,22 +229,22 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     done
     (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) || fail "$engine did not resync BINANCE within 60 s of the move"
     for _ in $(seq 30); do
-        age=$(sql "SELECT argMax(value, ts) FROM market.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = 'BINANCE' AND ts > now() - INTERVAL 5 SECOND")
+        age=$(sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = 'BINANCE' AND ts > now() - INTERVAL 5 SECOND")
         [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) && break
         sleep 1
     done
     [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) || fail "$engine: BINANCE's book still stale after the move (${age:-no} ns)"
     recovered=$(( $(date +%s) - moved ))
-    worst=$(sql "SELECT max(value) FROM market.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = '$other' AND ts > '$started'")
+    worst=$(sql "SELECT max(value) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = '$other' AND ts > '$started'")
     (( ${worst%%.*} < 5000000000 )) || fail "$engine: $other's book went ${worst} ns without an update during the move"
     # Recorded by the new node's archive, and nothing twice.
     for _ in $(seq 60); do
-        hosts=$(sql "SELECT count() FROM market.trade WHERE venue = 'BINANCE' AND host = '$new_node' AND ts_event > '$started'")
+        hosts=$(sql "SELECT count() FROM md.trade WHERE venue = 'BINANCE' AND host = '$new_node' AND ts_event > '$started'")
         (( hosts > 0 )) && break
         sleep 1
     done
     (( hosts > 0 )) || fail "no BINANCE trades recorded from $new_node after the move"
-    dupes=$(sql "SELECT count() - uniqExact(symbol, trade_id) FROM market.trade WHERE venue = 'BINANCE' AND ts_event > '$started' - INTERVAL 1 MINUTE")
+    dupes=$(sql "SELECT count() - uniqExact(symbol, trade_id) FROM md.trade WHERE venue = 'BINANCE' AND ts_event > '$started' - INTERVAL 1 MINUTE")
     [[ $dupes == 0 ]] || fail "$dupes BINANCE trades recorded twice across the move"
     ok "$mover moved $old_node -> $new_node: $engine resynced it, its book fresh $recovered s after, $other never stale (worst $((${worst%%.*} / 1000000)) ms), trades from the new node, none twice"
 

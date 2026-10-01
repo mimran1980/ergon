@@ -9,11 +9,11 @@ datasources:
       port: 8123
       protocol: http
       username: lab
-      defaultDatabase: market
+      defaultDatabase: md
       # Grafana's trace view reads otel_traces, the OpenTelemetry exporter's
       # layout that the ingester writes.
       traces:
-        defaultDatabase: market
+        defaultDatabase: tracing
         defaultTable: otel_traces
         otelEnabled: true
         otelVersion: 1.29.0

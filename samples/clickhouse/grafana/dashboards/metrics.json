@@ -18,8 +18,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT app FROM market.metrics ORDER BY app",
-        "definition": "SELECT DISTINCT app FROM market.metrics ORDER BY app",
+        "query": "SELECT DISTINCT app FROM metrics.metrics ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM metrics.metrics ORDER BY app",
         "refresh": 2,
         "multi": true,
         "includeAll": true,
@@ -51,7 +51,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'messages' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'messages' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -92,7 +92,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['instrument'] AS instrument, avg(value) AS bps FROM market.metrics WHERE $__timeFilter(ts) AND name = 'spread_bps' AND app IN (${app:singlequote}) GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['instrument'] AS instrument, avg(value) AS bps FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'spread_bps' AND app IN (${app:singlequote}) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -127,7 +127,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(p50 * count) / sum(count) / 1e6 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e6 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(p50 * count) / sum(count) / 1e6 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e6 AS avg_window_p99 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -168,7 +168,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, app, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p999 * count) / sum(count) / 1e3 AS avg_window_p999 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, app, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p999 * count) / sum(count) / 1e3 AS avg_window_p999 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -209,7 +209,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT ['min','p50','p75','p90','p99','p99.9','p99.99','p99.999','max'][idx] AS quantile, [toFloat64(min), p50, p75, p90, p99, p999, p9999, p99999, toFloat64(max)][idx] AS ns FROM (SELECT min, p50, p75, p90, p99, p999, p9999, p99999, max FROM market.metrics_histogram WHERE name = 'record_ns' AND app IN (${app:singlequote}) ORDER BY ts DESC LIMIT 1) ARRAY JOIN range(1, 10) AS idx",
+          "rawSql": "SELECT ['min','p50','p75','p90','p99','p99.9','p99.99','p99.999','max'][idx] AS quantile, [toFloat64(min), p50, p75, p90, p99, p999, p9999, p99999, toFloat64(max)][idx] AS ns FROM (SELECT min, p50, p75, p90, p99, p999, p9999, p99999, max FROM metrics.metrics_histogram WHERE name = 'record_ns' AND app IN (${app:singlequote}) ORDER BY ts DESC LIMIT 1) ARRAY JOIN range(1, 10) AS idx",
           "format": 1,
           "queryType": "table"
         }
@@ -244,7 +244,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['reason']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'persist_dropped' GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['reason']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'persist_dropped' GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -284,7 +284,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['trace'], ' ', labels['stage']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND name = 'trace_clamped' AND labels['stage'] != 'total' GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['trace'], ' ', labels['stage']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'trace_clamped' AND labels['stage'] != 'total' GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -325,7 +325,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT name, kind, app, pod, host, labels, argMax(value, ts) AS last FROM market.metrics WHERE ts > now() - INTERVAL 1 MINUTE GROUP BY name, kind, app, pod, host, labels ORDER BY name, app",
+          "rawSql": "SELECT name, kind, app, pod, host, labels, argMax(value, ts) AS last FROM metrics.metrics WHERE ts > now() - INTERVAL 1 MINUTE GROUP BY name, kind, app, pod, host, labels ORDER BY name, app",
           "format": 1,
           "queryType": "table"
         }

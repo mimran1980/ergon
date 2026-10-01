@@ -203,8 +203,9 @@ pub(crate) struct AeronStats {
     errors_since: i64,
     /// Each loss entry's observations already written.
     losses: HashMap<(i32, i32, String, String), i64>,
-    /// Per table: the columns written, once it exists.
-    synced: [Option<Vec<bool>>; 3],
+    /// Per table: the database it was found in and the columns written,
+    /// once it exists.
+    synced: [Option<(String, Vec<bool>)>; 3],
 }
 
 impl AeronStats {
@@ -251,10 +252,10 @@ impl AeronStats {
     /// Sample now (UNIX ns) and insert. Failures are returned for the tick's
     /// report; this sample is then lost, and the next one tries again.
     /// `clients` names Aeron clients by id, for those whose heartbeat does
-    /// not (the C client's).
+    /// not (the C client's). `client` gives each table's ClickHouse client.
     pub(crate) fn sample(
         &mut self,
-        ch: &ClickHouse,
+        client: impl Fn(&str) -> ClickHouse,
         now_ns: i64,
         clients: &HashMap<i64, String>,
     ) -> Vec<String> {
@@ -265,12 +266,16 @@ impl AeronStats {
         ];
         let mut errors = Vec::new();
         for (i, (shape, (rows, count))) in tables.into_iter().enumerate() {
+            let ch = client(&shape.name);
             // Created at the first sample, rows or not, so queries of a
             // healthy driver's errors and losses work.
-            if count == 0 && self.synced[i].is_some() {
+            let in_place = self.synced[i]
+                .as_ref()
+                .is_some_and(|(db, _)| *db == ch.database);
+            if count == 0 && in_place {
                 continue;
             }
-            if let Err(e) = self.insert(ch, i, &shape, rows) {
+            if let Err(e) = self.insert(&ch, i, &shape, rows) {
                 errors.push(format!("{}: {e}; this sample is not recorded", shape.name));
                 self.synced[i] = None;
             }
@@ -285,15 +290,22 @@ impl AeronStats {
         shape: &Shape,
         rows: Vec<u8>,
     ) -> Result<(), crate::Error> {
-        if self.synced[i].is_none() {
+        // Not yet compared, or `tables.yaml` moved it to another database.
+        if !self.synced[i]
+            .as_ref()
+            .is_some_and(|(db, _)| *db == ch.database)
+        {
             ch.create_database()?;
             let sync = ch.sync(shape, TableKind::Static)?;
             for p in &sync.problems {
                 log::error!("{}: {p}", shape.name);
             }
-            self.synced[i] = Some(sync.include);
+            self.synced[i] = Some((ch.database.clone(), sync.include));
         }
-        let include = self.synced[i].as_deref().unwrap_or_default();
+        let include = self.synced[i]
+            .as_ref()
+            .map(|(_, include)| include.as_slice())
+            .unwrap_or_default();
         if include.iter().any(|i| !i) {
             // ponytail: a static table someone altered; rows are built for
             // every column, so write nothing until it matches again.

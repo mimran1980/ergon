@@ -34,7 +34,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM market.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM md.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -68,7 +68,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM market.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'ETH%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM md.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'ETH%' GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -102,7 +102,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, count() / $__interval_s AS trades FROM market.trade WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, count() / $__interval_s AS trades FROM md.trade WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -142,7 +142,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(ask_price - bid_price) / toFloat64(ask_price + bid_price)) * 20000 AS spread_bps FROM market.quote WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(ask_price - bid_price) / toFloat64(ask_price + bid_price)) * 20000 AS spread_bps FROM md.quote WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -176,7 +176,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT m.time AS time, m.symbol AS symbol, (t.price - m.mark) / m.mark * 10000 AS basis_bps FROM (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS mark FROM market.mark_price WHERE $__timeFilter(ts_event) GROUP BY time, symbol) AS m INNER JOIN (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS price FROM market.trade WHERE venue = 'BYBIT' AND $__timeFilter(ts_event) GROUP BY time, symbol) AS t ON m.time = t.time AND m.symbol = t.symbol ORDER BY time",
+          "rawSql": "SELECT m.time AS time, m.symbol AS symbol, (t.price - m.mark) / m.mark * 10000 AS basis_bps FROM (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS mark FROM md.mark_price WHERE $__timeFilter(ts_event) GROUP BY time, symbol) AS m INNER JOIN (SELECT $__timeInterval(ts_event) AS time, symbol, avg(price) AS price FROM md.trade WHERE venue = 'BYBIT' AND $__timeFilter(ts_event) GROUP BY time, symbol) AS t ON m.time = t.time AND m.symbol = t.symbol ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -211,7 +211,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT symbol, venue, argMax(rate, ts_event) AS rate, argMax(interval_minutes, ts_event) AS interval_minutes, argMax(next_funding_ts, ts_event) AS next_funding, max(ts_event) AS updated FROM market.funding_rate GROUP BY symbol, venue ORDER BY symbol",
+          "rawSql": "SELECT symbol, venue, argMax(rate, ts_event) AS rate, argMax(interval_minutes, ts_event) AS interval_minutes, argMax(next_funding_ts, ts_event) AS next_funding, max(ts_event) AS updated FROM md.funding_rate GROUP BY symbol, venue ORDER BY symbol",
           "format": 1,
           "queryType": "table"
         }
@@ -240,7 +240,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(bids.price[1]) AS best_bid, avg(asks.price[1]) AS best_ask FROM market.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(bids.price[1]) AS best_bid, avg(asks.price[1]) AS best_ask FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -275,7 +275,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(arraySum(bids.size)) AS bid_depth, avg(arraySum(asks.size)) AS ask_depth FROM market.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(arraySum(bids.size)) AS bid_depth, avg(arraySum(asks.size)) AS ask_depth FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }

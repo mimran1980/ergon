@@ -803,6 +803,26 @@ fn the_drivers_counters_are_sampled_with_their_streams_and_clients() -> TestResu
         "ingester",
         "who sampled them"
     );
+
+    // Given a database in tables.yaml, the next samples land there.
+    let metrics = format!("{}_metrics", lab.ch.database);
+    lab.ch
+        .query(&format!("DROP DATABASE IF EXISTS {metrics}"))?;
+    lab.write_config(&format!(
+        "tables:\n  shapes: {{ kind: dynamic }}\n  aeron_counters: {{ kind: static, database: {metrics} }}\n"
+    ))?;
+    wait_until("a sample in the database tables.yaml names", || {
+        let report = ingester.tick()?;
+        if !report.errors.is_empty() {
+            return Err(format!("unexpected errors: {:?}", report.errors).into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let n = lab
+            .ch
+            .query(&format!("SELECT count() FROM {metrics}.aeron_counters"))
+            .unwrap_or_default();
+        Ok(n.trim().parse::<u64>().unwrap_or(0) > 0)
+    })?;
     Ok(())
 }
 

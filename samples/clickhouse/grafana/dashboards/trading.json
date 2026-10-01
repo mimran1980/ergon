@@ -18,8 +18,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT app FROM market.ema ORDER BY app",
-        "definition": "SELECT DISTINCT app FROM market.ema ORDER BY app",
+        "query": "SELECT DISTINCT app FROM engine.ema ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM engine.ema ORDER BY app",
         "refresh": 2,
         "multi": false,
         "includeAll": false,
@@ -34,8 +34,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT asset FROM market.ema ORDER BY asset",
-        "definition": "SELECT DISTINCT asset FROM market.ema ORDER BY asset",
+        "query": "SELECT DISTINCT asset FROM engine.ema ORDER BY asset",
+        "definition": "SELECT DISTINCT asset FROM engine.ema ORDER BY asset",
         "refresh": 2,
         "multi": false,
         "includeAll": false,
@@ -67,7 +67,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT ts AS time, mid, ema5m, ema30m, ema1h, ema4h, ema12h, ema1d FROM market.ema WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}' ORDER BY time",
+          "rawSql": "SELECT ts AS time, mid, ema5m, ema30m, ema1h, ema4h, ema12h, ema1d FROM engine.ema WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}' ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -106,7 +106,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT time, series, n FROM (SELECT toStartOfMinute(ts) AS time, concat('order ', side) AS series, count() AS n FROM market.new_order WHERE $__timeFilter(ts) AND app = '${engine}' GROUP BY time, series UNION ALL SELECT toStartOfMinute(ts) AS time, concat('fill ', side) AS series, count() AS n FROM market.execution_report WHERE $__timeFilter(ts) AND status = 'Filled' AND app = replace('${engine}', 'engine-', 'exch-sim-') GROUP BY time, series) ORDER BY time",
+          "rawSql": "SELECT time, series, n FROM (SELECT toStartOfMinute(ts) AS time, concat('order ', side) AS series, count() AS n FROM orders.new_order WHERE $__timeFilter(ts) AND app = '${engine}' GROUP BY time, series UNION ALL SELECT toStartOfMinute(ts) AS time, concat('fill ', side) AS series, count() AS n FROM orders.execution_report WHERE $__timeFilter(ts) AND status = 'Filled' AND app = replace('${engine}', 'engine-', 'exch-sim-') GROUP BY time, series) ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -150,7 +150,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, name, avg(value) AS v FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('position', 'pnl') AND labels['asset'] = '${asset}' GROUP BY time, name ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, name, avg(value) AS v FROM metrics.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('position', 'pnl') AND labels['asset'] = '${asset}' GROUP BY time, name ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -189,7 +189,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, v AS venue, avg(depth) AS depth FROM (SELECT ts, v, arraySum(arrayFilter((s, x) -> x = v, bids.size, bids.venue)) - arraySum(arrayFilter((s, x) -> x = v, asks.size, asks.venue)) AS depth FROM market.agg_book ARRAY JOIN arrayDistinct(arrayConcat(bids.venue, asks.venue)) AS v WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}') GROUP BY time, venue ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, v AS venue, avg(depth) AS depth FROM (SELECT ts, v, arraySum(arrayFilter((s, x) -> x = v, bids.size, bids.venue)) - arraySum(arrayFilter((s, x) -> x = v, asks.size, asks.venue)) AS depth FROM engine.agg_book ARRAY JOIN arrayDistinct(arrayConcat(bids.venue, asks.venue)) AS v WHERE $__timeFilter(ts) AND app = '${engine}' AND asset = '${asset}') GROUP BY time, venue ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -228,7 +228,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "WITH (SELECT argMax(tuple(bids.price, bids.size, bids.venue, asks.price, asks.size, asks.venue), ts) FROM market.agg_book WHERE app = '${engine}' AND asset = '${asset}' AND ts > now() - INTERVAL 1 MINUTE) AS b SELECT n AS level, b.3[n] AS bid_venue, b.2[n] AS bid_size, b.1[n] AS bid, b.4[n] AS ask, b.5[n] AS ask_size, b.6[n] AS ask_venue FROM (SELECT arrayJoin(range(1, greatest(length(b.1), length(b.4)) + 1)) AS n)",
+          "rawSql": "WITH (SELECT argMax(tuple(bids.price, bids.size, bids.venue, asks.price, asks.size, asks.venue), ts) FROM engine.agg_book WHERE app = '${engine}' AND asset = '${asset}' AND ts > now() - INTERVAL 1 MINUTE) AS b SELECT n AS level, b.3[n] AS bid_venue, b.2[n] AS bid_size, b.1[n] AS bid, b.4[n] AS ask, b.5[n] AS ask_size, b.6[n] AS ask_venue FROM (SELECT arrayJoin(range(1, greatest(length(b.1), length(b.4)) + 1)) AS n)",
           "format": 1,
           "queryType": "table"
         }
@@ -262,7 +262,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -303,7 +303,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT Timestamp, TraceId, ServiceName, round(Duration / 1e3) AS us FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = 'tick_to_trade' AND SpanAttributes['why'] = 'kept' AND ServiceName = '${engine}' ORDER BY Timestamp DESC LIMIT 100",
+          "rawSql": "SELECT Timestamp, TraceId, ServiceName, round(Duration / 1e3) AS us FROM tracing.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = 'tick_to_trade' AND SpanAttributes['why'] = 'kept' AND ServiceName = '${engine}' ORDER BY Timestamp DESC LIMIT 100",
           "format": 1,
           "queryType": "table"
         }
@@ -355,7 +355,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['venue'] AS venue, max(value) / 1e6 AS age_ms FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name = 'book_age_ns' GROUP BY time, venue ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['venue'] AS venue, max(value) / 1e6 AS age_ms FROM metrics.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name = 'book_age_ns' GROUP BY time, venue ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -396,7 +396,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(name, ' ', labels['venue']) AS series, sum(delta) / $__interval_s AS rate FROM market.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('feed_resyncs', 'tob_quotes') GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(name, ' ', labels['venue']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND app = '${engine}' AND name IN ('feed_resyncs', 'tob_quotes') GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }

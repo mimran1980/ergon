@@ -2,6 +2,7 @@
 #
 #   just up         create the kind cluster (4 nodes, 3 regions), build the images, apply the manifests
 #   just deploy     apply kustomization.yaml (deploy/, config/): after editing config/ or deploy/
+#   just watch-config  publish config/ to the pods on every save
 #   just md         rebuild + restart the feed handlers, engines and ingesters after a code/schema change
 #   just aeron      rebuild + restart Aeron (the driver, docker/aeron.Dockerfile), then its clients
 #   just ingester   restart the ingesters: they reload every schema in schema/
@@ -29,7 +30,8 @@ up: _cluster images deploy
 
 # Apply everything kustomization.yaml lists: deploy/ and config/. A change
 # to config/ alone changes only the ConfigMap `lab-config`: the pods see it
-# within about a minute (the kubelet's sync) and apply it with no restart.
+# at the kubelet's next sync, within about a minute, and apply it with no
+# restart. `just config` gets it there in seconds.
 # Server-side apply, so a field taken out of deploy/ is taken out of the
 # cluster too. Apply kustomization.yaml.
 deploy:
@@ -37,8 +39,23 @@ deploy:
     set -euo pipefail
     kubectl --context kind-{{cluster}} apply -k . --server-side --field-manager=lab | { grep -v unchanged || true; }
 
-# Publish config/ only: `just deploy` by another name, for scripts that edit it.
+# Changing a pod's annotation makes the kubelet sync that pod now, which
+# refreshes its ConfigMap volume. It restarts nothing. Under Flux nothing
+# does this, so the kubelet's own sync (about a minute) applies.
+# Publish config/ and have the pods see it in seconds.
 config: deploy
+    {{kube}} annotate pod --all --overwrite lab/config="$(cat config/* | cksum | cut -d' ' -f1)" >/dev/null
+
+# Run `just config` whenever a file in config/ changes. Ctrl-C to stop.
+watch-config:
+    #!/usr/bin/env bash
+    last=$(cat config/* | cksum)
+    while sleep 1; do
+        now=$(cat config/* | cksum)
+        [[ $now == "$last" ]] && continue
+        last=$now
+        just config && echo "$(date +%T) config/ published"
+    done
 
 # Not what `just up` does: four kind nodes on one machine cannot spare a core per thread.
 # Apply the lab, then deploy/spin/: spinning threads, one core each.
@@ -68,7 +85,7 @@ urls:
     echo "JupyterLab     http://$host:8888/lab/tree/verify.ipynb"
     echo "Feeds          $({{kube}} get deploy -l app=md -o jsonpath='{.items[*].metadata.labels.exchange}')"
     echo "Engines        $({{kube}} get deploy -l app=engine -o jsonpath='{.items[*].metadata.labels.region}')"
-    echo "Config         $PWD/config/  (\`just config\` publishes edits live)"
+    echo "Config         $PWD/config/  (\`just config\` or \`just watch-config\` publishes edits live)"
 
 _cluster:
     #!/usr/bin/env bash

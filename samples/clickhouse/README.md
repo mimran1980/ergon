@@ -49,7 +49,7 @@ Grafana is anonymous admin and Jupyter has no token, so use a network you trust.
 | ClickHouse | <http://localhost:8123/play> user `lab`, password `lab` |
 | Grafana | <http://localhost:3000> |
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb> |
-| What is recorded | `config/tables.yaml`. `just config` publishes it; pods see it in about a minute. |
+| What is recorded | `config/tables.yaml`. `just config` publishes it and pods see it within seconds. `just watch-config` publishes on every save. |
 | Who publishes | `config/streams.yaml`, published the same way. |
 
 | Pod | What |
@@ -133,7 +133,11 @@ and applies each fill once.
 `IDLE` is `spin`, `noop`, `yield`, or `sleep`. The lab sleeps. `just spin` is
 the isolated-core setting.
 
-`tables.yaml` and `streams.yaml` are one ConfigMap. Applications re-read them.
+`tables.yaml` and `streams.yaml` are one ConfigMap, under a fixed name so a
+change restarts nothing. Applications re-read them every second. The kubelet
+updates the mounted files at its next pod sync, about a minute later.
+`just config` cuts that to seconds by annotating the pods. A GitOps tool such
+as Flux can apply the same kustomization; it waits for the kubelet's sync.
 A new service is recorded and subscribed with no restart. Changing a running
 service's port or stream id needs a restart of that service.
 
@@ -361,9 +365,13 @@ Counts, sums, minima, and maxima do combine across windows:
 ```sql
 SELECT sum(count) AS sample_count, sum(sum) / sum(count) AS mean,
        min(min) AS minimum, max(max) AS maximum
-FROM market.metrics_histogram
+FROM metrics.metrics_histogram
 WHERE name = 'tick_to_trade_ns' AND ts > now() - INTERVAL 1 HOUR
 ```
+
+With a database of their own (`metrics` in the lab), every metric name is
+also a view there that reads only its rows: `SELECT * FROM
+metrics.tick_to_trade_ns`. A metric named like a table gets no view.
 
 `metrics` is `ts`, `name`, `kind`, `series`, `labels`, `value`, `delta`.
 `metrics_histogram` is `ts`, `name`, `series`, `labels`, `interval_ns`,
@@ -448,6 +456,23 @@ per `PERSIST_APP`. Applications re-read the file every second.
 `dynamic` adds a column when a new field arrives. `static` never alters the
 table. A missing or wrong column is skipped, and the log prints the `ALTER`.
 A changed type is never altered for you. `kind` is one value for every app.
+
+`database` names the ClickHouse database a table is kept in. Without one, a
+table is kept in the ingester's `CLICKHOUSE_DATABASE` (`md`). The lab keeps
+market data in `md`, the engines' tables in `engine`, orders in `orders`,
+traces in `tracing`, and metrics and Aeron counters in `metrics`. One query
+joins across them:
+
+```sql
+SELECT minute, orders, trades
+FROM (SELECT toStartOfMinute(ts) AS minute, count() AS orders FROM orders.new_order GROUP BY minute) AS o
+JOIN (SELECT toStartOfMinute(ts_event) AS minute, count() AS trades FROM md.trade GROUP BY minute) AS t
+USING minute
+ORDER BY minute
+```
+
+Moving a table makes a new one in the new database. Rows already written
+stay where they were (before this, in `market`).
 
 ## Types
 

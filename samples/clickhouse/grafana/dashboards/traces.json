@@ -18,8 +18,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT labels['trace'] FROM market.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
-        "definition": "SELECT DISTINCT labels['trace'] FROM market.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
+        "query": "SELECT DISTINCT labels['trace'] FROM metrics.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
+        "definition": "SELECT DISTINCT labels['trace'] FROM metrics.metrics_histogram WHERE name = 'trace_ns' ORDER BY 1",
         "refresh": 2,
         "multi": false,
         "includeAll": false,
@@ -34,8 +34,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
-        "definition": "SELECT TraceId FROM market.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
+        "query": "SELECT TraceId FROM tracing.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
+        "definition": "SELECT TraceId FROM tracing.otel_traces WHERE ParentSpanId = '' AND Timestamp > now() - INTERVAL 1 HOUR ORDER BY Duration DESC LIMIT 100",
         "refresh": 2,
         "multi": false,
         "includeAll": false,
@@ -67,7 +67,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY time, stage ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY time, stage ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -108,7 +108,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT labels['stage'] AS stage, sum(sum) AS ns FROM market.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY stage ORDER BY stage",
+          "rawSql": "SELECT labels['stage'] AS stage, sum(sum) AS ns FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = '${trace}' AND labels['stage'] != 'total' GROUP BY stage ORDER BY stage",
           "format": 1,
           "queryType": "table"
         }
@@ -142,7 +142,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT Timestamp, TraceId, ServiceName, SpanName, Duration / 1e3 AS duration_us, SpanAttributes['why'] AS why FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = '${trace}' ORDER BY Duration DESC LIMIT 50",
+          "rawSql": "SELECT Timestamp, TraceId, ServiceName, SpanName, Duration / 1e3 AS duration_us, SpanAttributes['why'] AS why FROM tracing.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = '${trace}' ORDER BY Duration DESC LIMIT 50",
           "format": 1,
           "queryType": "table"
         }
@@ -176,7 +176,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, SpanAttributes['why'] AS why, count() AS traces FROM market.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' GROUP BY time, why ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, SpanAttributes['why'] AS why, count() AS traces FROM tracing.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' GROUP BY time, why ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -211,7 +211,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT TraceId AS traceID, SpanId AS spanID, ParentSpanId AS parentSpanID, ServiceName AS serviceName, SpanName AS operationName, toUnixTimestamp64Nano(Timestamp) / 1000000 AS startTime, Duration / 1000000 AS duration, arrayMap(key -> map('key', key, 'value', SpanAttributes[key]), mapKeys(SpanAttributes)) AS tags, arrayMap(key -> map('key', key, 'value', ResourceAttributes[key]), mapKeys(ResourceAttributes)) AS serviceTags FROM market.otel_traces WHERE TraceId = '${trace_id}' ORDER BY startTime",
+          "rawSql": "SELECT TraceId AS traceID, SpanId AS spanID, ParentSpanId AS parentSpanID, ServiceName AS serviceName, SpanName AS operationName, toUnixTimestamp64Nano(Timestamp) / 1000000 AS startTime, Duration / 1000000 AS duration, arrayMap(key -> map('key', key, 'value', SpanAttributes[key]), mapKeys(SpanAttributes)) AS tags, arrayMap(key -> map('key', key, 'value', ResourceAttributes[key]), mapKeys(ResourceAttributes)) AS serviceTags FROM tracing.otel_traces WHERE TraceId = '${trace_id}' ORDER BY startTime",
           "format": 3,
           "queryType": "traces"
         }

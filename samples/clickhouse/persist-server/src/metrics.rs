@@ -40,6 +40,15 @@ pub(crate) const METRICS: &str = "metrics";
 /// Histograms.
 pub(crate) const HISTOGRAMS: &str = "metrics_histogram";
 
+/// The table a series' rows go to.
+pub(crate) const fn table_of(kind: persist_client::metrics::MetricKind) -> &'static str {
+    use persist_client::metrics::MetricKind;
+    match kind {
+        MetricKind::Counter | MetricKind::Gauge => METRICS,
+        MetricKind::Histogram => HISTOGRAMS,
+    }
+}
+
 /// How long one stored histogram row covers.
 const WINDOW_NS: u64 = 5_000_000_000;
 

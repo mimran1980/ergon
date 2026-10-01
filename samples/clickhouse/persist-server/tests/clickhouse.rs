@@ -125,6 +125,104 @@ fn standalone_writer_flushes_its_last_elapsed_histogram_window() -> TestResult {
 }
 
 #[test]
+fn each_table_lands_in_the_database_tables_yaml_names() -> TestResult {
+    use persist_client::event::codec;
+    use persist_client::metrics::{MetricDef, MetricKind};
+
+    let lab = Lab::new("databases", "")?;
+    let md = format!("{}_md", lab.ch.database);
+    let metrics = format!("{}_metrics", lab.ch.database);
+    for db in [&md, &metrics] {
+        lab.ch.query(&format!("DROP DATABASE IF EXISTS {db}"))?;
+    }
+    lab.write_config(&format!(
+        "tables:\n  tick: {{ kind: static, database: {md} }}\n  \
+         metrics: {{ kind: static, database: {metrics} }}\n  \
+         metrics_histogram: {{ kind: static, database: {metrics} }}\n"
+    ))?;
+    let mut writer = lab.writer(TICK)?;
+    let mut tick = [0u8; tick::TickEncoder::compute_length_with_header()];
+    let tick_len = tick::TickEncoder::wrap_and_apply_header(&mut tick, 0)
+        .fixed(&tick::TickFixedFields { seq: 42 })
+        .encoded_length_with_header();
+    assert!(writer.push(&tick[..tick_len], 0));
+    let latency = MetricDef::new("tick_to_trade_ns", MetricKind::Histogram, &[]);
+    for def in [
+        MetricDef::new("orders_sent", MetricKind::Counter, &[]),
+        latency.clone(),
+        // Named like a table: it gets no view.
+        MetricDef::new("tick", MetricKind::Gauge, &[]),
+    ] {
+        assert!(writer.push(&def.message()?, 0));
+    }
+    let mut hist = [0; codec::HistogramEncoder::compute_length_with_header(1)];
+    let hist_len = codec::HistogramEncoder::wrap_and_apply_header(&mut hist, 0)
+        .fixed(&codec::HistogramFixedFields {
+            ts: 1_700_000_001_000_000_000,
+            interval: 1_000_000,
+        })
+        .samples(1, |group| {
+            group.add(|entry| {
+                entry.series(latency.series).count(2).sum(20).min(7).max(13);
+                Ok(())
+            })
+        })?
+        .encoded_length_with_header();
+    assert!(writer.push(&hist[..hist_len], 0));
+    let report = writer.tick();
+    assert!(
+        report
+            .errors
+            .iter()
+            .all(|e| e.contains("no host, pod or app")),
+        "{:?}",
+        report.errors
+    );
+
+    assert_eq!(
+        lab.ch.query(&format!("SELECT seq FROM {md}.tick"))?.trim(),
+        "42"
+    );
+    assert_eq!(
+        lab.query("SELECT count() FROM system.tables WHERE database = 'DB' AND name = 'tick'")?,
+        "0",
+        "not in the default database"
+    );
+    assert_eq!(
+        lab.ch
+            .query(&format!(
+                "SELECT name, engine FROM system.tables WHERE database = '{metrics}' ORDER BY name FORMAT TSV"
+            ))?
+            .trim(),
+        "metrics\tMergeTree\nmetrics_histogram\tMergeTree\norders_sent\tView\ntick_to_trade_ns\tView"
+    );
+    assert_eq!(
+        lab.ch
+            .query(&format!(
+                "SELECT count, sum FROM {metrics}.tick_to_trade_ns FORMAT TSV"
+            ))?
+            .trim(),
+        "2\t20",
+        "the view reads its metric's rows"
+    );
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|p| p.contains("metric tick has no view")),
+        "{:?}",
+        report.problems
+    );
+
+    // Taken out of `database:`, the table is kept in the default database.
+    lab.write_config("tables:\n  tick: { kind: static }\n")?;
+    assert!(writer.push(&tick[..tick_len], 0));
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT seq FROM DB.tick")?, "42");
+    Ok(())
+}
+
+#[test]
 fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
     let lab = Lab::new(
         "schemas",
