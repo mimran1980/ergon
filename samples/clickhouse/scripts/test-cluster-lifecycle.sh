@@ -85,10 +85,10 @@ expect() {
     rm "$fixture/state/ssh"
 }
 recipe=stop; just --justfile "$sample_root/justfile" stop
-expect '10.9.0.4 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null' \
-    '10.9.0.3 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null' \
-    '10.9.0.2 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null' \
-    '10.9.0.1 sudo systemctl stop k3s && sudo k3s-killall.sh >/dev/null'
+expect '10.9.0.4 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
+    '10.9.0.3 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
+    '10.9.0.2 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
+    '10.9.0.1 sudo systemctl stop k3s && sudo k3s-killall.sh >/dev/null 2>&1'
 recipe=start; just --justfile "$sample_root/justfile" start
 expect '10.9.0.1 sudo systemctl start k3s' '10.9.0.2 sudo systemctl start k3s-agent' \
     '10.9.0.3 sudo systemctl start k3s-agent' '10.9.0.4 sudo systemctl start k3s-agent'

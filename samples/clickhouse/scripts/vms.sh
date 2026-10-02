@@ -170,7 +170,7 @@ tools() {
 stop() {
     local i
     for ((i = ${#ips[@]} - 1; i >= 0; i--)); do
-        on_vm "${ips[i]}" "sudo systemctl stop $(unit "$i") && sudo k3s-killall.sh >/dev/null"
+        on_vm "${ips[i]}" "sudo systemctl stop $(unit "$i") && sudo k3s-killall.sh >/dev/null 2>&1"
     done
 }
 
