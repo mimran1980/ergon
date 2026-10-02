@@ -919,3 +919,40 @@ fn the_same_insert_token_lands_once() -> TestResult {
     assert_eq!(lab.query("SELECT count(), sum(n) FROM DB.dedup")?, "2\t3");
     Ok(())
 }
+
+#[test]
+fn a_named_batch_over_the_insert_limit_lands_in_pieces_once() -> TestResult {
+    let lab = Lab::new("pieces", "tables:\n  shapes: { kind: static }\n")?;
+    let record = 13 + v1::LEN;
+    // query_log outlives the database: count only this run's inserts.
+    let since = lab.query("SELECT now64(6)")?;
+    let tick = |token: &str| -> Result<persist_server::Report, Box<dyn Error>> {
+        let mut writer = lab.writer(v1::SCHEMA)?;
+        writer.set_max_insert_bytes(3 * record);
+        writer.set_dedup_token(token);
+        for _ in 0..10 {
+            writer.push(&v1::message()?, 0);
+        }
+        Ok(writer.tick())
+    };
+    let report = tick("3:4096")?;
+    clean(&report)?;
+    assert_eq!(report.inserted.get("shapes"), Some(&10));
+    // Pieces of 3, 3, 3 and 1 identical rows: each piece is named, so none
+    // is mistaken for another.
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "10");
+    lab.query("SYSTEM FLUSH LOGS")?;
+    assert_eq!(
+        lab.query(&format!(
+            "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' \
+                 AND query_kind = 'Insert' AND has(tables, 'DB.shapes') \
+                 AND event_time_microseconds >= '{since}'"
+        ))?,
+        "4"
+    );
+    // The same batch again, as after a reply lost to a timeout: ClickHouse
+    // drops every piece that already landed.
+    clean(&tick("3:4096")?)?;
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "10");
+    Ok(())
+}

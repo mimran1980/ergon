@@ -21,6 +21,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "aeron-driver"
 version = "0.1.0"
 dependencies = [
+ "mimalloc",
  "rusteron-media-driver",
 ]
 
@@ -2058,6 +2059,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
+ "mimalloc",
  "persist-client",
  "schema",
  "signal-hook",
@@ -3179,6 +3181,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3227,6 +3238,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "log",
+ "mimalloc",
  "nautilus-binance",
  "nautilus-bybit",
  "nautilus-common",
@@ -3281,6 +3293,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -4227,6 +4248,7 @@ dependencies = [
  "hdrhistogram",
  "jiff",
  "log",
+ "mimalloc",
  "persist-client",
  "rusteron-archive",
  "schema",

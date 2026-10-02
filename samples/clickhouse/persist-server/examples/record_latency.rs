@@ -26,6 +26,9 @@
 //!   sampled, and every one published
 //! * `span-on`, `span-off`  a `tracing` span entered and closed
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};

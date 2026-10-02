@@ -14,6 +14,7 @@ ergo-sbe = { path = "../../sbe" }
 persist-client = { path = "persist-client" }
 schema = { path = "schema" }
 log = "0.4"
+mimalloc = "0.1.52"
 rusteron-archive = { version = "0.2.7", features = ["static", "multi-threaded"] }
 
 [workspace.lints.rust]

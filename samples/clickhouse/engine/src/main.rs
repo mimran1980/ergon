@@ -10,6 +10,9 @@
 //! `decide`, `send`. Every tick updates the stage histograms. A tick that
 //! sends an order is kept under that order's id. `exch-sim` uses the same id.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use engine::{App, Book, Change, Emas, Spec, Strategy, aggregate};
 use persist_client::clock::{Clock, Nanos};
 use schema::market::{

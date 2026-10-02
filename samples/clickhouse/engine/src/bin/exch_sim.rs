@@ -10,6 +10,9 @@
 //! Its `order_ack` trace (`wire`, `match`, `ack`) shares the order's id, so
 //! Grafana shows it under the engine's tick-to-trade trace of that order.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use engine::App;
 use persist_client::clock::{Clock, Nanos};
 use persist_client::trace::TraceId;

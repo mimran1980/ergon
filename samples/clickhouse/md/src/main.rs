@@ -8,6 +8,9 @@
 //! `kind` in `tables.yaml` chooses static or dynamic. The handle is installed
 //! once in `main`. With none installed, the free functions do nothing.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 

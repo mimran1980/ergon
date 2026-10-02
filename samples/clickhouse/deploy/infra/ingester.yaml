@@ -31,8 +31,6 @@ spec:
             - { name: PERSIST_SCHEMAS, value: /lab/schema }
             - { name: PERSIST_CHECKPOINT, value: /state/persist.checkpoint }
             - { name: PERSIST_INTERVAL, value: 2s }
-            # glibc keeps a heap arena per thread by default: two is plenty.
-            - { name: MALLOC_ARENA_MAX, value: "2" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: NODE_NAME

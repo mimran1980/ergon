@@ -45,7 +45,6 @@ spec:
             # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
             # machine; spin on an isolated core for real tick-to-trade.
             - { name: IDLE, value: sleep }
-            - { name: MALLOC_ARENA_MAX, value: "1" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP
@@ -118,7 +117,6 @@ spec:
             # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
             # machine; spin on an isolated core for real tick-to-trade.
             - { name: IDLE, value: sleep }
-            - { name: MALLOC_ARENA_MAX, value: "1" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP

@@ -269,6 +269,17 @@ fn has_dedup_window(engine_full: &str) -> bool {
     n == DEDUP_WINDOW.to_string()
 }
 
+/// The token of piece `i` of a batch named `token`, so a retry drops only
+/// the pieces that already landed. The first piece keeps the batch's own
+/// token, which is what a batch inserted whole before pieces existed used.
+pub(crate) fn piece_token(token: &str, i: usize) -> std::borrow::Cow<'_, str> {
+    if i == 0 {
+        token.into()
+    } else {
+        format!("{token}#{i}").into()
+    }
+}
+
 fn quote(ident: &str) -> String {
     format!("`{}`", ident.replace('`', "\\`"))
 }
@@ -290,5 +301,12 @@ mod tests {
             "MergeTree SETTINGS non_replicated_deduplication_window = 10000"
         ));
         assert!(!has_dedup_window("MergeTree ORDER BY tuple()"));
+    }
+
+    #[test]
+    fn each_piece_has_its_own_token_and_the_first_keeps_the_batchs() {
+        assert_eq!(piece_token("3:4096", 0), "3:4096");
+        assert_eq!(piece_token("3:4096", 1), "3:4096#1");
+        assert_eq!(piece_token("3:4096", 12), "3:4096#12");
     }
 }

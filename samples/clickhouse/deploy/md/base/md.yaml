@@ -49,9 +49,6 @@ spec:
             # spin, noop, yield or sleep. Its market data arrives on
             # NautilusTrader's runtime, which this does not change.
             - { name: IDLE, value: sleep }
-            # NautilusTrader's runtime has many threads, and glibc keeps a
-            # heap arena per thread by default: two is plenty.
-            - { name: MALLOC_ARENA_MAX, value: "2" }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP

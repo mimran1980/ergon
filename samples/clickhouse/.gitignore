@@ -1,3 +1,4 @@
 target/
 */src/generated/
 notebooks/.ipynb_checkpoints/
+.env

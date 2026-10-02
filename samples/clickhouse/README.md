@@ -59,6 +59,24 @@ Grafana is anonymous admin and Jupyter has no token, so use a network you trust.
 | `md-<exchange>` | One feed handler, host network, pinned to its region. |
 | `engine-<region>`, `exch-sim-<region>` | The engine and its dummy exchange, host network. |
 
+### Run on k3s VMs
+
+The same four nodes and three regions as VMs on a Linux libvirt host, joined into
+one k3s cluster: real machines with their own NICs, on x86, and off your laptop.
+Put the settings `scripts/vms.sh` lists in `.env` (gitignored), with
+`LAB_CONTEXT=lab-vms`, then:
+
+```sh
+just vms       # make the VMs, install k3s; once
+just sync      # copy this checkout to every VM (/lab); after each edit
+ssh <first VM> 'cd /srv/ergon/samples/clickhouse && just up'   # not /lab: the build mounts ../..
+```
+
+Build, `just md`, `just test` and `just verify` run on the first VM: the build
+container mounts the checkout. `just stop` / `just start` stop and start k3s on
+every VM; `just destroy` deletes the VMs. The UIs are on the NodePorts of any VM:
+`:30123/play`, `:30300`, `:30888`. `just watch-config` there needs `just sync` first.
+
 ## Deploy
 
 `kubectl apply -k .` applies `kustomization.yaml`. Image tags are its `images:` block.

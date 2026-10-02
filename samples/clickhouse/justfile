@@ -13,10 +13,17 @@
 #   just latency    time recording on the app thread
 #   just stop / just start   pause the cluster, keeping data
 #   just destroy    delete the cluster and its data
+#
+# On Linux VMs instead of kind (README, "Run on k3s VMs"): set LAB_CONTEXT=lab-vms
+# and LAB_VM_* in .env, then `just vms`, `just sync`, and run the rest on the first VM.
+
+set dotenv-load
 
 cluster := "clickhouse-lab"
 build_jobs := "2"
-kube := "kubectl --context kind-" + cluster + " -n lab"
+# kind by default; LAB_CONTEXT=lab-vms runs the lab on the k3s VMs of `just vms`.
+context := env("LAB_CONTEXT", "kind-" + cluster)
+kube := "kubectl --context " + context + " -n lab"
 
 default:
     @just --list
@@ -37,7 +44,7 @@ up: _cluster images deploy
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    kubectl --context kind-{{cluster}} apply -k . --server-side --field-manager=lab | { grep -v unchanged || true; }
+    kubectl --context {{context}} apply -k . --server-side --field-manager=lab | { grep -v unchanged || true; }
 
 # Changing a pod's annotation makes the kubelet sync that pod now, which
 # refreshes its ConfigMap volume. It restarts nothing. Under Flux nothing
@@ -62,7 +69,7 @@ watch-config:
 spin: deploy
     #!/usr/bin/env bash
     set -euo pipefail
-    kube=(kubectl --context kind-{{cluster}} -n lab)
+    kube=(kubectl --context {{context}} -n lab)
     patch() {
         local kind="$1" selector="$2" file="$3" name
         for name in $("${kube[@]}" get "$kind" -l "$selector" -o name); do
@@ -78,11 +85,17 @@ spin: deploy
 # Reachable from other machines too: every port listens on 0.0.0.0.
 urls:
     #!/usr/bin/env bash
-    host=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
-    host=${host:-localhost}
-    echo "ClickHouse UI  http://$host:8123/play   (user lab / password lab)"
-    echo "Grafana        http://$host:3000"
-    echo "JupyterLab     http://$host:8888/lab/tree/verify.ipynb"
+    if [[ {{context}} == kind-* ]]; then
+        host=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
+        host=${host:-localhost} clickhouse=8123 grafana=3000 jupyter=8888
+    else
+        # No kind port mapping: the NodePorts, on any node.
+        read -r host _ <<<"$LAB_VM_IPS"
+        clickhouse=30123 grafana=30300 jupyter=30888
+    fi
+    echo "ClickHouse UI  http://$host:$clickhouse/play   (user lab / password lab)"
+    echo "Grafana        http://$host:$grafana"
+    echo "JupyterLab     http://$host:$jupyter/lab/tree/verify.ipynb"
     echo "Feeds          $({{kube}} get deploy -l app=md -o jsonpath='{.items[*].metadata.labels.exchange}')"
     echo "Engines        $({{kube}} get deploy -l app=engine -o jsonpath='{.items[*].metadata.labels.region}')"
     echo "Config         $PWD/config/  (\`just config\` or \`just watch-config\` publishes edits live)"
@@ -90,6 +103,7 @@ urls:
 _cluster:
     #!/usr/bin/env bash
     set -euo pipefail
+    [[ {{context}} == kind-* ]] || exit 0 # the VMs come from `just vms`
     if ! kind get clusters | grep -qx {{cluster}}; then
         sed "s|LAB_DIR|$PWD|" deploy/kind.yaml | kind create cluster --config -
     fi
@@ -109,9 +123,17 @@ _load image:
     set -euo pipefail
     tar=$(mktemp)
     docker save --platform linux/$(docker version -f '{{{{.Server.Arch}}') {{image}} > "$tar"
-    for node in $(kind get nodes --name {{cluster}}); do
-        docker exec -i "$node" ctr -n k8s.io images import --all-platforms - < "$tar"
-    done
+    if [[ {{context}} == kind-* ]]; then
+        for node in $(kind get nodes --name {{cluster}}); do
+            docker exec -i "$node" ctr -n k8s.io images import --all-platforms - < "$tar"
+        done
+    else
+        nodes=$(kubectl --context {{context}} get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}')
+        test -n "$nodes"
+        for node in $nodes; do
+            ssh -o BatchMode=yes "$node" sudo k3s ctr -n k8s.io images import - < "$tar"
+        done
+    fi
     rm -f "$tar"
 
 # Compile the lab's binaries for Linux; build their image with the schema.
@@ -224,6 +246,7 @@ lint:
 stop:
     #!/usr/bin/env bash
     set -euo pipefail
+    [[ {{context}} == kind-* ]] || exec scripts/vms.sh stop
     nodes=$(kind get nodes --name {{cluster}})
     test -n "$nodes"
     docker stop $nodes
@@ -231,10 +254,33 @@ stop:
 start:
     #!/usr/bin/env bash
     set -euo pipefail
+    [[ {{context}} == kind-* ]] || exec scripts/vms.sh start
     nodes=$(kind get nodes --name {{cluster}})
     test -n "$nodes"
     docker start $nodes
 
 # Deletes the cluster, including all recorded data.
 destroy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ {{context}} == kind-* ]] || exec scripts/vms.sh destroy
     kind delete cluster --name {{cluster}}
+
+# Make the k3s VMs on LAB_VM_HOST (see scripts/vms.sh), then `just sync`.
+vms:
+    scripts/vms.sh create
+
+# Copy this checkout to /srv/ergon on every VM (/lab points into it). Never
+# deletes, and keeps a file edited on the VM (a notebook) if it is newer.
+sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for ip in $LAB_VM_IPS; do
+        ssh -o BatchMode=yes "$ip" 'ls -la /srv/ergon | head -5'
+        # What git sees (tracked, and new files it does not ignore) and .git:
+        # not the gigabytes of ignored build output beside them.
+        # A tracked file deleted here is skipped (macOS rsync has no --ignore-missing-args).
+        (cd ../.. && { echo .git; echo samples/clickhouse/.env; git ls-files -co --exclude-standard; git ls-files --recurse-submodules; } \
+            | sort -u | while IFS= read -r f; do if [[ -e $f ]]; then printf '%s\n' "$f"; fi; done) \
+            | rsync -az --update -r --files-from=- ../../ "$ip:/srv/ergon/"
+    done

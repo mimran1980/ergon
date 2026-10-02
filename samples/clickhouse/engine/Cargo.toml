@@ -14,6 +14,7 @@ path = "src/bin/exch_sim.rs"
 [dependencies]
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 log.workspace = true
+mimalloc.workspace = true
 schema.workspace = true
 persist-client.workspace = true
 signal-hook = "0.3"

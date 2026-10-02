@@ -53,6 +53,7 @@ use persist_client::{TableConfig, event, parse_config};
 use events::EventTable;
 
 pub use clickhouse::ClickHouse;
+use clickhouse::piece_token;
 pub use ingest::Ingester;
 pub use table::{Column, Shape, Table, tables_from_schema};
 
@@ -423,6 +424,51 @@ fn messages(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// A queued record's length, source id and feed flag, before its message.
+const RECORD_HEADER: usize = 4 + 8 + 1;
+
+/// The most queued bytes one insert carries by default: a batch replayed after
+/// a restart can hold a queue's worth, and inserted whole it outgrew the
+/// client's timeout and the server's memory and was retried forever.
+const MAX_INSERT_BYTES: usize = 1 << 20;
+
+/// Indices of the queued records that start a new insert: each record that
+/// would take its piece past `max` bytes of queue, so a piece holds at most
+/// `max` unless one record alone is larger. Queue positions, not row bytes, so a
+/// retry cuts in the same places whatever `tables.yaml` or the table's columns
+/// say by then, and each piece's token keeps naming the same records.
+fn piece_starts(queued: &[u8], max: usize) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let (mut offset, mut piece) = (0, 0);
+    for (index, (_, _, message)) in records(queued).enumerate() {
+        let size = RECORD_HEADER + message.len();
+        if offset > piece && offset + size - piece > max {
+            starts.push(index);
+            piece = offset;
+        }
+        offset += size;
+    }
+    starts
+}
+
+/// Insert piece `piece` of the batch named `token` from `rows` into
+/// `(table, columns)`, then empty `rows` for the next. Nothing to send is fine.
+fn insert_piece(
+    client: &ClickHouse,
+    (table, columns): (&str, &[&str]),
+    rows: &mut Vec<u8>,
+    token: &str,
+    piece: usize,
+) -> Result<(), Error> {
+    let sent = if rows.is_empty() {
+        Ok(())
+    } else {
+        client.insert_token(table, columns, rows, &piece_token(token, piece))
+    };
+    rows.clear();
+    sent
+}
+
 /// `(source id, from a feed, message)` of each record in a table's queue.
 fn records(mut rest: &[u8]) -> impl Iterator<Item = (u64, bool, &[u8])> {
     std::iter::from_fn(move || {
@@ -455,6 +501,8 @@ pub struct Writer {
     rows: Vec<u8>,
     /// Set for the uncommitted batch. Empty leaves ClickHouse's content checksum.
     dedup_token: String,
+    /// The most queued bytes one insert carries.
+    max_insert_bytes: usize,
     recheck: Duration,
     queued_bytes: usize,
     skipped: usize,
@@ -517,6 +565,7 @@ impl Writer {
             config_text: String::new(),
             rows: Vec::new(),
             dedup_token: String::new(),
+            max_insert_bytes: MAX_INSERT_BYTES,
             recheck,
             queued_bytes: 0,
             skipped: 0,
@@ -634,7 +683,7 @@ impl Writer {
         state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
-        self.queued_bytes += 13 + message.len();
+        self.queued_bytes += RECORD_HEADER + message.len();
         true
     }
 
@@ -671,7 +720,7 @@ impl Writer {
         state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
-        self.queued_bytes += 13 + message.len();
+        self.queued_bytes += RECORD_HEADER + message.len();
         true
     }
 
@@ -906,9 +955,16 @@ impl Writer {
         self.queued_bytes
     }
 
+    /// Insert at most `bytes` of a table's queue at a time (1 MiB by
+    /// default); a larger queue goes in several inserts.
+    pub fn set_max_insert_bytes(&mut self, bytes: usize) {
+        self.max_insert_bytes = bytes;
+    }
+
     /// Identify this tick's inserts. A retry of the same batch passes the
-    /// same token, and ClickHouse drops it.
-    pub(crate) fn set_dedup_token(&mut self, token: &str) {
+    /// same token, and ClickHouse drops it. Only a named batch is split
+    /// at [`Writer::set_max_insert_bytes`].
+    pub fn set_dedup_token(&mut self, token: &str) {
         self.dedup_token.clear();
         self.dedup_token.push_str(token);
     }
@@ -1251,7 +1307,31 @@ impl Writer {
             };
             let mut names = Vec::new();
             let now = jiff::Timestamp::now();
-            for (source, feed, message) in records(&state.queued) {
+            let columns: Vec<&str> = state.columns.iter().map(String::as_str).collect();
+            let client = client_in(&self.ch, state.database());
+            // A named batch goes in pieces, each encoded and sent before the
+            // next: neither one insert nor this buffer grows with the queue.
+            let starts = if self.dedup_token.is_empty() {
+                Vec::new()
+            } else {
+                piece_starts(&state.queued, self.max_insert_bytes)
+            };
+            let mut starts = starts.into_iter().peekable();
+            let (mut piece, mut inserted) = (0, Ok(()));
+            for (index, (source, feed, message)) in records(&state.queued).enumerate() {
+                if starts.next_if_eq(&index).is_some() {
+                    inserted = insert_piece(
+                        &client,
+                        (state.source.name(), &columns),
+                        &mut self.rows,
+                        &self.dedup_token,
+                        piece,
+                    );
+                    piece += 1;
+                    if inserted.is_err() {
+                        break;
+                    }
+                }
                 let known = self.origins.get(&source);
                 if known.is_none() && source != 0 {
                     self.unknown_origins += 1;
@@ -1297,17 +1377,15 @@ impl Writer {
                     state.source.name()
                 ));
             }
-            let columns: Vec<&str> = state.columns.iter().map(String::as_str).collect();
-            let inserted = if rows == 0 {
-                Ok(())
-            } else {
-                client_in(&self.ch, state.database()).insert_token(
-                    state.source.name(),
-                    &columns,
-                    &self.rows,
+            if inserted.is_ok() {
+                inserted = insert_piece(
+                    &client,
+                    (state.source.name(), &columns),
+                    &mut self.rows,
                     &self.dedup_token,
-                )
-            };
+                    piece,
+                );
+            }
             match inserted {
                 Ok(()) => {
                     if rows > 0 {
@@ -1365,5 +1443,37 @@ impl Writer {
             self.last_summary = Instant::now();
             log::info!("rows written so far: {:?}", self.totals);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queue(lens: &[usize]) -> Vec<u8> {
+        let mut queued = Vec::new();
+        for (i, len) in lens.iter().enumerate() {
+            queued.extend_from_slice(&u32::try_from(*len).unwrap_or(0).to_le_bytes());
+            queued.extend_from_slice(&(i as u64).to_le_bytes());
+            queued.push(u8::from(i % 2 == 0));
+            queued.extend(std::iter::repeat_n(0, *len));
+        }
+        queued
+    }
+
+    #[test]
+    fn pieces_start_at_each_limit_of_queue_bytes() {
+        // Records of 13 + 87 = 100 bytes, at most 250 per piece.
+        let queued = queue(&[87; 7]);
+        assert_eq!(piece_starts(&queued, 250), [2, 4, 6]);
+        assert_eq!(piece_starts(&queued, 100), [1, 2, 3, 4, 5, 6]);
+        assert!(piece_starts(&queued, 1 << 20).is_empty());
+        assert!(piece_starts(&[], 1).is_empty());
+    }
+
+    #[test]
+    fn a_record_larger_than_the_limit_is_a_piece_of_its_own() {
+        let queued = queue(&[10, 500, 10, 10]);
+        assert_eq!(piece_starts(&queued, 100), [1, 2]);
     }
 }

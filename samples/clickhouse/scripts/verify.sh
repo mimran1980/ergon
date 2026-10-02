@@ -19,9 +19,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CH=http://localhost:8123
-GRAFANA=http://localhost:3000
-KUBE=(kubectl --context kind-clickhouse-lab -n lab)
+if [[ ${LAB_CONTEXT:-kind-clickhouse-lab} == kind-* ]]; then
+    CH=http://localhost:8123 GRAFANA=http://localhost:3000
+else
+    # The k3s VMs have no kind port mapping: the NodePorts on the first VM.
+    read -r vm _ <<<"$LAB_VM_IPS"
+    CH=http://$vm:30123 GRAFANA=http://$vm:30300
+fi
+KUBE=(kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" -n lab)
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok:   $*"; }
 sql() { curl -sf -u lab:lab "$CH/" --data-binary "$1"; }
@@ -139,12 +144,14 @@ for uid in $uids; do
             [[ -z $err ]] || fail "Grafana panel '$title' [$table] ($uid): $err"
             rows=$(echo "$result" | jq '[.results.A.frames[]?.data.values[0]? // [] | length] | add // 0')
             # A disabled table may legitimately have nothing recent, a
-            # healthy driver no errors or losses, and a lab whose tables all
-            # exist no schema change within the query log's day.
+            # healthy driver no errors or losses, a venue no status change
+            # since its feed subscribed (Bybit sends one then), and a lab whose
+            # tables all exist no schema change within the query log's day.
             [[ $rows -gt 0 ]] || disabled "$table" || { [[ $title == *book_snapshot* ]] && disabled book_snapshot; } \
                 || [[ $title == "Distinct errors" || $title == "Data loss" ]] \
                 || [[ $title == "Schema changes (CREATE / ALTER)" ]] \
                 || [[ $table == metrics.aeron_errors || $table == metrics.aeron_loss ]] \
+                || [[ $table == md.instrument_status ]] \
                 || fail "Grafana panel '$title' [$table] ($uid) returned no rows"
             checked=$((checked + 1))
         done
@@ -208,8 +215,8 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     metric() { sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = '$1' AND labels['venue'] = '$2'"; }
     resyncs=$(metric feed_resyncs BINANCE)
     started=$(sql "SELECT now64(9)")
-    kubectl --context kind-clickhouse-lab cordon "$old_node" >/dev/null
-    trap 'kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null' EXIT
+    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
+    trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
     "${KUBE[@]}" delete pod "$old_pod" --wait=false >/dev/null
     for _ in $(seq 90); do
         new_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$old_pod\$" || true)
@@ -219,7 +226,7 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     [[ -n $new_pod ]] || fail "$mover did not come back within 90 s"
     new_node=$("${KUBE[@]}" get pod "$new_pod" -o jsonpath='{.spec.nodeName}')
     [[ $new_node != "$old_node" ]] || fail "$mover came back on $old_node, the cordoned node"
-    kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null
+    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
     trap - EXIT
     moved=$(date +%s)
     # Its engine joins the new node's publication, and resyncs its books.
@@ -251,8 +258,8 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     # Restarted in place: the same node's driver, so only a closed
     # publication makes the new pod a new session its engine can see.
     resyncs=$(metric feed_resyncs BINANCE)
-    kubectl --context kind-clickhouse-lab cordon "$old_node" >/dev/null
-    trap 'kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null' EXIT
+    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
+    trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
     "${KUBE[@]}" delete pod "$new_pod" --wait=false >/dev/null
     for _ in $(seq 90); do
         again=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$new_pod\$" || true)
@@ -261,7 +268,7 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     done
     [[ -n $again ]] || fail "$mover did not come back within 90 s of its restart"
     [[ $("${KUBE[@]}" get pod "$again" -o jsonpath='{.spec.nodeName}') == "$new_node" ]] || fail "$mover's restart left $new_node"
-    kubectl --context kind-clickhouse-lab uncordon "$old_node" >/dev/null
+    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
     trap - EXIT
     for _ in $(seq 60); do
         (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break

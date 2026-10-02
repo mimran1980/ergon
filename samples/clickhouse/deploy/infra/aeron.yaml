@@ -27,10 +27,13 @@ spec:
             # Idle strategy of each driver thread: spin (busy spin), noop,
             # yield, sleep-ns or backoff. For the best latency spin the sender
             # and receiver (and the conductor) on isolated cores: each then
-            # keeps a core at 100%. This lab runs four nodes on one machine,
-            # so it yields and sleeps.
-            - { name: AERON_SENDER_IDLE_STRATEGY, value: yield }
-            - { name: AERON_RECEIVER_IDLE_STRATEGY, value: yield }
+            # keeps a core at 100%. yield is no cheaper idle: it calls
+            # sched_yield in a loop and still shows a core at 100%. This lab
+            # runs four nodes on a few shared cores, so the sender and receiver
+            # back off (spin, then yield, then park up to 1 ms) and the
+            # conductor sleeps.
+            - { name: AERON_SENDER_IDLE_STRATEGY, value: backoff }
+            - { name: AERON_RECEIVER_IDLE_STRATEGY, value: backoff }
             - { name: AERON_CONDUCTOR_IDLE_STRATEGY, value: sleep-ns }
             - { name: AERON_IPC_TERM_BUFFER_LENGTH, value: "1.6777216e+07" }
             # A publisher that dies without closing keeps its publication
@@ -71,7 +74,10 @@ spec:
                 -Daeron.archive.segment.file.length=16m
                 -Daeron.archive.control.channel=aeron:udp?endpoint=0.0.0.0:8010
                 -Daeron.archive.replication.channel=aeron:udp?endpoint=localhost:0
-          resources: { requests: { memory: 64Mi }, limits: { memory: 192Mi } }
+          # Those flags alone reserve about 176 MiB before thread stacks and
+          # native memory: at 192 Mi, several replays of a backlog at once
+          # had the archive OOM-killed, and the ingester lost it mid-replay.
+          resources: { requests: { memory: 64Mi }, limits: { memory: 320Mi } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: archive, mountPath: /archive }

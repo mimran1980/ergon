@@ -14,6 +14,9 @@
 //!
 //! The conductor runs on this thread; the sender and receiver on their own.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

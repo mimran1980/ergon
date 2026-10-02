@@ -14,6 +14,9 @@
 //! An archive failure ends the process with an error: whatever restarts it
 //! (Kubernetes, here) reconnects, and it resumes from its checkpoints.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
