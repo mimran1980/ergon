@@ -10341,7 +10341,7 @@ impl<'a> FuelFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
+        if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     field: "group entry",
@@ -10558,7 +10558,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
+        if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     field: "group entry",
@@ -10804,7 +10804,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
+        if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     field: "group entry",
@@ -10855,7 +10855,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             );
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
+        if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             return Err(
                 sbe_rt::EncodeError::BufferTooShort {
                     field: "group entry",
@@ -10951,7 +10951,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             });
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
-        if self.offset + block_len > self.buf.len() {
+        if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 field: "group entry",
                 needed: block_len,

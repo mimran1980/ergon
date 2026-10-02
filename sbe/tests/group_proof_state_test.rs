@@ -450,6 +450,47 @@ fn fixed_stride_group_keeps_add_checked() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+#[test]
+fn standalone_group_rejects_invalid_offsets_before_creating_an_entry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_invalid_offset");
+    compile_and_run(
+        "gp_invalid_offset",
+        &src,
+        r#"
+        let mut buf = [0x5au8; 64];
+        for offset in [63, 64, usize::MAX - 1, usize::MAX] {
+            let mut fixed = PerformanceFiguresAccelerationEncoder::wrap(&mut buf, offset, 1);
+            assert!(matches!(
+                fixed.add(|_| panic!("an invalid extent must not expose an entry")),
+                Err(sbe_rt::EncodeError::BufferTooShort { .. })
+            ));
+            assert_eq!(fixed.written(), 0);
+
+            let mut fixed = PerformanceFiguresAccelerationEncoder::wrap(&mut buf, offset, 1);
+            assert!(matches!(
+                fixed.add_checked(|_| panic!("an invalid extent must not expose an entry")),
+                Err(sbe_rt::EncodeError::BufferTooShort { .. })
+            ));
+            assert_eq!(fixed.written(), 0);
+
+            let mut fixed = PerformanceFiguresAccelerationEncoder::wrap(&mut buf, offset, 1);
+            assert!(matches!(fixed.start_entry(), Err(sbe_rt::EncodeError::BufferTooShort { .. })));
+            assert_eq!(fixed.written(), 0);
+
+            let mut dynamic = FuelFiguresEncoder::wrap(&mut buf, offset, 1);
+            assert!(matches!(
+                dynamic.add(|_| panic!("an invalid extent must not expose an entry")),
+                Err(sbe_rt::EncodeError::BufferTooShort { .. })
+            ));
+            assert_eq!(dynamic.written(), 0);
+        }
+        assert_eq!(buf, [0x5au8; 64]);
+        "#,
+    );
+    Ok(())
+}
+
 /// Nested fixed-stride `wrap_trusted` must reject a short wire block.
 ///
 /// `Iterator::next` on the parent warms the entry extent cache, and that
