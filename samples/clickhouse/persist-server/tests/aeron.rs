@@ -1385,9 +1385,7 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     let _ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
     let publication = streams.publication("md-test", "127.0.0.1")?;
     let reader = client(&lab, stream_id)?;
-    let mut sub = reader
-        .bus()
-        .persistent(&streams, "md-test", "md", "127.0.0.1")?;
+    let mut sub = reader.bus().subscribe(&streams, "md-test", "md")?;
     // v1 messages, those replayed, and messages that started a subscription.
     let (rows, replayed, fresh) = (
         std::cell::Cell::new(0),

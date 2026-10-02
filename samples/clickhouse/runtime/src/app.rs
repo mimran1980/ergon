@@ -56,8 +56,6 @@ pub struct App {
     pub streams: Streams,
     /// Where `streams` came from, to follow its changes.
     pub streams_path: String,
-    /// This node's IP: its feeds bind it.
-    pub host_ip: String,
     /// `REGION`: which `md-*` feeds, and whose engine and exchange.
     pub region: String,
     pub idle: Idle,
@@ -89,7 +87,6 @@ impl App {
             persist,
             streams: Streams::load(&streams_path)?,
             streams_path,
-            host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
             region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
             // Lab default: yield. For the best latency, spin (or noop) on an
             // isolated core.

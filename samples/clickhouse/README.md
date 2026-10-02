@@ -192,7 +192,7 @@ ingester inserts, not when the feed publishes, because subscribers need every
 message.
 
 The engine follows each `md` stream and its exchange's fills with
-`Bus::persistent`. It replays the publisher's archive (port 8010) until it
+`Bus::subscribe`. It replays the publisher's archive (port 8010) until it
 catches the live stream. If it falls behind, it drops back to the recording.
 A restart or a move is a new recording; `PersistentSubscription` finds it by name and
 replays from the first message, on another thread, so the engine loop does not

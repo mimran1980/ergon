@@ -76,16 +76,20 @@ enum State {
 
 impl Bus {
     /// Subscribe to `service`'s `kind` stream through the archive that
-    /// records it, from this node (`host_ip`). The first subscription joins
-    /// the live stream; each after a restart of the publisher replays the
-    /// new session from its start.
-    pub fn persistent(
+    /// records it, from this node. The first subscription joins the live
+    /// stream; each after a restart of the publisher replays the new session
+    /// from its start. [`Bus::subscribe_live`] is the one with no archive.
+    ///
+    /// # Errors
+    ///
+    /// `service` or `kind` is not in the registry.
+    pub fn subscribe(
         &self,
         streams: &Streams,
         service: &str,
         kind: &str,
-        host_ip: &str,
     ) -> Result<PersistentSubscription, Error> {
+        let host_ip = self.host_ip();
         let stream_id = streams.stream(service, kind)?;
         Ok(PersistentSubscription {
             aeron: self.aeron().clone(),

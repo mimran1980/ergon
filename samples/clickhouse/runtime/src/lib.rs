@@ -88,6 +88,10 @@ pub struct Settings {
     pub host: String,
     /// The pod, or the process's name outside Kubernetes.
     pub pod: String,
+    /// This node's IP: the feeds this application publishes bind it, and the
+    /// ones it subscribes to are taken from it. `HOST_IP` (from the downward
+    /// API in Kubernetes).
+    pub host_ip: String,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
     /// Defaults to [`persist::CHANNEL`].
@@ -112,6 +116,7 @@ impl Settings {
             app: String::new(),
             host: String::new(),
             pod: String::new(),
+            host_ip: "127.0.0.1".into(),
             aeron_dir: None,
             channel: persist::CHANNEL.to_string(),
             stream_id: persist::STREAM_ID,
@@ -140,6 +145,7 @@ impl Settings {
             pod: std::env::var("POD_NAME")
                 .or_else(|_| std::env::var("HOSTNAME"))
                 .unwrap_or_default(),
+            host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
             metrics_interval: duration("PERSIST_METRICS_INTERVAL", Duration::from_secs(5)),
             subscriber_timeout: duration("PERSIST_SUBSCRIBER_TIMEOUT", Duration::from_secs(10)),
             ..Self::new(

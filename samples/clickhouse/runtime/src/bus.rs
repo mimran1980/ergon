@@ -35,6 +35,8 @@ pub struct Bus {
 
 struct Inner {
     aeron: Aeron,
+    /// This node's IP: see [`Settings::host_ip`].
+    host_ip: String,
     /// Stamped into every frame's reserved value.
     source: Source,
     source_message: Vec<u8>,
@@ -99,6 +101,7 @@ impl Bus {
         Ok(Self {
             inner: Arc::new(Inner {
                 aeron,
+                host_ip: settings.host_ip.clone(),
                 source,
                 source_message,
                 heartbeat: AtomicU64::new(0),
@@ -130,6 +133,12 @@ impl Bus {
             .unwrap_or_else(PoisonError::into_inner)
             .push(publication.clone());
         Ok(publication)
+    }
+
+    /// This node's IP: feeds opened from the registry bind it.
+    #[must_use]
+    pub fn host_ip(&self) -> &str {
+        &self.inner.host_ip
     }
 
     pub(crate) fn aeron(&self) -> &Aeron {

@@ -27,13 +27,11 @@ const ORDER_TTL_NS: i64 = 10_000_000_000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::start(schema::TRADING_SCHEMA)?;
-    let (s, ip) = (&app.streams, app.host_ip.as_str());
+    let s = &app.streams;
     let service = format!("exch-sim-{}", app.region);
     let engine = format!("engine-{}", app.region);
-    let exec = app
-        .bus
-        .publication(&s.publication(&service, ip)?, s.stream(&service, "exec")?)?;
-    let mut orders = app.bus.persistent(s, &engine, "orders", ip)?.from_start();
+    let exec = app.bus.publish(s, &service, "exec")?;
+    let mut orders = app.bus.subscribe(s, &engine, "orders")?.from_start();
     let ack = app
         .persist
         .tracer("order_ack", &["wire", "match", "ack"], &[]);

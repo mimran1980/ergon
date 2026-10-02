@@ -53,27 +53,23 @@ const ORDER_TIMEOUT_NS: i64 = 30 * SECOND;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::start(schema::TRADING_SCHEMA)?;
     let service = format!("engine-{}", app.region);
-    let (s, ip) = (&app.streams, app.host_ip.as_str());
-    let publication = s.publication(&service, ip)?;
-    let signals = app
-        .bus
-        .publication(&publication, s.stream(&service, "signals")?)?;
-    let orders = app
-        .bus
-        .publication(&publication, s.stream(&service, "orders")?)?;
+    let s = &app.streams;
+    let signals = app.bus.publish(s, &service, "signals")?;
+    let orders = app.bus.publish(s, &service, "orders")?;
     let exchange = format!("exch-sim-{}", app.region);
-    let mut exec = app.bus.persistent(s, &exchange, "exec", ip)?;
+    let mut exec = app.bus.subscribe(s, &exchange, "exec")?;
     let metrics = app.metrics();
     let (mut subs, mut venues) = (Vec::new(), Vec::new());
     add_venues(&app, s, &metrics, &mut subs, &mut venues)?;
     log::info!(
-        "{service}: {} venues ({}), publishing on {publication}",
+        "{service}: {} venues ({}), publishing from {}",
         venues.len(),
         venues
             .iter()
             .map(|v| v.name.as_str())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        app.bus.host_ip()
     );
     // A feed handler added to the registry, in any region, is subscribed to
     // within a second or two, with no restart.
@@ -133,7 +129,6 @@ fn add_venues(
     subs: &mut Vec<(PersistentSubscription, Subscription, Tracer)>,
     venues: &mut Vec<Venue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ip = app.host_ip.as_str();
     for (name, service) in streams
         .services
         .iter()
@@ -143,11 +138,8 @@ fn add_venues(
         if venues.iter().any(|v| v.name == label) {
             continue;
         }
-        let tob = app.bus.subscription(
-            &streams.subscription(name, "tob", ip)?,
-            streams.stream(name, "tob")?,
-        );
-        let md = app.bus.persistent(streams, name, "md", ip)?;
+        let tob = app.bus.subscribe_live(streams, name, "tob")?;
+        let md = app.bus.subscribe(streams, name, "md")?;
         // A trace per venue, its stages naming the venue and the route, so
         // a slow `feed` reads as the region it crossed. Still `tick_to_trade`:
         // sampled by tables.yaml's rule of that name. Held apart from `Core`:

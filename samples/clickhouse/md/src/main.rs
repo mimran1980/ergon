@@ -284,16 +284,14 @@ impl std::fmt::Debug for Feeds {
 }
 
 impl Feeds {
-    /// Open `service`'s feeds from the registry, on the node at `host_ip`.
+    /// Open `service`'s feeds from the registry, on the bus's node.
     fn open(bus: &Bus, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let streams = runtime::streams::Streams::load(
             std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
         )?;
         runtime::streams::check_node_network()?;
-        let host_ip = std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into());
-        let channel = streams.publication(service, &host_ip)?;
-        let md = bus.publication(&channel, streams.stream(service, "md")?)?;
-        let tob = bus.publication(&channel, streams.stream(service, "tob")?)?;
+        let md = bus.publish(&streams, service, "md")?;
+        let tob = bus.publish(&streams, service, "tob")?;
         // Room for the longest symbol and venue name in these feeds.
         let fits =
             |n: usize| BookDeltasEncoder::compute_length_with_header(n, 32, 16) <= md.max_payload();
@@ -302,9 +300,10 @@ impl Feeds {
             .find(|&n| fits(n))
             .unwrap_or(1);
         log::info!(
-            "feeds {service}: md stream {}, tob stream {}, on {channel}; {deltas_per_row} book changes a message",
+            "feeds {service}: md stream {}, tob stream {}, from {}; {deltas_per_row} book changes a message",
             md.stream_id(),
-            tob.stream_id()
+            tob.stream_id(),
+            bus.host_ip()
         );
         Ok(Self {
             md,

@@ -16,6 +16,7 @@ use rusteron_archive::AeronPublication;
 
 use crate::Error;
 use crate::bus::{Bus, DropKind};
+use crate::streams::Streams;
 
 /// A publication of this application's on a feed's channel and stream.
 pub struct Publication {
@@ -28,6 +29,25 @@ pub struct Publication {
 }
 
 impl Bus {
+    /// Publish `service`'s `kind` stream (see
+    /// [`crate::streams::Streams::publication`]) from this node.
+    ///
+    /// # Errors
+    ///
+    /// `service` or `kind` is not in the registry, or the media driver did
+    /// not add the publication within 10 s.
+    pub fn publish(
+        &self,
+        streams: &Streams,
+        service: &str,
+        kind: &str,
+    ) -> Result<Publication, Error> {
+        self.publication(
+            &streams.publication(service, self.host_ip())?,
+            streams.stream(service, kind)?,
+        )
+    }
+
     /// Publish on `channel` (see [`crate::streams::Streams::publication`])
     /// and `stream_id`.
     ///
