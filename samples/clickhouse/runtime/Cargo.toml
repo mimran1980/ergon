@@ -1,6 +1,6 @@
 [package]
-name = "persist-client"
-description = "Record SBE messages and tracing events for ClickHouse: the application side."
+name = "runtime"
+description = "What a lab application runs on: the Aeron bus, feeds, recording for ClickHouse, metrics, traces, a clock."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 ergo-sbe.workspace = true
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 log.workspace = true
@@ -15,6 +16,7 @@ minstant = "0.1"
 rusteron-archive.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+signal-hook = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 

@@ -2,7 +2,7 @@
 //! loop, and reuse it (Agrona's `CachedNanoClock`).
 //!
 //! ```
-//! use persist_client::clock::Clock;
+//! use runtime::clock::Clock;
 //!
 //! let clock = Clock::new();
 //! let now = clock.now(); // one read of the hardware clock, cached

@@ -32,8 +32,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Serialize;
 use serde::ser::{self, SerializeMap, SerializeSeq, SerializeStruct, SerializeTuple};
 
-use crate::Persist;
 use crate::event::{AddressHasher, FieldDef, HEADER, Kind, NONE, Shape, Value, fnv64, now_ns};
+use crate::persist::Persist;
 
 /// Why a value could not be measured, learned or written.
 #[derive(Debug)]

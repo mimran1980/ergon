@@ -13,9 +13,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use engine::App;
-use persist_client::clock::{Clock, Nanos};
-use persist_client::trace::TraceId;
+use runtime::app::App;
+use runtime::clock::{Clock, Nanos};
+use runtime::trace::TraceId;
 use schema::trading::sbe_rt::EncodeError;
 use schema::trading::{
     ExecutionReportEncoder, ExecutionReportFixedFields, NewOrderDecoder, OrderStatus,
@@ -31,16 +31,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = format!("exch-sim-{}", app.region);
     let engine = format!("engine-{}", app.region);
     let exec = app
-        .persist
-        .feed(&s.publication(&service, ip)?, s.stream(&service, "exec")?)?;
-    let mut orders = app
-        .persist
-        .persistent(s, &engine, "orders", ip)?
-        .from_start();
+        .bus
+        .publication(&s.publication(&service, ip)?, s.stream(&service, "exec")?)?;
+    let mut orders = app.bus.persistent(s, &engine, "orders", ip)?.from_start();
     let ack = app
         .persist
         .tracer("order_ack", &["wire", "match", "ack"], &[]);
-    let (clock, metrics) = (Clock::new(), app.persist.metrics());
+    let (clock, metrics) = (Clock::new(), app.metrics());
     let filled = metrics.counter("orders_filled", &[]);
     let stale = metrics.counter("orders_stale", &[]);
     log::info!("{service}: filling {engine}'s orders");

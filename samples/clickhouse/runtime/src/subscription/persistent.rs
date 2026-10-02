@@ -4,14 +4,14 @@
 //! from the recording. The publisher does not wait.
 //!
 //! A restart or a move is a new recording. Aeron 1.52.2 replays the old one
-//! to its end and then fails. [`Persistent`] finds the new recording by the
+//! to its end and then fails. [`PersistentSubscription`] finds the new recording by the
 //! service's name and replays from the first message. The handler is told,
 //! so the caller can drop state built from the old session.
 //!
 //! ponytail: a new session that starts at the old stop position would be
 //! treated as the same recording. Check the session id if that matters.
 //!
-//! The archive lookup runs on its own thread. [`Persistent::poll`] does not
+//! The archive lookup runs on its own thread. [`PersistentSubscription::poll`] does not
 //! wait. The archive is addressed by IP. The driver caches a channel hostname
 //! per endpoint, so a name would keep reaching the old node after a move.
 
@@ -23,16 +23,18 @@ use rusteron_archive::{
     IntoCString, PersistentSubscriptionBuilder,
 };
 
-use crate::feed::{Delivery, Origin};
+use super::{Delivery, Origin};
+use crate::Error;
+use crate::bus::Bus;
 use crate::streams::Streams;
-use crate::{Error, Persist};
+use crate::throttle::Throttle;
 
 /// A replay's stream id is the live one plus this: unique on the node, as
 /// live stream ids are unique in the registry.
-pub const REPLAY_STREAM_OFFSET: i32 = 1_000_000;
+const REPLAY_STREAM_OFFSET: i32 = 1_000_000;
 
 /// A persistent subscription to one stream of a registry service.
-pub struct Persistent {
+pub struct PersistentSubscription {
     aeron: Aeron,
     /// `md-binance stream 2011`, for the log.
     name: String,
@@ -52,7 +54,7 @@ pub struct Persistent {
     /// The next message is the first of a new subscription.
     fresh: bool,
     /// The last failure logged: each different one is logged once.
-    logged: Option<String>,
+    logged: Throttle,
 }
 
 /// A recording to follow, and the archive holding it, by IP.
@@ -72,7 +74,7 @@ enum State {
     },
 }
 
-impl Persist {
+impl Bus {
     /// Subscribe to `service`'s `kind` stream through the archive that
     /// records it, from this node (`host_ip`). The first subscription joins
     /// the live stream; each after a restart of the publisher replays the
@@ -83,10 +85,10 @@ impl Persist {
         service: &str,
         kind: &str,
         host_ip: &str,
-    ) -> Result<Persistent, Error> {
+    ) -> Result<PersistentSubscription, Error> {
         let stream_id = streams.stream(service, kind)?;
-        Ok(Persistent {
-            aeron: self.inner.aeron.clone(),
+        Ok(PersistentSubscription {
+            aeron: self.aeron().clone(),
             name: format!("{service} stream {stream_id}"),
             host: streams.host(service),
             archive_port: streams.archive_port,
@@ -97,14 +99,17 @@ impl Persist {
             state: State::Waiting(Instant::now()),
             from_start: false,
             fresh: false,
-            logged: None,
+            logged: Throttle::new(PersistentSubscription::REMIND),
         })
     }
 }
 
-impl Persistent {
+impl PersistentSubscription {
     /// How long to wait before asking the archive again.
     pub const RETRY: Duration = Duration::from_secs(1);
+
+    /// How often an unchanged failure is logged again.
+    const REMIND: Duration = Duration::from_secs(60);
 
     /// Up to `limit` messages, each with how it was delivered: whether it is
     /// the first of a new subscription (a new publisher session, when not
@@ -174,7 +179,7 @@ impl Persistent {
             );
         }
         self.from_start = true;
-        self.logged = None;
+        self.logged.clear();
         self.state = State::Finding(self.find());
     }
 
@@ -197,7 +202,7 @@ impl Persistent {
                             }
                         );
                         self.fresh = true;
-                        self.logged = None;
+                        self.logged.clear();
                         self.state = state;
                     }
                     Err(e) => self.retry(&e),
@@ -211,13 +216,11 @@ impl Persistent {
     }
 
     fn retry(&mut self, e: &dyn std::fmt::Display) {
-        // Each different failure once: an undeployed publisher fails every
-        // retry the same way.
-        let e = e.to_string();
-        if self.logged.as_ref() != Some(&e) {
-            log::info!("{}: {e}; retrying every {:?}", self.name, Self::RETRY);
-            self.logged = Some(e);
-        }
+        // An undeployed publisher fails every retry the same way.
+        self.logged.log(
+            log::Level::Info,
+            format_args!("{}: {e}; retrying every {:?}", self.name, Self::RETRY),
+        );
         self.state = State::Waiting(Instant::now() + Self::RETRY);
     }
 

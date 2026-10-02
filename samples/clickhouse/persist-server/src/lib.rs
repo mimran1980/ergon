@@ -1,6 +1,6 @@
 //! Replay the Aeron Archive into ClickHouse.
 //!
-//! `persist-client` publishes. The archive records. [`Ingester`] replays from
+//! `runtime` publishes. The archive records. [`Ingester`] replays from
 //! its checkpoint, inserts, saves the checkpoint, and purges behind it. If
 //! ClickHouse is slow, the archive holds the data.
 //!
@@ -43,12 +43,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use persist_client::metrics::{
+use runtime::event;
+use runtime::metrics::{
     HISTOGRAM_TEMPLATE_ID, METRIC_DEF_TEMPLATE_ID, METRICS_TEMPLATE_ID, MetricDef,
 };
-use persist_client::source::{SOURCE_TEMPLATE_ID, Source as Origin};
-use persist_client::trace::{TRACE_DEF_TEMPLATE_ID, TRACE_TEMPLATE_ID, TraceDef};
-use persist_client::{TableConfig, event, parse_config};
+use runtime::persist::{TableConfig, parse_config};
+use runtime::source::{SOURCE_TEMPLATE_ID, Source as Origin};
+use runtime::trace::{TRACE_DEF_TEMPLATE_ID, TRACE_TEMPLATE_ID, TraceDef};
 
 use events::EventTable;
 
@@ -86,13 +87,13 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<persist_client::Error> for Error {
-    fn from(e: persist_client::Error) -> Self {
+impl From<runtime::Error> for Error {
+    fn from(e: runtime::Error) -> Self {
         match e {
-            persist_client::Error::Schema(m) => Self::Schema(m),
-            persist_client::Error::Config(m) => Self::Config(m),
-            persist_client::Error::Aeron(m) | persist_client::Error::Thread(m) => Self::Aeron(m),
-            persist_client::Error::Encode(err) => Self::Schema(err.to_string()),
+            runtime::Error::Schema(m) => Self::Schema(m),
+            runtime::Error::Config(m) => Self::Config(m),
+            runtime::Error::Aeron(m) | runtime::Error::Thread(m) => Self::Aeron(m),
+            runtime::Error::Encode(err) => Self::Schema(err.to_string()),
         }
     }
 }
@@ -106,7 +107,7 @@ pub struct Settings {
     pub config_path: PathBuf,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
-    /// The recorded channel; defaults to `persist_client::CHANNEL`.
+    /// The recorded channel; defaults to `runtime::persist::CHANNEL`.
     pub channel: String,
     /// The recorded stream; replays use the next stream id.
     pub stream_id: i32,
@@ -123,7 +124,7 @@ pub struct Settings {
     pub aeron_stats_interval: Duration,
     /// The feed registry: every archived feed published on this node is
     /// recorded through a spy. `None` records the persist stream only.
-    pub streams: Option<persist_client::streams::Streams>,
+    pub streams: Option<runtime::streams::Streams>,
     /// This node's IP, which feeds published here bind.
     pub host_ip: String,
 }
@@ -140,8 +141,8 @@ impl Settings {
             clickhouse,
             config_path: config_path.into(),
             aeron_dir: None,
-            channel: persist_client::CHANNEL.to_string(),
-            stream_id: persist_client::STREAM_ID,
+            channel: runtime::persist::CHANNEL.to_string(),
+            stream_id: runtime::persist::STREAM_ID,
             checkpoint_path: checkpoint_path.into(),
             max_queued_bytes: 64 << 20,
             recheck: Duration::from_secs(30),
@@ -162,7 +163,7 @@ impl Settings {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         let streams_path = var("PERSIST_STREAMS", "config/streams.yaml");
         let streams = if Path::new(&streams_path).exists() {
-            Some(persist_client::streams::Streams::load(&streams_path)?)
+            Some(runtime::streams::Streams::load(&streams_path)?)
         } else {
             None
         };
@@ -208,7 +209,7 @@ pub struct Report {
 pub const RESERVED_TABLES: [&str; 6] = [
     metrics::METRICS,
     metrics::HISTOGRAMS,
-    persist_client::OTEL_TRACES,
+    runtime::persist::OTEL_TRACES,
     "aeron_counters",
     "aeron_errors",
     "aeron_loss",
@@ -240,7 +241,7 @@ impl Source {
             Self::Events(t) => &t.name,
             Self::Metrics => metrics::METRICS,
             Self::Histograms => metrics::HISTOGRAMS,
-            Self::Traces => persist_client::OTEL_TRACES,
+            Self::Traces => runtime::persist::OTEL_TRACES,
         }
     }
 
@@ -292,8 +293,8 @@ impl Source {
 /// `tables.yaml`'s entry for a table persistence owns: static, always on.
 fn fixed_config() -> TableConfig {
     TableConfig {
-        kind: persist_client::TableKind::Static,
-        enabled: persist_client::Switch::On,
+        kind: runtime::persist::TableKind::Static,
+        enabled: runtime::persist::Switch::On,
         apps: BTreeMap::new(),
         traces: BTreeMap::new(),
         database: None,
@@ -378,7 +379,7 @@ fn load_schemas(schemas: &[&str]) -> Result<Vec<Table>, Error> {
             .is_some_and(|t| t.schema_id == event::SCHEMA_ID)
         {
             return Err(Error::Schema(format!(
-                "schema id {} is reserved for event rows (persist-client/schema/events.xml)",
+                "schema id {} is reserved for event rows (runtime/schema/events.xml)",
                 event::SCHEMA_ID
             )));
         }
@@ -976,7 +977,7 @@ impl Writer {
     /// checks replay positions before closing windows and uses its own tick.
     pub fn tick(&mut self) -> Report {
         let mut report = Report::default();
-        let now = persist_client::clock::Clock::new().wall().epoch_ns();
+        let now = runtime::clock::Clock::new().wall().epoch_ns();
         self.flush_elapsed_histograms(u64::try_from(now).unwrap_or(0), true);
         self.run(&mut report);
         self.log(&report);

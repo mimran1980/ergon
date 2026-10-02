@@ -86,8 +86,8 @@ const TICK: &str = include_str!("schemas/tick.xml");
 
 #[test]
 fn standalone_writer_flushes_its_last_elapsed_histogram_window() -> TestResult {
-    use persist_client::event::codec;
-    use persist_client::metrics::{MetricDef, MetricKind};
+    use runtime::event::codec;
+    use runtime::metrics::{MetricDef, MetricKind};
 
     let lab = Lab::new("last_histogram", "tables: {}\n")?;
     let mut writer = lab.writer(TICK)?;
@@ -126,8 +126,8 @@ fn standalone_writer_flushes_its_last_elapsed_histogram_window() -> TestResult {
 
 #[test]
 fn each_table_lands_in_the_database_tables_yaml_names() -> TestResult {
-    use persist_client::event::codec;
-    use persist_client::metrics::{MetricDef, MetricKind};
+    use runtime::event::codec;
+    use runtime::metrics::{MetricDef, MetricKind};
 
     let lab = Lab::new("databases", "")?;
     let md = format!("{}_md", lab.ch.database);
@@ -275,17 +275,17 @@ fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
 }
 
 /// A `signal` row of `shape` with `edge` (field 0) set.
-fn signal_row(shape: &persist_client::event::Shape, edge: f64) -> Vec<u8> {
+fn signal_row(shape: &runtime::event::Shape, edge: f64) -> Vec<u8> {
     let mut row = vec![0; shape.row_len(0)];
     shape.write_row(&mut row, 1_700_000_000_000_000_000, |_| {
-        Some(persist_client::event::Value::F64(edge))
+        Some(runtime::event::Value::F64(edge))
     });
     row
 }
 
 #[test]
 fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
-    use persist_client::event::{FieldDef, Kind, Shape};
+    use runtime::event::{FieldDef, Kind, Shape};
 
     let lab = Lab::new("event_shapes", "tables:\n  signal: { kind: dynamic }\n")?;
     let saved = lab.dir.join("shapes");
@@ -863,7 +863,7 @@ fn trading_rows_round_trip_beside_market_rows() -> TestResult {
 
 #[test]
 fn persistences_own_tables_are_never_event_tables_or_sbe_messages() -> TestResult {
-    use persist_client::event::{FieldDef, Kind, Shape};
+    use runtime::event::{FieldDef, Kind, Shape};
 
     // Listed in tables.yaml (otel_traces for its switch): still the fixed
     // tables, never tables fed by event rows.

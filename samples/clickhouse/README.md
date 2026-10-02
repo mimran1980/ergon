@@ -18,7 +18,7 @@ node (one of four, three regions)
 
 | Crate | Role |
 |---|---|
-| `persist-client` | What the application links: `record()`, a `tracing` layer for rows and for counters, gauges, and histograms, metric handles, traces, a clock, UDP feeds. |
+| `runtime` | What the application links, one module per concern: `app` (start a process), `bus` (the Aeron client, its identity, drop counters, shutdown), `publication` and `subscription` (UDP feeds, with a persistent one that catches up from the archive), `persist` (`record()` and a `tracing` layer for rows, counters, gauges, and histograms), `metrics`, `trace`, `clock`, `idle`, `streams`. |
 | `persist-server` | The ingester. Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
 | `schema` | `market.xml`, `trading.xml`, the codecs generated from them, and `AnySchemaMessage` for a buffer that may be either. |
 | `md` | One exchange's public market data, via NautilusTrader. No API keys. |
@@ -192,9 +192,9 @@ ingester inserts, not when the feed publishes, because subscribers need every
 message.
 
 The engine follows each `md` stream and its exchange's fills with
-`Persist::persistent`. It replays the publisher's archive (port 8010) until it
+`Bus::persistent`. It replays the publisher's archive (port 8010) until it
 catches the live stream. If it falls behind, it drops back to the recording.
-A restart or a move is a new recording; `Persistent` finds it by name and
+A restart or a move is a new recording; `PersistentSubscription` finds it by name and
 replays from the first message, on another thread, so the engine loop does not
 wait. The engine drops that venue's books and rebuilds them from the new
 session's snapshot. `tob` is a plain best-effort subscription.
@@ -305,7 +305,7 @@ persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
 })?;
 ```
 
-Keep an instance with `let persist = Persist::connect(schema, settings)?` and
+Keep an instance with `let persist = Persist::connect(schema, &bus, settings)?`, where `bus = Bus::connect(&settings)?` is the application's Aeron client (feeds, `shutdown` and `drops` are on the bus), and
 call `persist.record(...)`. Optional `persist.install()` enables the free functions.
 With nothing installed, the free `record` does nothing. `connect` waits up to 10 seconds for a
 subscriber (`subscriber_timeout`).
@@ -437,7 +437,7 @@ static metric/tracer is needed. A scoped subscriber works too:
 
 ```rust
 use tracing_subscriber::layer::SubscriberExt;
-let persist = Persist::connect(schema, settings)?;
+let persist = Persist::connect(schema, &bus, settings)?;
 let metrics = persist.metrics();
 let subscriber = tracing_subscriber::registry().with(persist.layer());
 tracing::subscriber::with_default(subscriber, || {
@@ -497,7 +497,7 @@ A checkpoint trace stamps stages on the stack. `finish` always updates
 on and the trace is sampled, slower than the threshold, or kept.
 
 ```rust
-let t2t = persist_client::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
+let t2t = runtime::persist::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
 let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(ORDERS, order_id));
 t.mark(clock.now());
 t.attr(0, levels);

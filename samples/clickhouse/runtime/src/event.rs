@@ -46,7 +46,7 @@ use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::Persist;
+use crate::persist::Persist;
 
 /// The codec generated from `schema/events.xml`.
 #[allow(unsafe_code, warnings, clippy::all, clippy::unwrap_used)]
@@ -96,7 +96,7 @@ pub const HISTOGRAM: &str = "histogram";
 /// The numeric field of a counter, gauge, or histogram event.
 pub(crate) const VALUE: &str = "value";
 
-/// An event [`Persist::layer`](crate::Persist::layer) records: a table row,
+/// An event [`Persist::layer`](crate::persist::Persist::layer) records: a table row,
 /// or a counter, gauge, or histogram.
 #[must_use]
 pub(crate) fn layer_wants(meta: &tracing::Metadata<'_>) -> bool {

@@ -1,4 +1,4 @@
-//! Metrics from `persist_client::metrics`: two fixed tables, one row per
+//! Metrics from `runtime::metrics`: two fixed tables, one row per
 //! series per interval.
 //!
 //! A series' name and labels arrive once as a `MetricDef` message (saved
@@ -30,8 +30,8 @@
 use std::collections::HashMap;
 
 use hdrhistogram::Histogram;
-use persist_client::event::codec;
-use persist_client::metrics::MetricDef;
+use runtime::event::codec;
+use runtime::metrics::MetricDef;
 
 use crate::table::{Column, DecodeError, Shape, write_string, write_varint};
 
@@ -41,8 +41,8 @@ pub(crate) const METRICS: &str = "metrics";
 pub(crate) const HISTOGRAMS: &str = "metrics_histogram";
 
 /// The table a series' rows go to.
-pub(crate) const fn table_of(kind: persist_client::metrics::MetricKind) -> &'static str {
-    use persist_client::metrics::MetricKind;
+pub(crate) const fn table_of(kind: runtime::metrics::MetricKind) -> &'static str {
+    use runtime::metrics::MetricKind;
     match kind {
         MetricKind::Counter | MetricKind::Gauge => METRICS,
         MetricKind::Histogram => HISTOGRAMS,

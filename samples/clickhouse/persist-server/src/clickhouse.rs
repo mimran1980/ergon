@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use persist_client::TableKind;
+use runtime::persist::TableKind;
 
 use crate::Error;
 use crate::table::{Column, Shape};

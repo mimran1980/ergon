@@ -3,7 +3,7 @@
   Event rows: tables with no SBE message of their own (`tracing` events and
   `record_row`). Their columns are known only at run time, so the layout of
   each kind of row, a shape, is published once as a `Shape` message and every
-  `Row` carries values only, in that layout. See persist-client/src/event.rs.
+  `Row` carries values only, in that layout. See runtime/src/event.rs.
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="persist_events"

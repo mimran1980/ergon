@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use persist_client::TableKind;
+use runtime::persist::TableKind;
 use rusteron_archive::AeronCnc;
 
 use crate::clickhouse::ClickHouse;
@@ -217,7 +217,7 @@ impl AeronStats {
         let pod = std::env::var("POD_NAME")
             .or_else(|_| std::env::var("HOSTNAME"))
             .unwrap_or_default();
-        for name in [persist_client::source::host_name(), pod, "ingester".into()] {
+        for name in [runtime::source::host_name(), pod, "ingester".into()] {
             write_string(name.as_bytes(), &mut origin);
         }
         Ok(Self {

@@ -6,8 +6,8 @@
 //! * `control`   an empty loop: the floor this machine can measure
 //! * `control-x100` the amplified loop's floor, for the x100 arms
 //! * `sbe`       `Persist::record` of one SBE message
-//! * `installed` the same through `persist_client::record`, the installed handle
-//! * `uninstalled` `persist_client::record` with no handle installed: a no-op
+//! * `installed` the same through `runtime::persist::record`, the installed handle
+//! * `uninstalled` `runtime::persist::record` with no handle installed: a no-op
 //! * `event`     `tracing::info!(table = "signal", …)`, table enabled
 //! * `value`     `Persist::record_value` of a struct with the event's three fields
 //! * `value-nested` `record_value` of a struct with a nested struct and five levels
@@ -37,9 +37,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use persist_client::Persist;
-use persist_client::clock::{Clock, Nanos};
 use persist_server::{ClickHouse, Ingester};
+use runtime::clock::{Clock, Nanos};
+use runtime::persist::Persist;
 use tracing_subscriber::layer::SubscriberExt;
 
 #[path = "../tests/support/v1.rs"]
@@ -91,20 +91,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ready.recv_timeout(Duration::from_secs(20))?;
         thread
     };
-    let persist = Persist::connect(
-        v1::SCHEMA,
-        persist_client::Settings {
-            aeron_dir: Some(aeron_dir),
-            stream_id: STREAM,
-            app: "latency".into(),
-            metrics_interval: if arm == "poll-due" {
-                Duration::from_millis(1)
-            } else {
-                Duration::from_secs(5)
-            },
-            ..persist_client::Settings::new(&config)
+    let settings = runtime::Settings {
+        aeron_dir: Some(aeron_dir),
+        stream_id: STREAM,
+        app: "latency".into(),
+        metrics_interval: if arm == "poll-due" {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_secs(5)
         },
-    )?;
+        ..runtime::Settings::new(&config)
+    };
+    let bus = runtime::bus::Bus::connect(&settings)?;
+    let persist = Persist::connect(v1::SCHEMA, &bus, settings)?;
     while !persist.is_connected() {
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -163,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
         }),
         "installed" | "uninstalled" => sample!(1, |_i| {
-            persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+            runtime::persist::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
         }),
         "event" => sample!(1, |_i| {
             tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3);
@@ -241,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             String::new()
         },
-        persist.dropped(),
+        persist.bus().dropped(),
         at(0.5),
         at(0.99),
         at(0.999),
@@ -266,7 +265,7 @@ fn measure<const REPS: usize>(
         clock.now();
         let measuring = started.elapsed() > Duration::from_secs(3);
         if measuring && drops_at_measurement.is_none() {
-            drops_at_measurement = Some(persist.dropped());
+            drops_at_measurement = Some(persist.bus().dropped());
         }
         let t = Instant::now();
         for i in 0..REPS {
@@ -279,8 +278,9 @@ fn measure<const REPS: usize>(
         while t.elapsed() < Duration::from_micros(5) {}
     }
     let dropped = persist
+        .bus()
         .dropped()
-        .saturating_sub(drops_at_measurement.unwrap_or_else(|| persist.dropped()));
+        .saturating_sub(drops_at_measurement.unwrap_or_else(|| persist.bus().dropped()));
     Ok((samples, dropped))
 }
 

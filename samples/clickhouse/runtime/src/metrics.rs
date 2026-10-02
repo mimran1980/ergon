@@ -3,8 +3,10 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use persist_client::clock::Clock;
-//! # let persist = persist_client::Persist::connect("", persist_client::Settings::from_env())?;
+//! use runtime::clock::Clock;
+//! # let settings = runtime::Settings::from_env();
+//! # let bus = runtime::bus::Bus::connect(&settings)?;
+//! # let persist = runtime::persist::Persist::connect("", &bus, settings)?;
 //! let metrics = persist.metrics();
 //! let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
 //! let depth = metrics.gauge("book_depth", &[("side", "bid")]);
@@ -29,7 +31,7 @@
 //! * A **gauge** is `Sync` and `Clone`: every handle of a series shares one
 //!   cell, and the last value set wins.
 //! * Off the hot path the same series can be updated from a `tracing` event,
-//!   once [`crate::Persist::layer`] is installed:
+//!   once [`crate::persist::Persist::layer`] is installed:
 //!   `tracing::info!(counter = "orders_sent", venue = "binance")`,
 //!   `tracing::info!(gauge = "book_depth", value = 12.0)`,
 //!   `tracing::info!(histogram = "tick_to_trade_ns", value = 850)`.
@@ -57,9 +59,9 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::Persist;
 use crate::clock::Nanos;
 use crate::event::codec;
+use crate::persist::Persist;
 
 /// Template id of the `MetricDef` message.
 pub const METRIC_DEF_TEMPLATE_ID: u16 = codec::MetricDefEncoder::TEMPLATE_ID;

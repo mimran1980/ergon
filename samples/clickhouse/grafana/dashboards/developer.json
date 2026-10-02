@@ -175,7 +175,7 @@
     "overrides": []
    },
    "options": {},
-   "description": "persist_client::record of one trade on the feed handler's thread: the cost of recording on the hot path. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+   "description": "runtime::persist::record of one trade on the feed handler's thread: the cost of recording on the hot path. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
   },
   {
    "id": 7,

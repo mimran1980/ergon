@@ -1,4 +1,4 @@
-//! Traces from `persist_client::trace` into `otel_traces`, the OpenTelemetry
+//! Traces from `runtime::trace` into `otel_traces`, the OpenTelemetry
 //! ClickHouse exporter's table, which Grafana's trace view reads as it is.
 //!
 //! A checkpoint trace becomes a span for the whole (named after the trace)
@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use persist_client::event::{Kind, codec};
-use persist_client::trace::TraceDef;
+use runtime::event::{Kind, codec};
+use runtime::trace::TraceDef;
 
 use crate::metrics::{Row, column};
 use crate::table::{DecodeError, Shape, write_varint};
@@ -21,7 +21,7 @@ const ATTRIBUTES: &str = "Map(LowCardinality(String), String)";
 /// links are always empty here.
 pub(crate) fn traces_shape() -> Shape {
     Shape {
-        name: persist_client::OTEL_TRACES.into(),
+        name: runtime::persist::OTEL_TRACES.into(),
         columns: vec![
             column("Timestamp", TS),
             column("TraceId", "String"),
@@ -68,7 +68,7 @@ pub(crate) fn unknown_def(message: &[u8], defs: &HashMap<u64, TraceDef>) -> Opti
 
 fn span_id(parts: &[u64]) -> u64 {
     let bytes: Vec<u8> = parts.iter().flat_map(|p| p.to_le_bytes()).collect();
-    persist_client::event::fnv64(&bytes).max(1)
+    runtime::event::fnv64(&bytes).max(1)
 }
 
 /// One span's columns.

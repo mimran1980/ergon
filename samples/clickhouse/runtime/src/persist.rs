@@ -1,13 +1,16 @@
-//! Publish rows, metrics, and traces to Aeron. The ingester writes ClickHouse.
-//! The application does not talk to ClickHouse and does not wait for it.
+//! Record rows, metrics, and traces for the ingester, which writes
+//! ClickHouse. The application does not talk to ClickHouse and does not wait
+//! for it. [`Persist`] publishes on its own stream through the
+//! application's [`Bus`].
 //!
 //! * [`Persist::record`] encodes an SBE message into the Aeron term. The table
 //!   is the message name.
 //! * [`Persist::layer`] records `tracing` events that set `table`, and
 //!   `counter`, `gauge`, or `histogram`. Columns and labels are the other
 //!   fields. See [`event`].
-//! * [`mod@metrics`], [`trace`], and [`clock`] are the hot-path tools. The
-//!   same metrics and span traces can also be emitted with the `tracing` macros.
+//! * [`mod@metrics`], [`trace`], and [`clock`](crate::clock) are the hot-path
+//!   tools. The same metrics and span traces can also be emitted with the
+//!   `tracing` macros.
 //!
 //! Keep a [`Persist`] instance and use its methods, [`Persist::metrics`],
 //! [`Persist::tracer`], and [`Persist::layer`] without installing a static.
@@ -32,18 +35,6 @@
 //!   book_snapshot: { kind: dynamic, enabled: false }
 //! ```
 
-pub mod clock;
-pub mod event;
-pub mod feed;
-pub mod idle;
-pub mod metrics;
-pub mod persistent;
-pub mod source;
-mod spans;
-pub mod streams;
-pub mod trace;
-mod value;
-
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -51,20 +42,16 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use rusteron_archive::{
-    Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronOfferError, AeronPublication,
-    IntoCString,
-};
+use rusteron_archive::AeronPublication;
 use serde::Deserialize;
 use tracing::Subscriber;
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 
-/// How many times a term rotation (`AdminAction`) is retried before the
-/// record is dropped. Aeron asks for an immediate retry; this keeps a stuck
-/// rotation off the recording thread.
-const ADMIN_ACTION_RETRIES: u32 = 8;
+use crate::bus::{Bus, Claim, DropKind, Drops};
+use crate::throttle::Throttle;
+use crate::{Error, Settings, event, metrics, spans, trace};
 
 /// The stream applications publish on and the ingester's archive records.
 pub const STREAM_ID: i32 = 1001;
@@ -73,48 +60,6 @@ pub const STREAM_ID: i32 = 1001;
 /// ingester share. The 64 KiB MTU fits a message of up to 65 472 bytes in
 /// one `try_claim`.
 pub const CHANNEL: &str = "aeron:ipc?term-length=16m|mtu=65504";
-
-/// Everything that can go wrong outside the recording hot path.
-#[derive(Debug)]
-pub enum Error {
-    /// The SBE schema cannot be read.
-    Schema(String),
-    /// `tables.yaml` is missing or invalid.
-    Config(String),
-    /// The media driver is unreachable or refused a request.
-    Aeron(String),
-    /// A background thread could not be started.
-    Thread(String),
-    /// A source, metric, or trace dictionary message could not be encoded.
-    Encode(event::codec::sbe_rt::EncodeError),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Schema(m) => write!(f, "schema: {m}"),
-            Self::Config(m) => write!(f, "tables.yaml: {m}"),
-            Self::Aeron(m) => write!(f, "aeron: {m}"),
-            Self::Thread(m) => write!(f, "thread: {m}"),
-            Self::Encode(err) => write!(f, "encode: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Encode(err) => Some(err),
-            Self::Schema(_) | Self::Config(_) | Self::Aeron(_) | Self::Thread(_) => None,
-        }
-    }
-}
-
-impl From<event::EncodeError> for Error {
-    fn from(err: event::EncodeError) -> Self {
-        Self::Encode(err)
-    }
-}
 
 /// Whether the ingester may change a table's columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -287,113 +232,6 @@ pub fn snake_case(name: &str) -> String {
     out
 }
 
-/// Why a record was not published. [`Drops::other`] is a mis-sized encode, a
-/// failed commit, a second thread, or a term rotation that would not finish.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Drops {
-    /// No subscriber was recording the stream.
-    pub not_connected: u64,
-    /// The term buffer was full.
-    pub back_pressure: u64,
-    /// Longer than one `try_claim` can hold.
-    pub too_large: u64,
-    /// Anything else that was not published.
-    pub other: u64,
-}
-
-impl Drops {
-    /// Every dropped record.
-    #[must_use]
-    pub fn total(self) -> u64 {
-        self.not_connected + self.back_pressure + self.too_large + self.other
-    }
-}
-
-/// Which counter [`Persist::count`] increments.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DropKind {
-    NotConnected,
-    BackPressure,
-    TooLarge,
-    Other,
-    /// After [`Persist::shutdown`]: not a drop.
-    Closed,
-}
-
-/// Where to publish and what to read.
-#[derive(Clone, Debug)]
-pub struct Settings {
-    /// `tables.yaml`, re-read every second.
-    pub config_path: PathBuf,
-    /// This application's name: its entry under a table's `apps` switches
-    /// that table for it alone. With [`Settings::host`] and [`Settings::pod`],
-    /// it is written into every row the application records.
-    pub app: String,
-    /// The machine (in Kubernetes, the node).
-    pub host: String,
-    /// The pod, or the process's name outside Kubernetes.
-    pub pod: String,
-    /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
-    pub aeron_dir: Option<String>,
-    /// Defaults to [`CHANNEL`].
-    pub channel: String,
-    /// Defaults to [`STREAM_ID`].
-    pub stream_id: i32,
-    /// How often [`metrics::Metrics::poll`] publishes (default 5 s), at
-    /// multiples of it in UNIX time.
-    pub metrics_interval: Duration,
-    /// How long [`Persist::connect`] waits for a subscriber to record the
-    /// stream. [`Duration::ZERO`] returns as soon as the publication exists;
-    /// records until a subscriber arrives are dropped.
-    pub subscriber_timeout: Duration,
-}
-
-impl Settings {
-    /// The default channel and stream, and the default media driver.
-    #[must_use]
-    pub fn new(config_path: impl Into<PathBuf>) -> Self {
-        Self {
-            config_path: config_path.into(),
-            app: String::new(),
-            host: String::new(),
-            pod: String::new(),
-            aeron_dir: None,
-            channel: CHANNEL.to_string(),
-            stream_id: STREAM_ID,
-            subscriber_timeout: Duration::from_secs(10),
-            metrics_interval: Duration::from_secs(5),
-        }
-    }
-
-    /// [`Settings::new`] with `PERSIST_CONFIG` (`config/tables.yaml`),
-    /// `PERSIST_APP` (the app's name, default none), the host from
-    /// [`source::host_name`], the pod from `POD_NAME`, else `HOSTNAME`
-    /// (which Kubernetes sets to the pod's name), and the durations
-    /// `PERSIST_METRICS_INTERVAL` and `PERSIST_SUBSCRIBER_TIMEOUT` (`5s`).
-    #[must_use]
-    pub fn from_env() -> Self {
-        let duration = |var, default| {
-            std::env::var(var)
-                .ok()
-                .and_then(|v| v.parse::<jiff::SignedDuration>().ok())
-                .and_then(|d| Duration::try_from(d).ok())
-                .unwrap_or(default)
-        };
-        Self {
-            app: std::env::var("PERSIST_APP").unwrap_or_default(),
-            host: source::host_name(),
-            pod: std::env::var("POD_NAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .unwrap_or_default(),
-            metrics_interval: duration("PERSIST_METRICS_INTERVAL", Duration::from_secs(5)),
-            subscriber_timeout: duration("PERSIST_SUBSCRIBER_TIMEOUT", Duration::from_secs(10)),
-            ..Self::new(
-                std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
-            )
-        }
-    }
-}
-
 /// The handle the free functions use; see [`Persist::install`].
 static INSTALLED: OnceLock<Persist> = OnceLock::new();
 
@@ -482,24 +320,21 @@ pub fn tracer(name: &str, stages: &[&str], attrs: &[&str]) -> trace::Tracer {
 /// [`install`](Persist::install) it once and use the free functions.
 #[derive(Clone)]
 pub struct Persist {
-    inner: Arc<Inner>,
+    pub(crate) inner: Arc<Inner>,
 }
 
-struct Inner {
+pub(crate) struct Inner {
     /// Unique per `Persist` ever made: keys the per-thread call-site cache,
     /// which an address could not (a new `Persist` may reuse an old one's).
-    id: u64,
+    pub(crate) id: u64,
     publication: AeronPublication,
     /// Largest `try_claim`. Longer records are dropped.
     max_payload: usize,
-    /// Stamped into every frame's reserved value; its `Source` message is
-    /// sent ahead of the shapes.
-    source: source::Source,
-    source_message: Vec<u8>,
     /// Series and their publishing; see [`Persist::metrics`].
     metrics: metrics::Metrics,
-    aeron: Aeron,
-    shared: Arc<Shared>,
+    /// Its `Source` message is sent ahead of the shapes.
+    bus: Bus,
+    pub(crate) shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
 }
@@ -512,7 +347,7 @@ struct Beat {
 }
 
 /// State the config watcher writes and the hot path reads.
-struct Shared {
+pub(crate) struct Shared {
     /// Indexed by SBE template id.
     enabled: Vec<AtomicBool>,
     /// Event tables' switches by name, including tables `tables.yaml` does
@@ -521,40 +356,36 @@ struct Shared {
     events: RwLock<HashMap<String, Arc<AtomicBool>>>,
     /// Every event shape made so far, by id. A heartbeat round sends them
     /// again, one message per record, after the watcher marks them due.
-    shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
+    pub(crate) shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
     shapes_due: AtomicBool,
     /// The heartbeat round still to send: `Source`, then each shape, then
     /// each trace definition. Empty when nothing is due.
     heartbeat_queue: Mutex<VecDeque<Beat>>,
     /// [`Shared::heartbeat_queue`]'s length, so an idle record is one load.
     heartbeat_left: AtomicUsize,
-    /// Bumped every 5 s: each feed sends its `Source` message again.
-    heartbeat: AtomicU64,
-    /// [`Persist::shutdown`] has begun: nothing more is published.
-    closed: AtomicBool,
-    /// Every feed's publication, for [`Persist::shutdown`] to close.
-    feeds: Mutex<Vec<AeronPublication>>,
     /// Each trace's switch by name, set from `otel_traces` by the watcher.
     traces: RwLock<HashMap<String, Arc<trace::TraceSwitch>>>,
     /// Every trace definition made, re-sent with the shapes.
-    trace_defs: Mutex<Vec<Arc<trace::DefMessage>>>,
+    pub(crate) trace_defs: Mutex<Vec<Arc<trace::DefMessage>>>,
     /// `otel_traces` is on for this app: `tracing` spans are recorded, and a
     /// new tracer starts on.
     spans_on: AtomicBool,
     /// `otel_traces`' sampling by trace name, as last applied: what a new
     /// tracer starts with.
     trace_rules: RwLock<BTreeMap<String, TraceConfig>>,
-    span_defs: spans::SpanDefs,
-    not_connected: AtomicU64,
-    back_pressure: AtomicU64,
-    too_large: AtomicU64,
-    other: AtomicU64,
+    pub(crate) span_defs: spans::SpanDefs,
 }
 
 impl Persist {
-    /// Read the schema and `tables.yaml`, connect to the media driver, and
-    /// start re-reading `tables.yaml` every second.
-    pub fn connect(schema_xml: &str, settings: Settings) -> Result<Self, Error> {
+    /// Read the schema and `tables.yaml`, publish on `settings.channel`
+    /// through `bus`, and start re-reading `tables.yaml` every second.
+    ///
+    /// # Errors
+    ///
+    /// The schema or `tables.yaml` is invalid, the publication could not be
+    /// added, no subscriber recorded it within `settings.subscriber_timeout`,
+    /// or the watcher thread could not start.
+    pub fn connect(schema_xml: &str, bus: &Bus, settings: Settings) -> Result<Self, Error> {
         let schema = schema_tables(schema_xml)?;
         let slots = schema.iter().map(|(_, id)| usize::from(*id) + 1).max();
         let shared = Arc::new(Shared {
@@ -567,39 +398,28 @@ impl Persist {
             shapes_due: AtomicBool::new(true),
             heartbeat_queue: Mutex::new(VecDeque::new()),
             heartbeat_left: AtomicUsize::new(0),
-            heartbeat: AtomicU64::new(0),
-            closed: AtomicBool::new(false),
-            feeds: Mutex::new(Vec::new()),
             traces: RwLock::new(HashMap::new()),
             trace_defs: Mutex::new(Vec::new()),
             spans_on: AtomicBool::new(false),
             trace_rules: RwLock::new(BTreeMap::new()),
             span_defs: spans::SpanDefs::default(),
-            not_connected: AtomicU64::new(0),
-            back_pressure: AtomicU64::new(0),
-            too_large: AtomicU64::new(0),
-            other: AtomicU64::new(0),
         });
         let metrics = metrics::Metrics::new(settings.metrics_interval);
-        type Read = fn(&Shared) -> &AtomicU64;
+        type Read = fn(Drops) -> u64;
         let reasons: [(&str, Read); 4] = [
-            ("not_connected", |s: &Shared| &s.not_connected),
-            ("back_pressure", |s: &Shared| &s.back_pressure),
-            ("too_large", |s: &Shared| &s.too_large),
-            ("other", |s: &Shared| &s.other),
+            ("not_connected", |d| d.not_connected),
+            ("back_pressure", |d| d.back_pressure),
+            ("too_large", |d| d.too_large),
+            ("other", |d| d.other),
         ];
         for (reason, read) in reasons {
-            let shared = Arc::clone(&shared);
+            let bus = bus.clone();
             metrics.counter_fn("persist_dropped", &[("reason", reason)], move || {
-                read(&shared).load(Ordering::Relaxed)
+                read(bus.drops())
             });
         }
         metrics.start();
-        let (aeron, publication) =
-            publish(&settings).map_err(|e| Error::Aeron(format!("{}: {e}", settings.channel)))?;
-        let mut source = source::Source::new(&settings.host, &settings.pod, &settings.app);
-        source.client = aeron.client_id();
-        let source_message = source.message()?;
+        let publication = bus.add_publication(&settings.channel, settings.stream_id)?;
         let max_payload = publication
             .max_payload_length()
             .map_err(|e| Error::Aeron(e.to_string()))?;
@@ -611,10 +431,11 @@ impl Persist {
             text: String::new(),
             config: BTreeMap::new(),
             applied: false,
-            error: None,
+            error: Throttle::new(Duration::from_secs(60)),
             seen: Drops::default(),
             schema,
             shared: Arc::clone(&shared),
+            bus: bus.clone(),
         };
         watcher.reload()?;
         watcher.apply(jiff::Timestamp::now());
@@ -637,10 +458,8 @@ impl Persist {
                 },
                 publication,
                 max_payload,
-                source,
-                source_message,
                 metrics,
-                aeron,
+                bus: bus.clone(),
                 shared,
                 stop,
                 watcher: Some(thread),
@@ -703,7 +522,7 @@ impl Persist {
             switch,
             &self.inner.metrics,
             Some(self.clone()),
-            self.inner.source.id.rotate_left(17) ^ nonce,
+            self.inner.bus.source().id.rotate_left(17) ^ nonce,
         )
     }
 
@@ -743,7 +562,7 @@ impl Persist {
     /// `len` bytes of the Aeron term buffer and returns the length it wrote;
     /// otherwise `encode` is never called.
     ///
-    /// The record is dropped and counted in [`Persist::drops`] when Aeron
+    /// The record is dropped and counted in [`Bus::drops`] when Aeron
     /// cannot take it (no subscriber yet, back pressure, larger than one
     /// claim), when a term rotation does not finish within eight retries,
     /// when `encode` wrote another length or
@@ -946,7 +765,7 @@ impl Persist {
     fn heartbeat_round(&self) -> VecDeque<Beat> {
         let mut round = VecDeque::new();
         round.push_back(Beat {
-            bytes: self.inner.source_message.clone(),
+            bytes: self.inner.bus.source_message().to_vec(),
             shape: None,
             def: None,
         });
@@ -996,80 +815,11 @@ impl Persist {
     /// Claim `len` bytes, stamped with this application's source id.
     #[inline]
     fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
-        self.try_claim_on(&self.inner.publication, len)
-    }
-
-    /// Close every publication now, so the media driver drops them at once
-    /// and subscribers turn to the next publisher of each feed within
-    /// seconds, rather than after this client's liveness timeout. Call it on
-    /// SIGTERM, before exiting. Records made from now on are not published.
-    ///
-    /// It returns once the client has handed each close to the driver (at
-    /// most a second): a close is asynchronous, and one lost to an exit
-    /// leaves the publication open until the client times out. A new
-    /// process on the same node would then join that publication, in the
-    /// old session, and subscribers would never see it restart.
-    pub fn shutdown(&self) {
-        let shared = &self.inner.shared;
-        if shared.closed.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        // Let records already claiming finish: each takes well under a
-        // microsecond.
-        std::thread::sleep(Duration::from_millis(50));
-        let mut publications =
-            std::mem::take(&mut *shared.feeds.lock().unwrap_or_else(PoisonError::into_inner));
-        publications.push(self.inner.publication.clone());
-        let done = Arc::new(AtomicU64::new(0));
-        let handler = {
-            let done = Arc::clone(&done);
-            rusteron_archive::Handler::new(move || {
-                done.fetch_add(1, Ordering::Relaxed);
-            })
-        };
-        let closing = publications
-            .into_iter()
-            .map(|p| p.close_with_handler(Some(&handler)))
-            .filter(Result::is_ok)
-            .count() as u64;
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while done.load(Ordering::Relaxed) < closing && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        if done.load(Ordering::Relaxed) < closing {
-            log::warn!("shutdown: the driver took more than a second to close the publications");
-            // The client still holds it and may call it yet: never free it.
-            std::mem::forget(handler);
-        }
-    }
-
-    /// Claim `len` bytes of `publication`, stamped with this application's
-    /// source id.
-    #[inline]
-    pub(crate) fn try_claim_on(
-        &self,
-        publication: &AeronPublication,
-        len: usize,
-    ) -> Result<Claim, DropKind> {
-        if self.inner.shared.closed.load(Ordering::Relaxed) {
-            return Err(DropKind::Closed);
-        }
-        let claim = AeronBufferClaim::new_zeroed_on_stack();
-        retry_admin(|| publication.try_claim(len, &claim)).map_err(|err| classify(&err))?;
-        claim.frame_header_mut().reserved_value = self.inner.source.id as i64;
-        Ok(Claim { claim, done: false })
+        self.inner.bus.try_claim(&self.inner.publication, len)
     }
 
     pub(crate) fn count(&self, kind: DropKind) {
-        let shared = &self.inner.shared;
-        let counter = match kind {
-            DropKind::NotConnected => &shared.not_connected,
-            DropKind::BackPressure => &shared.back_pressure,
-            DropKind::TooLarge => &shared.too_large,
-            DropKind::Other => &shared.other,
-            DropKind::Closed => return,
-        };
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.inner.bus.count(kind);
     }
 
     /// The longest message one claim holds.
@@ -1086,33 +836,21 @@ impl Persist {
 
     #[cold]
     pub(crate) fn drop_one(&self) {
-        self.count(DropKind::Other);
+        self.inner.bus.drop_one();
     }
 
-    /// Records dropped so far, by reason (see [`Persist::record`]). Also
-    /// logged, once a second while the total grows.
+    /// The bus this records through: its [`Bus::drops`] count this
+    /// handle's dropped records, and [`Bus::shutdown`] closes it.
     #[must_use]
-    pub fn drops(&self) -> Drops {
-        let shared = &self.inner.shared;
-        Drops {
-            not_connected: shared.not_connected.load(Ordering::Relaxed),
-            back_pressure: shared.back_pressure.load(Ordering::Relaxed),
-            too_large: shared.too_large.load(Ordering::Relaxed),
-            other: shared.other.load(Ordering::Relaxed),
-        }
-    }
-
-    /// [`Drops::total`] of [`Persist::drops`].
-    #[must_use]
-    pub fn dropped(&self) -> u64 {
-        self.drops().total()
+    pub fn bus(&self) -> &Bus {
+        &self.inner.bus
     }
 }
 
 impl std::fmt::Debug for Persist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Persist")
-            .field("dropped", &self.dropped())
+            .field("bus", &self.inner.bus)
             .finish_non_exhaustive()
     }
 }
@@ -1124,62 +862,6 @@ impl Drop for Inner {
             thread.thread().unpark();
             let _ = thread.join();
         }
-    }
-}
-
-/// A claimed slot of the term buffer: aborted when dropped uncommitted, so
-/// an `encode` that fails releases it at once.
-pub(crate) struct Claim {
-    claim: AeronBufferClaim,
-    done: bool,
-}
-
-impl Claim {
-    #[inline]
-    pub(crate) fn data(&mut self) -> &mut [u8] {
-        self.claim.data()
-    }
-
-    #[inline]
-    pub(crate) fn commit(mut self) -> Result<(), rusteron_archive::AeronCError> {
-        self.done = true;
-        self.claim.commit().map(drop)
-    }
-}
-
-impl Drop for Claim {
-    fn drop(&mut self) {
-        if !self.done {
-            let _ = self.claim.abort();
-        }
-    }
-}
-
-#[inline]
-fn retry_admin<T>(
-    mut once: impl FnMut() -> Result<T, AeronOfferError>,
-) -> Result<T, AeronOfferError> {
-    let mut left = ADMIN_ACTION_RETRIES;
-    loop {
-        match once() {
-            Err(AeronOfferError::AdminAction) if left > 0 => {
-                left -= 1;
-                std::hint::spin_loop();
-            }
-            result => return result,
-        }
-    }
-}
-
-fn classify(err: &AeronOfferError) -> DropKind {
-    match err {
-        AeronOfferError::NotConnected => DropKind::NotConnected,
-        AeronOfferError::BackPressured => DropKind::BackPressure,
-        // Aeron returns this when the claim is longer than `max_payload`.
-        AeronOfferError::Error(inner) if inner.kind() == AeronErrorType::PublicationError => {
-            DropKind::TooLarge
-        }
-        _ => DropKind::Other,
     }
 }
 
@@ -1200,28 +882,6 @@ fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> R
     Ok(())
 }
 
-fn publish(
-    settings: &Settings,
-) -> Result<(Aeron, AeronPublication), rusteron_archive::AeronCError> {
-    let ctx = AeronContext::new()?;
-    if let Some(dir) = &settings.aeron_dir {
-        ctx.set_dir(&dir.as_str().into_c_string())?;
-    }
-    // The driver's counters name their client by this: see `aeron_counters`.
-    if !settings.app.is_empty() {
-        ctx.set_client_name(&settings.app.as_str().into_c_string())?;
-    }
-    let aeron = Aeron::new(&ctx)?;
-    aeron.start()?;
-    let publication = aeron
-        .async_add_publication(
-            &settings.channel.as_str().into_c_string(),
-            settings.stream_id,
-        )?
-        .poll_blocking(Duration::from_secs(10))?;
-    Ok((aeron, publication))
-}
-
 /// Applies `tables.yaml` to [`Shared::enabled`]; runs on its own thread.
 struct Watcher {
     ticks: u64,
@@ -1233,11 +893,12 @@ struct Watcher {
     config: BTreeMap<String, TableConfig>,
     /// The switches have been applied once: after that, only changes are logged.
     applied: bool,
-    /// The last error logged, so a broken file is reported once.
-    error: Option<String>,
+    /// The last error logged, so a broken file is reported once, then as a reminder.
+    error: Throttle,
     seen: Drops,
     schema: Vec<(String, u16)>,
     shared: Arc<Shared>,
+    bus: Bus,
 }
 
 impl Watcher {
@@ -1249,26 +910,18 @@ impl Watcher {
         self.ticks += 1;
         if self.ticks.is_multiple_of(5) {
             self.shared.shapes_due.store(true, Ordering::Relaxed);
-            self.shared.heartbeat.fetch_add(1, Ordering::Relaxed);
+            self.bus.beat();
         }
         match self.reload() {
-            Ok(()) => self.error = None,
-            Err(e) => {
-                let e = format!("{e}; keeping the previous configuration");
-                if self.error.as_ref() != Some(&e) {
-                    log::error!("{e}");
-                    self.error = Some(e);
-                }
-            }
+            Ok(()) => self.error.clear(),
+            Err(e) => self.error.log(
+                log::Level::Error,
+                format_args!("{e}; keeping the previous configuration"),
+            ),
         }
         // Every second, changed or not: an `until` passes by itself.
         self.apply(jiff::Timestamp::now());
-        let drops = Drops {
-            not_connected: self.shared.not_connected.load(Ordering::Relaxed),
-            back_pressure: self.shared.back_pressure.load(Ordering::Relaxed),
-            too_large: self.shared.too_large.load(Ordering::Relaxed),
-            other: self.shared.other.load(Ordering::Relaxed),
-        };
+        let drops = self.bus.drops();
         if drops.total() > self.seen.total() {
             log::warn!(
                 "{} records dropped in the last second ({} in all: {} not connected, {} back pressure, {} too large, {} other)",
@@ -1469,47 +1122,6 @@ mod tests {
             assert!(parse_config(&text).is_err(), "accepted slower_than: {bad}");
         }
         Ok(())
-    }
-
-    #[test]
-    fn admin_action_is_retried_a_handful_of_times() {
-        let mut calls = 0;
-        let err: Result<(), _> = retry_admin(|| {
-            calls += 1;
-            Err(AeronOfferError::AdminAction)
-        });
-        assert!(matches!(err, Err(AeronOfferError::AdminAction)));
-        assert_eq!(calls, ADMIN_ACTION_RETRIES + 1);
-
-        calls = 0;
-        let ok = retry_admin(|| {
-            calls += 1;
-            if calls < 3 {
-                Err(AeronOfferError::AdminAction)
-            } else {
-                Ok(7)
-            }
-        });
-        assert_eq!(ok, Ok(7));
-        assert_eq!(calls, 3);
-
-        let err = retry_admin(|| Err::<(), _>(AeronOfferError::BackPressured));
-        assert!(matches!(err, Err(AeronOfferError::BackPressured)));
-        assert_eq!(
-            classify(&AeronOfferError::NotConnected),
-            DropKind::NotConnected
-        );
-        assert_eq!(
-            classify(&AeronOfferError::BackPressured),
-            DropKind::BackPressure
-        );
-        assert_eq!(
-            classify(&AeronOfferError::Error(
-                AeronErrorType::PublicationError.into()
-            )),
-            DropKind::TooLarge
-        );
-        assert_eq!(classify(&AeronOfferError::Closed), DropKind::Other);
     }
 
     #[test]

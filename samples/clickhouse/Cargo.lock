@@ -2068,12 +2068,10 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "env_logger",
  "log",
  "mimalloc",
- "persist-client",
+ "runtime",
  "schema",
- "signal-hook",
 ]
 
 [[package]]
@@ -3260,7 +3258,7 @@ dependencies = [
  "nautilus-live",
  "nautilus-model",
  "nautilus-okx",
- "persist-client",
+ "runtime",
  "rust_decimal",
  "schema",
  "serde",
@@ -4236,21 +4234,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "persist-client"
-version = "0.1.0"
-dependencies = [
- "ergo-sbe",
- "jiff",
- "log",
- "minstant",
- "rusteron-archive",
- "serde",
- "serde_yaml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "persist-server"
 version = "0.1.0"
 dependencies = [
@@ -4260,7 +4243,7 @@ dependencies = [
  "jiff",
  "log",
  "mimalloc",
- "persist-client",
+ "runtime",
  "rusteron-archive",
  "schema",
  "serde",
@@ -4707,6 +4690,23 @@ name = "ruint-macro"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
+
+[[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "ergo-sbe",
+ "jiff",
+ "log",
+ "minstant",
+ "rusteron-archive",
+ "serde",
+ "serde_yaml",
+ "signal-hook",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "rust_decimal"

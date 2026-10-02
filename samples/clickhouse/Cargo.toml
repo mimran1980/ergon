@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["aeron-bench", "aeron-driver", "engine", "md", "persist-client", "persist-server", "schema"]
+members = ["aeron-bench", "aeron-driver", "engine", "md", "persist-server", "runtime", "schema"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +11,7 @@ publish = false
 
 [workspace.dependencies]
 ergo-sbe = { path = "../../sbe" }
-persist-client = { path = "persist-client" }
+runtime = { path = "runtime" }
 schema = { path = "schema" }
 log = "0.4"
 mimalloc = "0.1.52"

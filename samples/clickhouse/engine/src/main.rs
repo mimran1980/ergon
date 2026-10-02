@@ -1,6 +1,6 @@
 //! One thread, one loop, for one region.
 //!
-//! `md` streams and the exchange's fills come through `Persistent`, so a slow
+//! `md` streams and the exchange's fills come through `PersistentSubscription`, so a slow
 //! or restarted engine catches up from the archive. `tob` is best effort.
 //! The loop keeps each instrument's L2 book, and per asset an aggregated book,
 //! EMAs, and a strategy. Orders go to `exch-sim`. Fills come back on `exec`.
@@ -21,8 +21,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use engine::{App, Book, Change, Emas, Spec, Strategy, aggregate};
-use persist_client::clock::{Clock, Nanos};
+use engine::{Book, Change, Emas, Spec, Strategy, aggregate};
+use runtime::app::App;
+use runtime::clock::{Clock, Nanos};
 use schema::market::{
     AnyMessage, BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder,
     Side as MdSide,
@@ -33,10 +34,11 @@ use schema::trading::{
 };
 use std::collections::HashMap;
 
-use persist_client::feed::{Delivery, Feed, Subscriber};
-use persist_client::metrics::{Counter, Gauge, Histogram};
-use persist_client::persistent::Persistent;
-use persist_client::trace::{Trace, TraceId, Tracer};
+use runtime::metrics::{Counter, Gauge, Histogram};
+use runtime::publication::Publication;
+use runtime::subscription::PersistentSubscription;
+use runtime::subscription::{Delivery, Subscription};
+use runtime::trace::{Trace, TraceId, Tracer};
 
 /// Messages taken from one subscription per loop.
 const LIMIT: usize = 64;
@@ -54,14 +56,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (s, ip) = (&app.streams, app.host_ip.as_str());
     let publication = s.publication(&service, ip)?;
     let signals = app
-        .persist
-        .feed(&publication, s.stream(&service, "signals")?)?;
+        .bus
+        .publication(&publication, s.stream(&service, "signals")?)?;
     let orders = app
-        .persist
-        .feed(&publication, s.stream(&service, "orders")?)?;
+        .bus
+        .publication(&publication, s.stream(&service, "orders")?)?;
     let exchange = format!("exch-sim-{}", app.region);
-    let mut exec = app.persist.persistent(s, &exchange, "exec", ip)?;
-    let metrics = app.persist.metrics();
+    let mut exec = app.bus.persistent(s, &exchange, "exec", ip)?;
+    let metrics = app.metrics();
     let (mut subs, mut venues) = (Vec::new(), Vec::new());
     add_venues(&app, s, &metrics, &mut subs, &mut venues)?;
     log::info!(
@@ -75,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // A feed handler added to the registry, in any region, is subscribed to
     // within a second or two, with no restart.
-    let watch = persist_client::streams::Watch::spawn(&app.streams_path)?;
+    let watch = runtime::streams::Watch::spawn(&app.streams_path)?;
     let mut core = Core {
         venues,
         assets: Vec::new(),
@@ -126,9 +128,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// the registry just goes quiet.
 fn add_venues(
     app: &App,
-    streams: &persist_client::streams::Streams,
-    metrics: &persist_client::metrics::Metrics,
-    subs: &mut Vec<(Persistent, Subscriber, Tracer)>,
+    streams: &runtime::streams::Streams,
+    metrics: &runtime::metrics::Metrics,
+    subs: &mut Vec<(PersistentSubscription, Subscription, Tracer)>,
     venues: &mut Vec<Venue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ip = app.host_ip.as_str();
@@ -141,11 +143,11 @@ fn add_venues(
         if venues.iter().any(|v| v.name == label) {
             continue;
         }
-        let tob = app.persist.subscriber(
+        let tob = app.bus.subscription(
             &streams.subscription(name, "tob", ip)?,
             streams.stream(name, "tob")?,
         );
-        let md = app.persist.persistent(streams, name, "md", ip)?;
+        let md = app.bus.persistent(streams, name, "md", ip)?;
         // A trace per venue, its stages naming the venue and the route, so
         // a slow `feed` reads as the region it crossed. Still `tick_to_trade`:
         // sampled by tables.yaml's rule of that name. Held apart from `Core`:
@@ -230,8 +232,8 @@ struct Asset {
 struct Core {
     venues: Vec<Venue>,
     assets: Vec<Asset>,
-    signals: Feed,
-    orders: Feed,
+    signals: Publication,
+    orders: Publication,
     clock: Clock,
     next_second: i64,
     sent: Counter,
@@ -248,7 +250,7 @@ struct Core {
     /// Order sent to the exchange's `New`, and to its `Filled`.
     order_ack: Histogram,
     order_fill: Histogram,
-    metrics: persist_client::metrics::Metrics,
+    metrics: runtime::metrics::Metrics,
 }
 
 impl Core {

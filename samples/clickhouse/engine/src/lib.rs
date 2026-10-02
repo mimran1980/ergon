@@ -1,15 +1,9 @@
 //! The engine's logic, apart from Aeron: each instrument's order book from
-//! the feeds, their aggregate per asset, the EMAs and the strategy. Shared
-//! by the `engine` and `exch-sim` binaries with [`App`].
+//! the feeds, their aggregate per asset, the EMAs and the strategy.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrayvec::ArrayVec;
-use persist_client::idle::Idle;
-use persist_client::streams::Streams;
-use persist_client::{Persist, Settings};
 
 /// Decimal9 mantissas per unit.
 pub const SCALE: f64 = 1e9;
@@ -236,107 +230,6 @@ impl Strategy {
     #[must_use]
     pub fn pnl(&self, mid: f64) -> f64 {
         self.cash + self.position * mid
-    }
-}
-
-/// Why [`App::start`] could not bring a process up.
-#[derive(Debug)]
-pub enum Error {
-    /// The node check, the persist connection, or the stream registry failed.
-    Persist(persist_client::Error),
-    /// `SIGTERM` could not be registered.
-    Signal(std::io::Error),
-    /// `IDLE` is not `spin`, `noop`, `yield`, or `sleep`.
-    Idle(String),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Persist(err) => write!(f, "{err}"),
-            Self::Signal(err) => write!(f, "SIGTERM: {err}"),
-            Self::Idle(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Persist(err) => Some(err),
-            Self::Signal(err) => Some(err),
-            Self::Idle(_) => None,
-        }
-    }
-}
-
-impl From<persist_client::Error> for Error {
-    fn from(err: persist_client::Error) -> Self {
-        Self::Persist(err)
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Self::Signal(err)
-    }
-}
-
-/// What both binaries start with: logging, the persist handle, the feed
-/// registry, their idle strategy, and SIGTERM.
-pub struct App {
-    pub persist: Persist,
-    pub streams: Streams,
-    /// Where `streams` came from, to follow its changes.
-    pub streams_path: String,
-    /// This node's IP: its feeds bind it.
-    pub host_ip: String,
-    /// `REGION`: which `md-*` feeds, and whose engine and exchange.
-    pub region: String,
-    pub idle: Idle,
-    /// Set on SIGTERM: close the feeds and exit.
-    pub stop: Arc<AtomicBool>,
-}
-
-impl App {
-    /// Logging, the persist handle, the feed registry, the idle strategy,
-    /// and `SIGTERM`.
-    ///
-    /// # Errors
-    ///
-    /// The node check, the persist connection, the stream file, `IDLE`, or
-    /// registering `SIGTERM` failed.
-    pub fn start(schema: &str) -> Result<Self, Error> {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-        persist_client::streams::check_node_network()?;
-        let persist = Persist::connect(schema, Settings::from_env())?;
-        let stop = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
-        let streams_path =
-            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into());
-        Ok(Self {
-            persist,
-            streams: Streams::load(&streams_path)?,
-            streams_path,
-            host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
-            region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
-            // Lab default: yield. For the best latency, spin (or noop) on an
-            // isolated core.
-            idle: Idle::from_env("IDLE", Idle::Yield).map_err(Error::Idle)?,
-            stop,
-        })
-    }
-
-    /// SIGTERM arrived: the feeds are closed, so subscribers turn to this
-    /// service's next pod at once.
-    #[must_use]
-    pub fn stopping(&self) -> bool {
-        if self.stop.load(Ordering::Relaxed) {
-            log::info!("SIGTERM: closing the feeds");
-            self.persist.shutdown();
-            return true;
-        }
-        false
     }
 }
 

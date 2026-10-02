@@ -71,7 +71,7 @@ pub struct Ingester {
     /// This node's IP: its feeds' spies bind it.
     host_ip: String,
     /// New versions of `streams.yaml`, once [`Ingester::follow`] is called.
-    watch: Option<persist_client::streams::Watch>,
+    watch: Option<runtime::streams::Watch>,
     checkpoint_path: PathBuf,
     /// Positions of an insert that may already be in ClickHouse. Written
     /// before the insert and removed when the checkpoint passes it, so a
@@ -171,7 +171,7 @@ impl Ingester {
     /// Follow `streams.yaml` at `path` from now on: a service added to it has
     /// its feeds recorded here from the next tick, with no restart.
     pub fn follow(&mut self, path: impl Into<PathBuf>) -> Result<(), Error> {
-        self.watch = Some(persist_client::streams::Watch::spawn(path)?);
+        self.watch = Some(runtime::streams::Watch::spawn(path)?);
         Ok(())
     }
 
@@ -224,7 +224,7 @@ impl Ingester {
             && Instant::now() >= *next
         {
             *next = Instant::now() + *every;
-            let now = persist_client::clock::Clock::new().now().epoch_ns();
+            let now = runtime::clock::Clock::new().now().epoch_ns();
             let clients = self.writer.client_names();
             report
                 .errors
@@ -606,7 +606,7 @@ fn record(archive: &AeronArchive, channel: &str, stream_id: i32) -> Result<(), E
 /// a spy on its publication, and track its stream id.
 fn record_feeds(
     archive: &AeronArchive,
-    streams: &persist_client::streams::Streams,
+    streams: &runtime::streams::Streams,
     host_ip: &str,
     feeds: &mut BTreeSet<i32>,
 ) -> Result<(), Error> {

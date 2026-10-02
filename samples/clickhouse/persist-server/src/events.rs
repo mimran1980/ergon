@@ -1,5 +1,5 @@
 //! Tables fed by `tracing` events that name a table, and by `record_row`
-//! (`persist_client::event`). A `counter`, `gauge`, or `histogram` field is a
+//! (`runtime::event`). A `counter`, `gauge`, or `histogram` field is a
 //! metric message, not a row of one of these tables. There is no schema: the
 //! columns are the fields of the rows' shapes, each typed by the first shape
 //! that has it, after a `ts DateTime64(9, 'UTC')` column.
@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use persist_client::event::{Column as EventColumn, Decoded, Kind, Shape as EventShape, Value};
+use runtime::event::{Column as EventColumn, Decoded, Kind, Shape as EventShape, Value};
 
 use crate::table::{Column, DecodeError, Shape, write_string, write_varint};
 

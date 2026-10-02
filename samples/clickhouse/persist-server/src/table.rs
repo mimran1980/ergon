@@ -21,7 +21,7 @@
 //! is written as its default.
 
 use ergo_sbe::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
-use persist_client::snake_case;
+use runtime::persist::snake_case;
 
 use crate::Error;
 

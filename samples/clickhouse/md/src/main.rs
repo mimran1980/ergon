@@ -46,11 +46,13 @@ use nautilus_model::orderbook::{BookLevel, OrderBook};
 use nautilus_okx::OKXInstrumentType;
 use nautilus_okx::config::OKXDataClientConfig;
 use nautilus_okx::factories::OKXDataClientFactory;
-use persist_client::clock::{Clock, Nanos};
-use persist_client::event::Value;
-use persist_client::metrics::{Counter, Gauge, Histogram};
-use persist_client::trace::Tracer;
-use persist_client::{Persist, Settings};
+use runtime::Settings;
+use runtime::bus::Bus;
+use runtime::clock::{Clock, Nanos};
+use runtime::event::Value;
+use runtime::metrics::{Counter, Gauge, Histogram};
+use runtime::persist::Persist;
+use runtime::trace::Tracer;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use schema::market::{
@@ -265,9 +267,9 @@ struct Recorder {
 struct Feeds {
     /// Reliable: trades, order book changes and snapshots, bars, mark and
     /// index prices, funding rates.
-    md: persist_client::feed::Feed,
+    md: runtime::publication::Publication,
     /// Best effort: quotes (top of book).
-    tob: persist_client::feed::Feed,
+    tob: runtime::publication::Publication,
     /// Book changes per `book_deltas` message: as many as one UDP frame holds.
     deltas_per_row: usize,
 }
@@ -283,15 +285,15 @@ impl std::fmt::Debug for Feeds {
 
 impl Feeds {
     /// Open `service`'s feeds from the registry, on the node at `host_ip`.
-    fn open(persist: &Persist, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let streams = persist_client::streams::Streams::load(
+    fn open(bus: &Bus, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let streams = runtime::streams::Streams::load(
             std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
         )?;
-        persist_client::streams::check_node_network()?;
+        runtime::streams::check_node_network()?;
         let host_ip = std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into());
         let channel = streams.publication(service, &host_ip)?;
-        let md = persist.feed(&channel, streams.stream(service, "md")?)?;
-        let tob = persist.feed(&channel, streams.stream(service, "tob")?)?;
+        let md = bus.publication(&channel, streams.stream(service, "md")?)?;
+        let tob = bus.publication(&channel, streams.stream(service, "tob")?)?;
         // Room for the longest symbol and venue name in these feeds.
         let fits =
             |n: usize| BookDeltasEncoder::compute_length_with_header(n, 32, 16) <= md.max_payload();
@@ -324,7 +326,7 @@ struct Telemetry {
     /// The venue's timestamp to our handler, ns.
     trade_latency: Histogram,
     quote_latency: Histogram,
-    /// How long `persist_client::record` of a trade takes, ns.
+    /// How long `runtime::persist::record` of a trade takes, ns.
     record_ns: Histogram,
     spread_bps: HashMap<InstrumentId, Gauge>,
     /// Each book change, from the venue's timestamp: `wire`, `convert`,
@@ -334,7 +336,7 @@ struct Telemetry {
 
 impl Telemetry {
     fn new(instruments: &[InstrumentId]) -> Self {
-        let m = persist_client::metrics();
+        let m = runtime::persist::metrics();
         let kind = |k| m.counter("messages", &[("kind", k)]);
         let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
         Self {
@@ -353,7 +355,7 @@ impl Telemetry {
                     (id, gauge)
                 })
                 .collect(),
-            book_update: persist_client::tracer(
+            book_update: runtime::persist::tracer(
                 "book_update",
                 &["wire", "convert", "record"],
                 &["deltas"],
@@ -758,8 +760,8 @@ impl DataActor for Recorder {
             return Ok(());
         }
         // Any other custom type: rare, so a JSON round trip is fine here.
-        let table = persist_client::snake_case(data.data.type_name());
-        if !persist_client::event_enabled(&table) {
+        let table = runtime::persist::snake_case(data.data.type_name());
+        if !runtime::persist::event_enabled(&table) {
             return Ok(());
         }
         // ponytail: a JSON round trip per row; these arrive a few a second.
@@ -786,7 +788,7 @@ impl DataActor for Recorder {
             };
             (k != "type").then_some((k.as_str(), value))
         });
-        persist_client::record_row(
+        runtime::persist::record_row(
             &table,
             scalars
                 .chain(nested.iter().map(|(k, v)| (*k, Value::Str(v))))
@@ -801,7 +803,7 @@ impl Recorder {
     /// wrote, with the decimals and ids formatted on the stack.
     fn public_trade(&self, t: &HyperliquidPublicTrade) {
         const TABLE: &str = "hyperliquid_public_trade";
-        if !persist_client::event_enabled(TABLE) {
+        if !runtime::persist::event_enabled(TABLE) {
             return;
         }
         let (id, price, size) = (
@@ -810,7 +812,7 @@ impl Recorder {
             text::<48>(t.size),
         );
         let side = text::<16>(t.aggressor_side);
-        persist_client::record_row(
+        runtime::persist::record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -831,11 +833,11 @@ impl Recorder {
     /// `hyperliquid_open_interest`, as [`Self::public_trade`].
     fn open_interest(&self, oi: &HyperliquidOpenInterest) {
         const TABLE: &str = "hyperliquid_open_interest";
-        if !persist_client::event_enabled(TABLE) {
+        if !runtime::persist::event_enabled(TABLE) {
             return;
         }
         let (id, open_interest) = (text::<64>(oi.instrument_id), text::<48>(oi.open_interest));
-        persist_client::record_row(
+        runtime::persist::record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -850,10 +852,10 @@ impl Recorder {
     /// `deribit_volatility_index`, as [`Self::public_trade`].
     fn volatility_index(&self, v: &DeribitVolatilityIndex) {
         const TABLE: &str = "deribit_volatility_index";
-        if !persist_client::event_enabled(TABLE) {
+        if !runtime::persist::event_enabled(TABLE) {
             return;
         }
-        persist_client::record_row(
+        runtime::persist::record_row(
             TABLE,
             [
                 ("index_name", Value::Str(&v.index_name)),
@@ -926,7 +928,7 @@ impl Recorder {
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
     fn ticker(&mut self, book: &OrderBook) {
-        if !persist_client::event_enabled("ticker") {
+        if !runtime::persist::event_enabled("ticker") {
             return;
         }
         let id = book.instrument_id;
@@ -991,7 +993,7 @@ enum Regime {
 
 /// One `book_view` row: the book's top 5 levels a side, and what they say.
 fn book_view(book: &OrderBook) {
-    if !persist_client::event_enabled("book_view") {
+    if !runtime::persist::event_enabled("book_view") {
         return;
     }
     let top = |side: &mut dyn Iterator<Item = &BookLevel>| -> ArrayVec<Level, 5> {
@@ -1016,7 +1018,7 @@ fn book_view(book: &OrderBook) {
         .next()
         .map_or(0, |l| l.price.value.precision);
     let tick = 10f64.powi(-i32::from(precision));
-    persist_client::record_value(
+    runtime::persist::record_value(
         "book_view",
         &BookView {
             instrument: book.instrument_id.symbol.as_str(),
@@ -1169,16 +1171,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
     // Installed for the process: every callback records through
-    // `persist_client::record` and friends, with no handle to pass around.
-    let persist = Persist::connect(schema::MARKET_SCHEMA, Settings::from_env())?;
+    // `runtime::persist::record` and friends, with no handle to pass around.
+    let settings = Settings::from_env();
+    let bus = Bus::connect(&settings)?;
+    let persist = Persist::connect(schema::MARKET_SCHEMA, &bus, settings)?;
     persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     let service = std::env::var("SERVICE").unwrap_or_else(|_| format!("md-{}", venue.name));
-    let feeds = Feeds::open(&persist, &service)?;
+    let feeds = Feeds::open(&bus, &service)?;
     // SIGTERM (a restart, or a move to another node): close every
     // publication at once, so subscribers turn to the next pod of this feed
     // within seconds rather than after this client's timeout.
-    let closing = persist.clone();
+    let closing = bus.clone();
     tokio::spawn(async move {
         use tokio::signal::unix::{SignalKind, signal};
         if let Ok(mut term) = signal(SignalKind::terminate()) {
@@ -1191,7 +1195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Publishes the metrics every interval. A busy-spinning application
     // calls `poll` from its own loop instead, with the time it has.
     let metrics = persist.metrics();
-    let idle = persist_client::idle::Idle::from_env("IDLE", persist_client::idle::Idle::Sleep)?;
+    let idle = runtime::idle::Idle::from_env("IDLE", runtime::idle::Idle::Sleep)?;
     std::thread::Builder::new()
         .name("metrics".into())
         .spawn(move || {

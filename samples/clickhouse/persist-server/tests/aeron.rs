@@ -8,8 +8,10 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use persist_client::{Drops, Persist};
 use persist_server::{ClickHouse, Ingester, Report};
+use runtime::bus::Bus;
+use runtime::bus::Drops;
+use runtime::persist::Persist;
 
 #[path = "support/lab.rs"]
 mod lab;
@@ -35,8 +37,14 @@ fn stream(n: i32) -> i32 {
     10_000 + (std::process::id() % 100_000) as i32 * 16 + n * 2
 }
 
+/// A `Persist` on its own bus: the pair every application starts with.
+fn connect(settings: runtime::Settings) -> Result<Persist, Box<dyn Error>> {
+    let bus = Bus::connect(&settings)?;
+    Ok(Persist::connect(v1::SCHEMA, &bus, settings)?)
+}
+
 fn client(lab: &Lab, stream_id: i32) -> Result<Persist, Box<dyn Error>> {
-    let settings = persist_client::Settings {
+    let settings = runtime::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id,
@@ -46,9 +54,9 @@ fn client(lab: &Lab, stream_id: i32) -> Result<Persist, Box<dyn Error>> {
         host: "test-host".into(),
         pod: "test-pod".into(),
         app: "test-app".into(),
-        ..persist_client::Settings::new(&lab.config)
+        ..runtime::Settings::new(&lab.config)
     };
-    Ok(Persist::connect(v1::SCHEMA, settings)?)
+    connect(settings)
 }
 
 fn ingester(lab: &Lab, ch: ClickHouse, stream_id: i32) -> Result<Ingester, Box<dyn Error>> {
@@ -102,15 +110,15 @@ fn taken<E: Into<Box<dyn Error>>>(
     mut record: impl FnMut() -> Result<(), E>,
 ) -> TestResult {
     wait_until("a record to be taken", || {
-        let before = persist.drops().back_pressure;
+        let before = persist.bus().drops().back_pressure;
         record().map_err(Into::into)?;
-        Ok(persist.drops().back_pressure == before)
+        Ok(persist.bus().drops().back_pressure == before)
     })
 }
 
 /// Records dropped for anything but back pressure (which [`taken`] retries).
 fn dropped_but_back_pressure(persist: &Persist) -> u64 {
-    let drops = persist.drops();
+    let drops = persist.bus().drops();
     drops.total() - drops.back_pressure
 }
 
@@ -315,7 +323,7 @@ fn a_shape_aeron_could_not_take_is_sent_with_the_next_row() -> TestResult {
     let persist = client(&lab, stream_id)?;
     let subscriber = tracing_subscriber::registry().with(persist.layer());
     tracing::subscriber::with_default(subscriber, || emit_signal(1.0));
-    assert_eq!(persist.dropped(), 1);
+    assert_eq!(persist.bus().dropped(), 1);
 
     // Recording now: the shape was never marked sent, so it goes first.
     let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
@@ -392,7 +400,7 @@ fn nested_values_become_array_columns() -> TestResult {
         },
     );
     ingest(&mut ingester, &lab, "book", 2)?;
-    assert_eq!(persist.dropped(), 0);
+    assert_eq!(persist.bus().dropped(), 0);
     assert_eq!(
         lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'book' ORDER BY name FORMAT TSV")?,
         [
@@ -477,7 +485,7 @@ fn lists_of_different_lengths_in_one_struct_are_inserted() -> TestResult {
 
 #[test]
 fn rows_built_at_run_time_become_tables() -> TestResult {
-    use persist_client::event::Value;
+    use runtime::event::Value;
 
     let lab = Lab::new(
         "aeron_rows",
@@ -624,15 +632,15 @@ fn a_table_is_switched_per_app_until_a_time() -> TestResult {
         "aeron_per_app",
         "tables:\n  shapes: { kind: dynamic, enabled: false }\n",
     )?;
-    let settings = persist_client::Settings {
+    let settings = runtime::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id: stream(7),
         app: "binance".into(),
         subscriber_timeout: Duration::ZERO,
-        ..persist_client::Settings::new(&lab.config)
+        ..runtime::Settings::new(&lab.config)
     };
-    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    let persist = connect(settings)?;
     assert!(!persist.enabled(v1::TEMPLATE_ID), "off for every app");
 
     // Another app's entry leaves this one as `enabled` says.
@@ -658,13 +666,13 @@ fn a_table_is_switched_per_app_until_a_time() -> TestResult {
 
 #[test]
 fn metrics_reach_their_tables_every_interval() -> TestResult {
-    use persist_client::clock::Clock;
+    use runtime::clock::Clock;
     use tracing_subscriber::layer::SubscriberExt;
 
     let lab = Lab::new("aeron_metrics", "tables:\n  shapes: { kind: dynamic }\n")?;
     let stream_id = stream(14);
     let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
-    let settings = persist_client::Settings {
+    let settings = runtime::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id,
@@ -673,9 +681,9 @@ fn metrics_reach_their_tables_every_interval() -> TestResult {
         host: "test-host".into(),
         pod: "test-pod".into(),
         app: "test-app".into(),
-        ..persist_client::Settings::new(&lab.config)
+        ..runtime::Settings::new(&lab.config)
     };
-    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    let persist = connect(settings)?;
     wait_until("the archive to record the stream", || {
         Ok(persist.is_connected())
     })?;
@@ -828,8 +836,8 @@ fn the_drivers_counters_are_sampled_with_their_streams_and_clients() -> TestResu
 
 #[test]
 fn traces_become_spans_of_otel_traces() -> TestResult {
-    use persist_client::clock::{Clock, Nanos};
-    use persist_client::trace::TraceId;
+    use runtime::clock::{Clock, Nanos};
+    use runtime::trace::TraceId;
     use tracing_subscriber::layer::SubscriberExt;
 
     let lab = Lab::new(
@@ -847,7 +855,7 @@ fn traces_become_spans_of_otel_traces() -> TestResult {
     )?;
     let stream_id = stream(16);
     let mut ingester = ingester(&lab, lab.ch.clone(), stream_id)?;
-    let settings = persist_client::Settings {
+    let settings = runtime::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id,
@@ -856,9 +864,9 @@ fn traces_become_spans_of_otel_traces() -> TestResult {
         host: "test-host".into(),
         pod: "test-pod".into(),
         app: "test-app".into(),
-        ..persist_client::Settings::new(&lab.config)
+        ..runtime::Settings::new(&lab.config)
     };
-    let persist = Persist::connect(v1::SCHEMA, settings)?;
+    let persist = connect(settings)?;
     wait_until("the archive to record the stream", || {
         Ok(persist.is_connected())
     })?;
@@ -987,11 +995,11 @@ fn an_installed_handle_records_from_anywhere() -> TestResult {
     drop(persist); // the installed handle lives on
 
     // Code with no handle in reach: a callback, a library.
-    assert!(persist_client::enabled(v1::TEMPLATE_ID));
+    assert!(runtime::persist::enabled(v1::TEMPLATE_ID));
     for _ in 0..100 {
-        persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+        runtime::persist::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
     }
-    persist_client::record_row("signal", [("edge", persist_client::event::Value::F64(0.5))]);
+    runtime::persist::record_row("signal", [("edge", runtime::event::Value::F64(0.5))]);
     ingest(&mut ingester, &lab, "shapes", 100)?;
     ingest(&mut ingester, &lab, "signal", 1)?;
     Ok(())
@@ -1004,7 +1012,7 @@ fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
     let persist = client(&lab, stream(2))?;
     persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
     assert_eq!(
-        persist.drops(),
+        persist.bus().drops(),
         Drops {
             not_connected: 1,
             ..Drops::default()
@@ -1020,7 +1028,7 @@ fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
         Err("encoded an oversized record")
     })?;
     assert_eq!(
-        persist.drops(),
+        persist.bus().drops(),
         Drops {
             not_connected: 1,
             too_large: 1,
@@ -1028,21 +1036,21 @@ fn a_record_aeron_cannot_take_is_dropped_and_counted() -> TestResult {
         }
     );
     persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
-    assert_eq!(persist.dropped(), 2);
+    assert_eq!(persist.bus().dropped(), 2);
     Ok(())
 }
 
 #[test]
 fn connect_reports_when_nobody_is_recording() -> TestResult {
     let lab = Lab::new("aeron_wait", "tables:\n  shapes: { kind: dynamic }\n")?;
-    let settings = persist_client::Settings {
+    let settings = runtime::Settings {
         aeron_dir: Some(aeron_dir()),
         channel: CHANNEL.into(),
         stream_id: stream(13),
         subscriber_timeout: Duration::from_millis(300),
-        ..persist_client::Settings::new(&lab.config)
+        ..runtime::Settings::new(&lab.config)
     };
-    match Persist::connect(v1::SCHEMA, settings) {
+    match connect(settings) {
         Err(err) => assert!(err.to_string().contains("no subscriber"), "{err}"),
         Ok(_) => return Err("connected with no subscriber".into()),
     }
@@ -1068,7 +1076,7 @@ fn two_threads_publish_on_the_one_stream() -> TestResult {
     recorded
         .join()
         .map_err(|_| -> Box<dyn Error> { "the other thread panicked".into() })??;
-    assert_eq!(persist.dropped(), 0);
+    assert_eq!(persist.bus().dropped(), 0);
     ingest(&mut ingester, &lab, "shapes", 2)?;
     Ok(())
 }
@@ -1217,7 +1225,7 @@ fn a_feed_is_recorded_by_spy_and_its_table_switched_at_insert() -> TestResult {
     let stream_id = stream(18);
     let feed_stream = stream(19);
     let port = 42_000 + (std::process::id() % 1000) as u16 * 2;
-    let streams = persist_client::streams::Streams::parse(&format!(
+    let streams = runtime::streams::Streams::parse(&format!(
         "services:\n  md-test: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
     ))?;
     let settings = persist_server::Settings {
@@ -1231,7 +1239,9 @@ fn a_feed_is_recorded_by_spy_and_its_table_switched_at_insert() -> TestResult {
     };
     let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
     let persist = client(&lab, stream_id)?;
-    let feed = persist.feed(&streams.publication("md-test", "127.0.0.1")?, feed_stream)?;
+    let feed = persist
+        .bus()
+        .publication(&streams.publication("md-test", "127.0.0.1")?, feed_stream)?;
     wait_until("the persist stream and the feed to be recorded", || {
         Ok(persist.is_connected() && feed.is_connected())
     })?;
@@ -1277,17 +1287,17 @@ fn a_feed_is_recorded_by_spy_and_its_table_switched_at_insert() -> TestResult {
     // SIGTERM: every publication closes at once, so subscribers move on to
     // the next publisher without waiting out this client's timeout. A
     // record after it is quietly not published.
-    let before = persist.dropped();
-    persist.shutdown();
+    let before = persist.bus().dropped();
+    persist.bus().shutdown();
     feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
     persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
-    assert_eq!(persist.dropped(), before, "not counted as drops");
+    assert_eq!(persist.bus().dropped(), before, "not counted as drops");
     Ok(())
 }
 
 #[test]
 fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
-    use persist_client::streams::subscription_channel;
+    use runtime::streams::subscription_channel;
 
     let lab = Lab::new("aeron_subscriber", "tables:\n  shapes: { kind: dynamic }\n")?;
     let (stream_id, feed_stream) = (stream(20), stream(21));
@@ -1296,18 +1306,18 @@ fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
         "aeron:udp?control=127.0.0.1:{port}|control-mode=dynamic|fc=max|ssc=true|term-length=64k"
     );
     let reader = client(&lab, stream_id)?;
-    let mut sub = reader.subscriber(
+    let mut sub = reader.bus().subscription(
         &subscription_channel("localhost", port, "127.0.0.1", true),
         feed_stream,
     );
     // A name that never resolves: retried quietly, never a panic.
-    let mut nowhere = reader.subscriber(
+    let mut nowhere = reader.bus().subscription(
         &subscription_channel("nowhere.invalid", port, "127.0.0.1", true),
         feed_stream,
     );
     // v1 messages, and messages that started a session.
     let (rows, sessions) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
-    let poll = |sub: &mut persist_client::feed::Subscriber| {
+    let poll = |sub: &mut runtime::subscription::Subscription| {
         sub.poll(
             |m, delivery| {
                 assert!(delivery.is_live(), "a plain subscription replays nothing");
@@ -1322,7 +1332,7 @@ fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
     for n in 1..=2 {
         // A publisher, then its restart: a new client, so a new session.
         let publisher = client(&lab, stream_id)?;
-        let feed = publisher.feed(&publication, feed_stream)?;
+        let feed = publisher.bus().publication(&publication, feed_stream)?;
         // Both ends: the subscriber's image appears one status message
         // before the publisher counts it (no spy here for `ssc`).
         wait_until("the subscriber and the publisher to connect", || {
@@ -1345,7 +1355,7 @@ fn a_subscriber_follows_a_restarted_publisher_and_is_told_so() -> TestResult {
         // the driver would be shared, in the same session, and the
         // subscriber would never see the restart: `shutdown` returns only
         // once the driver has the close.
-        publisher.shutdown();
+        publisher.bus().shutdown();
     }
     assert_eq!(sessions.get(), 2, "the first session, then the restart");
     assert_eq!(poll(&mut nowhere), 0);
@@ -1359,7 +1369,7 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     let (stream_id, feed_stream) = (stream(22), stream(23));
     let port = 43_000 + (std::process::id() % 1000) as u16 * 2;
     // `md-test.localhost` is this machine, and so is its archive.
-    let streams = persist_client::streams::Streams::parse(&format!(
+    let streams = runtime::streams::Streams::parse(&format!(
         "domain: localhost\narchive_port: 18010\nservices:\n  md-test: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
     ))?;
     // The node's ingester has its archive record the feed.
@@ -1375,14 +1385,16 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     let _ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
     let publication = streams.publication("md-test", "127.0.0.1")?;
     let reader = client(&lab, stream_id)?;
-    let mut sub = reader.persistent(&streams, "md-test", "md", "127.0.0.1")?;
+    let mut sub = reader
+        .bus()
+        .persistent(&streams, "md-test", "md", "127.0.0.1")?;
     // v1 messages, those replayed, and messages that started a subscription.
     let (rows, replayed, fresh) = (
         std::cell::Cell::new(0),
         std::cell::Cell::new(0),
         std::cell::Cell::new(0),
     );
-    let poll = |sub: &mut persist_client::persistent::Persistent| {
+    let poll = |sub: &mut runtime::subscription::PersistentSubscription| {
         sub.poll(
             |m, delivery| {
                 if m.get(4..6) == Some(&v1::SCHEMA_ID.to_le_bytes()[..]) {
@@ -1396,7 +1408,7 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     };
 
     let first = client(&lab, stream_id)?;
-    let feed = first.feed(&publication, feed_stream)?;
+    let feed = first.bus().publication(&publication, feed_stream)?;
     wait_until("the feed to be recorded", || Ok(feed.is_connected()))?;
     // It starts from live: what was published before is not its business.
     wait_until("the subscriber to go live", || {
@@ -1405,7 +1417,7 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
         Ok(sub.is_live())
     })?;
     // Take everything in flight: quiet for 200 ms.
-    let drain = |sub: &mut persist_client::persistent::Persistent| {
+    let drain = |sub: &mut runtime::subscription::PersistentSubscription| {
         let mut quiet = Instant::now();
         while quiet.elapsed() < Duration::from_millis(200) {
             if poll(sub) > 0 {
@@ -1429,9 +1441,9 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
     // Aeron's persistent subscription would take the new image as if it
     // continued the old recording, having missed its start. Every one of its
     // messages arrives, once, as a new session.
-    first.shutdown();
+    first.bus().shutdown();
     let second = client(&lab, stream_id)?;
-    let feed = second.feed(&publication, feed_stream)?;
+    let feed = second.bus().publication(&publication, feed_stream)?;
     for _ in 0..100 {
         taken(&second, || {
             feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
@@ -1471,7 +1483,7 @@ fn a_persistent_subscription_loses_nothing_across_a_publisher_restart() -> TestR
 
 #[test]
 fn a_feed_added_to_the_registry_is_recorded_without_a_restart() -> TestResult {
-    use persist_client::streams::Streams;
+    use runtime::streams::Streams;
 
     let lab = Lab::new("aeron_follow", "tables:\n  shapes: { kind: dynamic }\n")?;
     let (stream_id, feed_stream) = (stream(24), stream(25));
@@ -1497,7 +1509,9 @@ fn a_feed_added_to_the_registry_is_recorded_without_a_restart() -> TestResult {
     std::fs::write(&path, &registry)?;
     let streams = Streams::parse(&registry)?;
     let persist = client(&lab, stream_id)?;
-    let feed = persist.feed(&streams.publication("md-new", "127.0.0.1")?, feed_stream)?;
+    let feed = persist
+        .bus()
+        .publication(&streams.publication("md-new", "127.0.0.1")?, feed_stream)?;
     // Connected only once the archive's spy records it (`ssc`).
     wait_until("the ingester to record the new feed", || {
         ingester.tick()?;
@@ -1517,7 +1531,7 @@ fn a_recording_with_nothing_in_it_yet_waits_for_data() -> TestResult {
     let lab = Lab::new("aeron_empty", "tables:\n  shapes: { kind: dynamic }\n")?;
     let (stream_id, feed_stream) = (stream(26), stream(27));
     let port = 45_000 + (std::process::id() % 1000) as u16 * 2;
-    let streams = persist_client::streams::Streams::parse(&format!(
+    let streams = runtime::streams::Streams::parse(&format!(
         "services:\n  md-idle: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
     ))?;
     let settings = persist_server::Settings {
@@ -1534,7 +1548,9 @@ fn a_recording_with_nothing_in_it_yet_waits_for_data() -> TestResult {
     // exchange connects: an active recording with nothing past its start,
     // which the archive refuses to replay.
     let persist = client(&lab, stream_id)?;
-    let feed = persist.feed(&streams.publication("md-idle", "127.0.0.1")?, feed_stream)?;
+    let feed = persist
+        .bus()
+        .publication(&streams.publication("md-idle", "127.0.0.1")?, feed_stream)?;
     wait_until("the feed to be recorded", || Ok(feed.is_connected()))?;
     for _ in 0..3 {
         let report = ingester.tick()?;

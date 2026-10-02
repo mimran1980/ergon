@@ -9,7 +9,7 @@ use crate::event::codec;
 /// Template id of the `Source` message.
 pub const SOURCE_TEMPLATE_ID: u16 = codec::SourceEncoder::TEMPLATE_ID;
 
-/// An application's identity: one per [`Persist`](crate::Persist).
+/// An application's identity: one per [`Bus`](crate::bus::Bus).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
     /// Stamped into every frame's reserved value.

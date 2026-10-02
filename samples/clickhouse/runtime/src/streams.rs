@@ -208,12 +208,15 @@ impl Watch {
     /// How often the file is read.
     pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
+    /// How often an unchanged parse failure is logged again.
+    const REMIND: std::time::Duration = std::time::Duration::from_secs(60);
+
     /// Watch `path`; its version now is the caller's.
     pub fn spawn(path: impl Into<std::path::PathBuf>) -> Result<Self, Error> {
         let path = path.into();
         let (tx, changes) = std::sync::mpsc::channel();
         let mut last = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut logged = None;
+        let mut logged = crate::throttle::Throttle::new(Self::REMIND);
         std::thread::Builder::new()
             .name("streams-watch".into())
             .spawn(move || {
@@ -229,17 +232,16 @@ impl Watch {
                         Ok(streams) => {
                             log::info!("{}: changed", path.display());
                             last = text;
-                            logged = None;
+                            logged.clear();
                             if tx.send(streams).is_err() {
                                 return; // the application is gone
                             }
                         }
                         Err(e) => {
-                            let e = e.to_string();
-                            if logged.as_ref() != Some(&e) {
-                                log::error!("{e}; keeping the previous version");
-                                logged = Some(e);
-                            }
+                            logged.log(
+                                log::Level::Error,
+                                format_args!("{e}; keeping the previous version"),
+                            );
                         }
                     }
                 }

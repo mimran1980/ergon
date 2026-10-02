@@ -3,9 +3,11 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use persist_client::clock::{Clock, Nanos};
-//! use persist_client::trace::TraceId;
-//! # let persist = persist_client::Persist::connect("", persist_client::Settings::from_env())?;
+//! use runtime::clock::{Clock, Nanos};
+//! use runtime::trace::TraceId;
+//! # let settings = runtime::Settings::from_env();
+//! # let bus = runtime::bus::Bus::connect(&settings)?;
+//! # let persist = runtime::persist::Persist::connect("", &bus, settings)?;
 //! # let (ts_event, seq, levels) = (0, 7, 10);
 //! let clock = Clock::new();
 //! // Once: the trace, its stages and its numeric attributes.
@@ -24,7 +26,7 @@
 //! ```
 //!
 //! The same waterfall from code that is not on the hot path is a `tracing`
-//! span (`info_span!`, `#[instrument]`). [`crate::Persist::layer`] records
+//! span (`info_span!`, `#[instrument]`). [`crate::persist::Persist::layer`] records
 //! those while `otel_traces` is on. Spans use the tracing registry and allocate;
 //! checkpoint stamps stay on the stack. Finishing a checkpoint trace locks
 //! its histogram cells to preserve complete summaries during concurrent polls.
@@ -53,10 +55,10 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
 
-use crate::Persist;
 use crate::clock::Nanos;
 use crate::event::codec;
 use crate::metrics::{Counter, Histogram, Metrics};
+use crate::persist::Persist;
 
 /// Template id of the `TraceDef` message.
 pub const TRACE_DEF_TEMPLATE_ID: u16 = codec::TraceDefEncoder::TEMPLATE_ID;
@@ -219,7 +221,7 @@ pub(crate) struct TraceSwitch {
 
 impl TraceSwitch {
     /// On or off, and `config`'s sampling (every one when not listed).
-    pub(crate) fn set(&self, on: bool, config: Option<&crate::TraceConfig>) {
+    pub(crate) fn set(&self, on: bool, config: Option<&crate::persist::TraceConfig>) {
         self.on.store(on, Relaxed);
         self.sample.store(config.map_or(1, |c| c.sample), Relaxed);
         self.slower_than.store(

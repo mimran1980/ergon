@@ -20,9 +20,9 @@ use tracing::{Metadata, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::Persist;
 use crate::clock::{Clock, Nanos};
 use crate::event::{Kind, codec};
+use crate::persist::Persist;
 use crate::trace::{DefMessage, TraceDef, TraceId};
 
 /// One field's value.
@@ -118,7 +118,7 @@ pub(crate) fn on_new_span<S>(
         let ext = p.extensions();
         ext.get::<SpanData>().map(|d| (d.trace, d.span))
     });
-    let source = persist.inner.source.id;
+    let source = persist.bus().source().id;
     let n = IDS.fetch_add(1, Relaxed) + 1;
     // Not `Tracer::next_id`'s namespace (`rotate_left(17) ^ nonce`).
     let (trace, parent) = parent.unwrap_or((TraceId::new(source.rotate_left(41), n), 0));
