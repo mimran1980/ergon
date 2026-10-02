@@ -157,16 +157,8 @@ impl Clock {
     #[inline]
     #[must_use]
     pub fn read(&self) -> Nanos {
-        Nanos(nanos(self.mono.elapsed()))
+        Nanos(self.mono.elapsed().as_nanos() as i64)
     }
-}
-
-/// A duration in nanoseconds, without `as_nanos`' 128-bit multiply.
-#[inline]
-fn nanos(d: Duration) -> i64 {
-    (d.as_secs() as i64)
-        .wrapping_mul(1_000_000_000)
-        .wrapping_add(i64::from(d.subsec_nanos()))
 }
 
 #[cfg(test)]
