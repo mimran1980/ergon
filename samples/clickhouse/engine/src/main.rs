@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // A feed handler added to the registry, in any region, is subscribed to
     // within a second or two, with no restart.
-    let watch = runtime::streams::Watch::spawn(&app.streams_path)?;
+    let mut watch = runtime::streams::Watch::new(&app.streams_path);
     let mut core = Core {
         venues,
         assets: Vec::new(),
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log::error!("streams.yaml: {e}");
             }
         }
-        metrics.poll(now);
+        app.persist.poll(now);
         app.idle.idle(work);
     }
 }

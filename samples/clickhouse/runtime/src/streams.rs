@@ -18,7 +18,8 @@
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -194,66 +195,62 @@ impl Streams {
     }
 }
 
-/// Watches `streams.yaml` on a thread of its own and hands each new
-/// version over, parsed and checked, so an application's own loop never
-/// touches the filesystem: it takes them with [`Watch::changed`], one
-/// relaxed channel poll. A version that does not parse is logged and
-/// skipped, keeping the last good one. In Kubernetes the file is a
-/// ConfigMap, which the kubelet swaps in place when it changes.
+/// Follows `streams.yaml`: [`Watch::changed`] reads it at most once per
+/// [`Watch::EVERY`] and hands over each new version, parsed and checked. A
+/// version that does not parse is logged once and skipped, keeping the last
+/// good one. In Kubernetes the file is a ConfigMap, which the kubelet swaps
+/// in place when it changes.
 pub struct Watch {
-    changes: std::sync::mpsc::Receiver<Streams>,
+    path: PathBuf,
+    /// The text last read, good or bad.
+    last: String,
+    next: Instant,
 }
 
 impl Watch {
     /// How often the file is read.
-    pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
-
-    /// How often an unchanged parse failure is logged again.
-    const REMIND: std::time::Duration = std::time::Duration::from_secs(60);
+    pub const EVERY: Duration = Duration::from_secs(1);
 
     /// Watch `path`; its version now is the caller's.
-    pub fn spawn(path: impl Into<std::path::PathBuf>) -> Result<Self, Error> {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let (tx, changes) = std::sync::mpsc::channel();
-        let mut last = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut logged = crate::throttle::Throttle::new(Self::REMIND);
-        std::thread::Builder::new()
-            .name("streams-watch".into())
-            .spawn(move || {
-                loop {
-                    std::thread::sleep(Self::EVERY);
-                    let Ok(text) = std::fs::read_to_string(&path) else {
-                        continue;
-                    };
-                    if text == last {
-                        continue;
-                    }
-                    match Streams::parse(&text) {
-                        Ok(streams) => {
-                            log::info!("{}: changed", path.display());
-                            last = text;
-                            logged.clear();
-                            if tx.send(streams).is_err() {
-                                return; // the application is gone
-                            }
-                        }
-                        Err(e) => {
-                            logged.log(
-                                log::Level::Error,
-                                format_args!("{e}; keeping the previous version"),
-                            );
-                        }
-                    }
-                }
-            })
-            .map_err(|e| Error::Config(format!("streams watch: {e}")))?;
-        Ok(Self { changes })
+        Self {
+            last: std::fs::read_to_string(&path).unwrap_or_default(),
+            path,
+            next: Instant::now() + Self::EVERY,
+        }
     }
 
-    /// The newest version since the last call, if the file changed.
-    #[must_use]
-    pub fn changed(&self) -> Option<Streams> {
-        self.changes.try_iter().last()
+    /// The new version, if the file changed and parses. Until the next
+    /// read is due, one clock read.
+    pub fn changed(&mut self) -> Option<Streams> {
+        let now = Instant::now();
+        if now < self.next {
+            return None;
+        }
+        self.next = now + Self::EVERY;
+        self.read()
+    }
+
+    fn read(&mut self) -> Option<Streams> {
+        // Missing for a moment while the kubelet swaps the ConfigMap.
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        if text == self.last {
+            return None;
+        }
+        let parsed = Streams::parse(&text);
+        self.last = text;
+        match parsed {
+            Ok(streams) => {
+                log::info!("{}: changed", self.path.display());
+                Some(streams)
+            }
+            Err(e) => {
+                log::error!("{e}; keeping the previous version");
+                None
+            }
+        }
     }
 }
 
@@ -362,21 +359,19 @@ kinds:
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("streams.yaml");
         std::fs::write(&path, REGISTRY)?;
-        let watch = Watch::spawn(&path)?;
-        let wait = || std::thread::sleep(Watch::EVERY * 3);
-        wait();
-        assert!(watch.changed().is_none(), "unchanged");
+        let mut watch = Watch::new(&path);
+        assert!(watch.changed().is_none(), "not due yet");
+        assert!(watch.read().is_none(), "unchanged");
         std::fs::write(&path, "services: [not a map\n")?;
-        wait();
-        assert!(watch.changed().is_none(), "a bad version is skipped");
+        assert!(watch.read().is_none(), "a bad version is skipped");
         let next = REGISTRY.replace(
             "  engine-an1:",
             "  md-okx: { port: 40504, region: as1, streams: { md: 2041 } }\n  engine-an1:",
         );
         std::fs::write(&path, &next)?;
-        wait();
-        let changed = watch.changed().ok_or("the new version")?;
+        let changed = watch.read().ok_or("the new version")?;
         assert_eq!(changed.stream("md-okx", "md")?, 2041);
+        assert!(watch.read().is_none(), "handed over once");
         std::fs::remove_dir_all(&dir)?;
         Ok(())
     }

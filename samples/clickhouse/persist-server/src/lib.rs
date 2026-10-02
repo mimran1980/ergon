@@ -92,7 +92,7 @@ impl From<runtime::Error> for Error {
         match e {
             runtime::Error::Schema(m) => Self::Schema(m),
             runtime::Error::Config(m) => Self::Config(m),
-            runtime::Error::Aeron(m) | runtime::Error::Thread(m) => Self::Aeron(m),
+            runtime::Error::Aeron(m) => Self::Aeron(m),
             runtime::Error::Encode(err) => Self::Schema(err.to_string()),
         }
     }

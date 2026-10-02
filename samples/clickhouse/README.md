@@ -195,8 +195,10 @@ The engine follows each `md` stream and its exchange's fills with
 `Bus::subscribe`. It replays the publisher's archive (port 8010) until it
 catches the live stream. If it falls behind, it drops back to the recording.
 A restart or a move is a new recording; `PersistentSubscription` finds it by name and
-replays from the first message, on another thread, so the engine loop does not
-wait. The engine drops that venue's books and rebuilds them from the new
+replays from the first message. Finding it (the archive connect, the
+recording list) is a state machine that each `poll` advances one step, so the
+engine loop never waits on another region and nothing runs on another
+thread. The engine drops that venue's books and rebuilds them from the new
 session's snapshot. `tob` is a plain best-effort subscription.
 
 `exch-sim` starts at the beginning of its engine's `orders` recording and
@@ -207,7 +209,8 @@ and applies each fill once.
 the isolated-core setting.
 
 `tables.yaml` and `streams.yaml` are one ConfigMap, under a fixed name so a
-change restarts nothing. Applications re-read them every second. The kubelet
+change restarts nothing. Applications re-read them every second from their
+own loop (`Persist::poll`, `Watch::changed`). The kubelet
 updates the mounted files at its next pod sync, about a minute later.
 `just config` cuts that to seconds by annotating the pods. A GitOps tool such
 as Flux can apply the same kustomization; it waits for the kubelet's sync.
@@ -415,7 +418,7 @@ loop {
     sent.inc();
     depth.set(12.0);
     t2t.record(850);
-    metrics.poll(now); // one compare until the next millisecond or the 5 s boundary
+    persist.poll(now); // two compares until a millisecond, the 5 s boundary or a config re-read is due
 }
 ```
 
@@ -446,11 +449,13 @@ tracing::subscriber::with_default(subscriber, || {
         tracing::info!(histogram = "send_ns", value = 850u64);
     });
 });
-metrics.poll(clock.now()); // keep polling in the application loop
+persist.poll(clock.now()); // keep polling in the application loop
 ```
 
 `info_span!` and `#[tracing::instrument]` produce span traces while `otel_traces`
 is enabled. Metric events update immediately but publish only when `poll` runs.
+`Persist::poll` also re-reads `tables.yaml` once a second; nothing else does,
+so an application that never polls never sees an edit.
 Use `persist.tracer(...)` for instance-owned checkpoint traces on the hot path.
 
 A histogram records the count, the sum, the minimum, and the maximum. Every
@@ -562,7 +567,8 @@ tables:
 ```
 
 `enabled` is `true`, `false`, or `{ until: <UTC time> }`. `apps` overrides it
-per `PERSIST_APP`. Applications re-read the file every second.
+per `PERSIST_APP`. Applications re-read the file every second, in
+`Persist::poll`.
 
 `dynamic` adds a column when a new field arrives. `static` never alters the
 table. A missing or wrong column is skipped, and the log prints the `ALTER`.

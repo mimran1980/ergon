@@ -12,7 +12,6 @@ use rusteron_archive::{
 use crate::Error;
 use crate::bus::Bus;
 use crate::streams::Streams;
-use crate::throttle::Throttle;
 
 mod persistent;
 
@@ -63,10 +62,6 @@ pub struct Subscription {
     /// The session messages are taken from, and the last few before it.
     session: Option<i32>,
     superseded: [Option<i32>; 4],
-    /// A failure to subscribe: an undeployed publisher fails every retry.
-    logged: Throttle,
-    /// A failed poll, which a busy loop repeats on every pass.
-    poll_failed: Throttle,
 }
 
 enum State {
@@ -76,8 +71,8 @@ enum State {
 }
 
 impl Bus {
-    /// Subscribe to `service`'s `kind` stream straight off the network, in
-    /// the background. Best effort: a message published while this was not
+    /// Subscribe to `service`'s `kind` stream straight off the network,
+    /// added as [`Subscription::poll`] is called. Best effort: a message published while this was not
     /// connected is gone; see [`Bus::subscribe`] for one that is not.
     ///
     /// # Errors
@@ -97,7 +92,7 @@ impl Bus {
 
     /// Subscribe to `channel` (see
     /// [`crate::streams::Streams::subscription`]) and `stream_id` on this
-    /// application's media driver, in the background.
+    /// application's media driver, added as [`Subscription::poll`] is called.
     #[must_use]
     pub fn subscription(&self, channel: &str, stream_id: i32) -> Subscription {
         Subscription {
@@ -107,8 +102,6 @@ impl Bus {
             state: State::Waiting(Instant::now()),
             session: None,
             superseded: [None; 4],
-            logged: Throttle::new(Subscription::REMIND),
-            poll_failed: Throttle::new(Subscription::REMIND),
         }
     }
 }
@@ -117,9 +110,6 @@ impl Subscription {
     /// How long to wait before adding a subscription that failed again: the
     /// name is resolved on the node's shared driver, so not in a hurry.
     pub const RETRY: Duration = Duration::from_secs(5);
-
-    /// How often an unchanged failure is logged again.
-    const REMIND: Duration = Duration::from_secs(60);
 
     /// Up to `limit` messages, each with how it was delivered: always live,
     /// as nothing is replayed here. Returns how many were taken: the work
@@ -156,11 +146,10 @@ impl Subscription {
             },
             limit,
         );
+        // A failed poll would fail again on every pass of a busy loop:
+        // subscribe again instead.
         if let Err(e) = polled {
-            self.poll_failed.log(
-                log::Level::Warn,
-                format_args!("{:?} stream {}: {e}", self.channel, self.stream_id),
-            );
+            self.retry(&e);
         }
         taken
     }
@@ -188,8 +177,6 @@ impl Subscription {
             State::Adding(adding) => match adding.poll() {
                 Ok(Some(subscription)) => {
                     log::info!("subscribed to {:?} stream {}", self.channel, self.stream_id);
-                    self.logged.clear();
-                    self.poll_failed.clear();
                     self.state = State::Ready(subscription);
                 }
                 Ok(None) => {}
@@ -199,15 +186,13 @@ impl Subscription {
         }
     }
 
+    #[cold]
     fn retry(&mut self, e: &dyn std::fmt::Display) {
-        self.logged.log(
-            log::Level::Info,
-            format_args!(
-                "{:?} stream {}: {e}; retrying every {:?}",
-                self.channel,
-                self.stream_id,
-                Self::RETRY
-            ),
+        log::warn!(
+            "{:?} stream {}: {e}; retrying in {:?}",
+            self.channel,
+            self.stream_id,
+            Self::RETRY
         );
         self.state = State::Waiting(Instant::now() + Self::RETRY);
     }

@@ -26,8 +26,9 @@
 //! is queued, the call also publishes one of those messages. A term rotation
 //! is tried eight times and then dropped.
 //!
-//! `tables.yaml` is re-read every second. `enabled` is applied here. `kind`
-//! is applied by the ingester.
+//! [`Persist::poll`] from the application's loop re-reads `tables.yaml` every
+//! second and publishes the metrics. `enabled` is applied here. `kind` is
+//! applied by the ingester.
 //!
 //! ```yaml
 //! tables:
@@ -37,9 +38,8 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use rusteron_archive::AeronPublication;
@@ -50,7 +50,7 @@ use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::bus::{Bus, Claim, DropKind, Drops};
-use crate::throttle::Throttle;
+use crate::clock::{Clock, Nanos};
 use crate::{Error, Settings, event, metrics, spans, trace};
 
 /// The stream applications publish on and the ingester's archive records.
@@ -335,8 +335,9 @@ pub(crate) struct Inner {
     /// Its `Source` message is sent ahead of the shapes.
     bus: Bus,
     pub(crate) shared: Arc<Shared>,
-    stop: Arc<AtomicBool>,
-    watcher: Option<JoinHandle<()>>,
+    /// `Nanos` of the next [`Watcher::tick`].
+    watch_due: AtomicI64,
+    watcher: Mutex<Watcher>,
 }
 
 /// One message of a heartbeat round.
@@ -377,14 +378,14 @@ pub(crate) struct Shared {
 }
 
 impl Persist {
-    /// Read the schema and `tables.yaml`, publish on `settings.channel`
-    /// through `bus`, and start re-reading `tables.yaml` every second.
+    /// Read the schema and `tables.yaml`, and publish on `settings.channel`
+    /// through `bus`. [`Persist::poll`] applies later edits.
     ///
     /// # Errors
     ///
     /// The schema or `tables.yaml` is invalid, the publication could not be
-    /// added, no subscriber recorded it within `settings.subscriber_timeout`,
-    /// or the watcher thread could not start.
+    /// added, or no subscriber recorded it within
+    /// `settings.subscriber_timeout`.
     pub fn connect(schema_xml: &str, bus: &Bus, settings: Settings) -> Result<Self, Error> {
         let schema = schema_tables(schema_xml)?;
         let slots = schema.iter().map(|(_, id)| usize::from(*id) + 1).max();
@@ -431,7 +432,6 @@ impl Persist {
             text: String::new(),
             config: BTreeMap::new(),
             applied: false,
-            error: Throttle::new(Duration::from_secs(60)),
             seen: Drops::default(),
             schema,
             shared: Arc::clone(&shared),
@@ -439,17 +439,6 @@ impl Persist {
         };
         watcher.reload()?;
         watcher.apply(jiff::Timestamp::now());
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("persist-config".into())
-            .spawn(move || {
-                while !flag.load(Ordering::Relaxed) {
-                    std::thread::park_timeout(Duration::from_secs(1));
-                    watcher.tick();
-                }
-            })
-            .map_err(|e| Error::Thread(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(Inner {
                 id: {
@@ -461,10 +450,37 @@ impl Persist {
                 metrics,
                 bus: bus.clone(),
                 shared,
-                stop,
-                watcher: Some(thread),
+                watch_due: AtomicI64::new(Clock::new().now().0 + Watcher::EVERY_NS),
+                watcher: Mutex::new(watcher),
             }),
         })
+    }
+
+    /// Publish the metrics that are due and, once a second, apply
+    /// `tables.yaml` and queue the dictionary heartbeat. Call it from the
+    /// application's loop with its clock's time: nothing else does. Until
+    /// something is due, two relaxed loads and compares.
+    #[inline]
+    pub fn poll(&self, now: Nanos) {
+        self.inner.metrics.poll_through(now, self);
+        if now.0 >= self.inner.watch_due.load(Ordering::Relaxed) {
+            self.watch(now);
+        }
+    }
+
+    #[cold]
+    fn watch(&self, now: Nanos) {
+        // Another thread is polling: it applies.
+        let Ok(mut watcher) = self.inner.watcher.try_lock() else {
+            return;
+        };
+        if now.0 < self.inner.watch_due.load(Ordering::Relaxed) {
+            return;
+        }
+        self.inner
+            .watch_due
+            .store(now.0 + Watcher::EVERY_NS, Ordering::Relaxed);
+        watcher.tick();
     }
 
     /// A checkpoint trace (see [`trace`]): make it once, then
@@ -527,7 +543,7 @@ impl Persist {
     }
 
     /// This application's metrics: make counters, gauges and histograms
-    /// from it, and call [`metrics::Metrics::poll`] from the loop. With
+    /// from it, and call [`Persist::poll`] from the loop. With
     /// [`Self::layer`] installed, `tracing` counter, gauge, and histogram
     /// events update the same registry. The handles are the path that does
     /// not allocate.
@@ -855,16 +871,6 @@ impl std::fmt::Debug for Persist {
     }
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.watcher.take() {
-            thread.thread().unpark();
-            let _ = thread.join();
-        }
-    }
-}
-
 fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> Result<(), Error> {
     if settings.subscriber_timeout.is_zero() {
         return Ok(());
@@ -882,19 +888,18 @@ fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> R
     Ok(())
 }
 
-/// Applies `tables.yaml` to [`Shared::enabled`]; runs on its own thread.
+/// Applies `tables.yaml` to [`Shared::enabled`], from [`Persist::poll`].
 struct Watcher {
     ticks: u64,
     path: PathBuf,
     /// This application's name, for the tables' `apps` switches.
     app: String,
-    /// The last `tables.yaml` read, and what it says.
+    /// The last `tables.yaml` read, good or bad, and the last good one's
+    /// tables.
     text: String,
     config: BTreeMap<String, TableConfig>,
     /// The switches have been applied once: after that, only changes are logged.
     applied: bool,
-    /// The last error logged, so a broken file is reported once, then as a reminder.
-    error: Throttle,
     seen: Drops,
     schema: Vec<(String, u16)>,
     shared: Arc<Shared>,
@@ -902,22 +907,19 @@ struct Watcher {
 }
 
 impl Watcher {
+    const EVERY_NS: i64 = 1_000_000_000;
+
     fn tick(&mut self) {
         // Every 5 s, ask the next record to send every event shape again.
         // An ingester that starts after the first one, with none saved,
-        // learns them from that record. Nothing is published here: this
-        // thread does not claim on the application's publication.
+        // learns them from that record.
         self.ticks += 1;
         if self.ticks.is_multiple_of(5) {
             self.shared.shapes_due.store(true, Ordering::Relaxed);
             self.bus.beat();
         }
-        match self.reload() {
-            Ok(()) => self.error.clear(),
-            Err(e) => self.error.log(
-                log::Level::Error,
-                format_args!("{e}; keeping the previous configuration"),
-            ),
+        if let Err(e) = self.reload() {
+            log::error!("{e}; keeping the previous configuration");
         }
         // Every second, changed or not: an `until` passes by itself.
         self.apply(jiff::Timestamp::now());
@@ -936,13 +938,15 @@ impl Watcher {
         }
     }
 
-    /// Read `tables.yaml` again if it changed since the last call.
+    /// Read `tables.yaml` again if it changed since the last call. A bad
+    /// version is reported once.
     fn reload(&mut self) -> Result<(), Error> {
         let text = std::fs::read_to_string(&self.path)
             .map_err(|e| Error::Config(format!("{}: {e}", self.path.display())))?;
         if text != self.text {
-            self.config = parse_config(&text)?;
+            let parsed = parse_config(&text);
             self.text = text;
+            self.config = parsed?;
         }
         Ok(())
     }

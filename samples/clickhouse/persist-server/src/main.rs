@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A service added to the registry is recorded from the next tick.
     let streams = std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into());
     if std::path::Path::new(&streams).exists() {
-        ingester.follow(streams)?;
+        ingester.follow(streams);
     }
     // SIGTERM stops it between ticks, its last inserts checkpointed. As a
     // container's first process it would otherwise ignore the signal and

@@ -11,23 +11,33 @@
 //! ponytail: a new session that starts at the old stop position would be
 //! treated as the same recording. Check the session id if that matters.
 //!
-//! The archive lookup runs on its own thread. [`PersistentSubscription::poll`] does not
-//! wait. The archive is addressed by IP. The driver caches a channel hostname
-//! per endpoint, so a name would keep reaching the old node after a move.
+//! The archive lookup is a state machine that [`PersistentSubscription::poll`]
+//! advances one step at a time: connect to the service's archive, list its
+//! recordings, subscribe. Neither the connect nor the listing waits: the
+//! archive may be in another region. Resolving the service's name does
+//! (`getaddrinfo`, about a millisecond in the cluster), once per lookup.
+//! The archive is addressed by IP. The driver caches a channel hostname per
+//! endpoint, so a name would keep reaching the old node after a move.
+//!
+//! ponytail: Aeron's own `PersistentSubscriptionBuilder::build` waits for the
+//! driver to register four counters (one round trip each). Handing it
+//! counters added asynchronously would remove that, once their ownership
+//! across the C context is clear.
 
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use rusteron_archive::{
-    Aeron, AeronArchiveAsyncConnect, AeronArchiveContext, AeronArchivePersistentSubscription,
-    IntoCString, PersistentSubscriptionBuilder,
+    Aeron, AeronArchive, AeronArchiveAsyncConnect, AeronArchiveContext,
+    AeronArchivePersistentSubscription, AeronArchiveProxy, AeronArchiveRecordingDescriptor,
+    AeronArchiveRecordingDescriptorPoller, Handler, IntoCString, PersistentSubscriptionBuilder,
 };
 
 use super::{Delivery, Origin};
 use crate::Error;
 use crate::bus::Bus;
 use crate::streams::Streams;
-use crate::throttle::Throttle;
 
 /// A replay's stream id is the live one plus this: unique on the node, as
 /// live stream ids are unique in the registry.
@@ -53,19 +63,18 @@ pub struct PersistentSubscription {
     from_start: bool,
     /// The next message is the first of a new subscription.
     fresh: bool,
-    /// The last failure logged: each different one is logged once.
-    logged: Throttle,
-}
-
-/// A recording to follow, and the archive holding it, by IP.
-struct Found {
-    recording: i64,
-    archive: String,
 }
 
 enum State {
     Waiting(Instant),
-    Finding(Receiver<Result<Found, String>>),
+    Connecting {
+        connect: AeronArchiveAsyncConnect,
+        /// The archive's control channel, by IP.
+        channel: String,
+        _ctx: AeronArchiveContext,
+        until: Instant,
+    },
+    Listing(Box<Listing>),
     Running {
         subscription: AeronArchivePersistentSubscription,
         recording: i64,
@@ -103,7 +112,6 @@ impl Bus {
             state: State::Waiting(Instant::now()),
             from_start: false,
             fresh: false,
-            logged: Throttle::new(PersistentSubscription::REMIND),
         })
     }
 }
@@ -112,8 +120,8 @@ impl PersistentSubscription {
     /// How long to wait before asking the archive again.
     pub const RETRY: Duration = Duration::from_secs(1);
 
-    /// How often an unchanged failure is logged again.
-    const REMIND: Duration = Duration::from_secs(60);
+    /// How long each step of the lookup may take.
+    const STEP: Duration = Duration::from_secs(5);
 
     /// Up to `limit` messages, each with how it was delivered: whether it is
     /// the first of a new subscription (a new publisher session, when not
@@ -183,100 +191,65 @@ impl PersistentSubscription {
             );
         }
         self.from_start = true;
-        self.logged.clear();
-        self.state = State::Finding(self.find());
+        self.state = State::Waiting(Instant::now());
     }
 
+    /// One step of the lookup: each state either moves on, gives up into
+    /// [`State::Waiting`], or stays as it is until the next call.
     #[cold]
     fn advance(&mut self) {
-        match &self.state {
-            State::Waiting(at) if Instant::now() >= *at => self.state = State::Finding(self.find()),
-            State::Finding(found) => match found.try_recv() {
-                Ok(Ok(found)) => match self.subscribe(&found) {
-                    Ok(state) => {
-                        log::info!(
-                            "{}: following recording {} on {}, {}",
-                            self.name,
-                            found.recording,
-                            found.archive,
-                            if self.from_start {
-                                "from its start"
-                            } else {
-                                "from live"
-                            }
-                        );
-                        self.fresh = true;
-                        self.logged.clear();
-                        self.state = state;
-                    }
-                    Err(e) => self.retry(&e),
-                },
-                Ok(Err(e)) => self.retry(&e),
-                Err(TryRecvError::Disconnected) => self.retry(&"the search thread ended"),
-                Err(TryRecvError::Empty) => {}
+        let now = Instant::now();
+        let next = match &mut self.state {
+            State::Waiting(at) if now >= *at => {
+                resolve(&self.host, self.archive_port).and_then(|channel| self.connect(&channel))
+            }
+            State::Connecting {
+                connect,
+                channel,
+                until,
+                ..
+            } => match connect.poll() {
+                Ok(Some(archive)) => Listing::start(archive, channel, self.stream_id, self.port),
+                Ok(None) if now >= *until => Err("connecting to its archive: timed out".into()),
+                Ok(None) => return,
+                Err(e) => Err(format!("connecting to its archive: {e}")),
             },
-            _ => {}
+            State::Listing(listing) => match listing.poll(now) {
+                Ok(Some(recording)) => {
+                    let channel = std::mem::take(&mut listing.channel);
+                    self.subscribe(recording, &channel)
+                }
+                Ok(None) => return,
+                Err(e) => Err(e),
+            },
+            State::Waiting(_) | State::Running { .. } => return,
+        };
+        match next {
+            Ok(state) => self.state = state,
+            Err(e) => self.retry(&e),
         }
     }
 
-    fn retry(&mut self, e: &dyn std::fmt::Display) {
-        // An undeployed publisher fails every retry the same way.
-        self.logged.log(
-            log::Level::Info,
-            format_args!("{}: {e}; retrying every {:?}", self.name, Self::RETRY),
-        );
+    fn retry(&mut self, e: &str) {
+        log::warn!("{}: {e}; retrying in {:?}", self.name, Self::RETRY);
         self.state = State::Waiting(Instant::now() + Self::RETRY);
     }
 
-    /// Ask the service's archive, on another thread, for the recording of
-    /// its current session: the newest still recording. The service's name
-    /// is resolved here, now, and the archive then reached by that IP.
-    fn find(&self) -> Receiver<Result<Found, String>> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (aeron, local) = (self.aeron.clone(), self.local.clone());
-        let (host, archive_port) = (self.host.clone(), self.archive_port);
-        let (stream_id, port) = (self.stream_id, format!(":{}", self.port));
-        let spawned = std::thread::Builder::new()
-            .name("find-recording".into())
-            .spawn(move || {
-                let found = resolve(&host, archive_port).and_then(|channel| {
-                    let ctx = archive_context(&aeron, &channel, &local)?;
-                    let archive = AeronArchiveAsyncConnect::new_with_aeron(&ctx, &aeron)
-                        .map_err(|e| e.to_string())?
-                        .poll_blocking(Duration::from_secs(5))
-                        .map_err(|e| format!("connecting to its archive: {e}"))?;
-                    let mut newest = None;
-                    archive
-                        .list_recordings_for_uri_fn(&mut 0, 0, i32::MAX, c"aeron", stream_id, |d| {
-                            // Still recording (no stop position), and
-                            // this service's: its control port.
-                            if d.stop_position() < 0 && d.original_channel().contains(&port) {
-                                newest = newest.max(Some(d.recording_id()));
-                            }
-                        })
-                        .map_err(|e| format!("listing its recordings: {e}"))?;
-                    newest
-                        .map(|recording| Found {
-                            recording,
-                            archive: channel,
-                        })
-                        .ok_or_else(|| "no recording of its current session yet".to_owned())
-                });
-                let _ = tx.send(found);
-            });
-        if let Err(e) = spawned {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let _ = tx.send(Err(e.to_string()));
-            return rx;
-        }
-        rx
+    /// Start connecting to the archive at `channel`.
+    fn connect(&self, channel: &str) -> Result<State, String> {
+        let ctx = archive_context(&self.aeron, channel, &self.local)?;
+        let connect = AeronArchiveAsyncConnect::new_with_aeron(&ctx, &self.aeron)
+            .map_err(|e| format!("connecting to its archive: {e}"))?;
+        Ok(State::Connecting {
+            connect,
+            channel: channel.to_owned(),
+            _ctx: ctx,
+            until: Instant::now() + Self::STEP,
+        })
     }
 
-    fn subscribe(&self, found: &Found) -> Result<State, String> {
-        let (recording, archive) = (
-            found.recording,
-            archive_context(&self.aeron, &found.archive, &self.local)?,
-        );
+    fn subscribe(&mut self, recording: i64, channel: &str) -> Result<State, String> {
+        let archive = archive_context(&self.aeron, channel, &self.local)?;
         let builder = PersistentSubscriptionBuilder::new()
             .and_then(|b| b.aeron(&self.aeron))
             .and_then(|b| b.archive_context(&archive))
@@ -293,11 +266,89 @@ impl PersistentSubscription {
         let subscription = builder
             .and_then(PersistentSubscriptionBuilder::build)
             .map_err(|e| format!("subscribing to recording {recording}: {e}"))?;
+        log::info!(
+            "{}: following recording {recording} on {channel}, {}",
+            self.name,
+            if self.from_start {
+                "from its start"
+            } else {
+                "from live"
+            }
+        );
+        self.fresh = true;
         Ok(State::Running {
             subscription,
             recording,
             _archive: archive,
         })
+    }
+}
+
+/// Asking a connected archive for the service's recordings, through its
+/// own proxy and descriptor poller: Aeron's `list_recordings_for_uri` in
+/// two halves, sending now and polling for the answer. The newest still
+/// recording (no stop position) on the service's control port is its
+/// current session's.
+struct Listing {
+    // Field order is drop order: the archive is closed before the consumer
+    // it may call.
+    _archive: AeronArchive,
+    poller: AeronArchiveRecordingDescriptorPoller,
+    _consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>>,
+    channel: String,
+    newest: Arc<AtomicI64>,
+    until: Instant,
+}
+
+impl Listing {
+    fn start(
+        archive: AeronArchive,
+        channel: &str,
+        stream_id: i32,
+        port: u16,
+    ) -> Result<State, String> {
+        let newest = Arc::new(AtomicI64::new(-1));
+        let (found, port) = (Arc::clone(&newest), format!(":{port}"));
+        let consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>> =
+            Handler::new(Box::new(move |d: AeronArchiveRecordingDescriptor| {
+                if d.stop_position() < 0 && d.original_channel().contains(&port) {
+                    found.fetch_max(d.recording_id(), Ordering::Relaxed);
+                }
+            }));
+        let inner = archive.get_inner_ref();
+        let proxy = AeronArchiveProxy::from(inner.archive_proxy);
+        let poller = AeronArchiveRecordingDescriptorPoller::from(inner.recording_descriptor_poller);
+        let correlation = archive.next_correlation_id();
+        poller.reset(correlation, i32::MAX, Some(&consumer));
+        if !proxy.list_recordings_for_uri(correlation, 0, i32::MAX, c"aeron", stream_id) {
+            return Err("listing its recordings: the request was not sent".into());
+        }
+        Ok(State::Listing(Box::new(Self {
+            _archive: archive,
+            poller,
+            _consumer: consumer,
+            channel: channel.to_owned(),
+            newest,
+            until: Instant::now() + PersistentSubscription::STEP,
+        })))
+    }
+
+    /// The recording once the list is complete.
+    fn poll(&mut self, now: Instant) -> Result<Option<i64>, String> {
+        self.poller
+            .poll()
+            .map_err(|e| format!("listing its recordings: {e}"))?;
+        if !self.poller.is_dispatch_complete() {
+            return if now >= self.until {
+                Err("listing its recordings: timed out".into())
+            } else {
+                Ok(None)
+            };
+        }
+        match self.newest.load(Ordering::Relaxed) {
+            -1 => Err("no recording of its current session yet".into()),
+            recording => Ok(Some(recording)),
+        }
     }
 }
 

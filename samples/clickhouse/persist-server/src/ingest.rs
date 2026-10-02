@@ -21,8 +21,9 @@ use std::time::{Duration, Instant};
 
 use rusteron_archive::{
     Aeron, AeronArchive, AeronArchiveAsyncConnect, AeronArchiveContext, AeronArchiveErrorCode,
-    AeronArchiveReplayParams, AeronContext, AeronImage, AeronSubscription,
-    AeronUnavailableImageCallback, Handler, Handlers, IntoCString, SOURCE_LOCATION_LOCAL,
+    AeronArchiveReplayParams, AeronAsyncAddSubscription, AeronContext, AeronImage,
+    AeronSubscription, AeronUnavailableImageCallback, Handler, Handlers, IntoCString,
+    SOURCE_LOCATION_LOCAL,
 };
 
 use crate::aeron_stats::AeronStats;
@@ -35,7 +36,9 @@ struct Replay {
     session: i64,
     /// Consumed position, including padding and a removed image's final position.
     position: Arc<AtomicI64>,
-    subscription: AeronSubscription,
+    subscription: Subscription,
+    /// Called by the client while the subscription is open.
+    _unavailable: Handler<ReplayPosition>,
     opened: Instant,
     connected: bool,
     /// A feed's recording: `tables.yaml` is applied when it is inserted.
@@ -44,6 +47,28 @@ struct Replay {
     start: i64,
     term_length: i32,
     segment_length: i32,
+}
+
+/// A replay's subscription, added without waiting for the driver.
+enum Subscription {
+    Adding(AeronAsyncAddSubscription),
+    Added(AeronSubscription),
+}
+
+impl Subscription {
+    /// The subscription once the driver has added it.
+    fn added(&mut self) -> Result<Option<&AeronSubscription>, Error> {
+        if let Self::Adding(adding) = self {
+            match adding.poll().map_err(aeron)? {
+                Some(added) => *self = Self::Added(added),
+                None => return Ok(None),
+            }
+        }
+        match self {
+            Self::Added(subscription) => Ok(Some(subscription)),
+            Self::Adding(_) => Ok(None),
+        }
+    }
 }
 
 struct ReplayPosition(Arc<AtomicI64>);
@@ -170,9 +195,8 @@ impl Ingester {
 
     /// Follow `streams.yaml` at `path` from now on: a service added to it has
     /// its feeds recorded here from the next tick, with no restart.
-    pub fn follow(&mut self, path: impl Into<PathBuf>) -> Result<(), Error> {
-        self.watch = Some(runtime::streams::Watch::spawn(path)?);
-        Ok(())
+    pub fn follow(&mut self, path: impl Into<PathBuf>) {
+        self.watch = Some(runtime::streams::Watch::new(path));
     }
 
     /// Replay what was recorded since the last tick, insert it, then save the
@@ -180,7 +204,11 @@ impl Ingester {
     /// archive can no longer be used: drop this ingester and connect again.
     pub fn tick(&mut self) -> Result<Report, Error> {
         let mut report = Report::default();
-        if let Some(streams) = self.watch.as_ref().and_then(|w| w.changed()) {
+        if let Some(streams) = self
+            .watch
+            .as_mut()
+            .and_then(runtime::streams::Watch::changed)
+        {
             record_feeds(&self.archive, &streams, &self.host_ip, &mut self.feeds)?;
         }
         self.open_replays(&mut report)?;
@@ -322,23 +350,19 @@ impl Ingester {
                     Handlers::NONE,
                     Some(&unavailable),
                 )
-                .map_err(aeron)?
-                .poll_blocking(Duration::from_secs(10))
                 .map_err(aeron)?;
             log::info!(
                 "replaying recording {} (stream {}) from position {from}",
                 d.id,
                 d.stream_id
             );
-            // An empty recording is already consumed through its replay start,
-            // even though it will never invoke a message callback.
-            self.polled.entry(d.id).or_insert(from);
             self.replays.insert(
                 d.id,
                 Replay {
                     session,
                     position,
-                    subscription,
+                    subscription: Subscription::Adding(subscription),
+                    _unavailable: unavailable,
                     opened: Instant::now(),
                     connected: false,
                     feed,
@@ -370,8 +394,11 @@ impl Ingester {
                 }
                 let feed = replay.feed;
                 let mut last = None;
-                let polled = replay
-                    .subscription
+                let Some(subscription) = replay.subscription.added()? else {
+                    caught_up = false;
+                    continue;
+                };
+                let polled = subscription
                     .poll_fn(
                         |message, header| {
                             // The frame's reserved value is the recording app's source id.
@@ -390,15 +417,18 @@ impl Ingester {
                 }
                 // Padding advances the subscriber position without invoking
                 // the fragment handler. Include it in catch-up/checkpoints.
-                replay.subscription.for_each_image(|image| {
+                subscription.for_each_image(|image| {
                     replay
                         .position
                         .fetch_max(image.position(), Ordering::Relaxed);
                 });
+                // From its replay start once it is subscribed: an empty
+                // recording never invokes a message callback.
                 let position = replay.position.load(Ordering::Relaxed);
                 self.polled
                     .entry(recording)
-                    .and_modify(|last| *last = (*last).max(position));
+                    .and_modify(|last| *last = (*last).max(position))
+                    .or_insert(position);
                 any |= polled > 0;
             }
             if !any || (capped && writer.queued_bytes() >= max_queued) {
@@ -409,7 +439,11 @@ impl Ingester {
             }
         }
         for (&recording, replay) in &mut self.replays {
-            if replay.subscription.is_connected() {
+            if replay
+                .subscription
+                .added()?
+                .is_some_and(AeronSubscription::is_connected)
+            {
                 replay.connected = true;
             } else if replay.connected || replay.opened.elapsed() > Duration::from_secs(10) {
                 // The replay reached the end of a stopped recording, or never

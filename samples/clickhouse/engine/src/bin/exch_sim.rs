@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             64,
         );
-        metrics.poll(clock.now());
+        app.persist.poll(clock.now());
         app.idle.idle(work);
     }
 }

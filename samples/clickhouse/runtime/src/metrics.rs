@@ -17,7 +17,7 @@
 //!     sent.inc(); // a load and a store
 //!     depth.set(12.0); // a store
 //!     t2t.record(850); // count, sum, min, and max
-//!     metrics.poll(now); // one compare, until the next millisecond or the 5 s boundary
+//!     persist.poll(now); // two compares, until the next millisecond, the 5 s boundary or a config re-read
 //! #   break;
 //! }
 //! # Ok(()) }
@@ -530,7 +530,7 @@ impl Metrics {
     }
 
     /// Series that nothing publishes: handles work, and cost what they
-    /// always do. What [`fn@crate::metrics`] returns with no handle installed.
+    /// always do. What [`fn@crate::persist::metrics`] returns with no handle installed.
     #[must_use]
     pub fn detached() -> Self {
         Self::new(std::time::Duration::from_secs(5))
@@ -789,10 +789,23 @@ impl Metrics {
     #[cold]
     fn poll_due(&self, now: Nanos) {
         if let Some(persist) = &self.persist {
-            self.poll_with(now, persist.max_payload(), |len, write| {
-                persist.claim(len, write);
-            });
+            self.publish_due(now, persist);
         }
+    }
+
+    /// [`Metrics::poll`], published through `persist`.
+    #[inline]
+    pub(crate) fn poll_through(&self, now: Nanos, persist: &Persist) {
+        if now.0 >= self.registry.next_due.load(Relaxed) {
+            self.publish_due(now, persist);
+        }
+    }
+
+    #[cold]
+    fn publish_due(&self, now: Nanos, persist: &Persist) {
+        self.poll_with(now, persist.max_payload(), |len, write| {
+            persist.claim(len, write);
+        });
     }
 
     /// [`Metrics::poll`] once a deadline is due: publish one message

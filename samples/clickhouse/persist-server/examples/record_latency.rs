@@ -20,7 +20,7 @@
 //! Metric and clock samples time 100 operations (`x100` in the output).
 //! Metric handles and tracing events use the same values in each batch.
 //! * `clock-now` `Clock::now`; `clock-cached` `Clock::cached`; `system-time` `SystemTime::now`
-//! * `poll-idle` `Metrics::poll` between the 5 s interval. A histogram makes
+//! * `poll-idle` `Persist::poll` between the 5 s interval. A histogram makes
 //!   poll due every 1 ms. `poll-due` uses a 1 ms metrics interval, so every
 //!   deadline also includes counters. Both arms measure a mixed duty cycle:
 //!   most polls are idle, while due polls publish at most one message.
@@ -212,7 +212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "poll-idle" | "poll-due" => sample!(1, |_i| {
             others[0].inc();
             histogram.record(850);
-            metrics.poll(clock.cached());
+            persist.poll(clock.cached());
         }),
         "trace-off" | "trace-unsampled" | "trace-sampled" => sample!(1, |_i| {
             let mut t = tracer.start(Nanos(1_000), tracer.next_id());

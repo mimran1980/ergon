@@ -75,6 +75,23 @@ fn ingester(lab: &Lab, ch: ClickHouse, stream_id: i32) -> Result<Ingester, Box<d
     })?)
 }
 
+/// Is `template_id` recorded, once `persist` has applied `tables.yaml`
+/// again? Polling it is what applies edits.
+fn enabled(persist: &Persist) -> bool {
+    persist.poll(runtime::clock::Clock::new().now());
+    persist.enabled(v1::TEMPLATE_ID)
+}
+
+/// Poll `persist` for `wait`: an edit that should change nothing has had
+/// its chance.
+fn settle(persist: &Persist, wait: Duration) {
+    let until = Instant::now() + wait;
+    while Instant::now() < until {
+        enabled(persist);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn wait_until(what: &str, mut done: impl FnMut() -> Result<bool, Box<dyn Error>>) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !done()? {
@@ -614,15 +631,15 @@ fn enabled_follows_the_config_file() -> TestResult {
     })?;
 
     lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: true }\n")?;
-    wait_until("recording on", || Ok(persist.enabled(v1::TEMPLATE_ID)))?;
+    wait_until("recording on", || Ok(enabled(&persist)))?;
 
     // An invalid edit is rejected and the last good configuration stays.
     lab.write_config("tables:\n  shapes: { kind: sometimes }\n")?;
-    std::thread::sleep(Duration::from_millis(2500));
-    assert!(persist.enabled(v1::TEMPLATE_ID));
+    settle(&persist, Duration::from_millis(2500));
+    assert!(enabled(&persist));
 
     lab.write_config("tables:\n  shapes: { kind: dynamic, enabled: false }\n")?;
-    wait_until("recording off", || Ok(!persist.enabled(v1::TEMPLATE_ID)))?;
+    wait_until("recording off", || Ok(!enabled(&persist)))?;
     Ok(())
 }
 
@@ -647,8 +664,8 @@ fn a_table_is_switched_per_app_until_a_time() -> TestResult {
     lab.write_config(
         "tables:\n  shapes: { kind: dynamic, enabled: false, apps: { bybit: true } }\n",
     )?;
-    std::thread::sleep(Duration::from_millis(2500));
-    assert!(!persist.enabled(v1::TEMPLATE_ID));
+    settle(&persist, Duration::from_millis(2500));
+    assert!(!enabled(&persist));
 
     // On for this app until three seconds from now, then off by itself,
     // with no further edit.
@@ -656,10 +673,8 @@ fn a_table_is_switched_per_app_until_a_time() -> TestResult {
     lab.write_config(&format!(
         "tables:\n  shapes: {{ kind: dynamic, enabled: false, apps: {{ binance: {{ until: {until} }} }} }}\n"
     ))?;
-    wait_until("on for this app", || Ok(persist.enabled(v1::TEMPLATE_ID)))?;
-    wait_until("off once its time has passed", || {
-        Ok(!persist.enabled(v1::TEMPLATE_ID))
-    })?;
+    wait_until("on for this app", || Ok(enabled(&persist)))?;
+    wait_until("off once its time has passed", || Ok(!enabled(&persist)))?;
     assert!(jiff::Timestamp::now() >= until, "switched off early");
     Ok(())
 }
@@ -779,6 +794,23 @@ fn the_drivers_counters_are_sampled_with_their_streams_and_clients() -> TestResu
     wait_until("the archive to record the stream", || {
         Ok(persist.is_connected())
     })?;
+    // Publication counters exist before replay delivers the application's
+    // Source metadata. Keep that initial sample to exercise late naming.
+    wait_until("the publication's initial counter sample", || {
+        let report = ingester.tick()?;
+        if !report.errors.is_empty() {
+            return Err(format!("unexpected errors: {:?}", report.errors).into());
+        }
+        let n = lab.query(&format!(
+            "SELECT count() FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id}"
+        ))?;
+        Ok(n.parse::<u64>()? > 0)
+    })?;
+    assert_eq!(
+        lab.query(&format!("SELECT DISTINCT client_name = '', value = 0 FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} FORMAT TSV"))?,
+        "1\t1",
+        "the first record has not sent Source or data yet"
+    );
     record(&persist, 10)?;
     // Samples until one has a delta: the second sample of a counter.
     wait_until("two samples of this stream's publication", || {
@@ -788,13 +820,15 @@ fn the_drivers_counters_are_sampled_with_their_streams_and_clients() -> TestResu
         }
         std::thread::sleep(Duration::from_millis(100));
         let n = lab
-            .query(&format!("SELECT count() FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} AND delta IS NOT NULL"))
+            .query(&format!("SELECT count() FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} AND delta IS NOT NULL AND client_name = 'test-app'"))
             .unwrap_or_default();
         Ok(n.parse::<u64>().unwrap_or(0) > 0)
     })?;
-    // The application's publication, named by its client, from its key.
+    // The latest sample of every publication must have the name learned
+    // from Source and the recorded bytes. Earlier samples legitimately
+    // precede both; keep them rather than filtering unnamed rows away.
     assert_eq!(
-        lab.query(&format!("SELECT DISTINCT client_name, channel, session_id IS NOT NULL, value >= 10 * 64 FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} FORMAT TSV"))?,
+        lab.query(&format!("SELECT tupleElement(sample, 1), tupleElement(sample, 2), tupleElement(sample, 3), tupleElement(sample, 4) FROM (SELECT argMax(tuple(client_name, channel, session_id IS NOT NULL, value >= 10 * 64), ts) AS sample FROM DB.aeron_counters WHERE type = 'pub-pos' AND stream_id = {stream_id} GROUP BY counter_id, registration_id) FORMAT TSV"))?,
         "test-app\taeron:ipc?term-length=1m\t1\t1"
     );
     // The archive's recording of it, joined on the session.
@@ -1498,7 +1532,7 @@ fn a_feed_added_to_the_registry_is_recorded_without_a_restart() -> TestResult {
         ..persist_server::Settings::new(lab.ch.clone(), &lab.config, lab.dir.join("checkpoint"))
     };
     let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
-    ingester.follow(&path)?;
+    ingester.follow(&path);
 
     // A new service in the registry, as a ConfigMap update delivers it.
     let registry = format!(

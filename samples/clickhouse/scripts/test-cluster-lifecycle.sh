@@ -66,6 +66,8 @@ done
 # The k3s VMs: k3s stops agents first and the server last, starts the server
 # first, and every node imports the image.
 export LAB_CONTEXT=lab-vms LAB_VM_IPS='10.9.0.1 10.9.0.2 10.9.0.3 10.9.0.4'
+# Every LAB_VM_* the recipes read, or the developer's .env fills the rest in.
+export LAB_VM_NODE_IPS=$LAB_VM_IPS LAB_VM_REGIONS='an1 an1 as1 ew2'
 cat > "$fixture/bin/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

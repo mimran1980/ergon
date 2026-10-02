@@ -1191,16 +1191,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(0);
         }
     });
-    // Publishes the metrics every interval. A busy-spinning application
-    // calls `poll` from its own loop instead, with the time it has.
-    let metrics = persist.metrics();
+    // Publishes the metrics and applies `tables.yaml`. A busy-spinning
+    // application calls `poll` from its own loop instead, with the time it
+    // has; Nautilus owns this one's.
+    let polled = persist.clone();
     let idle = runtime::idle::Idle::from_env("IDLE", runtime::idle::Idle::Sleep)?;
     std::thread::Builder::new()
-        .name("metrics".into())
+        .name("persist".into())
         .spawn(move || {
             let clock = Clock::new();
             loop {
-                metrics.poll(clock.now());
+                polled.poll(clock.now());
                 idle.idle(0);
             }
         })?;

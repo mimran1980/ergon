@@ -12,7 +12,6 @@
 //!   [`event`] for rows from `tracing` events.
 //! * [`mod@metrics`], [`trace`], [`clock`] and [`idle`]: the hot-path tools.
 //! * [`source`]: who recorded a row.
-//! * [`throttle`]: log a repeating failure once, then as a reminder.
 
 pub mod app;
 pub mod bus;
@@ -26,7 +25,6 @@ pub mod source;
 mod spans;
 pub mod streams;
 pub mod subscription;
-pub mod throttle;
 pub mod trace;
 mod value;
 
@@ -42,8 +40,6 @@ pub enum Error {
     Config(String),
     /// The media driver is unreachable or refused a request.
     Aeron(String),
-    /// A background thread could not be started.
-    Thread(String),
     /// A source, metric, or trace dictionary message could not be encoded.
     Encode(event::codec::sbe_rt::EncodeError),
 }
@@ -54,7 +50,6 @@ impl std::fmt::Display for Error {
             Self::Schema(m) => write!(f, "schema: {m}"),
             Self::Config(m) => write!(f, "tables.yaml: {m}"),
             Self::Aeron(m) => write!(f, "aeron: {m}"),
-            Self::Thread(m) => write!(f, "thread: {m}"),
             Self::Encode(err) => write!(f, "encode: {err}"),
         }
     }
@@ -64,7 +59,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Encode(err) => Some(err),
-            Self::Schema(_) | Self::Config(_) | Self::Aeron(_) | Self::Thread(_) => None,
+            Self::Schema(_) | Self::Config(_) | Self::Aeron(_) => None,
         }
     }
 }
@@ -78,7 +73,8 @@ impl From<event::EncodeError> for Error {
 /// Where to publish and what to read.
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// `tables.yaml`, re-read every second.
+    /// `tables.yaml`, re-read every second by
+    /// [`Persist::poll`](persist::Persist::poll).
     pub config_path: PathBuf,
     /// This application's name: its entry under a table's `apps` switches
     /// that table for it alone. With [`Settings::host`] and [`Settings::pod`],
@@ -98,7 +94,7 @@ pub struct Settings {
     pub channel: String,
     /// Defaults to [`persist::STREAM_ID`].
     pub stream_id: i32,
-    /// How often [`metrics::Metrics::poll`] publishes (default 5 s), at
+    /// How often [`Persist::poll`](persist::Persist::poll) publishes (default 5 s), at
     /// multiples of it in UNIX time.
     pub metrics_interval: Duration,
     /// How long [`Persist::connect`](persist::Persist::connect) waits for a subscriber to record the
