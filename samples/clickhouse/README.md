@@ -27,9 +27,14 @@ node (one of four, three regions)
 
 ## Run
 
+Recipes in `justfile` work on whichever cluster `LAB_CONTEXT` names (kind's
+by default). Making and removing a cluster is per platform: `mac.justfile`
+(`just mac …`, kind on this machine) and `azure.justfile` (`just azure …`,
+below).
+
 ```sh
 cd samples/clickhouse
-just up        # kind cluster, images, deploy
+just mac up    # kind cluster (if needed), images, deploy
 just deploy    # apply kustomization.yaml after a config or manifest edit
 just md        # rebuild the app image and restart publishers and ingesters
 just aeron     # rebuild Aeron, then restart its clients
@@ -37,8 +42,9 @@ just verify    # check the running lab, including moving a feed between nodes
 just logs
 just test      # unit and integration tests; leaves ClickHouse and an Aeron driver up
 just test-stop
-just stop      # pause every cluster node, keep the data
-just destroy   # delete the cluster and the data
+just mac stop  # pause every kind node, keep the data
+just mac start
+just mac destroy   # delete the cluster and the data
 ```
 
 Needs Docker, kind, kubectl, just, and jq. Ports listen on every interface.
@@ -59,23 +65,72 @@ Grafana is anonymous admin and Jupyter has no token, so use a network you trust.
 | `md-<exchange>` | One feed handler, host network, pinned to its region. |
 | `engine-<region>`, `exch-sim-<region>` | The engine and its dummy exchange, host network. |
 
-### Run on k3s VMs
+### Run on Azure
 
-The same four nodes and three regions as VMs on a Linux libvirt host, joined into
-one k3s cluster: real machines with their own NICs, on x86, and off your laptop.
-Put the settings `scripts/vms.sh` lists in `.env` (gitignored), with
-`LAB_CONTEXT=lab-vms`, then:
+The same k3s nodes as Azure VMs, one per region, in one resource group
+(`ergon-lab`). Each region has its own network; the networks are peered, so
+k3s, flannel and Aeron's unicast MDC channels use private addresses. Only ssh
+(22), the Kubernetes API (6443) and the NodePorts are open, and only to the
+address `up` ran from.
 
 ```sh
-just vms       # make the VMs, install k3s; once
-just sync      # copy this checkout to every VM (/lab); after each edit
-ssh <first VM> 'cd /srv/ergon/samples/clickhouse && just up'   # not /lab: the build mounts ../..
+az login                 # once
+just azure up            # create everything, provision k3s; prints the .env lines
+just azure sync          # copy the checkout; .git goes to the first node only
+just azure on up         # on the first node: build, deploy, wait
+just azure on verify     # any lab recipe runs there the same way
+just azure pause         # stop k3s and every pod, VMs and data kept
+just azure resume
+just azure stop          # deallocate: no compute charge, cluster kept
+just azure start
+just azure down          # delete everything; fails unless the subscription is empty
 ```
 
-Build, `just md`, `just test` and `just verify` run on the first VM: the build
-container mounts the checkout. `just stop` / `just start` stop and start k3s on
-every VM; `just destroy` deletes the VMs. The UIs are on the NodePorts of any VM:
-`:30123/play`, `:30300`, `:30888`. `just watch-config` there needs `just sync` first.
+The first node builds the images and runs the lab's recipes (the build
+container mounts its checkout), so `just azure on <recipe>` runs them there.
+The UIs are on the NodePorts of any node: `:30123/play`, `:30300`, `:30888`.
+
+`.env` (gitignored) holds `LAB_CONTEXT=lab-vms`,
+`KUBECONFIG=~/.kube/lab-vms.yaml`, `LAB_AZ_REGIONS` and the `LAB_VM_*` lines
+`up` prints. **Run `just azure down` when a session ends**: deallocated VMs
+still pay for disks and addresses, and only a deleted group costs nothing.
+`down` also removes the `NetworkWatcherRG` Azure creates on its own.
+
+| Lab region | Azure region | VM |
+|---|---|---|
+| `an1` | Japan East (Tokyo) | Standard_D4s_v5 |
+| `as1` | East Asia (Hong Kong) | Standard_D4s_v5 |
+| `ew2` | Sweden Central (Stockholm) | Standard_D4s_v5 |
+| `us1` | East US 2 (Virginia) | Standard_D4s_v6 |
+
+A free-trial subscription allows 4 vCPUs and 3 public addresses per region,
+so one 4-vCPU node per region; more quota needs a pay-as-you-go upgrade,
+which also lifts the spending limit. It also may not get every size in every
+region: in October 2026 Southeast Asia, UK South/West, North Europe and France
+offered it no D-series size, East US only v4, and West Europe accepted no new
+customers. `az vm list-skus -l <region>` shows what a subscription can use;
+`LAB_AZ_REGIONS` (`azure-region:lab-region[:size]`) picks them. A node costs
+about $0.19–0.26 an hour, four about $1. Cross-region transfer is
+$0.02–0.08/GB, and engines subscribe to every feed, so market data crosses
+regions continuously. Round trips from Tokyo measured 54 ms (Hong Kong),
+159 ms (Virginia) and 254 ms (Stockholm).
+
+Changing the running lab, from `samples/clickhouse` on the Mac:
+
+| Changed | Run |
+|---|---|
+| Rust code (md, engine, ingester, exch-sim) | `just azure sync`, then `just azure on md` |
+| The Aeron driver or `docker/aeron.Dockerfile` | `just azure sync`, then `just azure on aeron` |
+| Manifests under `deploy/` | `just deploy` |
+| `config/tables.yaml`, `config/streams.yaml` | `just config` (no restart) |
+| Grafana dashboards | `just azure sync` (reloaded within 10 s) |
+| One pod, restarted | `kubectl --context lab-vms -n lab rollout restart deploy/<name>`, or k9s |
+
+`just azure sync` copies by content, so cargo on the first node rebuilds exactly what
+changed. Watch the cluster with
+`k9s --kubeconfig ~/.kube/lab-vms.yaml --context lab-vms -n lab`. Grafana's
+**Quant**, **SRE** and **Developer** dashboards are the starting points; each
+links to the detailed ones.
 
 ## Deploy
 
@@ -180,8 +235,13 @@ decode 3–7 µs, book 13–45 µs, decision about 1 µs, send 10–22 µs.
 
 ## Memory
 
-About 3.4 GiB for the whole lab, measured 2026-09-27. Give Docker Desktop
-about 8 GiB, not the whole machine.
+The whole lab used about 3.4 GiB when measured on 2026-09-27, before the
+cache reductions below. That includes Kubernetes; pod limits are ceilings,
+not reserved memory. On a 16 GiB Mac, set Docker Desktop → Settings → Resources
+→ Memory to 8 GiB and apply/restart, leaving the other 8 GiB for macOS and
+host builds. A 16 GiB Docker allowance on that machine leaves no headroom
+when the lab and builds peak together. The repository does not change this
+host setting automatically.
 
 | Pod | In use | Limit |
 |---|---|---|
@@ -192,6 +252,39 @@ about 8 GiB, not the whole machine.
 | `grafana` | ~130 MiB | 192 MiB |
 | `jupyter` | ~75 MiB | 512 MiB |
 | `ingester`, `engine`, `exch-sim` | 1–4 MiB | 256, 64, 64 MiB |
+
+`deploy/infra/clickhouse.xml` gives each mark, index-mark, primary-index and
+query-condition cache 16 MiB, and bounds the optional query-result cache to
+16 MiB. ClickHouse's tracked server memory has a 70% allowance inside its
+1.25 GiB container; the remaining room is for native allocations. It uses
+eight merge threads and 32 task slots, preserving MergeTree's default
+free-slot thresholds. `clickhouse-users.xml` limits a query to two threads
+and 384 MiB; oversized queries fail instead of exhausting the container.
+See the [ClickHouse 25.8 server defaults](https://github.com/ClickHouse/ClickHouse/blob/v25.8.1.5101-lts/programs/server/config.xml)
+and [MergeTree threshold checks](https://github.com/ClickHouse/ClickHouse/blob/v25.8.1.5101-lts/src/Storages/MergeTree/MergeTreeSettings.cpp).
+Apply these changes with `just deploy`; the hashed settings ConfigMap
+restarts ClickHouse. Aeron's driver uses an explicit `16m` IPC default.
+
+`just test` and `just latency` use the same ClickHouse settings in their
+separate `persist-test-clickhouse` container, capped at 1.25 GiB with no extra
+swap allowance and two CPUs. The next run recreates that disposable container
+if its settings changed; its test databases are disposable. The host test
+Aeron JVM has a 128 MiB heap and 64 MiB direct-memory cap (mapped logs and
+other JVM memory are additional); an old uncapped test driver is restarted.
+Tests run with two test threads; `just test_threads=4 test` overrides this.
+`just build` defaults to one Rust and native compiler job; use
+`just build_jobs=2 build` when memory permits. Run `just test-stop` after
+testing to release the test services. For benchmarks, `just mac stop` (kind) or
+`just azure pause` (Azure) pauses the lab and `just mac start` / `just azure
+resume` resumes it afterward, preserving recordings.
+
+Check actual usage with `docker stats --no-stream` and
+`kubectl --context kind-clickhouse-lab -n lab top pods --containers` (the
+latter needs metrics-server). Check pod terminations with
+`kubectl --context kind-clickhouse-lab -n lab get pods -o json`; an
+`OOMKilled` termination confirms a container memory failure. These settings
+still need a live workload check after deployment; the table above is the
+historical measurement, not a measurement of the new settings.
 
 ## Record
 
@@ -528,8 +621,9 @@ the table is fixed. A new session (restart or move) is a new recording.
 ## Latency
 
 `just latency`, 2026-09-27, Apple M4, rustc 1.98.1, lab running on the same
-machine. Timer resolution is 42 ns. Metric and clock rows are 100 operations
-per sample, divided back to one. Nothing was dropped.
+machine. Timer resolution is 42 ns. Metric and clock rows below are amortized
+costs of 100-operation batches; their divided quantiles do not describe
+individual-operation tail latency. Nothing was dropped in that historical run.
 
 | Call | p50 | p99 | p99.9 |
 |---|---|---|---|
@@ -540,7 +634,7 @@ per sample, divided back to one. Nothing was dropped.
 | `record_value`, flat / nested | 166 ns / 375 ns | 458 ns / 1.5 µs | 5.1 µs / 13 µs |
 | counter, gauge, histogram | 1.3 / 1.3 / 1.7 ns | 2–5 ns | 4–8 ns |
 | `Clock::cached` / `Clock::now` | 1.3 ns / 21 ns | 2.9 ns / 90 ns | 5.4 ns / 1.1 µs |
-| `poll`, idle / publishing | 41 ns / 42 ns | 42 ns / 250 ns | 458 ns / 3.7 µs |
+| `poll`, 5 s / 1 ms metrics intervals (mixed idle/due calls) | 41 ns / 42 ns | 42 ns / 250 ns | 458 ns / 3.7 µs |
 | checkpoint trace, off / unsampled / published | 42 / 41 / 83 ns | 84 / 84 / 333 ns | 625 ns / 500 ns / 1.5 µs |
 | `tracing` span, off / on | 83 ns / 250 ns | 209 ns / 667 ns | 1.8 µs / 5.9 µs |
 
@@ -550,6 +644,18 @@ The histogram and checkpoint-trace rows have not been remeasured with that
 lock. With a histogram registered, `poll` is due every 1 ms. The idle poll
 figure was measured before that. Due counter/gauge and histogram cycles run in
 deadline order so neither can starve the other.
+
+The current harness selects the operation before timing and makes handle,
+value, input and output observations opaque to the optimizer. It reports both
+raw batch quantiles and amortized batch costs. `control-x100` measures the
+amplified loop floor. Metric handles and `counter-event`, `gauge-event` and
+`histogram-event` use identical 100-update batches and input sequences. Each
+tracing update includes registry lookup and labels.
+`poll-idle` and `poll-due` both include mostly idle polls at the 5 µs cadence;
+`poll-due` uses a 1 ms metrics interval and includes counter deadlines too.
+Drops during measurement are reported separately from total drops, which
+include warm-up. These harness changes have not yet been measured through the
+live archive and ClickHouse path; the table above remains historical.
 
 `Clock::now` here is `mach_absolute_time`. On x86-64 Linux it is `rdtsc`,
 which this run did not measure.
@@ -578,10 +684,10 @@ interest and public trades. Venue-specific decimals stay text.
 - An event column's type is fixed by the first value. A later value of another type becomes NULL when it cannot convert.
 - A `tracing` field that is a nested struct is stored as debug text. Use `record_value` for columns.
 - In `record_row`, a JSON null omits the field, so each pattern of nulls is its own shape.
-- `just verify` counts restarts. After `just stop` / `just start` its last check fails.
+- `just verify` counts restarts. After pausing and resuming the lab its last check fails.
 - Two publications on one stream must use the same channel parameters.
 - Metrics of a process that exits before the next `poll` are lost. A counter's `delta` survives a restart. Its `value` starts again at 0.
-- A histogram read from another thread while it is being updated can disagree on `sum` and count. Poll from the recording thread.
+- Histogram polling takes count, sum, min, and max together under the cell mutex. A concurrent recorder waits while its cell is drained.
 - A crash can drop the histogram window still open in the ingester, at most 5 s.
 - A heartbeat round sends one dictionary message per `record` until it is done. A quiet process finishes it only as fast as it records.
 - A persistent subscription can replay only the segments the ingester has not yet purged.

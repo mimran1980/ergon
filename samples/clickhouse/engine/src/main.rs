@@ -6,9 +6,17 @@
 //! EMAs, and a strategy. Orders go to `exch-sim`. Fills come back on `exec`.
 //! Once a second it publishes `ema` and `agg_book` on `signals`.
 //!
-//! `tick_to_trade` is a checkpoint trace: `feed`, `decode`, `book`, `signal`,
+//! It subscribes to every feed handler, in every region: the whole market,
+//! the far venues as late as the network makes them.
+//!
+//! `tick_to_trade` is a checkpoint trace per venue, from the venue's event:
+//! `venue <VENUE>` (the venue to md), `feed <from>→<here>` (md to this
+//! engine, across regions or not), `decode`, `book`, `signal` (the EMAs),
 //! `decide`, `send`. Every tick updates the stage histograms. A tick that
 //! sends an order is kept under that order's id. `exch-sim` uses the same id.
+//! Histograms beside it: `md_to_engine_ns`, `venue_to_engine_ns` and
+//! `tick_to_order_ns` per venue and its region (`from`), `order_ack_ns` and
+//! `order_fill_ns` per order.
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -65,15 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    // A feed handler added to the registry in this region is subscribed to
+    // A feed handler added to the registry, in any region, is subscribed to
     // within a second or two, with no restart.
     let watch = persist_client::streams::Watch::spawn(&app.streams_path)?;
-    // Held apart from `core`: a trace in flight borrows it.
-    let t2t = app.persist.tracer(
-        "tick_to_trade",
-        &["feed", "decode", "book", "signal", "decide", "send"],
-        &[],
-    );
     let mut core = Core {
         venues,
         assets: Vec::new(),
@@ -88,6 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drift: metrics.gauge("clock_drift_ns", &[]),
         live: false,
         open: HashMap::new(),
+        order_ack: metrics.histogram("order_ack_ns", &[]),
+        order_fill: metrics.histogram("order_fill_ns", &[]),
         metrics: metrics.clone(),
     };
     loop {
@@ -95,14 +99,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         let mut work = 0;
-        for (i, (md, tob)) in subs.iter_mut().enumerate() {
-            work += md.poll(|m, delivery| core.on_md(&t2t, i, m, delivery), LIMIT);
+        for (i, (md, tob, t2t)) in subs.iter_mut().enumerate() {
+            work += md.poll(|m, delivery| core.on_md(t2t, i, m, delivery), LIMIT);
             work += tob.poll(|m, _| core.on_tob(i, m), LIMIT);
         }
         work += exec.poll(|m, _| core.on_exec(m), LIMIT);
         let now = core.clock.now();
         if core.every_second(now) {
-            for (venue, (md, _)) in core.venues.iter().zip(&subs) {
+            for (venue, (md, _, _)) in core.venues.iter().zip(&subs) {
                 venue.live.set(f64::from(u8::from(md.is_live())));
             }
             if let Some(streams) = watch.changed()
@@ -116,21 +120,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Subscribe to every feed handler of `streams` in this region not yet
-/// subscribed to. Venues are only ever added: one taken out of the registry
-/// just goes quiet.
+/// Subscribe to every feed handler of `streams`, in every region, not yet
+/// subscribed to: each engine sees the whole market, the far venues as late
+/// as the network makes them. Venues are only ever added: one taken out of
+/// the registry just goes quiet.
 fn add_venues(
     app: &App,
     streams: &persist_client::streams::Streams,
     metrics: &persist_client::metrics::Metrics,
-    subs: &mut Vec<(Persistent, Subscriber)>,
+    subs: &mut Vec<(Persistent, Subscriber, Tracer)>,
     venues: &mut Vec<Venue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ip = app.host_ip.as_str();
-    for (name, _) in streams
+    for (name, service) in streams
         .services
         .iter()
-        .filter(|(name, service)| name.starts_with("md-") && service.region == app.region)
+        .filter(|(name, _)| name.starts_with("md-"))
     {
         let label = name.trim_start_matches("md-").to_uppercase();
         if venues.iter().any(|v| v.name == label) {
@@ -141,8 +146,27 @@ fn add_venues(
             streams.stream(name, "tob")?,
         );
         let md = app.persist.persistent(streams, name, "md", ip)?;
-        subs.push((md, tob));
-        let l = [("venue", label.as_str())];
+        // A trace per venue, its stages naming the venue and the route, so
+        // a slow `feed` reads as the region it crossed. Still `tick_to_trade`:
+        // sampled by tables.yaml's rule of that name. Held apart from `Core`:
+        // a trace in flight borrows its tracer.
+        let t2t = app.persist.tracer(
+            "tick_to_trade",
+            &[
+                &format!("venue {label}"),
+                &format!("feed {}→{}", service.region, app.region),
+                "decode",
+                "book",
+                "signal",
+                "decide",
+                "send",
+            ],
+            &[],
+        );
+        subs.push((md, tob, t2t));
+        // `from`: the feed's region, so each engine's view of every region
+        // is its own series (Tokyo to London is not Tokyo to Tokyo).
+        let l = [("venue", label.as_str()), ("from", service.region.as_str())];
         log::info!("{name}: subscribing");
         venues.push(Venue {
             instruments: Vec::new(),
@@ -154,6 +178,9 @@ fn add_venues(
             replayed: metrics.counter("feed_replayed", &l),
             tob: metrics.counter("tob_quotes", &l),
             tob_latency: metrics.histogram("tob_latency_ns", &l),
+            md_latency: metrics.histogram("md_to_engine_ns", &l),
+            venue_latency: metrics.histogram("venue_to_engine_ns", &l),
+            tick_to_order: metrics.histogram("tick_to_order_ns", &l),
             name: label,
         });
     }
@@ -183,6 +210,12 @@ struct Venue {
     replayed: Counter,
     tob: Counter,
     tob_latency: Histogram,
+    /// The feed handler's receive to this engine's, every live book message.
+    md_latency: Histogram,
+    /// The venue's event time to this engine's receive: the whole market data path.
+    venue_latency: Histogram,
+    /// The feed handler's receive to this engine's order, for ticks that send one.
+    tick_to_order: Histogram,
 }
 
 struct Asset {
@@ -212,6 +245,9 @@ struct Core {
     /// Orders sent and not yet answered, by id: when sent. A fill applies
     /// once, to an order here; a replayed or repeated one is ignored.
     open: HashMap<u64, i64>,
+    /// Order sent to the exchange's `New`, and to its `Filled`.
+    order_ack: Histogram,
+    order_fill: Histogram,
     metrics: persist_client::metrics::Metrics,
 }
 
@@ -316,7 +352,11 @@ impl Core {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
         let at = self.clock.from_remote(d.ts_init() as i64, received);
-        let mut trace = t2t.start(at, t2t.next_id());
+        self.path_latency(v, at, d.ts_event(), received);
+        // From the venue's event: the venue to md, then md to here.
+        let event = self.clock.from_remote(d.ts_event() as i64, received);
+        let mut trace = t2t.start(event, t2t.next_id());
+        trace.mark(at);
         trace.mark(received);
         let (Ok(bids), Ok(asks), Ok(symbol)) = (d.bids(), d.asks(), d.symbol()) else {
             return;
@@ -327,14 +367,18 @@ impl Core {
             bids.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
             asks.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
         );
-        self.tick(v, i, d.ts_init(), trace);
+        self.tick(v, i, d.ts_init(), at, trace);
     }
 
     fn on_deltas(&mut self, t2t: &Tracer, v: usize, d: BookDeltasDecoder<'_>, received: Nanos) {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
         let at = self.clock.from_remote(d.ts_init() as i64, received);
-        let mut trace = t2t.start(at, t2t.next_id());
+        self.path_latency(v, at, d.ts_event(), received);
+        // From the venue's event: the venue to md, then md to here.
+        let event = self.clock.from_remote(d.ts_event() as i64, received);
+        let mut trace = t2t.start(event, t2t.next_id());
+        trace.mark(at);
         trace.mark(received);
         let (Ok(deltas), Ok(symbol)) = (d.deltas(), d.symbol()) else {
             return;
@@ -357,12 +401,12 @@ impl Core {
                 },
             });
         }
-        self.tick(v, i, d.ts_init(), trace);
+        self.tick(v, i, d.ts_init(), at, trace);
     }
 
     /// Instrument `i` of venue `v` changed: its asset's aggregate, EMAs and
     /// strategy, and an order if it says so.
-    fn tick(&mut self, v: usize, i: usize, tick_ts: u64, mut trace: Trace<'_>) {
+    fn tick(&mut self, v: usize, i: usize, tick_ts: u64, at: Nanos, mut trace: Trace<'_>) {
         let Some(a) = self.venues[v].instruments[i].asset else {
             return;
         };
@@ -421,12 +465,29 @@ impl Core {
             trace.mark(self.clock.now());
             if sent.is_ok() {
                 self.sent.inc();
+                let ordered = self.clock.now().since(at).max(0) as u64;
+                self.venues[v].tick_to_order.record(ordered);
                 self.open.insert(order_id, order_id as i64);
                 trace.set_id(TraceId::new(ORDERS, order_id));
                 trace.keep();
             }
         }
         trace.finish();
+    }
+
+    /// How old a live book message of venue `v` arrives: from the feed
+    /// handler's receive (`at`) and from the venue's own event time. A
+    /// message caught up from the archive is as old as the outage, not the path.
+    fn path_latency(&self, v: usize, at: Nanos, ts_event: u64, received: Nanos) {
+        if !self.live {
+            return;
+        }
+        let venue = &self.venues[v];
+        venue.md_latency.record(received.since(at).max(0) as u64);
+        let event = self.clock.from_remote(ts_event as i64, received);
+        venue
+            .venue_latency
+            .record(received.since(event).max(0) as u64);
     }
 
     /// Best effort top of book: counted, and how old it arrives.
@@ -447,7 +508,15 @@ impl Core {
         let Ok(TradingMessage::ExecutionReport(r)) = TradingMessage::decode(m, 0) else {
             return;
         };
+        let sent = self.open.get(&r.order_id()).copied();
+        let age = |sent: i64| (self.clock.now().epoch_ns() - sent).max(0) as u64;
         match r.status() {
+            OrderStatus::New => {
+                if let Some(sent) = sent {
+                    self.order_ack.record(age(sent));
+                }
+                return;
+            }
             OrderStatus::Filled => {}
             OrderStatus::Rejected => {
                 self.open.remove(&r.order_id());
@@ -459,6 +528,9 @@ impl Core {
         // one again.
         if self.open.remove(&r.order_id()).is_none() {
             return;
+        }
+        if let Some(sent) = sent {
+            self.order_fill.record(age(sent));
         }
         let Ok(name) = r.asset_as_str() else {
             return;
@@ -524,8 +596,8 @@ impl Core {
                     })
                 })
             };
-            let bids = aggregate(books(), true, AGG_LEVELS);
-            let asks = aggregate(books(), false, AGG_LEVELS);
+            let bids = aggregate::<AGG_LEVELS>(books(), true);
+            let asks = aggregate::<AGG_LEVELS>(books(), false);
             let len =
                 AggBookEncoder::compute_length_with_header(bids.len(), asks.len(), name.len());
             let d9 = |x: f64| Decimal9::new((x * engine::SCALE).round() as i64);

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use arrayvec::ArrayVec;
 use persist_client::idle::Idle;
 use persist_client::streams::Streams;
 use persist_client::{Persist, Settings};
@@ -115,35 +116,44 @@ impl Book {
     }
 }
 
-/// One side's best `n` levels across books, best first: `(price mantissa,
-/// base size, venue)`. `books` are `(spec, book, venue)`.
+/// One side's best `N` levels across books, best first: `(price mantissa,
+/// base size, venue)`. `books` are `(spec, book, venue)`. On the stack: each
+/// level goes into place as it comes, and a book's side stops at the first
+/// level that cannot make the top `N`. Equal prices keep the books' order.
 #[must_use]
-pub fn aggregate<'a>(
+pub fn aggregate<'a, const N: usize>(
     books: impl Iterator<Item = (&'a Spec, &'a Book, &'a str)>,
     bid: bool,
-    n: usize,
-) -> Vec<(i64, f64, &'a str)> {
-    let mut levels: Vec<(i64, f64, &str)> = books
-        .filter(|(_, book, _)| book.synced)
-        .flat_map(|(spec, book, venue)| {
-            let side: Box<dyn Iterator<Item = (&i64, &i64)>> = if bid {
-                Box::new(book.bids.iter().rev())
-            } else {
-                Box::new(book.asks.iter())
-            };
-            side.take(n).map(move |(&price, &size)| {
-                let p = price as f64 / SCALE;
-                (price, spec.base(size as f64 / SCALE, p), venue)
-            })
-        })
-        .collect();
-    if bid {
-        levels.sort_by_key(|l| std::cmp::Reverse(l.0));
-    } else {
-        levels.sort_by_key(|l| l.0);
+) -> ArrayVec<(i64, f64, &'a str), N> {
+    let mut top = ArrayVec::new();
+    let better = |a: i64, b: i64| if bid { a > b } else { a < b };
+    for (spec, book, venue) in books.filter(|(_, book, _)| book.synced) {
+        let mut add = |(&price, &size): (&i64, &i64)| {
+            if top.is_full()
+                && !top
+                    .last()
+                    .is_some_and(|l: &(i64, f64, &str)| better(price, l.0))
+            {
+                return false;
+            }
+            let at = top
+                .iter()
+                .position(|l| better(price, l.0))
+                .unwrap_or(top.len());
+            if top.is_full() {
+                top.pop();
+            }
+            let p = price as f64 / SCALE;
+            top.insert(at, (price, spec.base(size as f64 / SCALE, p), venue));
+            true
+        };
+        if bid {
+            book.bids.iter().rev().take(N).all(&mut add);
+        } else {
+            book.asks.iter().take(N).all(&mut add);
+        }
     }
-    levels.truncate(n);
-    levels
+    top
 }
 
 /// Time-decayed EMAs over [`HORIZONS`]: `α = 1 − e^(−Δt/τ)`, so each moves
@@ -424,10 +434,10 @@ mod tests {
             ]
             .into_iter()
         };
-        let bids = aggregate(books(), true, 2);
-        assert_eq!(bids, [(d(100), 1.0, "A"), (d(99), 10.0, "B")]);
-        let asks = aggregate(books(), false, 5);
-        assert_eq!(asks, [(d(100), 5.0, "B"), (d(101), 1.0, "A")]);
+        let bids = aggregate::<2>(books(), true);
+        assert_eq!(bids.as_slice(), [(d(100), 1.0, "A"), (d(99), 10.0, "B")]);
+        let asks = aggregate::<5>(books(), false);
+        assert_eq!(asks.as_slice(), [(d(100), 5.0, "B"), (d(101), 1.0, "A")]);
     }
 
     #[test]

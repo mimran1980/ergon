@@ -8,6 +8,7 @@ check-aeron-cluster:
 
 # Cluster integration tests (requires Java 17+ and built Aeron jars — run
 # `just build-aeron-jars` once first; slow).
+# Cluster integration tests (Java 17+ and built Aeron jars; slow)
 test-aeron-cluster-harness:
     cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 
@@ -15,6 +16,7 @@ test-aeron-cluster-harness:
 build-aeron-jars:
     cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar
 
+# Record the Aeron test jars' SHA-256 hashes
 hash-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -28,6 +30,7 @@ hash-aeron-jars:
     done
     echo "=== SHA-256 hashes saved to cluster-test-harness/test-jars.sha256 ==="
 
+# Fail if the Aeron test jars' SHA-256 hashes differ from the committed ones
 check-aeron-jars:
     #!/usr/bin/env bash
     set -euo pipefail

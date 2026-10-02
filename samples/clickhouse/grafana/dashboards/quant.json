@@ -1,0 +1,528 @@
+{
+ "uid": "quant",
+ "title": "Quant",
+ "description": "Markets across venues per asset, the engines' signals and their trading.",
+ "tags": [
+  "lab"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Prices across venues",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Mid by venue: $asset",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts_event) AS time, venue, avg((toFloat64(bid_price) + toFloat64(ask_price)) / 2) AS mid FROM md.quote WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) = '${asset}') GROUP BY time, venue ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "repeat": "asset",
+   "repeatDirection": "h",
+   "maxPerRow": 3
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Each venue's mid against the venues' average (bps): $asset",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 1,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT time, venue, (mid - avg(mid) OVER (PARTITION BY time)) / avg(mid) OVER (PARTITION BY time) * 10000 AS bps FROM (SELECT $__timeInterval(ts_event) AS time, venue, avg((toFloat64(bid_price) + toFloat64(ask_price)) / 2) AS mid FROM md.quote WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) = '${asset}') GROUP BY time, venue) ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Positive: the venue quotes above the others. Linear USDT, inverse USD and USDC contracts differ by their quote currency's basis.",
+   "repeat": "asset",
+   "repeatDirection": "h",
+   "maxPerRow": 3
+  },
+  {
+   "id": 4,
+   "type": "row",
+   "title": "Liquidity",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Quoted spread (bps)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 10,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg((toFloat64(ask_price) - toFloat64(bid_price)) / (toFloat64(ask_price) + toFloat64(bid_price))) * 20000 AS bps FROM md.quote WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Top-10 book imbalance (bid − ask) / (bid + ask)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 10,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg((arraySum(bids.size) - arraySum(asks.size)) / greatest(arraySum(bids.size) + arraySum(asks.size), 1e-12)) AS imbalance FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "+1: all the visible depth is bids. Sizes are each venue's own units (contracts on Deribit and OKX)."
+  },
+  {
+   "id": 7,
+   "type": "piechart",
+   "title": "Traded notional share by venue (selected assets)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 18,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT venue, round(sum(toFloat64(price) * toFloat64(size))) AS notional FROM md.trade WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY venue ORDER BY notional DESC",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "Price × size in each venue's units: comparable for linear contracts; inverse contracts (Deribit) count USD sizes × price."
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Trades per second by venue",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 18,
+    "w": 16,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts_event) AS time, venue, count() / $__interval_s AS trades FROM md.trade WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, venue ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 9,
+   "type": "row",
+   "title": "Perpetuals",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 26,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 10,
+   "type": "table",
+   "title": "Funding rate now, by asset and venue (% per interval)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 27,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT if(base = 'XBT', 'BTC', base) AS asset, venue, round(argMax(toFloat64(rate), f.ts_event) * 100, 5) AS rate_pct, argMax(interval_minutes, f.ts_event) AS interval_minutes, max(f.ts_event) AS updated FROM md.funding_rate AS f INNER JOIN md.instrument_spec AS s USING (symbol, venue) GROUP BY asset, venue ORDER BY asset, venue",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Mark against index (bps)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 27,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT m.time AS time, m.instrument AS instrument, (m.mark - i.idx) / i.idx * 10000 AS basis_bps FROM (SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(price)) AS mark FROM md.mark_price WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument) AS m INNER JOIN (SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(price)) AS idx FROM md.index_price WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument) AS i USING (time, instrument) ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 12,
+   "type": "row",
+   "title": "Engines: signals, positions, PnL",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 35,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 13,
+   "type": "timeseries",
+   "title": "Aggregated mid and EMAs (engine-an1): $asset",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 36,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT ts AS time, mid, ema5m, ema30m, ema1h FROM engine.ema WHERE $__timeFilter(ts) AND app = 'engine-an1' AND asset = '${asset}' ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "repeat": "asset",
+   "repeatDirection": "h",
+   "maxPerRow": 3
+  },
+  {
+   "id": 14,
+   "type": "timeseries",
+   "title": "Position by engine and asset (base)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 36,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['asset']) AS series, avg(value) AS position FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'position' AND labels['asset'] IN (${asset:singlequote}) GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "PnL by engine and asset (quote)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 44,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['asset']) AS series, avg(value) AS pnl FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'pnl' AND labels['asset'] IN (${asset:singlequote}) GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Orders and fills per minute by engine",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 52,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT time, series, n FROM (SELECT toStartOfMinute(ts) AS time, concat(app, ' orders') AS series, count() AS n FROM orders.new_order WHERE $__timeFilter(ts) GROUP BY time, series UNION ALL SELECT toStartOfMinute(ts) AS time, concat(replaceOne(app, 'exch-sim-', 'engine-'), ' fills') AS series, count() AS n FROM orders.execution_report WHERE $__timeFilter(ts) AND status = 'Filled' GROUP BY time, series) ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  }
+ ],
+ "templating": {
+  "list": [
+   {
+    "name": "asset",
+    "type": "query",
+    "datasource": {
+     "type": "grafana-clickhouse-datasource",
+     "uid": "clickhouse"
+    },
+    "query": "SELECT DISTINCT if(base = 'XBT', 'BTC', base) FROM md.instrument_spec ORDER BY 1",
+    "definition": "SELECT DISTINCT if(base = 'XBT', 'BTC', base) FROM md.instrument_spec ORDER BY 1",
+    "refresh": 2,
+    "multi": true,
+    "includeAll": true,
+    "current": {
+     "selected": true,
+     "text": [
+      "BTC",
+      "ETH"
+     ],
+     "value": [
+      "BTC",
+      "ETH"
+     ]
+    }
+   }
+  ]
+ },
+ "links": [
+  {
+   "title": "Market data",
+   "type": "link",
+   "url": "/d/market",
+   "keepTime": true
+  },
+  {
+   "title": "Trading",
+   "type": "link",
+   "url": "/d/trading",
+   "keepTime": true
+  },
+  {
+   "title": "Latency",
+   "type": "link",
+   "url": "/d/latency",
+   "keepTime": true
+  }
+ ]
+}

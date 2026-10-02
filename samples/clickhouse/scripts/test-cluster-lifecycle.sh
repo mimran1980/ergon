@@ -40,14 +40,14 @@ done
 SH
 chmod +x "$fixture/bin/kind" "$fixture/bin/docker"
 
-just --justfile "$sample_root/justfile" stop
+just --justfile "$sample_root/justfile" mac stop
 for node in "${nodes[@]}"; do
     [[ $(cat "$fixture/state/$node") == stopped ]] || {
         echo "stop left $node running" >&2
         exit 1
     }
 done
-just --justfile "$sample_root/justfile" start
+just --justfile "$sample_root/justfile" mac start
 for node in "${nodes[@]}"; do
     [[ $(cat "$fixture/state/$node") == running ]] || {
         echo "start left $node stopped" >&2
@@ -55,7 +55,7 @@ for node in "${nodes[@]}"; do
     }
 done
 
-if CLUSTER_TEST_LIST_FAIL=1 just --justfile "$sample_root/justfile" stop >/dev/null 2>&1; then
+if CLUSTER_TEST_LIST_FAIL=1 just --justfile "$sample_root/justfile" mac stop >/dev/null 2>&1; then
     echo 'stop must fail when node discovery fails' >&2
     exit 1
 fi
@@ -84,16 +84,16 @@ expect() {
     diff <(printf '%s\n' "$@") "$fixture/state/ssh" || { echo "$recipe: wrong ssh calls" >&2; exit 1; }
     rm "$fixture/state/ssh"
 }
-recipe=stop; just --justfile "$sample_root/justfile" stop
+recipe=stop; just --justfile "$sample_root/justfile" azure pause
 expect '10.9.0.4 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
     '10.9.0.3 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
     '10.9.0.2 sudo systemctl stop k3s-agent && sudo k3s-killall.sh >/dev/null 2>&1' \
     '10.9.0.1 sudo systemctl stop k3s && sudo k3s-killall.sh >/dev/null 2>&1'
-recipe=start; just --justfile "$sample_root/justfile" start
+recipe=start; just --justfile "$sample_root/justfile" azure resume
 expect '10.9.0.1 sudo systemctl start k3s' '10.9.0.2 sudo systemctl start k3s-agent' \
     '10.9.0.3 sudo systemctl start k3s-agent' '10.9.0.4 sudo systemctl start k3s-agent'
 recipe=_load; just --justfile "$sample_root/justfile" _load lab/app:local
 for ip in $LAB_VM_IPS; do
     [[ $(cat "$fixture/state/import-$ip") == *lab/app:local* ]] || { echo "_load skipped $ip" >&2; exit 1; }
 done
-echo 'cluster lifecycle recipes: PASS (kind: all four nodes, discovery failure; k3s VMs: stop, start, load)'
+echo 'cluster lifecycle recipes: PASS (mac: all four kind nodes, discovery failure; azure: pause, resume, image load on k3s)'

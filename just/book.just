@@ -15,6 +15,7 @@ book-test:
 
 # Build + test the book (CI equivalent).
 # Uses the strict docs_validation_test harness, not the permissive mdbook test.
+# Build and test the book as CI does
 book-ci: policy
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
     cd book && mdbook build

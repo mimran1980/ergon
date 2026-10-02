@@ -1,0 +1,342 @@
+{
+ "uid": "latency",
+ "title": "Latency",
+ "tags": [
+  "lab"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-15m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "table",
+   "title": "Feed handler → engine, every live book message (ms): each feed's region to each engine's",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT concat(labels['venue'], ' (', labels['from'], ')') AS feed, replaceOne(app, 'engine-', '') AS engine, round(min(min) / 1e6, 3) AS min, round(sum(p50 * count) / sum(count) / 1e6, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e6, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e6, 3) AS p99_99, round(max(max) / 1e6, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'md_to_engine_ns' GROUP BY feed, engine ORDER BY feed, engine",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "md's receive time to the engine's, on the reliable md stream. Same region: the node's Aeron path. Other regions: the network between them. Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Feed handler → engine by region pair: min, p50, p99, p99.99, max (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(labels['from'], ' → ', replaceOne(app, 'engine-', '')) AS series, min(min) / 1e6 AS min, sum(p50 * count) / sum(count) / 1e6 AS p50, sum(p99 * count) / sum(count) / 1e6 AS p99, sum(p9999 * count) / sum(count) / 1e6 AS p99_99, max(max) / 1e6 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'md_to_engine_ns' GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 3,
+   "type": "table",
+   "title": "Venue → engine: the whole market data path (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT concat(labels['venue'], ' (', labels['from'], ')') AS feed, replaceOne(app, 'engine-', '') AS engine, round(min(min) / 1e6, 3) AS min, round(sum(p50 * count) / sum(count) / 1e6, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e6, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e6, 3) AS p99_99, round(max(max) / 1e6, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_engine_ns' GROUP BY feed, engine ORDER BY feed, engine",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "The exchange's event time to the engine's receive: exchange, internet, feed handler and Aeron together. Includes the exchange's clock error. Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 4,
+   "type": "table",
+   "title": "Venue → feed handler (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 24,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT app AS feed, labels['kind'] AS kind, round(min(min) / 1e6, 3) AS min, round(sum(p50 * count) / sum(count) / 1e6, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e6, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e6, 3) AS p99_99, round(max(max) / 1e6, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' GROUP BY feed, kind ORDER BY feed, kind",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 5,
+   "type": "table",
+   "title": "Tick to order: feed handler receive → order sent, ticks that traded (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 32,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT replaceOne(app, 'engine-', '') AS engine, concat(labels['venue'], ' (', labels['from'], ')') AS tick_from, round(min(min) / 1e3, 3) AS min, round(sum(p50 * count) / sum(count) / 1e3, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e3, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e3, 3) AS p99_99, round(max(max) / 1e3, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'tick_to_order_ns' GROUP BY engine, tick_from ORDER BY engine, tick_from",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "µs"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Only ticks that sent an order: feed, decode, book, signal (EMA), decide and send. A tick from a far region carries that region's network delay. Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Engine stages, every tick: min, p50, p99, p99.99, max (µs) — decode, book, signal (EMA), decide, send",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 40,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['stage']) AS series, min(min) / 1e3 AS min, sum(p50 * count) / sum(count) / 1e3 AS p50, sum(p99 * count) / sum(count) / 1e3 AS p99, sum(p9999 * count) / sum(count) / 1e3 AS p99_99, max(max) / 1e3 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND labels['stage'] != 'total' AND NOT startsWith(labels['stage'], 'feed') AND NOT startsWith(labels['stage'], 'venue') GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "µs"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "The engine's own work per tick, without the feed's travel. Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 7,
+   "type": "table",
+   "title": "Order → exchange ack and fill (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 48,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT replaceOne(app, 'engine-', '') AS engine, replaceOne(name, '_ns', '') AS leg, round(min(min) / 1e3, 3) AS min, round(sum(p50 * count) / sum(count) / 1e3, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e3, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e3, 3) AS p99_99, round(max(max) / 1e3, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name IN ('order_ack_ns', 'order_fill_ns') GROUP BY engine, leg ORDER BY engine, leg",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "µs"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "The engine's order to the region's exchange's New, and to its Filled, back on the engine. Count-weighted averages of each 5 s window's estimated percentiles, not percentiles of all samples combined; max is exact. Wall clocks of different nodes: cross-node values include their offset (Azure time sync keeps it well under a millisecond)."
+  },
+  {
+   "id": 8,
+   "type": "table",
+   "title": "Recording: feed handler receive → row in ClickHouse (ms), by table and node",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 56,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT host AS node, table, min(lag) AS min, quantiles(0.5, 0.99, 0.9999)(lag) AS q, round(q[1], 0) AS p50, round(q[2], 0) AS p99, round(q[3], 0) AS p99_99, max(lag) AS max, count() AS rows FROM (SELECT host, 'trade' AS table, dateDiff('millisecond', ts_init, inserted_at) AS lag FROM md.trade WHERE $__timeFilter(inserted_at) UNION ALL SELECT host, 'quote', dateDiff('millisecond', ts_init, inserted_at) FROM md.quote WHERE $__timeFilter(inserted_at) UNION ALL SELECT host, 'book_deltas', dateDiff('millisecond', ts_init, inserted_at) FROM md.book_deltas WHERE $__timeFilter(inserted_at)) GROUP BY node, table ORDER BY node, table",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "The archive, the ingester's batching (PERSIST_INTERVAL) and ClickHouse: slow by design, off the trading path. Exact percentiles of the rows."
+  },
+  {
+   "id": 9,
+   "type": "table",
+   "title": "ClickHouse insert time per table (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 64,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT tables[1] AS table, count() AS inserts, min(query_duration_ms) AS min, quantiles(0.5, 0.99, 0.9999)(query_duration_ms) AS q, q[1] AS p50, q[2] AS p99, q[3] AS p99_99, max(query_duration_ms) AS max, sum(written_rows) AS rows FROM system.query_log WHERE $__timeFilter(event_time) AND type = 'QueryFinish' AND query_kind = 'Insert' GROUP BY table ORDER BY p99 DESC LIMIT 40",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Each ingester insert, as ClickHouse timed it."
+  }
+ ],
+ "description": "Every hop: venue → feed handler → engine (by region pair) → order → exchange; and the recording path to ClickHouse."
+}

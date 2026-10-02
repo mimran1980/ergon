@@ -23,13 +23,15 @@ spec:
           # that is most of Docker's memory. clickhouse.xml keeps its
           # caches, thread pools and own logs small.
           # With every exchange (1,600 quotes a second) it sits at 550-700
-          # MiB and merges push it past 768: it caps itself at 80% of this.
+          # MiB and merges push it past 768. Keep the hard limit for native
+          # allocations; tracked memory is capped at 70%, queries at 384 MiB.
           resources: { requests: { memory: 512Mi }, limits: { memory: 1280Mi } }
           readinessProbe:
             httpGet: { path: /ping, port: 8123 }
           volumeMounts:
             - { name: data, mountPath: /var/lib/clickhouse }
             - { name: settings, mountPath: /etc/clickhouse-server/config.d/lab.xml, subPath: lab.xml, readOnly: true }
+            - { name: settings, mountPath: /etc/clickhouse-server/users.d/lab.xml, subPath: users.xml, readOnly: true }
       volumes:
         - name: settings
           configMap: { name: clickhouse-settings }

@@ -4,6 +4,7 @@
 //! every arm:
 //!
 //! * `control`   an empty loop: the floor this machine can measure
+//! * `control-x100` the amplified loop's floor, for the x100 arms
 //! * `sbe`       `Persist::record` of one SBE message
 //! * `installed` the same through `persist_client::record`, the installed handle
 //! * `uninstalled` `persist_client::record` with no handle installed: a no-op
@@ -12,15 +13,17 @@
 //! * `value-nested` `record_value` of a struct with a nested struct and five levels
 //! * `event-off` the same event for a disabled table
 //! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
-//! * `counter`, `gauge`, `histogram`  one update of a metric handle. The
-//!   `tracing` metric events are slower and are not timed here.
+//! * `counter`, `gauge`, `histogram`  one update of a metric handle
+//! * `counter-event`, `gauge-event`, `histogram-event` the same metric update
+//!   through a tracing event, including label collection and registry lookup
 //!
-//! The metric and clock arms are below the timer's resolution, so each
-//! sample times 100 of them (`x100` in the output).
+//! Metric and clock samples time 100 operations (`x100` in the output).
+//! Metric handles and tracing events use the same values in each batch.
 //! * `clock-now` `Clock::now`; `clock-cached` `Clock::cached`; `system-time` `SystemTime::now`
 //! * `poll-idle` `Metrics::poll` between the 5 s interval. A histogram makes
 //!   poll due every 1 ms. `poll-due` uses a 1 ms metrics interval, so every
-//!   call also publishes counters, one message a call
+//!   deadline also includes counters. Both arms measure a mixed duty cycle:
+//!   most polls are idle, while due polls publish at most one message.
 //! * `trace-off`, `trace-unsampled`, `trace-sampled`  a 4-stage checkpoint trace
 //!   (start, 4 marks, an attribute, finish) with `otel_traces` off, on but not
 //!   sampled, and every one published
@@ -29,6 +32,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -137,76 +141,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .to_vec(),
     };
 
-    // One record every 5 µs (200k/s, far above the lab's live rate) for 8 s.
-    // The first 3 s are skipped: pages are touched for the first time then,
-    // which is a one-off cost.
-    let reps = match arm.as_str() {
-        "counter" | "gauge" | "histogram" | "clock-now" | "clock-cached" | "system-time" => 100,
-        _ => 1,
-    };
-    let mut samples = Vec::with_capacity(1_000_000);
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(8) {
-        clock.now(); // the loop's one clock read, as a duty cycle would
-        let t = Instant::now();
-        for i in 0..reps {
-            match arm.as_str() {
-                "sbe" => persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?,
-                "installed" | "uninstalled" => {
-                    persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?
-                }
-                "event" => {
-                    tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3)
-                }
-                "value" => persist.record_value("signal", &signal),
-                "value-nested" => persist.record_value("book", &book),
-                "no-table" => tracing::trace!(x = 1),
-                "event-off" => {
-                    tracing::info!(table = "quiet", instrument = "BTCUSDT", edge = 0.25, n = 3)
-                }
-                "counter" => counter.inc(),
-                "gauge" => gauge.set(i as f64),
-                "histogram" => histogram.record(850 + (i as u64 & 63) * 64),
-                "clock-now" => {
-                    let _ = std::hint::black_box(clock.now());
-                }
-                "clock-cached" => {
-                    let _ = std::hint::black_box(clock.cached());
-                }
-                "system-time" => {
-                    let _ = std::hint::black_box(std::time::SystemTime::now());
-                }
-                "poll-idle" | "poll-due" => {
-                    // A histogram makes poll due every 1 ms. poll-due still
-                    // publishes counters on its 1 ms metrics interval.
-                    others[0].inc();
-                    histogram.record(850);
-                    metrics.poll(clock.cached());
-                }
-                "trace-off" | "trace-unsampled" | "trace-sampled" => {
-                    let mut t = tracer.start(Nanos(1_000), tracer.next_id());
-                    for at in [1_100, 1_300, 1_600, 2_000] {
-                        t.mark(Nanos(at));
-                    }
-                    t.attr(0, 10);
-                    t.finish();
-                }
-                "span-on" | "span-off" => tracing::info_span!("work", n = 3).in_scope(|| {}),
-                _ => {}
-            }
-        }
-        let took = t.elapsed();
-        if started.elapsed() > Duration::from_secs(3) {
-            samples.push(took);
-        }
-        while t.elapsed() < Duration::from_micros(5) {}
+    // Dispatch once, outside the measured loop. Each closure is monomorphized:
+    // string comparisons and a dynamic call are not part of operation timing.
+    macro_rules! sample {
+        ($reps:literal, |$i:ident| $operation:block) => {
+            measure::<$reps>(&clock, &persist, |$i| {
+                $operation;
+                Ok(())
+            })
+            .map(|measurement| (measurement, $reps))
+        };
     }
+    let measured = match arm.as_str() {
+        "control" => sample!(1, |i| {
+            black_box(i);
+        }),
+        "control-x100" => sample!(100, |i| {
+            black_box(i);
+        }),
+        "sbe" => sample!(1, |_i| {
+            persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+        }),
+        "installed" | "uninstalled" => sample!(1, |_i| {
+            persist_client::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
+        }),
+        "event" => sample!(1, |_i| {
+            tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3);
+        }),
+        "value" => sample!(1, |_i| {
+            persist.record_value("signal", black_box(&signal));
+        }),
+        "value-nested" => sample!(1, |_i| {
+            persist.record_value("book", black_box(&book));
+        }),
+        "no-table" => sample!(1, |_i| {
+            tracing::trace!(x = 1);
+        }),
+        "event-off" => sample!(1, |_i| {
+            tracing::info!(table = "quiet", instrument = "BTCUSDT", edge = 0.25, n = 3);
+        }),
+        "counter" => sample!(100, |_i| {
+            black_box(&counter).inc();
+        }),
+        "gauge" => sample!(100, |i| {
+            black_box(&gauge).set(black_box(i as f64));
+        }),
+        "histogram" => sample!(100, |i| {
+            black_box(&histogram).record(black_box(850 + (i as u64 & 63) * 64));
+        }),
+        "counter-event" => sample!(100, |_i| {
+            tracing::info!(counter = "latency_counter", arm = "counter");
+        }),
+        "gauge-event" => sample!(100, |i| {
+            tracing::info!(gauge = "latency_gauge", value = black_box(i as f64));
+        }),
+        "histogram-event" => sample!(100, |i| {
+            tracing::info!(
+                histogram = "latency_histogram",
+                value = black_box(850 + (i as u64 & 63) * 64)
+            );
+        }),
+        "clock-now" => sample!(100, |_i| {
+            black_box(black_box(&clock).now());
+        }),
+        "clock-cached" => sample!(100, |_i| {
+            black_box(black_box(&clock).cached());
+        }),
+        "system-time" => sample!(100, |_i| {
+            black_box(std::time::SystemTime::now());
+        }),
+        "poll-idle" | "poll-due" => sample!(1, |_i| {
+            others[0].inc();
+            histogram.record(850);
+            metrics.poll(clock.cached());
+        }),
+        "trace-off" | "trace-unsampled" | "trace-sampled" => sample!(1, |_i| {
+            let mut t = tracer.start(Nanos(1_000), tracer.next_id());
+            for at in [1_100, 1_300, 1_600, 2_000] {
+                t.mark(Nanos(black_box(at)));
+            }
+            t.attr(0, 10);
+            t.finish();
+        }),
+        "span-on" | "span-off" => sample!(1, |_i| {
+            tracing::info_span!("work", n = 3).in_scope(|| {});
+        }),
+        _ => Err(format!("unknown latency arm: {arm}").into()),
+    };
     stop.store(true, Ordering::Relaxed);
     ingester.join().map_err(|_| "ingester panicked")??;
+    let ((mut samples, dropped), reps) = measured?;
     samples.sort();
     let at = |q: f64| samples[((samples.len() - 1) as f64 * q) as usize];
     println!(
-        "{arm:11} {} records{}, dropped {}: p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}",
+        "{arm:16} {} samples{}, dropped during measurement {dropped} (total {} including warm-up): batch p50 {:?}  p99 {:?}  p99.9 {:?}  max {:?}; batch p50/op {:.2} ns  p99/op {:.2} ns",
         samples.len(),
         if reps > 1 {
             format!(" x{reps}")
@@ -217,9 +245,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(0.5),
         at(0.99),
         at(0.999),
-        at(1.0)
+        at(1.0),
+        at(0.5).as_secs_f64() * 1e9 / f64::from(reps),
+        at(0.99).as_secs_f64() * 1e9 / f64::from(reps)
     );
     Ok(())
+}
+
+/// One sample every 5 µs (at most 200k/s). Amplified arms do REPS operations
+/// per sample. Keep the ingester running, skip 3 s warm-up, measure for 5 s.
+fn measure<const REPS: usize>(
+    clock: &Clock,
+    persist: &Persist,
+    mut operation: impl FnMut(usize) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(Vec<Duration>, u64), Box<dyn std::error::Error>> {
+    let mut samples = Vec::with_capacity(1_000_000);
+    let started = Instant::now();
+    let mut drops_at_measurement = None;
+    while started.elapsed() < Duration::from_secs(8) {
+        clock.now();
+        let measuring = started.elapsed() > Duration::from_secs(3);
+        if measuring && drops_at_measurement.is_none() {
+            drops_at_measurement = Some(persist.dropped());
+        }
+        let t = Instant::now();
+        for i in 0..REPS {
+            operation(i)?;
+        }
+        let took = t.elapsed();
+        if measuring {
+            samples.push(took);
+        }
+        while t.elapsed() < Duration::from_micros(5) {}
+    }
+    let dropped = persist
+        .dropped()
+        .saturating_sub(drops_at_measurement.unwrap_or_else(|| persist.dropped()));
+    Ok((samples, dropped))
 }
 
 #[derive(serde::Serialize)]

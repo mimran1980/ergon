@@ -1,6 +1,12 @@
-# ClickHouse persistence lab. Run from samples/clickhouse/.
+# ClickHouse persistence lab. Run from samples/clickhouse/. These recipes work
+# on whichever cluster LAB_CONTEXT names; making and removing a cluster is per
+# platform:
 #
-#   just up         create the kind cluster (4 nodes, 3 regions), build the images, apply the manifests
+#   just mac up|stop|start|destroy                kind on this machine (mac.justfile)
+#   just azure up|sync|on|pause|resume|stop|start|status|down
+#                                                 VMs on Azure (azure.justfile)
+#
+#   just up         build the images, apply the manifests, wait (the cluster exists)
 #   just deploy     apply kustomization.yaml (deploy/, config/): after editing config/ or deploy/
 #   just watch-config  publish config/ to the pods on every save
 #   just md         rebuild + restart the feed handlers, engines and ingesters after a code/schema change
@@ -9,27 +15,29 @@
 #   just logs       follow the feed handler, engine, ingester and Aeron logs
 #   just verify     check the running lab end to end
 #   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
-#   just test-stop  stop that throwaway ClickHouse and driver (2 GB+ of memory)
+#   just test-stop  stop that throwaway ClickHouse and driver
 #   just latency    time recording on the app thread
-#   just stop / just start   pause the cluster, keeping data
-#   just destroy    delete the cluster and its data
-#
-# On Linux VMs instead of kind (README, "Run on k3s VMs"): set LAB_CONTEXT=lab-vms
-# and LAB_VM_* in .env, then `just vms`, `just sync`, and run the rest on the first VM.
 
 set dotenv-load
 
+mod mac 'mac.justfile'
+mod azure 'azure.justfile'
+
 cluster := "clickhouse-lab"
-build_jobs := "2"
-# kind by default; LAB_CONTEXT=lab-vms runs the lab on the k3s VMs of `just vms`.
+build_jobs := "1"
+test_threads := "2"
+# kind by default; LAB_CONTEXT=lab-vms is the k3s cluster of `just azure up`.
 context := env("LAB_CONTEXT", "kind-" + cluster)
 kube := "kubectl --context " + context + " -n lab"
 
+[private]
 default:
     @just --list
 
-# Create the cluster (if needed), build images, deploy, wait, print URLs.
-up: _cluster images deploy
+# Build images, deploy, wait, print URLs: on a cluster that exists
+# (`just mac up` makes kind's; on Azure, `just azure on up`).
+# Build images, deploy and wait, on a cluster that exists
+up: images deploy
     {{kube}} rollout status statefulset/clickhouse --timeout=300s
     {{kube}} rollout status deploy/grafana deploy/jupyter daemonset/aeron daemonset/ingester --timeout=300s
     for d in $({{kube}} get deploy -l 'app in (md,engine,exch-sim)' -o name); do {{kube}} rollout status $d --timeout=300s; done
@@ -41,6 +49,7 @@ up: _cluster images deploy
 # restart. `just config` gets it there in seconds.
 # Server-side apply, so a field taken out of deploy/ is taken out of the
 # cluster too. Apply kustomization.yaml.
+# Apply kustomization.yaml: deploy/ and config/
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -83,6 +92,7 @@ spin: deploy
 
 
 # Reachable from other machines too: every port listens on 0.0.0.0.
+# Print the UIs' URLs
 urls:
     #!/usr/bin/env bash
     if [[ {{context}} == kind-* ]]; then
@@ -100,14 +110,7 @@ urls:
     echo "Engines        $({{kube}} get deploy -l app=engine -o jsonpath='{.items[*].metadata.labels.region}')"
     echo "Config         $PWD/config/  (\`just config\` or \`just watch-config\` publishes edits live)"
 
-_cluster:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [[ {{context}} == kind-* ]] || exit 0 # the VMs come from `just vms`
-    if ! kind get clusters | grep -qx {{cluster}}; then
-        sed "s|LAB_DIR|$PWD|" deploy/kind.yaml | kind create cluster --config -
-    fi
-
+# Build every image and load it into the cluster
 images: build
     docker build -q -t lab/jupyter:local -f docker/jupyter.Dockerfile docker
     docker build -q -t lab/aeron:local -f docker/aeron.Dockerfile docker
@@ -137,14 +140,16 @@ _load image:
     rm -f "$tar"
 
 # Compile the lab's binaries for Linux; build their image with the schema.
-# Two compile jobs: NautilusTrader's crates take gigabytes each to build, and
+# One compile job: NautilusTrader's crates take gigabytes each to build, and
 # the Docker VM shares the machine with the running lab. Raise it with
 # `just build_jobs=8 build` on a machine with memory to spare.
+# Compile the lab's Linux binaries and build their image
 build:
     docker build -q -t lab/builder:local -f docker/builder.Dockerfile docker
     docker run --rm -v "$PWD/../..":/src -w /src/samples/clickhouse \
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
-        -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} lab/builder:local \
+        -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} \
+        -e CMAKE_BUILD_PARALLEL_LEVEL={{build_jobs}} lab/builder:local \
         sh -c 'cargo build --release -p md -p persist-server -p aeron-driver -p engine --bins && mkdir -p target/linux/schema \
             && cp /target/release/md /target/release/ingester /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
             && cp schema/*.xml target/linux/schema/'
@@ -179,6 +184,7 @@ ingester:
     {{kube}} rollout restart daemonset/ingester
     {{kube}} rollout status daemonset/ingester --timeout=120s
 
+# Follow the feeds', engines', ingesters' and Aeron's logs
 logs:
     {{kube}} logs -f -l 'app in (md,engine,exch-sim,ingester,aeron)' --prefix --max-log-requests 30 --tail 20
 
@@ -189,18 +195,38 @@ verify:
 # Unit + integration tests; starts a throwaway ClickHouse and Aeron archive driver.
 test: _test-clickhouse _test-aeron
     bash scripts/test-cluster-lifecycle.sh
-    cargo test --workspace
+    bash scripts/test-azure.sh
+    bash scripts/test-test-service-memory.sh
+    cargo test --workspace -- --test-threads={{test_threads}}
 
 _test-clickhouse:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! docker ps --format '{{{{.Names}}' | grep -qx persist-test-clickhouse; then
+    # Recreate only this disposable container when its memory settings change.
+    settings=$(cat deploy/infra/clickhouse.xml deploy/infra/clickhouse-users.xml | cksum | awk '{print $1 "-" $2}')
+    settings="memory-v1-$settings"
+    current=$(docker inspect --format '{{{{index .Config.Labels "lab.test-settings"}}' persist-test-clickhouse 2>/dev/null || true)
+    running=$(docker inspect --format '{{{{.State.Running}}' persist-test-clickhouse 2>/dev/null || true)
+    if [[ $current != "$settings" || $running != true ]]; then
         docker rm -f persist-test-clickhouse >/dev/null 2>&1 || true
         docker run -d --name persist-test-clickhouse -p 18123:8123 --ulimit nofile=262144:262144 \
+            --memory=1280m --memory-swap=1280m --cpus=2 --label "lab.test-settings=$settings" \
+            -v "$PWD/deploy/infra/clickhouse.xml:/etc/clickhouse-server/config.d/lab.xml:ro" \
+            -v "$PWD/deploy/infra/clickhouse-users.xml:/etc/clickhouse-server/users.d/lab.xml:ro" \
             -e CLICKHOUSE_USER=lab -e CLICKHOUSE_PASSWORD=lab -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
             clickhouse/clickhouse-server:25.8 >/dev/null
-        until curl -sf http://localhost:18123/ping >/dev/null; do sleep 1; done
     fi
+    deadline=$((SECONDS + 120))
+    for ((attempt=0; attempt<120 && SECONDS<deadline; attempt++)); do
+        timeout=$((deadline - SECONDS))
+        if ((timeout > 2)); then timeout=2; fi
+        curl -sf --connect-timeout 1 --max-time "$timeout" http://localhost:18123/ping >/dev/null && exit 0
+        [[ $(docker inspect --format '{{{{.State.Running}}' persist-test-clickhouse) == true ]] || break
+        if ((SECONDS < deadline)); then sleep 1; fi
+    done
+    docker logs --tail 40 persist-test-clickhouse >&2
+    echo 'test ClickHouse did not become ready within 120 seconds' >&2
+    exit 1
 
 # Stop the throwaway ClickHouse and Aeron driver that `just test` leaves running.
 test-stop:
@@ -208,22 +234,32 @@ test-stop:
     pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
 
 # Media driver + archive in one JVM. The tests use /tmp/persist-test-aeron;
-# 1 MiB segments so they see purges.
+# 1 MiB segments so they see purges. Cap the JVM on the host too; an old
+# uncapped test driver is restarted once to pick up the heap limit.
 _test-aeron: _aeron-jar
     #!/usr/bin/env bash
     set -euo pipefail
     # A driver whose directory is gone (macOS cleans /tmp) is no driver.
-    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f 'aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
+    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f 'Xmx128m.*aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
         pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
         touch target/aeron-test.started
         sleep 1 # `-nt` compares whole seconds
-        nohup java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \
+        nohup java -Xms32m -Xmx128m -XX:MaxDirectMemorySize=64m -XX:+UseSerialGC \
+            -XX:ReservedCodeCacheSize=32m -XX:MaxMetaspaceSize=64m -Xss512k \
+            --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \
             -Daeron.dir=/tmp/persist-test-aeron -Daeron.dir.delete.on.start=true \
             -Daeron.archive.dir=target/aeron-test-archive -Daeron.archive.segment.file.length=1m \
             -Daeron.archive.control.channel='aeron:udp?endpoint=localhost:18010' \
             -Daeron.archive.replication.channel='aeron:udp?endpoint=localhost:0' \
             io.aeron.archive.ArchivingMediaDriver > target/aeron-test.log 2>&1 &
-        until [[ /tmp/persist-test-aeron/cnc.dat -nt target/aeron-test.started ]]; do sleep 0.2; done
+        for ((attempt=0; attempt<600; attempt++)); do
+            [[ /tmp/persist-test-aeron/cnc.dat -nt target/aeron-test.started ]] && exit 0
+            pgrep -f 'Xmx128m.*aeron.dir=/tmp/persist-test-aeron' >/dev/null || break
+            sleep 0.2
+        done
+        tail -n 40 target/aeron-test.log >&2
+        echo 'test Aeron driver did not become ready within 120 seconds' >&2
+        exit 1
     fi
 
 aeron_version := "1.52.2"
@@ -236,51 +272,10 @@ _aeron-jar:
 
 # Time recording on the app thread: SBE, tracing on and off, and a control.
 latency: _test-clickhouse _test-aeron
-    for arm in control sbe installed uninstalled event value value-nested event-off no-table counter gauge histogram clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
+    for arm in control control-x100 sbe installed uninstalled event value value-nested event-off no-table counter gauge histogram counter-event gauge-event histogram-event clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
         cargo run -q --release -p persist-server --example record_latency -- $arm; done
 
+# Clippy and rustfmt for the sample
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --check
-
-stop:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [[ {{context}} == kind-* ]] || exec scripts/vms.sh stop
-    nodes=$(kind get nodes --name {{cluster}})
-    test -n "$nodes"
-    docker stop $nodes
-
-start:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [[ {{context}} == kind-* ]] || exec scripts/vms.sh start
-    nodes=$(kind get nodes --name {{cluster}})
-    test -n "$nodes"
-    docker start $nodes
-
-# Deletes the cluster, including all recorded data.
-destroy:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [[ {{context}} == kind-* ]] || exec scripts/vms.sh destroy
-    kind delete cluster --name {{cluster}}
-
-# Make the k3s VMs on LAB_VM_HOST (see scripts/vms.sh), then `just sync`.
-vms:
-    scripts/vms.sh create
-
-# Copy this checkout to /srv/ergon on every VM (/lab points into it). Never
-# deletes, and keeps a file edited on the VM (a notebook) if it is newer.
-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for ip in $LAB_VM_IPS; do
-        ssh -o BatchMode=yes "$ip" 'ls -la /srv/ergon | head -5'
-        # What git sees (tracked, and new files it does not ignore) and .git:
-        # not the gigabytes of ignored build output beside them.
-        # A tracked file deleted here is skipped (macOS rsync has no --ignore-missing-args).
-        (cd ../.. && { echo .git; echo samples/clickhouse/.env; git ls-files -co --exclude-standard; git ls-files --recurse-submodules; } \
-            | sort -u | while IFS= read -r f; do if [[ -e $f ]]; then printf '%s\n' "$f"; fi; done) \
-            | rsync -az --update -r --files-from=- ../../ "$ip:/srv/ergon/"
-    done

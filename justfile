@@ -12,6 +12,7 @@ import 'just/housekeeping.just'
 import 'just/book.just'
 
 # Default: list available commands.
+[private]
 default:
     @just --list
 
@@ -59,6 +60,7 @@ policy:
 #
 # Run this before starting a release. It takes minutes, not hours, and every
 # entry either passes or tells you exactly what drifted.
+# Every cheap release gate in one pass: run before `just release`
 preflight:
     # Cheapest gate, and one that actually bit: the 0.1.17 release aborted at
     # step 2/8 on sample-crate fmt drift that had been sitting on the branch.
@@ -143,11 +145,13 @@ check-products: policy
 # generated flyweight API, which is the artifact users actually read, so a
 # broken intra-doc link or a link to a type the generator does not emit can only
 # be caught here.
+# Strict rustdoc of a generated consumer crate
 check-generated-rustdoc:
     RUSTDOCFLAGS='-D warnings -D rustdoc::broken_intra_doc_links' cargo doc --manifest-path samples/sbe-feature-tour/Cargo.toml --no-deps
 
 # Verify that all public structs/enums in the generated golden have doc comments.
 # Uses syn-based parsing (see sbe/tests/generated_docs_test.rs).
+# Every public struct and enum in the generated golden has a doc comment
 check-generated-docs:
     cargo test -p ergo-sbe --test generated_docs_test --all-features -- --test-threads=1
 
@@ -194,6 +198,7 @@ release-check: test check-coverage check-generated-rustdoc
 #
 # Re-run the benches if you commit anything afterwards; the manifest check will
 # reject stale evidence rather than let it through.
+# Release with benchmark gates already proven on a quiet machine
 release-verified: _check-release-notes
     @echo "=== 0/8 confirm benchmark evidence exists for HEAD ==="
     bash scripts/package-bench-artifacts.sh /tmp/ergon-bench-evidence-precheck
@@ -208,6 +213,7 @@ release-verified: _check-release-notes
 # Runs the benchmark gates inline, ~40 min in, on a machine hot from the test
 # suite. If the tightest maintained ratio fails there, re-measure on an idle
 # machine before believing it, then use `just release-verified`.
+# Full release: test, bench, publish, tag, GitHub release, version bump
 release: _check-release-notes
     just clean
     just _release-pre
@@ -285,6 +291,7 @@ audit:
 # Comprehensive test suite: unit, integration, doctests/rustdoc, Java cluster
 # lifecycle tests, sample tests, and benchmark compilation. Missing Java,
 # Gradle, jars, or another required dependency is a failure.
+# Everything: unit, integration, doctests, Java cluster, samples, bench compile
 test: policy
     @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
@@ -367,6 +374,7 @@ check-coverage:
 # mutants. This is a MANUAL gate — too slow for CI (~16 h with --jobs 1).
 # Run locally before landing codegen changes; use --jobs 1 to avoid
 # exhausting disk space with parallel build trees.
+# Mutation testing of parser, resolver and codegen (manual; about 16 h)
 check-mutation:
     ./scripts/check-mutation-config.sh
     cargo mutants --jobs 1
@@ -399,12 +407,14 @@ fix:
 # Each invocation owns a unique result root, so the gate can only read estimates
 # produced by that same invocation.
 # Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
+# Head-to-head ergon vs sbe-tool benches; every ratio gated at 1.00 in both LTO profiles
 bench:
     ./scripts/run-sbe-bench.sh
 
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while
 # pre-fix ergon regressed because generated entry setters did not inline.
+# Group-codegen comparison against sbe-tool, both LTO profiles
 bench-groups:
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
@@ -426,6 +436,7 @@ bench-historic-update:
 # order) — it has no sbe-tool arm, so it informs the lane guidance in the book
 # rather than gating a ratio. Both LTO profiles, because the cache changes
 # decoder size and inlining.
+# Non-gating codec matrix and offset/alignment diagnostics, both LTO profiles
 bench-diagnostics:
     cargo bench -p ergo-sbe-benchmarks --bench codec_matrix_bench
     cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
@@ -442,6 +453,7 @@ bench-cold:
 # disassembly for the named perf-probe symbols, in both optimisation profiles.
 # Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
 # than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
+# Callgrind instruction counts and disassembly per probe; fails if ergon Ir/op exceeds sbe-tool
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 
@@ -449,11 +461,13 @@ bench-instructions:
 # pairs — currently `cluster_decode_session_event`, the pair carrying a
 # documented no-LTO-only wall-clock allowance (see check-bench-gate.sh).
 # Same Linux/Valgrind/llvm-objdump requirement and fail-closed contract.
+# Callgrind instruction counts for the cluster codec pairs (Linux + Valgrind)
 bench-cluster-instructions:
     ./scripts/run-cluster-instruction-probes.sh --all-profiles
 
 # Regenerate the two sbe-tool comparators the head-to-head benches measure
 # against, from the pinned simple-binary-encoding submodule.
+# Regenerate the sbe-tool comparators from the pinned submodule
 update-bench-reference:
     ./scripts/regenerate-sbe-benchmark-reference.sh
 
@@ -468,6 +482,7 @@ check-bench-reference:
 # absolute workspace paths. package-bench-artifacts expects:
 #   LTO    → <repo>/target/criterion
 #   no-LTO → <repo>/target/bench-no-lto/criterion
+# Cluster codec benches, ergon vs sbe-tool, both LTO profiles
 bench-cluster:
     #!/usr/bin/env bash
     set -euo pipefail

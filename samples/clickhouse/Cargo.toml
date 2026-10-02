@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["aeron-driver", "engine", "md", "persist-client", "persist-server", "schema"]
+members = ["aeron-bench", "aeron-driver", "engine", "md", "persist-client", "persist-server", "schema"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,11 @@
+<!-- Query settings belong in users.d, separately from server config.d.
+     Leave room for concurrent inserts, merges and native allocations. -->
+<clickhouse>
+    <profiles>
+        <default>
+            <max_threads>2</max_threads>
+            <max_insert_threads>1</max_insert_threads>
+            <max_memory_usage>402653184</max_memory_usage>
+        </default>
+    </profiles>
+</clickhouse>

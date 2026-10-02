@@ -35,7 +35,8 @@ spec:
             - { name: AERON_SENDER_IDLE_STRATEGY, value: backoff }
             - { name: AERON_RECEIVER_IDLE_STRATEGY, value: backoff }
             - { name: AERON_CONDUCTOR_IDLE_STRATEGY, value: sleep-ns }
-            - { name: AERON_IPC_TERM_BUFFER_LENGTH, value: "1.6777216e+07" }
+            # Aeron's size parser accepts integers or k/m/g suffixes.
+            - { name: AERON_IPC_TERM_BUFFER_LENGTH, value: "16m" }
             # A publisher that dies without closing keeps its publication
             # (and every subscriber's image of it) alive until its client
             # times out: Aeron's 10 s default bounds how long a moved feed's

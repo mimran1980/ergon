@@ -1,0 +1,386 @@
+{
+ "uid": "developer",
+ "title": "Developer",
+ "description": "Where the code spends its time: engine stages, record() cost, traces, and what lands in each table.",
+ "tags": [
+  "lab"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Engine hot path",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "table",
+   "title": "Engine stages per tick (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT replaceOne(app, 'engine-', '') AS engine, labels['stage'] AS stage, round(min(min) / 1e3, 3) AS min, round(sum(p50 * count) / sum(count) / 1e3, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e3, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e3, 3) AS p99_99, round(max(max) / 1e3, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND labels['stage'] IN ('decode', 'book', 'signal', 'decide', 'send') GROUP BY engine, stage ORDER BY engine, stage",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "Stage costs on the engine thread: decode the SBE message, apply it to the book, the EMAs (signal), the strategy (decide), the order (send). Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Engine stages over time: min, p50, p99, p99.99, max (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['stage']) AS series, min(min) / 1e3 AS min, sum(p50 * count) / sum(count) / 1e3 AS p50, sum(p99 * count) / sum(count) / 1e3 AS p99, sum(p9999 * count) / sum(count) / 1e3 AS p99_99, max(max) / 1e3 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND labels['stage'] IN ('decode', 'book', 'signal', 'decide', 'send') GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "µs"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 4,
+   "type": "table",
+   "title": "Tick to order, ticks that sent one (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT replaceOne(app, 'engine-', '') AS engine, concat(labels['venue'], ' (', labels['from'], ')') AS tick_from, round(min(min) / 1e3, 3) AS min, round(sum(p50 * count) / sum(count) / 1e3, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e3, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e3, 3) AS p99_99, round(max(max) / 1e3, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'tick_to_order_ns' GROUP BY engine, tick_from ORDER BY engine, tick_from",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+  },
+  {
+   "id": 5,
+   "type": "row",
+   "title": "Recording API cost (the application's thread)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 25,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 6,
+   "type": "table",
+   "title": "record() per trade (µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 26,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT app, round(min(min) / 1e3, 3) AS min, round(sum(p50 * count) / sum(count) / 1e3, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e3, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e3, 3) AS p99_99, round(max(max) / 1e3, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' GROUP BY app ORDER BY app",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "persist_client::record of one trade on the feed handler's thread: the cost of recording on the hot path. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Trace stages clamped / s (a stage ended before it started: clocks)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 26,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['trace'], ' ', labels['stage']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'trace_clamped' GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 8,
+   "type": "row",
+   "title": "Traces",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 34,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 9,
+   "type": "table",
+   "title": "Slowest kept tick-to-trade traces (open one in Traces)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 35,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT Timestamp, TraceId, ServiceName, round(Duration / 1e3) AS us FROM tracing.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND SpanName = 'tick_to_trade' ORDER BY Duration DESC LIMIT 30",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "TraceId"
+      },
+      "properties": [
+       {
+        "id": "links",
+        "value": [
+         {
+          "title": "Open trace",
+          "url": "/d/traces/traces?var-trace=tick_to_trade&var-trace_id=${__value.raw}&${__url_time_range}"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "options": {}
+  },
+  {
+   "id": 10,
+   "type": "row",
+   "title": "Data",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 43,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Rows per second by table",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 44,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(event_time) AS time, database || '.' || table AS t, sum(rows) / $__interval_s AS rows FROM system.part_log WHERE database IN ('md', 'engine', 'orders', 'tracing', 'metrics') AND event_type = 'NewPart' AND $__timeFilter(event_time) GROUP BY time, t ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 12,
+   "type": "table",
+   "title": "Schema changes (CREATE / ALTER), last day",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 44,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT event_time, user, substring(query, 1, 200) AS ddl FROM system.query_log WHERE type = 'QueryFinish' AND query_kind IN ('Create', 'Alter') AND event_time > now() - INTERVAL 1 DAY AND query NOT LIKE '%system.%' ORDER BY event_time DESC LIMIT 50",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "links": [
+  {
+   "title": "Traces",
+   "type": "link",
+   "url": "/d/traces",
+   "keepTime": true
+  },
+  {
+   "title": "Latency",
+   "type": "link",
+   "url": "/d/latency",
+   "keepTime": true
+  },
+  {
+   "title": "Metrics",
+   "type": "link",
+   "url": "/d/metrics",
+   "keepTime": true
+  },
+  {
+   "title": "ClickHouse tables",
+   "type": "link",
+   "url": "/d/tables",
+   "keepTime": true
+  }
+ ]
+}

@@ -9,13 +9,39 @@
     "to": "now"
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "asset",
+        "label": "Asset",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT if(base = 'XBT', 'BTC', base) FROM md.instrument_spec ORDER BY 1",
+        "definition": "SELECT DISTINCT if(base = 'XBT', 'BTC', base) FROM md.instrument_spec ORDER BY 1",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "current": {
+          "selected": true,
+          "text": [
+            "BTC",
+            "ETH"
+          ],
+          "value": [
+            "BTC",
+            "ETH"
+          ]
+        }
+      }
+    ]
   },
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
-      "title": "BTC trade price",
+      "title": "Trade price: $asset",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -34,7 +60,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM md.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM md.trade WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) = '${asset}') GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -44,41 +70,10 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
-    },
-    {
-      "id": 2,
-      "type": "timeseries",
-      "title": "ETH trade price",
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
       },
-      "gridPos": {
-        "x": 12,
-        "y": 0,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(price) AS price FROM md.trade WHERE $__timeFilter(ts_event) AND symbol LIKE 'ETH%' GROUP BY time, instrument ORDER BY time",
-          "format": 0,
-          "queryType": "timeseries"
-        }
-      ],
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
+      "repeat": "asset",
+      "repeatDirection": "h",
+      "maxPerRow": 3
     },
     {
       "id": 3,
@@ -102,7 +97,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, count() / $__interval_s AS trades FROM md.trade WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, count() / $__interval_s AS trades FROM md.trade WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -142,7 +137,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(ask_price - bid_price) / toFloat64(ask_price + bid_price)) * 20000 AS spread_bps FROM md.quote WHERE $__timeFilter(ts_event) GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(toFloat64(ask_price - bid_price) / toFloat64(ask_price + bid_price)) * 20000 AS spread_bps FROM md.quote WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -240,7 +235,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(bids.price[1]) AS best_bid, avg(asks.price[1]) AS best_ask FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(bids.price[1]) AS best_bid, avg(asks.price[1]) AS best_ask FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -275,7 +270,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(arraySum(bids.size)) AS bid_depth, avg(arraySum(asks.size)) AS ask_depth FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND symbol LIKE 'BTC%' GROUP BY time, instrument ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts_event) AS time, concat(symbol, '.', venue) AS instrument, avg(arraySum(bids.size)) AS bid_depth, avg(arraySum(asks.size)) AS ask_depth FROM md.book_snapshot WHERE $__timeFilter(ts_event) AND (symbol, venue) IN (SELECT symbol, venue FROM md.instrument_spec WHERE if(base = 'XBT', 'BTC', base) IN (${asset:singlequote})) GROUP BY time, instrument ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }

@@ -108,7 +108,7 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Venue to us, p50 / p99 (ms) (weighted window estimates)",
+      "title": "Venue to us, min, p50, p99, p99.99, max (ms) (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -127,7 +127,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(p50 * count) / sum(count) / 1e6 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e6 AS avg_window_p99 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, min(min) / 1e6 AS min, sum(p50 * count) / sum(count) / 1e6 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e6 AS avg_window_p99, sum(p9999 * count) / sum(count) / 1e6 AS avg_window_p99_99, max(max) / 1e6 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'venue_to_local_ns' AND app IN (${app:singlequote}) GROUP BY time, series ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }
@@ -149,7 +149,7 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "record() p50 / p99 / p99.9 (µs) (weighted window estimates)",
+      "title": "record() min, p50, p99, p99.99, max (µs) (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -168,7 +168,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, app, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p999 * count) / sum(count) / 1e3 AS avg_window_p999 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, app, min(min) / 1e3 AS min, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p9999 * count) / sum(count) / 1e3 AS avg_window_p99_99, max(max) / 1e3 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'record_ns' AND app IN (${app:singlequote}) GROUP BY time, app ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }

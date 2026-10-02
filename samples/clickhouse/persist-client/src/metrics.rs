@@ -53,6 +53,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -462,7 +463,7 @@ struct State {
     by_series: HashMap<u64, usize>,
     cells: Vec<Cellref>,
     /// The interval being published, while `active`. Counter/gauge buffers
-    /// are reused; histogram snapshots allocate their merged summaries.
+    /// and histogram buffers are reused across intervals.
     cycle: Cycle,
     /// A counter/gauge interval is being published.
     active: bool,
@@ -478,6 +479,9 @@ struct State {
     last_hist_end: u64,
     /// A counter series' total over its cells, by series index; reused.
     totals: Vec<Option<u64>>,
+    /// One-based summary slot for each definition; zero represents no sample.
+    /// `Option<NonZeroUsize>` keeps each reusable slot to one machine word.
+    histogram_slots: Vec<Option<NonZeroUsize>>,
 }
 
 struct Registry {
@@ -516,6 +520,7 @@ impl Metrics {
                     next_metrics: i64::MAX,
                     last_hist_end: 0,
                     totals: Vec::new(),
+                    histogram_slots: Vec::new(),
                 }),
             }),
             persist: None,
@@ -964,18 +969,9 @@ impl State {
         let interval = end.saturating_sub(self.last_hist_end);
         self.last_hist_end = end;
         self.next_hist = Nanos::from_epoch(end_i.saturating_add(HISTOGRAM_MS)).0;
-        let samples = self.take_histogram_samples();
-        if samples.is_empty() {
+        self.take_histogram_samples();
+        if self.cycle.samples.is_empty() {
             return false;
-        }
-        let mut hist_defs = Vec::new();
-        for &(series, _) in &samples {
-            let Some(&index) = self.by_series.get(&series) else {
-                continue;
-            };
-            if !self.defs[index].announced && !self.defs[index].message.is_empty() {
-                hist_defs.push(index);
-            }
         }
         self.cycle.hist_ts = end;
         self.cycle.hist_interval = if interval == 0 {
@@ -983,17 +979,17 @@ impl State {
         } else {
             interval
         };
-        self.cycle.samples = samples;
         self.cycle.next_sample = 0;
-        self.cycle.hist_defs = hist_defs;
         self.cycle.next_hist_def = 0;
         self.hist_open = true;
         true
     }
 
-    fn take_histogram_samples(&mut self) -> Vec<(u64, HistSample)> {
-        let mut merged: Vec<Option<HistSample>> = vec![None; self.defs.len()];
-        let mut order = Vec::new();
+    fn take_histogram_samples(&mut self) -> &[(u64, HistSample)] {
+        self.cycle.samples.clear();
+        self.cycle.hist_defs.clear();
+        self.histogram_slots.clear();
+        self.histogram_slots.resize(self.defs.len(), None);
         for cell in &self.cells {
             let Source::Histogram(histogram) = &cell.source else {
                 continue;
@@ -1002,20 +998,22 @@ impl State {
             if sample.count == 0 {
                 continue;
             }
-            if let Some(acc) = &mut merged[cell.def] {
+            if let Some(index) = self.histogram_slots[cell.def] {
+                let acc = &mut self.cycle.samples[index.get() - 1].1;
                 acc.count = acc.count.wrapping_add(sample.count);
                 acc.sum = acc.sum.wrapping_add(sample.sum);
                 acc.min = acc.min.min(sample.min);
                 acc.max = acc.max.max(sample.max);
             } else {
-                merged[cell.def] = Some(sample);
-                order.push(cell.def);
+                self.histogram_slots[cell.def] = NonZeroUsize::new(self.cycle.samples.len() + 1);
+                let def = &self.defs[cell.def];
+                self.cycle.samples.push((def.def.series, sample));
+                if !def.announced && !def.message.is_empty() {
+                    self.cycle.hist_defs.push(cell.def);
+                }
             }
         }
-        order
-            .into_iter()
-            .filter_map(|index| merged[index].map(|sample| (self.defs[index].def.series, sample)))
-            .collect()
+        &self.cycle.samples
     }
 
     /// Read counters and gauges into the interval ending at `ts` (UNIX ns).
@@ -1563,6 +1561,138 @@ mod tests {
             !decoded.histograms.is_empty(),
             "histogram deadline must be serviced"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn histogram_snapshots_keep_first_nonempty_order_across_cycles() -> TestResult {
+        let metrics = Metrics::detached();
+        let a_empty = metrics.histogram("a", &[]);
+        let b = metrics.histogram("b", &[]);
+        let a = metrics.histogram("a", &[]);
+        let series_a = MetricDef::new("a", MetricKind::Histogram, &[]).series;
+        let series_b = MetricDef::new("b", MetricKind::Histogram, &[]).series;
+        b.record(9);
+        a.record(3);
+        a.record(7);
+        {
+            let mut state = metrics.state();
+            let samples = state.take_histogram_samples();
+            assert_eq!(samples.len(), 2);
+            assert_eq!(samples[0].0, series_b);
+            assert_eq!(samples[1].0, series_a);
+            let sample = samples[1].1;
+            assert_eq!(
+                (sample.count, sample.sum, sample.min, sample.max),
+                (2, 10, 3, 7)
+            );
+            assert!(state.take_histogram_samples().is_empty());
+        }
+        let c = metrics.histogram("c", &[]);
+        c.record(11);
+        a_empty.record(1);
+        a.record(5);
+        let mut state = metrics.state();
+        let samples = state.take_histogram_samples();
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].0, series_a);
+        let sample = samples[0].1;
+        assert_eq!(
+            (sample.count, sample.sum, sample.min, sample.max),
+            (2, 6, 1, 5)
+        );
+        assert_eq!(
+            samples[1].0,
+            MetricDef::new("c", MetricKind::Histogram, &[]).series
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_metrics_keep_totals_and_histogram_order_across_cycles() -> TestResult {
+        let metrics = Metrics::detached();
+        let first = metrics.histogram("first", &[]);
+        let counters: Vec<_> = (0..4096)
+            .map(|i| metrics.counter(&format!("counter-{i}"), &[]))
+            .collect();
+        let gauge = metrics.gauge("gauge", &[]);
+        let last = metrics.histogram("last", &[]);
+        let first_extra = metrics.histogram("first", &[]);
+        let first_id = MetricDef::new("first", MetricKind::Histogram, &[]).series;
+        let last_id = MetricDef::new("last", MetricKind::Histogram, &[]).series;
+        for counter in &counters {
+            counter.add(3);
+        }
+        gauge.set(7.0);
+        first.record(1);
+        first_extra.record(5);
+        last.record(9);
+        let mut state = metrics.state();
+        state.snapshot_metrics(5_000_000_000);
+        assert!(
+            state
+                .cycle
+                .counters
+                .iter()
+                .all(|(_, total, delta)| (*total, *delta) == (3, 3))
+        );
+        assert_eq!(state.cycle.counters.len(), counters.len());
+        let samples = state.take_histogram_samples();
+        assert_eq!(
+            samples.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [first_id, last_id]
+        );
+        assert_eq!(samples[0].1.count, 2);
+        assert_eq!(samples[0].1.sum, 6);
+        assert!(state.take_histogram_samples().is_empty());
+        counters[0].add(2);
+        first_extra.record(4);
+        last.record(8);
+        let samples = state.take_histogram_samples();
+        assert_eq!(
+            samples.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [last_id, first_id]
+        );
+        assert_eq!(samples[1].1.sum, 4);
+        state.snapshot_metrics(10_000_000_000);
+        assert_eq!(
+            (state.cycle.counters[0].1, state.cycle.counters[0].2),
+            (5, 2)
+        );
+        assert!(
+            state.cycle.counters[1..]
+                .iter()
+                .all(|(_, total, delta)| (*total, *delta) == (3, 0))
+        );
+        assert_eq!(state.cycle.gauges.len(), 1);
+        assert_eq!(state.cycle.gauges[0].1, 7.0);
+        Ok(())
+    }
+
+    #[test]
+    fn histogram_cycles_reuse_warmed_summary_and_definition_storage() -> TestResult {
+        let metrics = Metrics::detached();
+        let histogram = metrics.histogram("latency", &[]);
+        let mut state = metrics.state();
+        state.cycle.samples.reserve(128);
+        state.cycle.hist_defs.reserve(128);
+        let samples_capacity = state.cycle.samples.capacity();
+        let defs_capacity = state.cycle.hist_defs.capacity();
+        state.last_hist_end = 10_000_000_000;
+        for millisecond in 1..=3 {
+            histogram.record(7);
+            assert!(state.open_histogram(Nanos::from_epoch(
+                10_000_000_000 + millisecond * HISTOGRAM_MS
+            )));
+            assert_eq!(state.cycle.samples.len(), 1);
+            assert_eq!(state.cycle.hist_defs.len(), usize::from(millisecond == 1));
+            assert_eq!(state.cycle.samples.capacity(), samples_capacity);
+            assert_eq!(state.cycle.hist_defs.capacity(), defs_capacity);
+            while let Some(next) = state.next_histogram(usize::MAX) {
+                state.finish_publish(&next);
+            }
+            assert!(!state.hist_open);
+        }
         Ok(())
     }
 

@@ -1,0 +1,660 @@
+{
+ "uid": "sre",
+ "title": "SRE",
+ "description": "Is the system healthy: feeds live, latency within budget, nothing dropped, recording keeping up.",
+ "tags": [
+  "lab"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Service level: feed to engine (the trading path)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "bargauge",
+   "title": "Feed → engine per region pair, last 5 min: p50, p99.99, max (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 24,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT concat(labels['from'], ' → ', replaceOne(app, 'engine-', '')) AS route, round(sum(p50 * count) / sum(count) / 1e6, 2) AS p50, round(sum(p9999 * count) / sum(count) / 1e6, 2) AS p99_99, round(max(max) / 1e6, 2) AS max FROM metrics.metrics_histogram WHERE ts > now() - INTERVAL 5 MINUTE AND name = 'md_to_engine_ns' GROUP BY route ORDER BY route",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "gradient"
+   },
+   "description": "Same region: Aeron on the node. Across regions: the network. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+  },
+  {
+   "id": 3,
+   "type": "table",
+   "title": "Feed → engine latency per region pair (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT concat(labels['from'], ' → ', replaceOne(app, 'engine-', '')) AS route, round(min(min) / 1e6, 3) AS min, round(sum(p50 * count) / sum(count) / 1e6, 3) AS p50, round(sum(p99 * count) / sum(count) / 1e6, 3) AS p99, round(sum(p9999 * count) / sum(count) / 1e6, 3) AS p99_99, round(max(max) / 1e6, 3) AS max, sum(count) AS samples FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'md_to_engine_ns' GROUP BY route ORDER BY route",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+  },
+  {
+   "id": 4,
+   "type": "row",
+   "title": "Feeds",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Feed live on each engine (1 live, 0 replaying or lost)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['venue']) AS series, min(value) AS live FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'feed_live' GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Book age by venue, worst engine (ms)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 17,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, labels['venue'] AS venue, max(value) / 1e6 AS age_ms FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'book_age_ns' GROUP BY time, venue ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "Time since an engine last applied this venue's book. A stalled feed climbs here first."
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Messages per second by feed",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 25,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['kind']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'messages' GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Feed resyncs and replayed messages / s",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 25,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(replaceOne(app, 'engine-', ''), ' ', labels['venue'], ' ', name) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name IN ('feed_resyncs', 'feed_replayed') GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 9,
+   "type": "row",
+   "title": "Loss and back pressure",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 33,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Dropped records / s by app and reason",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 34,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', labels['reason']) AS series, sum(delta) / $__interval_s AS rate FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'persist_dropped' GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {},
+   "description": "A record the application could not publish: back_pressure (Aeron log full: the archive or a subscriber behind), not_connected, too_large. Should be zero."
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Publisher headroom before back pressure (bytes)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 34,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT p.ts AS time, concat(p.host, ' ', toString(p.stream_id), ' ', p.client_name) AS publication, min(l.value - p.value) AS headroom FROM metrics.aeron_counters AS p INNER JOIN metrics.aeron_counters AS l ON p.ts = l.ts AND p.registration_id = l.registration_id WHERE $__timeFilter(p.ts) AND p.type = 'pub-pos' AND l.type = 'pub-lmt' GROUP BY time, publication ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "Archive behind publisher (bytes)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 42,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT p.ts AS time, concat(p.host, ' recording ', toString(r.recording_id)) AS recording, max(p.value - r.value) AS behind FROM metrics.aeron_counters AS p INNER JOIN metrics.aeron_counters AS r ON p.ts = r.ts AND p.session_id = r.session_id WHERE $__timeFilter(p.ts) AND p.type = 'pub-pos' AND r.type = 'rec-pos' GROUP BY time, recording ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 13,
+   "type": "timeseries",
+   "title": "NAKs, retransmits and loss per node / s",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 42,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(host, ' ', label) AS series, sum(delta) / $__interval_s AS rate FROM metrics.aeron_counters WHERE $__timeFilter(ts) AND type = 'system' AND label IN ('NAKs sent', 'NAKs received', 'Retransmits sent', 'Loss gap fills') GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 14,
+   "type": "row",
+   "title": "Recording to ClickHouse (off the trading path)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 50,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "Ingest lag: feed handler receive → row in ClickHouse by node: min, p50, p99, p99.99, max (s)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 51,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(inserted_at) AS time, host, min(dateDiff('millisecond', ts_init, inserted_at)) / 1000 AS min, quantile(0.5)(dateDiff('millisecond', ts_init, inserted_at)) / 1000 AS p50, quantile(0.99)(dateDiff('millisecond', ts_init, inserted_at)) / 1000 AS p99, quantile(0.9999)(dateDiff('millisecond', ts_init, inserted_at)) / 1000 AS p99_99, max(dateDiff('millisecond', ts_init, inserted_at)) / 1000 AS max FROM md.quote WHERE $__timeFilter(inserted_at) GROUP BY time, host ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Rows inserted per second by table",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 51,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(event_time) AS time, database || '.' || table AS t, sum(rows) / $__interval_s AS rows FROM system.part_log WHERE database IN ('md', 'engine', 'orders', 'tracing', 'metrics') AND event_type = 'NewPart' AND $__timeFilter(event_time) GROUP BY time, t ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 17,
+   "type": "table",
+   "title": "Active parts per table (merge pressure)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 59,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT database || '.' || table AS t, count() AS parts, sum(rows) AS rows, formatReadableSize(sum(bytes_on_disk)) AS size FROM system.parts WHERE active AND database IN ('md', 'engine', 'orders', 'tracing', 'metrics') GROUP BY t ORDER BY parts DESC LIMIT 20",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 18,
+   "type": "table",
+   "title": "Failed ClickHouse queries (last hour)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 59,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT max(event_time) AS last, count() AS n, any(substring(exception, 1, 160)) AS error FROM system.query_log WHERE event_time > now() - INTERVAL 1 HOUR AND type IN ('ExceptionBeforeStart', 'ExceptionWhileProcessing') GROUP BY exception_code ORDER BY n DESC",
+     "format": 1,
+     "queryType": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 19,
+   "type": "row",
+   "title": "Trading health",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 67,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 20,
+   "type": "timeseries",
+   "title": "Open, expired and stale orders",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 68,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, concat(app, ' ', name) AS series, max(value) AS n FROM metrics.metrics WHERE $__timeFilter(ts) AND name IN ('orders_open', 'orders_expired', 'orders_stale') GROUP BY time, series ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 21,
+   "type": "timeseries",
+   "title": "Engine clock drift (wall − monotonic, µs)",
+   "datasource": {
+    "type": "grafana-clickhouse-datasource",
+    "uid": "clickhouse"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 68,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-clickhouse-datasource",
+      "uid": "clickhouse"
+     },
+     "editorType": "sql",
+     "rawSql": "SELECT $__timeInterval(ts) AS time, app, avg(value) / 1e3 AS drift_us FROM metrics.metrics WHERE $__timeFilter(ts) AND name = 'clock_drift_ns' GROUP BY time, app ORDER BY time",
+     "format": 0,
+     "queryType": "timeseries"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "µs"
+    },
+    "overrides": []
+   },
+   "options": {},
+   "description": "How far each engine's wall clock wanders from its monotonic clock; cross-node latencies are only as good as this."
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "links": [
+  {
+   "title": "Latency",
+   "type": "link",
+   "url": "/d/latency",
+   "keepTime": true
+  },
+  {
+   "title": "Aeron",
+   "type": "link",
+   "url": "/d/aeron",
+   "keepTime": true
+  },
+  {
+   "title": "Metrics",
+   "type": "link",
+   "url": "/d/metrics",
+   "keepTime": true
+  },
+  {
+   "title": "ClickHouse tables",
+   "type": "link",
+   "url": "/d/tables",
+   "keepTime": true
+  }
+ ]
+}

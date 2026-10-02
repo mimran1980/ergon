@@ -243,7 +243,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Tick to trade, per stage: p50 / p99 (µs), every tick (weighted window estimates)",
+      "title": "Tick to trade, per stage: min, p50, p99, p99.99, max (µs), every tick (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -262,7 +262,7 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99 FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, labels['stage'] AS stage, min(min) / 1e3 AS min, sum(p50 * count) / sum(count) / 1e3 AS avg_window_p50, sum(p99 * count) / sum(count) / 1e3 AS avg_window_p99, sum(p9999 * count) / sum(count) / 1e3 AS avg_window_p99_99, max(max) / 1e3 AS max FROM metrics.metrics_histogram WHERE $__timeFilter(ts) AND name = 'trace_ns' AND labels['trace'] = 'tick_to_trade' AND app = '${engine}' GROUP BY time, stage ORDER BY time",
           "format": 0,
           "queryType": "timeseries"
         }

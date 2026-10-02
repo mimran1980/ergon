@@ -1,0 +1,17 @@
+[package]
+name = "aeron-bench"
+description = "Aeron ping-pong latency under each driver threading mode, idle strategy and CPU policy."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+hdrhistogram = "7"
+mimalloc.workspace = true
+rusteron-archive.workspace = true
+rusteron-media-driver = { version = "0.2.7", features = ["static"] }
+
+[lints]
+workspace = true

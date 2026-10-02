@@ -32,7 +32,7 @@ configMapGenerator:
   # ClickHouse's settings. Its name carries a hash of the file, so a change
   # restarts ClickHouse, which reads them only at start.
   - name: clickhouse-settings
-    files: [lab.xml=deploy/infra/clickhouse.xml]
+    files: [lab.xml=deploy/infra/clickhouse.xml, users.xml=deploy/infra/clickhouse-users.xml]
 # Image tags live here. The manifests name the image without one.
 images:
   - name: lab/app

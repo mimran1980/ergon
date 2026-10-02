@@ -26,3 +26,4 @@ samples/clickhouse/persist-server/tests/*.rs	samples	cd samples/clickhouse && ju
 samples/clickhouse/engine/src/*.rs	samples	cd samples/clickhouse && just test
 samples/clickhouse/md/src/*.rs	samples	cd samples/clickhouse && just test
 samples/clickhouse/schema/src/*.rs	samples	cd samples/clickhouse && just test
+samples/clickhouse/aeron-bench/src/*.rs	samples	cd samples/clickhouse && just test

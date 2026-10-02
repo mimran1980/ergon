@@ -14,7 +14,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayString, ArrayVec};
 
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
@@ -29,7 +29,7 @@ use nautilus_deribit::config::DeribitDataClientConfig;
 use nautilus_deribit::data_types::DeribitVolatilityIndex;
 use nautilus_deribit::factories::DeribitDataClientFactory;
 use nautilus_hyperliquid::config::HyperliquidDataClientConfig;
-use nautilus_hyperliquid::data_types::HyperliquidOpenInterest;
+use nautilus_hyperliquid::data_types::{HyperliquidOpenInterest, HyperliquidPublicTrade};
 use nautilus_hyperliquid::factories::HyperliquidDataClientFactory;
 use nautilus_kraken::common::enums::KrakenProductType;
 use nautilus_kraken::config::KrakenDataClientConfig;
@@ -74,7 +74,9 @@ const MAX_DELTAS_PER_ROW: usize = 1000;
 struct Venue {
     /// `EXCHANGE`, and the Nautilus client id upper-cased.
     name: &'static str,
-    instruments: [&'static str; 2],
+    /// The default instruments: the venue's most traded, so the feeds carry
+    /// real volume. `INSTRUMENTS` (comma-separated) replaces them.
+    instruments: &'static [&'static str],
     /// A book depth the venue streams.
     depth: usize,
     /// Perpetual swaps: mark price, index price and funding rate.
@@ -88,7 +90,18 @@ struct Venue {
 const VENUES: [Venue; 6] = [
     Venue {
         name: "binance",
-        instruments: ["BTCUSDT.BINANCE", "ETHUSDT.BINANCE"],
+        instruments: &[
+            "BTCUSDT.BINANCE",
+            "ETHUSDT.BINANCE",
+            "SOLUSDT.BINANCE",
+            "BNBUSDT.BINANCE",
+            "XRPUSDT.BINANCE",
+            "DOGEUSDT.BINANCE",
+            "ADAUSDT.BINANCE",
+            "TRXUSDT.BINANCE",
+            "LINKUSDT.BINANCE",
+            "AVAXUSDT.BINANCE",
+        ],
         depth: 20, // spot streams 5/10/20
         perpetual: false,
         bars: true,
@@ -96,7 +109,18 @@ const VENUES: [Venue; 6] = [
     },
     Venue {
         name: "bybit",
-        instruments: ["BTCUSDT-LINEAR.BYBIT", "ETHUSDT-LINEAR.BYBIT"],
+        instruments: &[
+            "BTCUSDT-LINEAR.BYBIT",
+            "ETHUSDT-LINEAR.BYBIT",
+            "SOLUSDT-LINEAR.BYBIT",
+            "BNBUSDT-LINEAR.BYBIT",
+            "XRPUSDT-LINEAR.BYBIT",
+            "DOGEUSDT-LINEAR.BYBIT",
+            "ADAUSDT-LINEAR.BYBIT",
+            "TRXUSDT-LINEAR.BYBIT",
+            "LINKUSDT-LINEAR.BYBIT",
+            "AVAXUSDT-LINEAR.BYBIT",
+        ],
         depth: 50, // 1/50/200/1000
         perpetual: true,
         bars: true,
@@ -104,7 +128,18 @@ const VENUES: [Venue; 6] = [
     },
     Venue {
         name: "okx",
-        instruments: ["BTC-USDT-SWAP.OKX", "ETH-USDT-SWAP.OKX"],
+        instruments: &[
+            "BTC-USDT-SWAP.OKX",
+            "ETH-USDT-SWAP.OKX",
+            "SOL-USDT-SWAP.OKX",
+            "BNB-USDT-SWAP.OKX",
+            "XRP-USDT-SWAP.OKX",
+            "DOGE-USDT-SWAP.OKX",
+            "ADA-USDT-SWAP.OKX",
+            "TRX-USDT-SWAP.OKX",
+            "LINK-USDT-SWAP.OKX",
+            "AVAX-USDT-SWAP.OKX",
+        ],
         depth: 50, // 50 or 400
         perpetual: true,
         bars: true,
@@ -112,7 +147,18 @@ const VENUES: [Venue; 6] = [
     },
     Venue {
         name: "deribit",
-        instruments: ["BTC-PERPETUAL.DERIBIT", "ETH-PERPETUAL.DERIBIT"],
+        instruments: &[
+            "BTC-PERPETUAL.DERIBIT",
+            "ETH-PERPETUAL.DERIBIT",
+            "SOL_USDC-PERPETUAL.DERIBIT",
+            "BNB_USDC-PERPETUAL.DERIBIT",
+            "XRP_USDC-PERPETUAL.DERIBIT",
+            "DOGE_USDC-PERPETUAL.DERIBIT",
+            "ADA_USDC-PERPETUAL.DERIBIT",
+            "TRX_USDC-PERPETUAL.DERIBIT",
+            "LINK_USDC-PERPETUAL.DERIBIT",
+            "AVAX_USDC-PERPETUAL.DERIBIT",
+        ],
         depth: 20, // 1/10/20
         perpetual: true,
         bars: true,
@@ -123,7 +169,18 @@ const VENUES: [Venue; 6] = [
     },
     Venue {
         name: "hyperliquid",
-        instruments: ["BTC-USD-PERP.HYPERLIQUID", "ETH-USD-PERP.HYPERLIQUID"],
+        instruments: &[
+            "BTC-USD-PERP.HYPERLIQUID",
+            "ETH-USD-PERP.HYPERLIQUID",
+            "SOL-USD-PERP.HYPERLIQUID",
+            "BNB-USD-PERP.HYPERLIQUID",
+            "XRP-USD-PERP.HYPERLIQUID",
+            "DOGE-USD-PERP.HYPERLIQUID",
+            "ADA-USD-PERP.HYPERLIQUID",
+            "TRX-USD-PERP.HYPERLIQUID",
+            "LINK-USD-PERP.HYPERLIQUID",
+            "AVAX-USD-PERP.HYPERLIQUID",
+        ],
         depth: 20,
         perpetual: true,
         bars: true,
@@ -154,7 +211,18 @@ const VENUES: [Venue; 6] = [
     Venue {
         name: "kraken",
         // Kraken Futures' linear perpetuals; Kraken calls bitcoin XBT.
-        instruments: ["PF_XBTUSD.KRAKEN", "PF_ETHUSD.KRAKEN"],
+        instruments: &[
+            "PF_XBTUSD.KRAKEN",
+            "PF_ETHUSD.KRAKEN",
+            "PF_SOLUSD.KRAKEN",
+            "PF_BNBUSD.KRAKEN",
+            "PF_XRPUSD.KRAKEN",
+            "PF_DOGEUSD.KRAKEN",
+            "PF_ADAUSD.KRAKEN",
+            "PF_TRXUSD.KRAKEN",
+            "PF_LINKUSD.KRAKEN",
+            "PF_AVAXUSD.KRAKEN",
+        ],
         depth: 25,
         perpetual: true,
         bars: false, // Kraken Futures streams no bars
@@ -179,9 +247,13 @@ struct Ticker {
 struct Recorder {
     core: DataActorCore,
     venue: &'static Venue,
+    instruments: Vec<InstrumentId>,
     tickers: HashMap<InstrumentId, Ticker>,
-    /// Deribit's volatility index (DVOL) by index name, e.g. `btc_usd`.
-    volatility: HashMap<String, f64>,
+    /// Deribit's volatility index (DVOL) by index name, e.g. `btc_usd`: a
+    /// handful, scanned, so a lookup by asset allocates nothing.
+    volatility: Vec<(String, f64)>,
+    /// `EXCHANGE` upper-cased once: every custom row's `venue`.
+    venue_upper: String,
     /// One `book_deltas` row's changes, reused.
     deltas: Vec<BookDeltasDeltasEntry>,
     t: Telemetry,
@@ -261,7 +333,7 @@ struct Telemetry {
 }
 
 impl Telemetry {
-    fn new(venue: &Venue) -> Self {
+    fn new(instruments: &[InstrumentId]) -> Self {
         let m = persist_client::metrics();
         let kind = |k| m.counter("messages", &[("kind", k)]);
         let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
@@ -274,11 +346,9 @@ impl Telemetry {
             trade_latency: latency("trade"),
             quote_latency: latency("quote"),
             record_ns: m.histogram("record_ns", &[("table", "trade")]),
-            spread_bps: venue
-                .instruments
-                .map(InstrumentId::from)
-                .into_iter()
-                .map(|id| {
+            spread_bps: instruments
+                .iter()
+                .map(|&id| {
                     let gauge = m.gauge("spread_bps", &[("instrument", &id.to_string())]);
                     (id, gauge)
                 })
@@ -309,7 +379,7 @@ impl DataActor for Recorder {
         let _span = tracing::info_span!("subscribe", venue = self.venue.name).entered();
         let second = NonZeroUsize::try_from(1000)?;
         let depth = NonZeroUsize::new(self.venue.depth);
-        for id in self.venue.instruments.map(InstrumentId::from) {
+        for id in self.instruments.clone() {
             // The definition as loaded now; `on_instrument` records changes.
             let loaded = self.cache().instrument(&id);
             if let Some(instrument) = loaded {
@@ -577,7 +647,7 @@ impl DataActor for Recorder {
     fn on_bar(&mut self, b: &Bar) -> anyhow::Result<()> {
         let id = b.bar_type.instrument_id();
         let (symbol, venue) = names(&id);
-        let spec = b.bar_type.to_string();
+        let spec = text::<96>(b.bar_type);
         let len = BarEncoder::compute_length_with_header(symbol.len(), venue.len(), spec.len());
         self.feeds.md.record(BarEncoder::TEMPLATE_ID, len, |buf| {
             Ok(BarEncoder::wrap_and_apply_header(buf, 0)
@@ -661,14 +731,33 @@ impl DataActor for Recorder {
     /// (`HyperliquidPublicTrade` -> `hyperliquid_public_trade`).
     fn on_data(&mut self, data: &CustomData) -> anyhow::Result<()> {
         let any = data.data.as_any();
+        // The types this recorder subscribes to, written field by field with
+        // no allocation: a public trade arrives with every Hyperliquid trade.
+        if let Some(t) = any.downcast_ref::<HyperliquidPublicTrade>() {
+            self.public_trade(t);
+            return Ok(());
+        }
         if let Some(oi) = any.downcast_ref::<HyperliquidOpenInterest>() {
             self.tickers
                 .entry(oi.instrument_id)
                 .or_default()
                 .open_interest = oi.open_interest.to_f64();
-        } else if let Some(v) = any.downcast_ref::<DeribitVolatilityIndex>() {
-            self.volatility.insert(v.index_name.clone(), v.volatility);
+            self.open_interest(oi);
+            return Ok(());
         }
+        if let Some(v) = any.downcast_ref::<DeribitVolatilityIndex>() {
+            match self
+                .volatility
+                .iter_mut()
+                .find(|(name, _)| *name == v.index_name)
+            {
+                Some((_, value)) => *value = v.volatility,
+                None => self.volatility.push((v.index_name.clone(), v.volatility)),
+            }
+            self.volatility_index(v);
+            return Ok(());
+        }
+        // Any other custom type: rare, so a JSON round trip is fine here.
         let table = persist_client::snake_case(data.data.type_name());
         if !persist_client::event_enabled(&table) {
             return Ok(());
@@ -697,18 +786,97 @@ impl DataActor for Recorder {
             };
             (k != "type").then_some((k.as_str(), value))
         });
-        let venue = self.venue.name.to_uppercase();
         persist_client::record_row(
             &table,
             scalars
                 .chain(nested.iter().map(|(k, v)| (*k, Value::Str(v))))
-                .chain([("venue", Value::Str(&venue))]),
+                .chain([("venue", Value::Str(&self.venue_upper))]),
         );
         Ok(())
     }
 }
 
 impl Recorder {
+    /// `hyperliquid_public_trade`: the columns and text the generic JSON path
+    /// wrote, with the decimals and ids formatted on the stack.
+    fn public_trade(&self, t: &HyperliquidPublicTrade) {
+        const TABLE: &str = "hyperliquid_public_trade";
+        if !persist_client::event_enabled(TABLE) {
+            return;
+        }
+        let (id, price, size) = (
+            text::<64>(t.instrument_id),
+            text::<48>(t.price),
+            text::<48>(t.size),
+        );
+        let side = text::<16>(t.aggressor_side);
+        persist_client::record_row(
+            TABLE,
+            [
+                ("instrument_id", Value::Str(&id)),
+                ("price", Value::Str(&price)),
+                ("size", Value::Str(&size)),
+                ("aggressor_side", Value::Str(&side)),
+                ("trade_id", Value::Str(&t.trade_id)),
+                ("buyer", Value::Str(&t.buyer)),
+                ("seller", Value::Str(&t.seller)),
+                ("hash", Value::Str(&t.hash)),
+                ("ts_event", Value::I64(t.ts_event.as_u64() as i64)),
+                ("ts_init", Value::I64(t.ts_init.as_u64() as i64)),
+                ("venue", Value::Str(&self.venue_upper)),
+            ],
+        );
+    }
+
+    /// `hyperliquid_open_interest`, as [`Self::public_trade`].
+    fn open_interest(&self, oi: &HyperliquidOpenInterest) {
+        const TABLE: &str = "hyperliquid_open_interest";
+        if !persist_client::event_enabled(TABLE) {
+            return;
+        }
+        let (id, open_interest) = (text::<64>(oi.instrument_id), text::<48>(oi.open_interest));
+        persist_client::record_row(
+            TABLE,
+            [
+                ("instrument_id", Value::Str(&id)),
+                ("open_interest", Value::Str(&open_interest)),
+                ("ts_event", Value::I64(oi.ts_event.as_u64() as i64)),
+                ("ts_init", Value::I64(oi.ts_init.as_u64() as i64)),
+                ("venue", Value::Str(&self.venue_upper)),
+            ],
+        );
+    }
+
+    /// `deribit_volatility_index`, as [`Self::public_trade`].
+    fn volatility_index(&self, v: &DeribitVolatilityIndex) {
+        const TABLE: &str = "deribit_volatility_index";
+        if !persist_client::event_enabled(TABLE) {
+            return;
+        }
+        persist_client::record_row(
+            TABLE,
+            [
+                ("index_name", Value::Str(&v.index_name)),
+                ("ts_event", Value::I64(v.ts_event.as_u64() as i64)),
+                ("ts_init", Value::I64(v.ts_init.as_u64() as i64)),
+                ("volatility", Value::F64(v.volatility)),
+                ("venue", Value::Str(&self.venue_upper)),
+            ],
+        );
+    }
+
+    /// The DVOL of `base` (`BTC` reads `btc_usd`), with no allocation.
+    fn volatility_of(&self, base: &str) -> Option<f64> {
+        self.volatility
+            .iter()
+            .find(|(name, _)| {
+                name.len() == base.len() + 4
+                    && name.ends_with("_usd")
+                    && name[..base.len()].eq_ignore_ascii_case(base)
+            })
+            .map(|&(_, value)| value)
+    }
+
     /// How to read `i`'s sizes, on the md feed: when it is loaded, and before
     /// each book snapshot, so a subscriber that joins late or resyncs has it.
     fn spec(&self, i: &InstrumentAny) -> anyhow::Result<()> {
@@ -767,8 +935,7 @@ impl Recorder {
             .as_str()
             .split('-')
             .next()
-            .and_then(|base| self.volatility.get(&format!("{}_usd", base.to_lowercase())))
-            .copied();
+            .and_then(|base| self.volatility_of(base));
         let t = self.tickers.entry(id).or_default();
         tracing::info!(
             table = "ticker",
@@ -874,13 +1041,43 @@ fn book_view(book: &OrderBook) {
 /// ClickHouse `Decimal(18, 9)`), by the generated conversion. More than nine
 /// decimals, or more than +-9.2 billion, is an error, never a rounded value.
 fn d9(d: Decimal) -> anyhow::Result<Decimal9> {
-    d.try_to_sbe().map_err(anyhow::Error::msg)
+    d.try_to_sbe().map_err(|e| anyhow::anyhow!("{e}: {d}"))
 }
 
 /// `d` exactly, as the schema's `Rate` (mantissa x 10^-18): funding rates
 /// carry more decimals than `Decimal9` holds.
 fn rate(d: Decimal) -> anyhow::Result<Rate> {
-    d.try_to_sbe().map_err(anyhow::Error::msg)
+    d.try_to_sbe().map_err(|e| anyhow::anyhow!("{e}: {d}"))
+}
+
+/// `x` as text for a row's text field on the hot path: on the stack, `N`
+/// bytes being generous for what is formatted here (ids, decimals, bar
+/// types). Longer text is allocated rather than cut: a value is never lost.
+fn text<const N: usize>(x: impl std::fmt::Display) -> Text<N> {
+    use std::fmt::Write as _;
+    let mut s = ArrayString::new();
+    if write!(s, "{x}").is_ok() {
+        Text::Stack(s)
+    } else {
+        Text::Heap(x.to_string())
+    }
+}
+
+/// [`text`]'s result: a `&str` either way.
+enum Text<const N: usize> {
+    Stack(ArrayString<N>),
+    Heap(String),
+}
+
+impl<const N: usize> std::ops::Deref for Text<N> {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match self {
+            Self::Stack(s) => s,
+            Self::Heap(s) => s,
+        }
+    }
 }
 
 /// The best [`BOOK_LEVELS`] levels of one side as `(price, size)`, on the stack.
@@ -909,6 +1106,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let names: Vec<_> = VENUES.iter().map(|v| v.name).collect();
         format!("EXCHANGE={exchange}: expected one of {names:?}")
     })?;
+    let instruments: Vec<InstrumentId> = match std::env::var("INSTRUMENTS") {
+        Ok(list) => list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(InstrumentId::from)
+            .collect(),
+        Err(_) => venue
+            .instruments
+            .iter()
+            .map(|&s| InstrumentId::from(s))
+            .collect(),
+    };
     let trader = TraderId::from(format!("RECORDER-{}", venue.name.to_uppercase()).as_str());
     let builder = LiveNode::builder(trader, Environment::Live)?;
     let builder = match venue.name {
@@ -994,10 +1204,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         venue,
+        t: Telemetry::new(&instruments),
+        instruments,
         tickers: HashMap::new(),
-        volatility: HashMap::new(),
+        volatility: Vec::new(),
+        venue_upper: venue.name.to_uppercase(),
         deltas: Vec::with_capacity(MAX_DELTAS_PER_ROW),
-        t: Telemetry::new(venue),
         feeds,
     })?;
     node.run().await?;
@@ -1043,9 +1255,17 @@ mod tests {
     }
 
     #[test]
+    fn text_stays_on_the_stack_and_never_cuts() {
+        assert!(matches!(text::<8>(42), Text::Stack(ref s) if s.as_str() == "42"));
+        let long = text::<4>("BTC-USD-PERP.HYPERLIQUID");
+        assert!(matches!(long, Text::Heap(_)));
+        assert_eq!(&*long, "BTC-USD-PERP.HYPERLIQUID");
+    }
+
+    #[test]
     fn every_venue_parses() -> anyhow::Result<()> {
         for venue in &VENUES {
-            for id in venue.instruments.map(InstrumentId::from) {
+            for id in venue.instruments.iter().map(|&s| InstrumentId::from(s)) {
                 assert_eq!(id.venue.as_str(), venue.name.to_uppercase());
                 let bars = BarType::from(format!("{id}-1-MINUTE-LAST-EXTERNAL").as_str());
                 assert_eq!(bars.instrument_id(), id);
