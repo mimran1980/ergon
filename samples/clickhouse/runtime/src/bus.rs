@@ -1,7 +1,7 @@
 //! The application's Aeron client and its identity on it.
 //!
-//! [`Bus::connect`] once per process. [`Bus::publication`],
-//! [`Bus::subscription`] and [`Bus::persistent`] open feeds on it, and
+//! [`Bus::connect`] once per process. [`Bus::publish`], [`Bus::subscribe`]
+//! and [`Bus::subscribe_live`] open feeds from the registry on it, and
 //! [`Persist`](crate::persist::Persist) records through it. Every publication
 //! made from one bus shares:
 //!

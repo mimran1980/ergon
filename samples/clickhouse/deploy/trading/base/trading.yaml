@@ -32,6 +32,9 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/engine]
           env:
+            # mimalloc's full allocator report on stderr at exit (after SIGTERM;
+            # read it with `kubectl logs --previous`). Uncomment to use:
+            # - { name: MIMALLOC_SHOW_STATS, value: "1" }
             # From its pod's `region` label, which deploy/trading/<region> sets.
             - name: REGION
               valueFrom: { fieldRef: { fieldPath: "metadata.labels['region']" } }
@@ -104,6 +107,9 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/exch-sim]
           env:
+            # mimalloc's full allocator report on stderr at exit (after SIGTERM;
+            # read it with `kubectl logs --previous`). Uncomment to use:
+            # - { name: MIMALLOC_SHOW_STATS, value: "1" }
             # From its pod's `region` label, which deploy/trading/<region> sets.
             - name: REGION
               valueFrom: { fieldRef: { fieldPath: "metadata.labels['region']" } }

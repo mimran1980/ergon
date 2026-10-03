@@ -31,6 +31,9 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/md]
           env:
+            # mimalloc's full allocator report on stderr at exit (after SIGTERM;
+            # read it with `kubectl logs --previous`). Uncomment to use:
+            # - { name: MIMALLOC_SHOW_STATS, value: "1" }
             # From its pod's `exchange` label, which deploy/md/<exchange> sets.
             - name: EXCHANGE
               valueFrom: { fieldRef: { fieldPath: "metadata.labels['exchange']" } }

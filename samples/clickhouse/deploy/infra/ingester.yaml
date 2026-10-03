@@ -23,6 +23,9 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/ingester]
           env:
+            # mimalloc's full allocator report on stderr at exit (after SIGTERM;
+            # read it with `kubectl logs --previous`). Uncomment to use:
+            # - { name: MIMALLOC_SHOW_STATS, value: "1" }
             - { name: AERON_DIR, value: /aeron/driver }
             - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }

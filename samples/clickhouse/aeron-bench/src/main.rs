@@ -312,24 +312,41 @@ fn replay(o: &Options) -> Result<(), Error> {
         Duration::from_secs(10),
     )?;
     let (mut messages, mut bytes, mut first) = (0u64, 0u64, None);
-    let want = u64::try_from(stop - start)?;
+    // Padding advances the image position without reaching the fragment callback.
+    // Retain the replay image before polling so its final position survives close.
+    let mut image = None;
+    let mut complete = false;
     let mut waiter = Waiter::default();
-    while bytes < want && started.elapsed() < Duration::from_secs(120) {
+    while started.elapsed() < Duration::from_secs(120) {
         driver.work()?;
-        let n = subscription.poll_fn(
+        if image.is_none() {
+            image = subscription.image_by_session_id(session as i32);
+        }
+        let Some(image) = &image else {
+            waiter.idle(o.idle);
+            continue;
+        };
+        let n = image.poll_fn(
             |message, _| {
+                first.get_or_insert_with(|| started.elapsed());
                 messages += 1;
                 // A message's frame: a 32-byte header, then the payload, padded to 32 bytes.
                 bytes += u64::try_from((32 + message.len()).div_ceil(32) * 32).unwrap_or(0);
             },
             256,
         )?;
+        if image.position() >= stop {
+            complete = true;
+            break;
+        }
         if n > 0 {
-            first.get_or_insert_with(|| started.elapsed());
             waiter.work();
         } else {
             waiter.idle(o.idle);
         }
+    }
+    if !complete {
+        return Err("replay did not consume the full recording within 120 s".into());
     }
     let total = started.elapsed();
     println!(
@@ -410,21 +427,24 @@ fn ping(o: &Options) -> Result<(), Error> {
                 (sent < total && epoch.elapsed() >= next).then_some(next)
             }
         };
+        let mut got = false;
         if let Some(at) = due {
             message[..8].copy_from_slice(&sent.to_le_bytes());
             message[8..16].copy_from_slice(&u64::try_from(at.as_nanos())?.to_le_bytes());
-            send(&link, &driver, &message)?;
-            sent += 1;
-            waiter.work();
-            continue;
+            // An overdue sender must still drain its reply queue. Blocking
+            // here can fill both bounded channels and stall ping and pong.
+            if link.publication.offer_raw(&message, Handlers::NONE) >= 0 {
+                sent += 1;
+                got = true;
+            }
         }
-        let now = epoch.elapsed();
-        let mut got = false;
         link.subscription.poll_fn(
             |echo, _| {
                 let seq = u64::from_le_bytes(echo[..8].try_into().unwrap_or_default());
                 let at = u64::from_le_bytes(echo[8..16].try_into().unwrap_or_default());
-                let rtt = u64::try_from(now.as_nanos())
+                // Timestamp receipt inside the callback: an echo may arrive
+                // after the clock sampled before polling the subscription.
+                let rtt = u64::try_from(epoch.elapsed().as_nanos())
                     .unwrap_or(u64::MAX)
                     .saturating_sub(at);
                 if seq >= o.warmup {

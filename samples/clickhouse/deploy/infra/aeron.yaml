@@ -21,6 +21,9 @@ spec:
           imagePullPolicy: Never
           command: [/usr/local/bin/aeron-driver]
           env:
+            # mimalloc's full allocator report on stderr at exit (after SIGTERM;
+            # read it with `kubectl logs --previous`). Uncomment to use:
+            # - { name: MIMALLOC_SHOW_STATS, value: "1" }
             - { name: AERON_DIR, value: /aeron/driver }
             - { name: AERON_DIR_DELETE_ON_START, value: "true" }
             - { name: AERON_THREADING_MODE, value: DEDICATED }
