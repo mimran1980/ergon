@@ -31,7 +31,10 @@ use crate::subscription::{Delivery, PersistentSubscription, Subscription};
 use crate::timer::{self, Fired, TimerError, TimerId, TimerWheel};
 use crate::trace::Tracer;
 
+mod archive;
 pub mod sim;
+
+pub use archive::ArchiveConfig;
 
 /// A feed this agent subscribed to, as numbered by [`Ctx::subscribe`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

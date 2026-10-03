@@ -219,3 +219,16 @@ fn from_to_and_stop_bound_the_run() -> TestResult {
     assert_eq!(stopped.seen.len(), 2, "A, then B stops the run");
     Ok(())
 }
+
+#[test]
+fn a_paced_run_takes_its_simulated_time_over_the_speed() -> TestResult {
+    // Input spans 4 ms of simulated time; at 1x it takes at least that long.
+    let started = std::time::Instant::now();
+    let config = SimConfig {
+        speed: Some(1.0),
+        ..SimConfig::new(streams()?)
+    };
+    run(&mut Probe::default(), config)?;
+    assert!(started.elapsed() >= std::time::Duration::from_millis(3));
+    Ok(())
+}

@@ -351,3 +351,128 @@ fn an_exclusive_persist_publishes_other_threads_rows_from_its_owner() -> TestRes
     assert_eq!(bus.dropped(), 0, "{:?}", bus.drops());
     Ok(())
 }
+
+/// Records what a replay delivers: `(feed, ctx.now, payload index)`.
+#[derive(Default)]
+struct Replayed {
+    seen: Vec<(u32, i64, u64)>,
+}
+
+impl Agent for Replayed {
+    fn start(&mut self, _ctx: &mut Ctx) -> Result<(), ergon_runtime::Error> {
+        Ok(())
+    }
+
+    fn on_message(&mut self, ctx: &mut Ctx, feed: FeedId, msg: &[u8], _d: Delivery) {
+        if msg.get(2..4) == Some(&1u16.to_le_bytes()[..]) {
+            let i = u64::from_le_bytes(msg[8..16].try_into().unwrap_or_default());
+            self.seen.push((feed.0, ctx.now().0, i));
+        }
+    }
+
+    fn on_timer(&mut self, _ctx: &mut Ctx, _timer: Expiry) {}
+}
+
+#[test]
+fn an_archive_replay_merges_recordings_by_their_publish_stamps() -> TestResult {
+    use ergon_runtime::rt::ArchiveConfig;
+    use ergon_runtime::rt::sim::{Sim, SimConfig};
+    use rusteron_archive::{AeronArchiveAsyncConnect, AeronArchiveContext, IntoCString};
+
+    const CONTROL: &str = "aeron:ipc?term-length=64k";
+    let (a, b) = (stream(4, 0), stream(4, 1));
+    let settings = Settings {
+        aeron_dir: Some(aeron_dir()),
+        app: "replay-test".into(),
+        ..Settings::new("unused.yaml")
+    };
+    let bus = Bus::connect(&settings)?;
+    // Record both streams, then publish them interleaved.
+    let aeron = rusteron_archive::Aeron::new(&{
+        let ctx = rusteron_archive::AeronContext::new()?;
+        ctx.set_dir(&aeron_dir().into_c_string())?;
+        ctx
+    })?;
+    aeron.start()?;
+    let archive_ctx = AeronArchiveContext::new()?;
+    archive_ctx.set_aeron(&aeron)?;
+    archive_ctx.set_control_request_channel(&CONTROL.into_c_string())?;
+    archive_ctx.set_control_response_channel(&CONTROL.into_c_string())?;
+    let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &aeron)?
+        .poll_blocking(Duration::from_secs(10))?;
+    for id in [a, b] {
+        archive.start_recording(
+            c"aeron:ipc",
+            id,
+            rusteron_archive::SOURCE_LOCATION_LOCAL,
+            false,
+        )?;
+    }
+    let (pa, pb) = (
+        bus.publication("aeron:ipc", a)?,
+        bus.publication("aeron:ipc", b)?,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !(pa.is_connected() && pb.is_connected()) {
+        assert!(
+            Instant::now() < deadline,
+            "the archive did not record the streams"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for i in 0..20u64 {
+        let publication = if i % 2 == 0 { &pa } else { &pb };
+        publish_one(publication, i);
+        std::thread::sleep(Duration::from_micros(50));
+    }
+    // Let the archive write them.
+    std::thread::sleep(Duration::from_millis(500));
+
+    let streams = Streams::parse(&format!(
+        "services:\n  rec-a: {{ port: 47001, region: r, streams: {{ md: {a} }} }}\n  rec-b: {{ port: 47002, region: r, streams: {{ md: {b} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    ))?;
+    let config = SimConfig {
+        from: Some(Nanos(0)),
+        archive: Some((
+            bus,
+            ArchiveConfig {
+                control: CONTROL.into(),
+                response: CONTROL.into(),
+                replay_stream: stream(4, 2),
+            },
+        )),
+        ..SimConfig::new(streams)
+    };
+    let mut sim = Sim::new(config, Vec::new())?;
+    sim.ctx().subscribe("rec-a", "md")?;
+    sim.ctx().subscribe("rec-b", "md")?;
+    let mut agent = Replayed::default();
+    sim.run(&mut agent)?;
+    let order: Vec<u64> = agent.seen.iter().map(|s| s.2).collect();
+    assert_eq!(
+        order,
+        (0..20).collect::<Vec<_>>(),
+        "merged by publish stamp"
+    );
+    assert!(
+        agent
+            .seen
+            .iter()
+            .all(|&(feed, _, i)| feed == u32::from(i % 2 == 1))
+    );
+    assert!(
+        agent.seen.windows(2).all(|w| w[0].1 < w[1].1)
+            && agent.seen[0].1 > 1_700_000_000_000_000_000,
+        "the event time is each frame's epoch publish stamp: {:?}",
+        agent.seen
+    );
+    Ok(())
+}
+
+fn publish_one(publication: &Publication, i: u64) {
+    let _ = publication.record(1, FRAME, |buf| {
+        buf[2..4].copy_from_slice(&1u16.to_le_bytes());
+        buf[8..16].copy_from_slice(&i.to_le_bytes());
+        Ok::<_, std::convert::Infallible>(FRAME)
+    });
+}
