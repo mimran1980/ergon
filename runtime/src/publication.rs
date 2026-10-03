@@ -3,8 +3,9 @@
 //! the archive on whichever node publishes it.
 //!
 //! [`Publication::record`] is the same exact-length claim as
-//! [`Persist::record`](crate::persist::Persist::record), stamped with the
-//! application's source id and counted in the same [`Bus::drops`]. Unlike
+//! [`Persist::record`](crate::persist::Persist::record), counted in the same
+//! [`Bus::drops`]. Its frames carry their publish time in the reserved value;
+//! the recording's `Source` message says who published it. Unlike
 //! it, it does not ask `tables.yaml`: subscribers need every message whether
 //! or not it is persisted, so the ingester applies `enabled`, `apps` and
 //! `until` to feed tables when it inserts them. Every message must fit one
@@ -94,7 +95,8 @@ impl Publication {
             bus.count(DropKind::TooLarge);
             return Ok(());
         }
-        let claim = match bus.try_claim(&self.aeron, len) {
+        // A feed frame carries its publish time; its source is the recording's.
+        let claim = match bus.try_claim_at(&self.aeron, len, crate::clock::epoch_now().0) {
             Ok(claim) => claim,
             Err(kind) => {
                 bus.count(kind);
@@ -123,7 +125,7 @@ impl Publication {
         let message = self.bus.source_message();
         let sent = self
             .bus
-            .try_claim(&self.aeron, message.len())
+            .try_claim_at(&self.aeron, message.len(), crate::clock::epoch_now().0)
             .is_ok_and(|claim| {
                 claim.data().copy_from_slice(message);
                 claim.commit().is_ok()

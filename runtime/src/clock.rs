@@ -58,6 +58,15 @@ impl Nanos {
     }
 }
 
+/// The process clock now, as UNIX-epoch nanoseconds, from any thread: the
+/// anchor's epoch plus its monotonic elapsed time, no [`Clock`] needed.
+#[inline]
+#[must_use]
+pub fn epoch_now() -> Nanos {
+    let elapsed = i64::try_from(ANCHOR.mono.elapsed().as_nanos()).unwrap_or(i64::MAX);
+    Nanos(ANCHOR.epoch_ns.saturating_add(elapsed))
+}
+
 /// One pairing of the monotonic clock with the wall clock.
 struct Anchor {
     mono: Mono,

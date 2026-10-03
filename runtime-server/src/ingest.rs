@@ -43,6 +43,10 @@ struct Replay {
     connected: bool,
     /// A feed's recording: `tables.yaml` is applied when it is inserted.
     feed: bool,
+    /// A feed's frames carry their publish time in the reserved value, so
+    /// its rows take the source the recording's `Source` message names.
+    /// One exclusive publication is one session is one recording.
+    source: u64,
     /// The recording's first position still on disk; advances as it is purged.
     start: i64,
     term_length: i32,
@@ -107,6 +111,10 @@ pub struct Ingester {
     checkpoints: BTreeMap<i64, i64>,
     /// Everything up to here has been handed to the writer, by recording id.
     polled: BTreeMap<i64, i64>,
+    /// Each feed recording's source, saved beside the checkpoints so a
+    /// resume mid-recording knows it before the next `Source` message.
+    sources: BTreeMap<i64, i64>,
+    sources_path: PathBuf,
     max_queued: usize,
     /// The driver's own statistics, and when they are next sampled.
     stats: Option<(AeronStats, Duration, Instant)>,
@@ -169,6 +177,8 @@ impl Ingester {
             record_feeds(&archive, streams, &settings.host_ip, &mut feeds)?;
         }
         let checkpoints = load(&settings.checkpoint_path)?;
+        let sources_path = settings.checkpoint_path.with_extension("sources");
+        let sources = load(&sources_path)?;
         let pending_path = settings.checkpoint_path.with_extension("pending");
         let pending = load(&pending_path)?;
         let pending = in_flight(&checkpoints, pending);
@@ -203,6 +213,8 @@ impl Ingester {
             pending,
             polled: checkpoints.clone(),
             checkpoints,
+            sources,
+            sources_path,
             max_queued: settings.max_queued_bytes,
             stats,
         })
@@ -323,6 +335,11 @@ impl Ingester {
                 self.archive.purge_recording(d.id).map_err(aeron)?;
                 self.checkpoints.remove(&d.id);
                 self.polled.remove(&d.id);
+                if self.sources.remove(&d.id).is_some()
+                    && let Err(e) = save(&self.sources_path, &self.sources)
+                {
+                    report.errors.push(e.to_string());
+                }
                 if let Err(e) = save(&self.checkpoint_path, &self.checkpoints) {
                     report.errors.push(e.to_string());
                 }
@@ -379,6 +396,7 @@ impl Ingester {
                     opened: Instant::now(),
                     connected: false,
                     feed,
+                    source: self.sources.get(&d.id).map_or(0, |s| s.cast_unsigned()),
                     start: d.start,
                     term_length: d.term_length,
                     segment_length: d.segment_length,
@@ -397,6 +415,7 @@ impl Ingester {
         let max_queued = self.max_queued;
         let writer = &mut self.writer;
         let mut finished = Vec::new();
+        let mut learned = Vec::new();
         let mut caught_up = true;
         loop {
             let mut any = false;
@@ -406,6 +425,7 @@ impl Ingester {
                     break;
                 }
                 let feed = replay.feed;
+                let mut source = replay.source;
                 let mut last = None;
                 let Some(subscription) = replay.subscription.added()? else {
                     caught_up = false;
@@ -414,12 +434,19 @@ impl Ingester {
                 let polled = subscription
                     .poll_fn(
                         |message, header| {
-                            // The frame's reserved value is the recording app's source id.
-                            writer.push_from(
-                                message,
-                                header.reserved_value().unwrap_or(0).cast_unsigned(),
-                                feed,
-                            );
+                            // A persist frame's reserved value is the recording
+                            // app's source id; a feed frame's is its publish
+                            // time, and its source is the recording's.
+                            let reserved = header.reserved_value().unwrap_or(0).cast_unsigned();
+                            let from = if feed {
+                                if let Some(id) = source_id(message) {
+                                    source = id;
+                                }
+                                source
+                            } else {
+                                reserved
+                            };
+                            writer.push_from(message, from, feed);
                             last = Some(header.position());
                         },
                         1024,
@@ -427,6 +454,10 @@ impl Ingester {
                     .map_err(|e| Error::Aeron(format!("archive replay: {e}")))?;
                 if let Some(position) = last {
                     self.polled.insert(recording, position);
+                }
+                if source != replay.source {
+                    replay.source = source;
+                    learned.push((recording, source));
                 }
                 // Padding advances the subscriber position without invoking
                 // the fragment handler. Include it in catch-up/checkpoints.
@@ -463,6 +494,12 @@ impl Ingester {
                 // started: open it again next tick, from its checkpoint.
                 finished.push(recording);
             }
+        }
+        if !learned.is_empty() {
+            for (recording, source) in learned {
+                self.sources.insert(recording, source.cast_signed());
+            }
+            save(&self.sources_path, &self.sources)?;
         }
         for recording in finished {
             if let Some(replay) = self.replays.remove(&recording) {
@@ -584,6 +621,16 @@ fn in_flight(
     } else {
         Some(pending)
     }
+}
+
+/// The source id a `Source` message names; `None` for any other message.
+fn source_id(message: &[u8]) -> Option<u64> {
+    if message.get(2..4) != Some(&ergon_runtime::source::SOURCE_TEMPLATE_ID.to_le_bytes()[..])
+        || message.get(4..6) != Some(&ergon_runtime::event::SCHEMA_ID.to_le_bytes()[..])
+    {
+        return None;
+    }
+    ergon_runtime::source::Source::decode(message).map(|s| s.id)
 }
 
 /// The insert's identity: one token per batch, stable across the retry.

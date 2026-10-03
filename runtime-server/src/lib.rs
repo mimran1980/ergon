@@ -601,8 +601,10 @@ impl Writer {
     }
 
     /// Queue one SBE message or event row, header included, for its table.
-    /// `source` is the Aeron frame's reserved value: the id of the `Source`
-    /// that recorded it, or 0 for none. `false` when its table is not in
+    /// `source` is the id of the `Source` that recorded it, or 0 for none: a
+    /// persist frame's reserved value, or for a feed (whose frames carry
+    /// their publish time there) the source its recording's `Source`
+    /// message named. `false` when its table is not in
     /// `tables.yaml`: the message is skipped, and counted in the next
     /// tick's errors.
     ///

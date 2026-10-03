@@ -932,7 +932,8 @@ impl Persist {
         match &self.inner.publication {
             Publication::Shared(p) => self.inner.bus.try_claim(p, len),
             Publication::Exclusive(owned) => owned.claimable().map_or(Err(DropKind::Other), |p| {
-                self.inner.bus.try_claim_exclusive(p, len)
+                let source = self.inner.bus.source_id();
+                crate::bus::claim_exclusive(p, len, source)
             }),
         }
     }

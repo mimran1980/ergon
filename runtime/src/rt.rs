@@ -16,7 +16,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rusteron_archive::{AeronBufferClaim, AeronExclusivePublication};
+use rusteron_archive::AeronExclusivePublication;
 
 use crate::Error;
 use crate::bus::{Bus, DropKind};
@@ -402,7 +402,9 @@ impl Ctx {
     }
 
     /// Publish one message of exactly `len` bytes (header included) that
-    /// `encode` writes into the claimed frame, zero-copy. A frame Aeron does
+    /// `encode` writes into the claimed frame, zero-copy. The frame's reserved
+    /// value is [`Ctx::now`]: the event time it was published at, which a
+    /// replay or backtest uses as the message's event time. A frame Aeron does
     /// not take is counted in [`Bus::drops`] and returns `Ok(())`.
     ///
     /// # Errors
@@ -424,7 +426,7 @@ impl Ctx {
             self.bus.count(DropKind::TooLarge);
             return Ok(());
         }
-        let claim = match self.bus.try_claim_exclusive(&sink.publication, len) {
+        let claim = match crate::bus::claim_exclusive(&sink.publication, len, self.now.0) {
             Ok(claim) => claim,
             Err(kind) => {
                 self.bus.count(kind);
@@ -465,9 +467,7 @@ impl Ctx {
             return;
         };
         let message = self.bus.source_message();
-        if let Ok(claim) = self
-            .bus
-            .try_claim_exclusive(&sink.publication, message.len())
+        if let Ok(claim) = crate::bus::claim_exclusive(&sink.publication, message.len(), self.now.0)
         {
             claim.data().copy_from_slice(message);
             let _ = claim.commit();
@@ -868,22 +868,4 @@ pub fn sigterm() -> Result<Arc<AtomicBool>, std::io::Error> {
     let stop = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
     Ok(stop)
-}
-
-/// Write `message` on an exclusive publication, stamped as [`Bus`] stamps.
-impl Bus {
-    /// Claim `len` bytes of an exclusive `publication`: no CAS on the term
-    /// tail and no shutdown check (the publication is closed under it).
-    #[inline]
-    pub(crate) fn try_claim_exclusive(
-        &self,
-        publication: &AeronExclusivePublication,
-        len: usize,
-    ) -> Result<crate::bus::Claim, DropKind> {
-        let claim = AeronBufferClaim::new_zeroed_on_stack();
-        crate::bus::retry_admin(|| publication.try_claim(len, &claim))
-            .map_err(|err| crate::bus::classify(&err))?;
-        claim.frame_header_mut().reserved_value = self.source().id.cast_signed();
-        Ok(crate::bus::Claim::new(claim))
-    }
 }

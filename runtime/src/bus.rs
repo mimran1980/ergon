@@ -227,6 +227,12 @@ impl Bus {
         &self.inner.source
     }
 
+    /// The source id persist stamps into each frame's reserved value.
+    #[inline]
+    pub(crate) fn source_id(&self) -> i64 {
+        self.inner.source.id.cast_signed()
+    }
+
     pub(crate) fn source_message(&self) -> &[u8] {
         &self.inner.source_message
     }
@@ -307,12 +313,24 @@ impl Bus {
         publication: &AeronPublication,
         len: usize,
     ) -> Result<Claim, DropKind> {
+        self.try_claim_at(publication, len, self.source_id())
+    }
+
+    /// Claim `len` bytes of `publication`, stamped with `reserved`: a feed's
+    /// publish time, or persist's source id.
+    #[inline]
+    pub(crate) fn try_claim_at(
+        &self,
+        publication: &AeronPublication,
+        len: usize,
+        reserved: i64,
+    ) -> Result<Claim, DropKind> {
         if self.inner.closed.load(Ordering::Relaxed) {
             return Err(DropKind::Closed);
         }
         let claim = AeronBufferClaim::new_zeroed_on_stack();
         retry_admin(|| publication.try_claim(len, &claim)).map_err(|err| classify(&err))?;
-        claim.frame_header_mut().reserved_value = self.inner.source.id.cast_signed();
+        claim.frame_header_mut().reserved_value = reserved;
         Ok(Claim { claim, done: false })
     }
 
@@ -393,6 +411,21 @@ impl Drop for Claim {
             let _ = self.claim.abort();
         }
     }
+}
+
+/// Claim `len` bytes of an exclusive `publication`, stamped with
+/// `reserved`: no CAS on the term tail and no shutdown check (the publication
+/// is closed under it). A feed stamps its publish time, persist its source id.
+#[inline]
+pub(crate) fn claim_exclusive(
+    publication: &AeronExclusivePublication,
+    len: usize,
+    reserved: i64,
+) -> Result<Claim, DropKind> {
+    let claim = AeronBufferClaim::new_zeroed_on_stack();
+    retry_admin(|| publication.try_claim(len, &claim)).map_err(|err| classify(&err))?;
+    claim.frame_header_mut().reserved_value = reserved;
+    Ok(Claim::new(claim))
 }
 
 #[inline]
