@@ -242,6 +242,15 @@ impl Ctx {
         }
     }
 
+    /// The wall clock now: a TSC read plus the cached offset, no system
+    /// call. For code outside a dispatch, such as a callback another
+    /// framework drives; inside one, [`Ctx::wall_ns`] is the event's.
+    #[inline]
+    #[must_use]
+    pub fn wall_now(&self) -> Nanos {
+        Nanos(self.read().0 + self.wall_offset)
+    }
+
     /// The event time on the wall clock, for stamping what another process
     /// compares with its own clock. No system call.
     #[inline]
@@ -652,6 +661,12 @@ impl Runtime {
         self.ctx.stopping
     }
 
+    /// The agent's context, read-only: [`Ctx::send`] needs no more.
+    #[must_use]
+    pub const fn ctx_ref(&self) -> &Ctx {
+        &self.ctx
+    }
+
     /// The agent's context, for set-up outside a callback.
     pub const fn ctx(&mut self) -> &mut Ctx {
         &mut self.ctx
@@ -833,6 +848,26 @@ impl Runtime {
             _ => {}
         }
     }
+}
+
+impl std::fmt::Debug for Runtime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Runtime")
+            .field("feeds", &self.feeds.len())
+            .field("now", &self.ctx.now)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A flag SIGTERM sets: [`Config::stop`] for a runtime built by hand.
+///
+/// # Errors
+///
+/// The handler could not be registered.
+pub fn sigterm() -> Result<Arc<AtomicBool>, std::io::Error> {
+    let stop = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
+    Ok(stop)
 }
 
 /// Write `message` on an exclusive publication, stamped as [`Bus`] stamps.

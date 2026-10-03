@@ -20,8 +20,11 @@ use ergon_runtime::Settings;
 use ergon_runtime::bus::Bus;
 use ergon_runtime::clock::{Clock, Nanos};
 use ergon_runtime::event::Value;
-use ergon_runtime::metrics::{Counter, Gauge, Histogram};
+use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram};
 use ergon_runtime::persist::Persist;
+use ergon_runtime::rt::{Agent, Config, Ctx, Expiry, FeedId, Out, Runtime};
+use ergon_runtime::streams::Streams;
+use ergon_runtime::subscription::Delivery;
 use ergon_runtime::trace::Tracer;
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
@@ -31,6 +34,7 @@ use nautilus_bybit::factories::BybitDataClientFactory;
 use nautilus_common::actor::{DataActor, DataActorConfig, DataActorCore};
 use nautilus_common::enums::Environment;
 use nautilus_common::nautilus_actor;
+use nautilus_common::timer::TimeEvent;
 use nautilus_core::Params;
 use nautilus_deribit::config::DeribitDataClientConfig;
 use nautilus_deribit::data_types::DeribitVolatilityIndex;
@@ -260,6 +264,40 @@ struct Recorder {
     deltas: Vec<BookDeltasDeltasEntry>,
     t: Telemetry,
     feeds: Feeds,
+    /// Persist's housekeeping, SIGTERM, and the feeds' `Source` heartbeat:
+    /// the runtime in embedded mode, driven from this actor's callbacks.
+    rt: Runtime,
+    housekeeping: Housekeeping,
+}
+
+/// md takes no feeds and keeps no timers of its own: its runtime only does
+/// housekeeping.
+#[derive(Debug)]
+struct Housekeeping;
+
+impl Agent for Housekeeping {
+    fn start(&mut self, _ctx: &mut Ctx) -> Result<(), ergon_runtime::Error> {
+        Ok(())
+    }
+
+    fn on_message(&mut self, _ctx: &mut Ctx, _feed: FeedId, _msg: &[u8], _d: Delivery) {}
+
+    fn on_timer(&mut self, _ctx: &mut Ctx, _timer: Expiry) {}
+}
+
+impl Recorder {
+    /// One duty cycle of the runtime, on this actor's thread: due
+    /// housekeeping, or nothing. On SIGTERM (a restart, or a move to another
+    /// node) close every publication at once, so subscribers turn to the
+    /// next pod of this feed within seconds rather than after this client's
+    /// timeout.
+    fn invoke(&mut self) {
+        self.rt.cycle(&mut self.housekeeping);
+        if self.rt.is_stopping() {
+            self.rt.finish(&mut self.housekeeping);
+            std::process::exit(0);
+        }
+    }
 }
 
 /// This exchange's feeds (config/streams.yaml): market data other
@@ -267,9 +305,9 @@ struct Recorder {
 struct Feeds {
     /// Reliable: trades, order book changes and snapshots, bars, mark and
     /// index prices, funding rates.
-    md: ergon_runtime::publication::Publication,
+    md: Out,
     /// Best effort: quotes (top of book).
-    tob: ergon_runtime::publication::Publication,
+    tob: Out,
     /// Book changes per `book_deltas` message: as many as one UDP frame holds.
     deltas_per_row: usize,
 }
@@ -277,34 +315,27 @@ struct Feeds {
 impl std::fmt::Debug for Feeds {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Feeds")
-            .field("md", &self.md.stream_id())
-            .field("tob", &self.tob.stream_id())
+            .field("md", &self.md)
+            .field("tob", &self.tob)
             .finish()
     }
 }
 
 impl Feeds {
-    /// Open `service`'s feeds from the registry, on the bus's node.
-    fn open(bus: &Bus, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let streams = ergon_runtime::streams::Streams::load(
-            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
-        )?;
-        ergon_runtime::streams::check_node_network()?;
-        let md = bus.publish(&streams, service, "md")?;
-        let tob = bus.publish(&streams, service, "tob")?;
+    /// Open `service`'s feeds from the registry, on this node, as
+    /// exclusive publications of the actor's thread.
+    fn open(rt: &mut Runtime, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let ctx = rt.ctx();
+        let md = ctx.publish(service, "md")?;
+        let tob = ctx.publish(service, "tob")?;
         // Room for the longest symbol and venue name in these feeds.
-        let fits =
-            |n: usize| BookDeltasEncoder::compute_length_with_header(n, 32, 16) <= md.max_payload();
+        let max = ctx.max_payload(md);
+        let fits = |n: usize| BookDeltasEncoder::compute_length_with_header(n, 32, 16) <= max;
         let deltas_per_row = (1..=MAX_DELTAS_PER_ROW)
             .rev()
             .find(|&n| fits(n))
             .unwrap_or(1);
-        log::info!(
-            "feeds {service}: md stream {}, tob stream {}, from {}; {deltas_per_row} book changes a message",
-            md.stream_id(),
-            tob.stream_id(),
-            bus.host_ip()
-        );
+        log::info!("feeds {service}: {deltas_per_row} book changes a message");
         Ok(Self {
             md,
             tob,
@@ -323,10 +354,10 @@ struct Telemetry {
     books: Counter,
     deltas: Counter,
     /// The venue's timestamp to our handler, ns.
-    trade_latency: Histogram,
-    quote_latency: Histogram,
+    trade_latency: LocalHistogram,
+    quote_latency: LocalHistogram,
     /// How long `ergon_runtime::persist::record` of a trade takes, ns.
-    record_ns: Histogram,
+    record_ns: LocalHistogram,
     spread_bps: HashMap<InstrumentId, Gauge>,
     /// Each book change, from the venue's timestamp: `wire`, `convert`,
     /// `record`.
@@ -337,7 +368,7 @@ impl Telemetry {
     fn new(instruments: &[InstrumentId]) -> Self {
         let m = ergon_runtime::persist::metrics();
         let kind = |k| m.counter("messages", &[("kind", k)]);
-        let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
+        let latency = |k| m.local_histogram("venue_to_local_ns", &[("kind", k)]);
         Self {
             clock: Clock::new(),
             trades: kind("trade"),
@@ -346,7 +377,7 @@ impl Telemetry {
             deltas: kind("book_deltas"),
             trade_latency: latency("trade"),
             quote_latency: latency("quote"),
-            record_ns: m.histogram("record_ns", &[("table", "trade")]),
+            record_ns: m.local_histogram("record_ns", &[("table", "trade")]),
             spread_bps: instruments
                 .iter()
                 .map(|&id| {
@@ -362,13 +393,10 @@ impl Telemetry {
         }
     }
 
-    /// Ns from the venue's `ts_event` to now, both wall clocks; 0 when the
-    /// venue's is ahead.
-    fn since_venue(&self, ts_event: u64) -> u64 {
-        self.clock
-            .wall()
-            .since(Nanos::from_epoch(ts_event as i64))
-            .max(0) as u64
+    /// Ns from the venue's `ts_event` to `wall_now`, both wall clocks; 0
+    /// when the venue's is ahead.
+    fn since_venue(ts_event: u64, wall_now: Nanos) -> u64 {
+        wall_now.since(Nanos::from_epoch(ts_event as i64)).max(0) as u64
     }
 }
 
@@ -376,6 +404,16 @@ nautilus_actor!(Recorder);
 
 impl DataActor for Recorder {
     fn on_start(&mut self) -> anyhow::Result<()> {
+        // The runtime's duty cycle every millisecond, quiet venue or not.
+        self.clock().set_timer(
+            "ergon-runtime",
+            std::time::Duration::from_millis(1),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
         // A `tracing` span: recorded while `otel_traces` is on for this app.
         let _span = tracing::info_span!("subscribe", venue = self.venue.name).entered();
         let second = NonZeroUsize::try_from(1000)?;
@@ -419,7 +457,22 @@ impl DataActor for Recorder {
         Ok(())
     }
 
+    /// Nautilus traps SIGTERM too, and stops the actor first: close every
+    /// publication now, so subscribers turn to the next pod of this feed
+    /// within seconds rather than after the node's shutdown or this
+    /// client's timeout.
+    fn on_stop(&mut self) -> anyhow::Result<()> {
+        self.rt.finish(&mut self.housekeeping);
+        Ok(())
+    }
+
+    fn on_time_event(&mut self, _event: &TimeEvent) -> anyhow::Result<()> {
+        self.invoke();
+        Ok(())
+    }
+
     fn on_instrument(&mut self, i: &InstrumentAny) -> anyhow::Result<()> {
+        self.invoke();
         // Decimals as text, so a tick size like 0.00001 is kept exactly.
         tracing::info!(
             table = "instrument",
@@ -443,6 +496,7 @@ impl DataActor for Recorder {
     }
 
     fn on_instrument_status(&mut self, s: &InstrumentStatus) -> anyhow::Result<()> {
+        self.invoke();
         tracing::info!(
             table = "instrument_status",
             instrument = %s.instrument_id,
@@ -459,8 +513,9 @@ impl DataActor for Recorder {
     }
 
     fn on_trade(&mut self, t: &TradeTick) -> anyhow::Result<()> {
+        self.invoke();
         self.t.trades.inc();
-        let latency = self.t.since_venue(t.ts_event.as_u64());
+        let latency = Telemetry::since_venue(t.ts_event.as_u64(), self.rt.ctx_ref().wall_now());
         self.t.trade_latency.record(latency);
         let started = self.t.clock.cached();
         let ticker = self.tickers.entry(t.instrument_id).or_default();
@@ -471,9 +526,11 @@ impl DataActor for Recorder {
         let trade_id = t.trade_id.as_str().as_bytes();
         let len =
             TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-        self.feeds
-            .md
-            .record(TradeEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+        self.rt.ctx_ref().send(
+            self.feeds.md,
+            TradeEncoder::TEMPLATE_ID,
+            len,
+            |buf| -> anyhow::Result<_> {
                 Ok(TradeEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&TradeFixedFields {
                         ts_event: t.ts_event.as_u64(),
@@ -490,21 +547,25 @@ impl DataActor for Recorder {
                     .venue(venue)?
                     .trade_id(trade_id)?
                     .encoded_length_with_header())
-            })?;
+            },
+        )?;
         let took = self.t.clock.now().since(started);
         self.t.record_ns.record(took.max(0) as u64);
         Ok(())
     }
 
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
+        self.invoke();
         self.t.quotes.inc();
-        let latency = self.t.since_venue(q.ts_event.as_u64());
+        let latency = Telemetry::since_venue(q.ts_event.as_u64(), self.rt.ctx_ref().wall_now());
         self.t.quote_latency.record(latency);
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.feeds
-            .tob
-            .record(QuoteEncoder::TEMPLATE_ID, len, |buf| -> anyhow::Result<_> {
+        self.rt.ctx_ref().send(
+            self.feeds.tob,
+            QuoteEncoder::TEMPLATE_ID,
+            len,
+            |buf| -> anyhow::Result<_> {
                 Ok(QuoteEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&QuoteFixedFields {
                         ts_event: q.ts_event.as_u64(),
@@ -517,7 +578,8 @@ impl DataActor for Recorder {
                     .symbol(symbol)?
                     .venue(venue)?
                     .encoded_length_with_header())
-            })?;
+            },
+        )?;
         // The hot path keeps a gauge. The `spread` table is a tracing event
         // on the once-a-second book, below.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
@@ -528,6 +590,7 @@ impl DataActor for Recorder {
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
+        self.invoke();
         self.t.books.inc();
         self.spread(book);
         self.ticker(book);
@@ -546,7 +609,8 @@ impl DataActor for Recorder {
             symbol.len(),
             venue.len(),
         );
-        self.feeds.md.record(
+        self.rt.ctx_ref().send(
+            self.feeds.md,
             BookSnapshotEncoder::TEMPLATE_ID,
             len,
             |buf| -> anyhow::Result<_> {
@@ -576,6 +640,7 @@ impl DataActor for Recorder {
     }
 
     fn on_book_deltas(&mut self, d: &OrderBookDeltas) -> anyhow::Result<()> {
+        self.invoke();
         self.t.deltas.inc();
         // A checkpoint trace from the venue's timestamp: `wire` (the venue
         // and the network), `convert` (rows built), `record` (published).
@@ -584,7 +649,7 @@ impl DataActor for Recorder {
         // stage is true whatever this process's clock has drifted.
         let now = self.t.clock.now();
         let mut trace = tracer.start(
-            self.t.clock.from_remote(d.ts_event.as_u64() as i64, now),
+            self.rt.ctx_ref().from_remote(d.ts_event.as_u64() as i64),
             tracer.next_id(),
         );
         trace.mark(now);
@@ -618,7 +683,8 @@ impl DataActor for Recorder {
                 symbol.len(),
                 venue.len(),
             );
-            self.feeds.md.record(
+            self.rt.ctx_ref().send(
+                self.feeds.md,
                 BookDeltasEncoder::TEMPLATE_ID,
                 len,
                 |buf| -> anyhow::Result<_> {
@@ -646,35 +712,39 @@ impl DataActor for Recorder {
     }
 
     fn on_bar(&mut self, b: &Bar) -> anyhow::Result<()> {
+        self.invoke();
         let id = b.bar_type.instrument_id();
         let (symbol, venue) = names(&id);
         let spec = text::<96>(b.bar_type);
         let len = BarEncoder::compute_length_with_header(symbol.len(), venue.len(), spec.len());
-        self.feeds.md.record(BarEncoder::TEMPLATE_ID, len, |buf| {
-            Ok(BarEncoder::wrap_and_apply_header(buf, 0)
-                .fixed(&BarFixedFields {
-                    ts_event: b.ts_event.as_u64(),
-                    ts_init: b.ts_init.as_u64(),
-                    open: d9(b.open.as_decimal())?,
-                    high: d9(b.high.as_decimal())?,
-                    low: d9(b.low.as_decimal())?,
-                    close: d9(b.close.as_decimal())?,
-                    volume: d9(b.volume.as_decimal())?,
-                })
-                .symbol(symbol)?
-                .venue(venue)?
-                .bar_type(spec.as_bytes())?
-                .encoded_length_with_header())
-        })
+        self.rt
+            .ctx_ref()
+            .send(self.feeds.md, BarEncoder::TEMPLATE_ID, len, |buf| {
+                Ok(BarEncoder::wrap_and_apply_header(buf, 0)
+                    .fixed(&BarFixedFields {
+                        ts_event: b.ts_event.as_u64(),
+                        ts_init: b.ts_init.as_u64(),
+                        open: d9(b.open.as_decimal())?,
+                        high: d9(b.high.as_decimal())?,
+                        low: d9(b.low.as_decimal())?,
+                        close: d9(b.close.as_decimal())?,
+                        volume: d9(b.volume.as_decimal())?,
+                    })
+                    .symbol(symbol)?
+                    .venue(venue)?
+                    .bar_type(spec.as_bytes())?
+                    .encoded_length_with_header())
+            })
     }
 
     fn on_mark_price(&mut self, m: &MarkPriceUpdate) -> anyhow::Result<()> {
+        self.invoke();
         self.tickers.entry(m.instrument_id).or_default().mark = Some(m.value.as_f64());
         let (symbol, venue) = names(&m.instrument_id);
         let len = MarkPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.feeds
-            .md
-            .record(MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
+        self.rt
+            .ctx_ref()
+            .send(self.feeds.md, MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&MarkPriceFixedFields {
                         ts_event: m.ts_event.as_u64(),
@@ -688,12 +758,13 @@ impl DataActor for Recorder {
     }
 
     fn on_index_price(&mut self, x: &IndexPriceUpdate) -> anyhow::Result<()> {
+        self.invoke();
         self.tickers.entry(x.instrument_id).or_default().index = Some(x.value.as_f64());
         let (symbol, venue) = names(&x.instrument_id);
         let len = IndexPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.feeds
-            .md
-            .record(IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
+        self.rt
+            .ctx_ref()
+            .send(self.feeds.md, IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&IndexPriceFixedFields {
                         ts_event: x.ts_event.as_u64(),
@@ -707,12 +778,13 @@ impl DataActor for Recorder {
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
+        self.invoke();
         self.tickers.entry(f.instrument_id).or_default().funding = f.rate.to_f64();
         let (symbol, venue) = names(&f.instrument_id);
         let len = FundingRateEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.feeds
-            .md
-            .record(FundingRateEncoder::TEMPLATE_ID, len, |buf| {
+        self.rt
+            .ctx_ref()
+            .send(self.feeds.md, FundingRateEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&FundingRateFixedFields {
                         ts_event: f.ts_event.as_u64(),
@@ -731,6 +803,7 @@ impl DataActor for Recorder {
     /// the venue sends it, into a table named after its type
     /// (`HyperliquidPublicTrade` -> `hyperliquid_public_trade`).
     fn on_data(&mut self, data: &CustomData) -> anyhow::Result<()> {
+        self.invoke();
         let any = data.data.as_any();
         // The types this recorder subscribes to, written field by field with
         // no allocation: a public trade arrives with every Hyperliquid trade.
@@ -892,9 +965,11 @@ impl Recorder {
             quote.len(),
         );
         let ts = self.core.timestamp_ns().as_u64();
-        self.feeds
-            .md
-            .record(InstrumentSpecEncoder::TEMPLATE_ID, len, |buf| {
+        self.rt.ctx_ref().send(
+            self.feeds.md,
+            InstrumentSpecEncoder::TEMPLATE_ID,
+            len,
+            |buf| {
                 Ok(InstrumentSpecEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&InstrumentSpecFixedFields {
                         ts_event: ts,
@@ -906,7 +981,8 @@ impl Recorder {
                     .base(base.as_bytes())?
                     .quote(quote.as_bytes())?
                     .encoded_length_with_header())
-            })
+            },
+        )
     }
 
     /// One `spread` row a second. A `tracing` event builds a table from its
@@ -1100,7 +1176,7 @@ fn names(id: &InstrumentId) -> (&[u8], &[u8]) {
     (id.symbol.as_str().as_bytes(), id.venue.as_str().as_bytes())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exchange = std::env::var("EXCHANGE").unwrap_or_else(|_| "binance".into());
     let venue = VENUES.iter().find(|v| v.name == exchange).ok_or_else(|| {
@@ -1170,41 +1246,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
     // Installed for the process: every callback records through
-    // `ergon_runtime::persist::record` and friends, with no handle to pass around.
-    let settings = Settings::from_env();
+    // `ergon_runtime::persist::record` and friends, with no handle to pass
+    // around. Exclusive: the actor's thread records; a `tracing` span from
+    // an adapter's worker thread is handed to it.
+    let settings = Settings {
+        exclusive: true,
+        ..Settings::from_env()
+    };
     let bus = Bus::connect(&settings)?;
     let persist = Persist::connect(schema::MARKET_SCHEMA, &bus, settings)?;
     persist.install();
     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
     let service = std::env::var("SERVICE").unwrap_or_else(|_| format!("md-{}", venue.name));
-    let feeds = Feeds::open(&bus, &service)?;
-    // SIGTERM (a restart, or a move to another node): close every
-    // publication at once, so subscribers turn to the next pod of this feed
-    // within seconds rather than after this client's timeout.
-    let closing = bus.clone();
-    tokio::spawn(async move {
-        use tokio::signal::unix::{SignalKind, signal};
-        if let Ok(mut term) = signal(SignalKind::terminate()) {
-            term.recv().await;
-            log::info!("SIGTERM: closing the feeds");
-            closing.shutdown();
-            std::process::exit(0);
-        }
-    });
-    // Publishes the metrics and applies `tables.yaml`. A busy-spinning
-    // application calls `poll` from its own loop instead, with the time it
-    // has; Nautilus owns this one's.
-    let polled = persist.clone();
-    let idle = ergon_runtime::idle::Idle::from_env("IDLE", ergon_runtime::idle::Idle::Sleep)?;
-    std::thread::Builder::new()
-        .name("persist".into())
-        .spawn(move || {
-            let clock = Clock::new();
-            loop {
-                polled.poll(clock.now());
-                idle.idle(0);
-            }
-        })?;
+    ergon_runtime::streams::check_node_network()?;
+    let streams = Streams::load(
+        std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
+    )?;
+    // No thread of its own: the actor drives it (`Recorder::invoke`), from
+    // every callback and a millisecond timer. It polls persist, applies
+    // `tables.yaml`, refreshes the wall-clock offset, and stops on SIGTERM.
+    let mut rt = Runtime::new(Config {
+        persist: Some(persist),
+        stop: ergon_runtime::rt::sigterm()?,
+        ..Config::new(bus, streams)
+    })?;
+    let feeds = Feeds::open(&mut rt, &service)?;
+    rt.start(&mut Housekeeping)?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         venue,
@@ -1215,6 +1282,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         venue_upper: venue.name.to_uppercase(),
         deltas: Vec::with_capacity(MAX_DELTAS_PER_ROW),
         feeds,
+        rt,
+        housekeeping: Housekeeping,
     })?;
     node.run().await?;
     Ok(())

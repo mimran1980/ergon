@@ -289,3 +289,65 @@ fn the_counter_sees_an_allocation_on_the_counted_thread() {
     drop(boxed);
     assert!(after > before, "the allocation gate cannot fail");
 }
+
+#[test]
+fn an_exclusive_persist_publishes_other_threads_rows_from_its_owner() -> TestResult {
+    use ergon_runtime::event::Value;
+    use ergon_runtime::persist::Persist;
+
+    let dir = std::env::temp_dir().join(format!("exclusive-persist-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let config = dir.join("tables.yaml");
+    std::fs::write(&config, "tables:\n  probe: { kind: dynamic }\n")?;
+    let stream_id = stream(3, 0);
+    let settings = Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: IPC.into(),
+        stream_id,
+        subscriber_timeout: Duration::ZERO,
+        exclusive: true,
+        app: "runtime-live-test".into(),
+        ..Settings::new(&config)
+    };
+    let bus = Bus::connect(&settings)?;
+    let persist = Persist::connect(include_str!("../schema/events.xml"), &bus, settings)?;
+    let mut sink = bus.subscription(IPC, stream_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !(persist.is_connected() && sink.is_connected()) {
+        sink.poll(|_, _| {}, 256);
+        assert!(
+            Instant::now() < deadline,
+            "the persist stream did not connect"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let mut taken = 0;
+    let mut drain = |sink: &mut Subscription| {
+        for _ in 0..50 {
+            taken += sink.poll(|_, _| {}, 256);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::mem::take(&mut taken)
+    };
+    drain(&mut sink);
+    let other = persist.clone();
+    std::thread::spawn(move || {
+        for i in 0..5 {
+            other.record_row("probe", [("i", Value::I64(i))]);
+        }
+    })
+    .join()
+    .map_err(|_| "the recording thread panicked")?;
+    assert_eq!(
+        drain(&mut sink),
+        0,
+        "another thread claimed on the exclusive publication"
+    );
+    persist.poll(ergon_runtime::clock::Clock::new().now());
+    assert!(
+        drain(&mut sink) >= 5,
+        "the owner did not publish the handed-off rows"
+    );
+    assert_eq!(bus.dropped(), 0, "{:?}", bus.drops());
+    Ok(())
+}

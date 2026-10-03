@@ -40,6 +40,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::Instant;
 
@@ -343,7 +344,10 @@ pub(crate) struct Inner {
     /// Unique per `Persist` ever made: keys the per-thread call-site cache,
     /// which an address could not (a new `Persist` may reuse an old one's).
     pub(crate) id: u64,
-    publication: AeronPublication,
+    publication: Publication,
+    /// Exclusive mode: records from other threads, published by the owner's
+    /// [`Persist::poll`].
+    handoff: Option<Handoff>,
     /// Largest `try_claim`. Longer records are dropped.
     max_payload: usize,
     /// Series and their publishing; see [`Persist::metrics`].
@@ -355,6 +359,25 @@ pub(crate) struct Inner {
     watch_due: AtomicI64,
     watcher: Mutex<Watcher>,
 }
+
+/// The publication persist records on.
+enum Publication {
+    /// Any thread may record.
+    Shared(AeronPublication),
+    /// Only its owner claims: no CAS on the term tail.
+    Exclusive(crate::owned::OwnedPublication),
+}
+
+/// Records made off the owner thread in exclusive mode: copied, queued, and
+/// published by the owner. Off the hot path by construction (a `tracing`
+/// span from a library's worker thread, say), so a copy is fine.
+struct Handoff {
+    send: SyncSender<Vec<u8>>,
+    receive: Mutex<Receiver<Vec<u8>>>,
+}
+
+/// Messages a hand-off holds before it drops and counts.
+const HANDOFF: usize = 4_096;
 
 /// One message of a heartbeat round.
 struct Beat {
@@ -436,10 +459,29 @@ impl Persist {
             });
         }
         metrics.start();
-        let publication = bus.add_publication(&settings.channel, settings.stream_id)?;
-        let max_payload = publication
-            .max_payload_length()
-            .map_err(|e| Error::Aeron(e.to_string()))?;
+        let (publication, max_payload) = if settings.exclusive {
+            let p = bus.add_exclusive_publication(&settings.channel, settings.stream_id)?;
+            let max = p
+                .max_payload_length()
+                .map_err(|e| Error::Aeron(e.to_string()))?;
+            (
+                Publication::Exclusive(crate::owned::OwnedPublication::new(p)),
+                max,
+            )
+        } else {
+            let p = bus.add_publication(&settings.channel, settings.stream_id)?;
+            let max = p
+                .max_payload_length()
+                .map_err(|e| Error::Aeron(e.to_string()))?;
+            (Publication::Shared(p), max)
+        };
+        let handoff = settings.exclusive.then(|| {
+            let (send, receive) = std::sync::mpsc::sync_channel(HANDOFF);
+            Handoff {
+                send,
+                receive: Mutex::new(receive),
+            }
+        });
         wait_for_subscriber(bus, &publication, &settings)?;
         let mut watcher = Watcher {
             ticks: 0,
@@ -462,6 +504,7 @@ impl Persist {
                     NEXT.fetch_add(1, Ordering::Relaxed)
                 },
                 publication,
+                handoff,
                 max_payload,
                 metrics,
                 bus: bus.clone(),
@@ -478,6 +521,7 @@ impl Persist {
     /// something is due, two relaxed loads and compares.
     #[inline]
     pub fn poll(&self, now: Nanos) {
+        self.drain_handoff();
         self.inner.metrics.poll_through(now, self);
         if now.0 >= self.inner.watch_due.load(Ordering::Relaxed) {
             self.watch(now);
@@ -621,6 +665,20 @@ impl Persist {
         if !self.enabled(template_id) {
             return Ok(());
         }
+        if !self.on_owner() {
+            debug_assert!(
+                false,
+                "an exclusive persist recorded template {template_id} off its owner thread"
+            );
+            let mut copy = vec![0; len];
+            let written = encode(&mut copy)?;
+            if written == len {
+                self.hand_off(copy);
+            } else {
+                self.drop_one();
+            }
+            return Ok(());
+        }
         self.flush_due_shapes();
         if len > self.inner.max_payload {
             self.count(DropKind::TooLarge);
@@ -733,6 +791,15 @@ impl Persist {
     /// `write` returns `true`. A `false` write aborts the claim. Either
     /// failure is counted.
     pub(crate) fn claim(&self, len: usize, write: impl FnOnce(&mut [u8]) -> bool) {
+        if !self.on_owner() {
+            let mut copy = vec![0; len];
+            if write(&mut copy) {
+                self.hand_off(copy);
+            } else {
+                self.drop_one();
+            }
+            return;
+        }
         self.flush_due_shapes();
         if len > self.inner.max_payload {
             self.count(DropKind::TooLarge);
@@ -847,6 +914,10 @@ impl Persist {
 
     /// Publish a built message; why not, when Aeron could not take it.
     fn publish_owned(&self, bytes: &[u8]) -> Result<(), DropKind> {
+        if !self.on_owner() {
+            self.hand_off(bytes.to_vec());
+            return Ok(());
+        }
         if bytes.len() > self.inner.max_payload {
             return Err(DropKind::TooLarge);
         }
@@ -858,7 +929,54 @@ impl Persist {
     /// Claim `len` bytes, stamped with this application's source id.
     #[inline]
     fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
-        self.inner.bus.try_claim(&self.inner.publication, len)
+        match &self.inner.publication {
+            Publication::Shared(p) => self.inner.bus.try_claim(p, len),
+            Publication::Exclusive(owned) => owned.claimable().map_or(Err(DropKind::Other), |p| {
+                self.inner.bus.try_claim_exclusive(p, len)
+            }),
+        }
+    }
+
+    /// Shared mode, or the owner thread of an exclusive one.
+    #[inline]
+    fn on_owner(&self) -> bool {
+        match &self.inner.publication {
+            Publication::Shared(_) => true,
+            Publication::Exclusive(owned) => owned.is_owner(),
+        }
+    }
+
+    /// Queue a record made off the owner thread; dropped and counted when
+    /// the owner has fallen this far behind.
+    #[cold]
+    fn hand_off(&self, bytes: Vec<u8>) {
+        let Some(handoff) = &self.inner.handoff else {
+            self.drop_one();
+            return;
+        };
+        if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
+            handoff.send.try_send(bytes)
+        {
+            self.count(DropKind::BackPressure);
+        }
+    }
+
+    /// Publish what other threads handed off, on the owner thread.
+    fn drain_handoff(&self) {
+        let Some(handoff) = &self.inner.handoff else {
+            return;
+        };
+        if !self.on_owner() {
+            return;
+        }
+        let Ok(receive) = handoff.receive.try_lock() else {
+            return;
+        };
+        while let Ok(bytes) = receive.try_recv() {
+            if let Err(kind) = self.publish_owned(&bytes) {
+                self.count(kind);
+            }
+        }
     }
 
     pub(crate) fn count(&self, kind: DropKind) {
@@ -874,7 +992,10 @@ impl Persist {
     /// is dropped and counted.
     #[must_use]
     pub fn is_connected(&self) -> bool {
-        self.inner.publication.is_connected()
+        match &self.inner.publication {
+            Publication::Shared(p) => p.is_connected(),
+            Publication::Exclusive(owned) => owned.is_connected(),
+        }
     }
 
     #[cold]
@@ -900,14 +1021,18 @@ impl std::fmt::Debug for Persist {
 
 fn wait_for_subscriber(
     bus: &Bus,
-    publication: &AeronPublication,
+    publication: &Publication,
     settings: &Settings,
 ) -> Result<(), Error> {
+    let connected = || match publication {
+        Publication::Shared(p) => p.is_connected(),
+        Publication::Exclusive(owned) => owned.is_connected(),
+    };
     if settings.subscriber_timeout.is_zero() {
         return Ok(());
     }
     let deadline = Instant::now() + settings.subscriber_timeout;
-    while !publication.is_connected() {
+    while !connected() {
         if Instant::now() >= deadline {
             return Err(Error::Aeron(format!(
                 "{}: no subscriber is recording the stream after {:?}",

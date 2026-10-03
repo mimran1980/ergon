@@ -15,10 +15,11 @@ use crate::streams::Streams;
 
 mod persistent;
 
-/// The image session id of an archive replay: the low 32 bits of the
-/// replay session id `start_replay` returns. The high 32 bits number the
-/// replay, and pass `i32` once an archive has run a few billion replays
-/// (Aeron's own clients take `(int) replaySessionId`).
+/// The image session id of an archive replay.
+///
+/// It is the low 32 bits of the replay session id `start_replay` returns.
+/// The high 32 bits number the replay, and pass `i32` once an archive has
+/// run a few billion replays (Aeron's own clients take `(int) replaySessionId`).
 #[must_use]
 pub fn replay_image_session(replay_session: i64) -> i32 {
     u32::try_from(replay_session & 0xffff_ffff).map_or(0, u32::cast_signed)

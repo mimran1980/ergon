@@ -24,6 +24,7 @@ pub mod event;
 pub mod idle;
 pub mod metrics;
 mod os;
+mod owned;
 pub mod persist;
 pub mod publication;
 pub mod rt;
@@ -108,6 +109,11 @@ pub struct Settings {
     /// ([`bus::Bus::do_work`]) rather than on its own thread, which would
     /// contend for a pinned core. `AERON_INVOKER`; the runtime's default.
     pub aeron_invoker: bool,
+    /// Record on an exclusive publication (no CAS on the term tail) owned by
+    /// the thread that connects: an application whose records come from one
+    /// thread. Records from other threads (a library's `tracing` spans) are
+    /// handed to it and published by its [`Persist::poll`](persist::Persist::poll).
+    pub exclusive: bool,
     /// Defaults to [`persist::CHANNEL`].
     pub channel: String,
     /// Defaults to [`persist::STREAM_ID`].
@@ -133,6 +139,7 @@ impl Settings {
             host_ip: "127.0.0.1".into(),
             aeron_dir: None,
             aeron_invoker: false,
+            exclusive: false,
             channel: persist::CHANNEL.to_string(),
             stream_id: persist::STREAM_ID,
             subscriber_timeout: Duration::from_secs(10),
