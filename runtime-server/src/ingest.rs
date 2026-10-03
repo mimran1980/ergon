@@ -13,7 +13,7 @@
 //! A new process resumes from the checkpoints. A crash drops at most the
 //! open 5 s histogram window.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -27,7 +27,13 @@ use rusteron_archive::{
 };
 
 use crate::aeron_stats::AeronStats;
+use ergon_runtime::clock::Nanos;
+use ergon_runtime::frames::FrameRow;
+
 use crate::{Error, Report, Settings, Writer};
+
+/// The table of raw feed frames: kept when `tables.yaml` lists it.
+const FRAME_TABLE: &str = "frame";
 
 /// The archive's local control channel: same host, no ports.
 const CONTROL: &std::ffi::CStr = c"aeron:ipc?term-length=64k";
@@ -43,6 +49,11 @@ struct Replay {
     connected: bool,
     /// A feed's recording: `tables.yaml` is applied when it is inserted.
     feed: bool,
+    /// A feed's service and kind, and the recording's session and stream,
+    /// for its `frame` rows.
+    names: Option<(String, String)>,
+    session_id: i32,
+    stream_id: i32,
     /// A feed's frames carry their publish time in the reserved value, so
     /// its rows take the source the recording's `Source` message names.
     /// One exclusive publication is one session is one recording.
@@ -95,8 +106,10 @@ pub struct Ingester {
     _ctx: AeronContext,
     /// The persist stream; replays use the next id.
     stream_id: i32,
-    /// Feed streams recorded here, by stream id.
-    feeds: BTreeSet<i32>,
+    /// Feed streams recorded here, by stream id: their service and kind.
+    feeds: BTreeMap<i32, (String, String)>,
+    /// A `Frame` row being built, reused.
+    frame_row: Vec<u8>,
     /// This node's IP: its feeds' spies bind it.
     host_ip: String,
     /// New versions of `streams.yaml`, once [`Ingester::follow`] is called.
@@ -128,6 +141,7 @@ fn aeron(e: impl std::fmt::Display) -> Error {
 struct Recording {
     id: i64,
     stream_id: i32,
+    session_id: i32,
     start: i64,
     stop: i64,
     term_length: i32,
@@ -145,8 +159,12 @@ impl Ingester {
     /// A schema or `tables.yaml` could not be loaded, or the archive did not
     /// connect or accept a recording request.
     pub fn connect(schemas: &[&str], settings: Settings) -> Result<Self, Error> {
+        // Raw feed frames: a `frame` table when `tables.yaml` lists it.
+        let schemas: Vec<&str> = std::iter::once(ergon_runtime::frames::SCHEMA)
+            .chain(schemas.iter().copied())
+            .collect();
         let mut writer = Writer::new(
-            schemas,
+            &schemas,
             settings.clickhouse,
             &settings.config_path,
             settings.recheck,
@@ -172,7 +190,7 @@ impl Ingester {
             .poll_blocking(Duration::from_secs(10))
             .map_err(|e| Error::Aeron(format!("connecting to the archive: {e}")))?;
         record(&archive, &settings.channel, settings.stream_id)?;
-        let mut feeds = BTreeSet::new();
+        let mut feeds = BTreeMap::new();
         if let Some(streams) = &settings.streams {
             record_feeds(&archive, streams, &settings.host_ip, &mut feeds)?;
         }
@@ -206,6 +224,7 @@ impl Ingester {
             _ctx: ctx,
             stream_id: settings.stream_id,
             feeds,
+            frame_row: Vec::new(),
             host_ip: settings.host_ip,
             watch: None,
             checkpoint_path: settings.checkpoint_path,
@@ -303,6 +322,7 @@ impl Ingester {
                 recordings.push(Recording {
                     id: d.recording_id(),
                     stream_id: d.stream_id(),
+                    session_id: d.session_id(),
                     start: d.start_position(),
                     stop: d.stop_position(),
                     term_length: d.term_buffer_length(),
@@ -311,7 +331,8 @@ impl Ingester {
             })
             .map_err(aeron)?;
         for d in recordings {
-            let feed = self.feeds.contains(&d.stream_id);
+            let names = self.feeds.get(&d.stream_id).cloned();
+            let feed = names.is_some();
             if (d.stream_id != self.stream_id && !feed) || self.replays.contains_key(&d.id) {
                 continue;
             }
@@ -332,21 +353,7 @@ impl Ingester {
             // A stopped recording (its application exited) that is all in
             // ClickHouse is no longer needed.
             if length < 0 && d.stop >= 0 && from >= d.stop {
-                self.archive.purge_recording(d.id).map_err(aeron)?;
-                self.checkpoints.remove(&d.id);
-                self.polled.remove(&d.id);
-                if self.sources.remove(&d.id).is_some()
-                    && let Err(e) = save(&self.sources_path, &self.sources)
-                {
-                    report.errors.push(e.to_string());
-                }
-                if let Err(e) = save(&self.checkpoint_path, &self.checkpoints) {
-                    report.errors.push(e.to_string());
-                }
-                report.purged.push(format!(
-                    "recording {}: all of it is in ClickHouse, deleted it",
-                    d.id
-                ));
+                self.purge(d.id, report)?;
                 continue;
             }
             // Length -1 replays to the end and follows a live recording.
@@ -396,6 +403,9 @@ impl Ingester {
                     opened: Instant::now(),
                     connected: false,
                     feed,
+                    names,
+                    session_id: d.session_id,
+                    stream_id: d.stream_id,
                     source: self.sources.get(&d.id).map_or(0, |s| s.cast_unsigned()),
                     start: d.start,
                     term_length: d.term_length,
@@ -403,6 +413,55 @@ impl Ingester {
                 },
             );
         }
+        Ok(())
+    }
+
+    /// After a poll: save the feed sources learned, and stop replays that
+    /// reached the end of a stopped recording or never started, to open them
+    /// again next tick from their checkpoints.
+    fn settle(&mut self, learned: Vec<(i64, u64)>) -> Result<(), Error> {
+        let mut finished = Vec::new();
+        for (&recording, replay) in &mut self.replays {
+            if replay
+                .subscription
+                .added()?
+                .is_some_and(AeronSubscription::is_connected)
+            {
+                replay.connected = true;
+            } else if replay.connected || replay.opened.elapsed() > Duration::from_secs(10) {
+                finished.push(recording);
+            }
+        }
+        if !learned.is_empty() {
+            for (recording, source) in learned {
+                self.sources.insert(recording, source.cast_signed());
+            }
+            save(&self.sources_path, &self.sources)?;
+        }
+        for recording in finished {
+            if let Some(replay) = self.replays.remove(&recording) {
+                let _ = self.archive.stop_replay(replay.session);
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete a stopped recording that is all in `ClickHouse`, and forget it.
+    fn purge(&mut self, id: i64, report: &mut Report) -> Result<(), Error> {
+        self.archive.purge_recording(id).map_err(aeron)?;
+        self.checkpoints.remove(&id);
+        self.polled.remove(&id);
+        if self.sources.remove(&id).is_some()
+            && let Err(e) = save(&self.sources_path, &self.sources)
+        {
+            report.errors.push(e.to_string());
+        }
+        if let Err(e) = save(&self.checkpoint_path, &self.checkpoints) {
+            report.errors.push(e.to_string());
+        }
+        report.purged.push(format!(
+            "recording {id}: all of it is in ClickHouse, deleted it"
+        ));
         Ok(())
     }
 
@@ -414,7 +473,8 @@ impl Ingester {
         let recordings: Vec<_> = self.replays.keys().copied().collect();
         let max_queued = self.max_queued;
         let writer = &mut self.writer;
-        let mut finished = Vec::new();
+        let frames_on = writer.wants(FRAME_TABLE);
+        let frame_row = &mut self.frame_row;
         let mut learned = Vec::new();
         let mut caught_up = true;
         loop {
@@ -424,7 +484,16 @@ impl Ingester {
                     caught_up = false;
                     break;
                 }
-                let feed = replay.feed;
+                let replay_meta = Meta {
+                    feed: replay.feed,
+                    names: if frames_on {
+                        replay.names.as_ref()
+                    } else {
+                        None
+                    },
+                    session_id: replay.session_id,
+                    stream_id: replay.stream_id,
+                };
                 let mut source = replay.source;
                 let mut last = None;
                 let Some(subscription) = replay.subscription.added()? else {
@@ -434,19 +503,9 @@ impl Ingester {
                 let polled = subscription
                     .poll_fn(
                         |message, header| {
-                            // A persist frame's reserved value is the recording
-                            // app's source id; a feed frame's is its publish
-                            // time, and its source is the recording's.
-                            let reserved = header.reserved_value().unwrap_or(0).cast_unsigned();
-                            let from = if feed {
-                                if let Some(id) = source_id(message) {
-                                    source = id;
-                                }
-                                source
-                            } else {
-                                reserved
-                            };
-                            writer.push_from(message, from, feed);
+                            let reserved = header.reserved_value().unwrap_or(0);
+                            let at = (recording, header.position(), reserved);
+                            take(writer, frame_row, replay_meta, at, &mut source, message);
                             last = Some(header.position());
                         },
                         1024,
@@ -482,30 +541,7 @@ impl Ingester {
                 break;
             }
         }
-        for (&recording, replay) in &mut self.replays {
-            if replay
-                .subscription
-                .added()?
-                .is_some_and(AeronSubscription::is_connected)
-            {
-                replay.connected = true;
-            } else if replay.connected || replay.opened.elapsed() > Duration::from_secs(10) {
-                // The replay reached the end of a stopped recording, or never
-                // started: open it again next tick, from its checkpoint.
-                finished.push(recording);
-            }
-        }
-        if !learned.is_empty() {
-            for (recording, source) in learned {
-                self.sources.insert(recording, source.cast_signed());
-            }
-            save(&self.sources_path, &self.sources)?;
-        }
-        for recording in finished {
-            if let Some(replay) = self.replays.remove(&recording) {
-                let _ = self.archive.stop_replay(replay.session);
-            }
-        }
+        self.settle(learned)?;
         if caught_up {
             let mut ends = BTreeMap::new();
             for recording in recordings {
@@ -623,6 +659,54 @@ fn in_flight(
     }
 }
 
+/// What a replayed frame needs to know about its recording.
+#[derive(Clone, Copy)]
+struct Meta<'a> {
+    feed: bool,
+    /// A feed's service and kind, when its frames become `frame` rows.
+    names: Option<&'a (String, String)>,
+    session_id: i32,
+    stream_id: i32,
+}
+
+/// One replayed frame to the writer: as its table's row and, for a feed
+/// whose frames are kept, as a `frame` row. A persist frame's reserved value
+/// is the recording app's source id; a feed frame's is its publish time, and
+/// its source the recording's (`source`, learned from its `Source` message).
+fn take(
+    writer: &mut Writer,
+    frame_row: &mut Vec<u8>,
+    meta: Meta<'_>,
+    (recording, position, reserved): (i64, i64, i64),
+    source: &mut u64,
+    message: &[u8],
+) {
+    let from = if meta.feed {
+        if let Some(id) = source_id(message) {
+            *source = id;
+        }
+        *source
+    } else {
+        reserved.cast_unsigned()
+    };
+    writer.push_from(message, from, meta.feed);
+    if let Some((service, kind)) = meta.names {
+        let row = FrameRow {
+            ts: Nanos(reserved),
+            recording,
+            position,
+            session: meta.session_id,
+            stream: meta.stream_id,
+            service,
+            kind,
+            message,
+        };
+        if row.encode(frame_row).is_ok() {
+            writer.push_from(frame_row, from, true);
+        }
+    }
+}
+
 /// The source id a `Source` message names; `None` for any other message.
 fn source_id(message: &[u8]) -> Option<u64> {
     if message.get(2..4) != Some(&ergon_runtime::source::SOURCE_TEMPLATE_ID.to_le_bytes()[..])
@@ -704,11 +788,11 @@ fn record_feeds(
     archive: &AeronArchive,
     streams: &ergon_runtime::streams::Streams,
     host_ip: &str,
-    feeds: &mut BTreeSet<i32>,
+    feeds: &mut BTreeMap<i32, (String, String)>,
 ) -> Result<(), Error> {
-    for (service, _, stream_id) in streams.archived() {
+    for (service, kind, stream_id) in streams.archived() {
         record(archive, &streams.spy(service, host_ip)?, stream_id)?;
-        feeds.insert(stream_id);
+        feeds.insert(stream_id, (service.to_owned(), kind.to_owned()));
     }
     Ok(())
 }

@@ -1254,6 +1254,77 @@ fn an_mdc_feed_is_spy_recorded_and_reachable_by_name() -> TestResult {
     Ok(())
 }
 
+/// With a `frame` table in `tables.yaml`, every feed frame is also kept as
+/// is: its publish stamp, recording and position, the feed's names, and the
+/// message bytes, sorted by feed and time (not by the bytes).
+#[test]
+fn feed_frames_are_kept_raw_in_the_frame_table() -> TestResult {
+    let lab = Lab::new(
+        "aeron_frames",
+        "tables:\n  shapes: { kind: dynamic }\n  frame: { kind: static }\n",
+    )?;
+    let stream_id = stream(31);
+    let feed_stream = stream(32);
+    let port = 47_000 + u16::try_from(std::process::id() % 1000).unwrap_or(0) * 2;
+    let streams = ergon_runtime::streams::Streams::parse(&format!(
+        "services:\n  md-frames: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
+    ))?;
+    let settings = ergon_runtime_server::Settings {
+        aeron_dir: Some(aeron_dir()),
+        channel: CHANNEL.into(),
+        stream_id,
+        recheck: Duration::ZERO,
+        streams: Some(streams.clone()),
+        host_ip: "127.0.0.1".into(),
+        ..ergon_runtime_server::Settings::new(
+            lab.ch.clone(),
+            &lab.config,
+            lab.dir.join("checkpoint"),
+        )
+    };
+    let mut ingester = Ingester::connect(&[v1::SCHEMA], settings)?;
+    let persist = client(&lab, stream_id)?;
+    let feed = persist
+        .bus()
+        .publication(&streams.publication("md-frames", "127.0.0.1")?, feed_stream)?;
+    wait_until("the persist stream and the feed to be recorded", || {
+        Ok(persist.is_connected() && feed.is_connected())
+    })?;
+    let before = ergon_runtime::clock::epoch_now().0;
+    for _ in 0..20 {
+        taken(&persist, || {
+            feed.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)
+        })?;
+    }
+    let after = ergon_runtime::clock::epoch_now().0;
+    ingest(&mut ingester, &lab, "shapes", 20)?;
+    wait_until("the frames", || {
+        ingester.tick()?;
+        let n = lab.query(&format!(
+            "SELECT count() FROM DB.frame WHERE template_id = {}",
+            v1::TEMPLATE_ID
+        ))?;
+        Ok(n.parse::<u64>()? >= 20)
+    })?;
+    assert_eq!(
+        lab.query(&format!(
+            "SELECT count(), uniqExact(position), any(service), any(kind), any(app), \
+             countIf(length(message) = {}), countIf(toUnixTimestamp64Nano(ts) BETWEEN {before} AND {after}) \
+             FROM DB.frame WHERE template_id = {} FORMAT TSV",
+            v1::LEN,
+            v1::TEMPLATE_ID
+        ))?,
+        "20\t20\tmd-frames\tmd\ttest-app\t20\t20"
+    );
+    assert_eq!(
+        lab.query(
+            "SELECT sorting_key FROM system.tables WHERE database = 'DB' AND name = 'frame'"
+        )?,
+        "service, kind, ts"
+    );
+    Ok(())
+}
+
 /// A feed frame's reserved value is its publish time, so its rows take the
 /// source the recording's `Source` message named. An ingester that resumes
 /// past that message (it is sent once, then every 5 s) still knows it, from

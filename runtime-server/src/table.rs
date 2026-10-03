@@ -102,6 +102,8 @@ struct VarData {
     length: Uint,
     header_len: usize,
     since_version: u16,
+    /// Text (`characterEncoding`), not raw bytes: a sort key.
+    text: bool,
 }
 
 /// An unsigned integer inside a group or var-data header: `numInGroup`,
@@ -194,6 +196,9 @@ impl Table {
                         length,
                         header_len,
                         since_version: t.encoding.since_version,
+                        text: tokens[i..=end]
+                            .iter()
+                            .any(|t| t.encoding.character_encoding.is_some()),
                     });
                 }
                 _ => return Err(unsupported(&msg.name, &t.name, "this token")),
@@ -203,12 +208,18 @@ impl Table {
         Ok(table)
     }
 
-    /// The table: columns in wire order, ordered by the var-data columns
-    /// (symbol, venue, …) then the first timestamp, partitioned by day of it.
+    /// The table: columns in wire order, ordered by the text var-data
+    /// columns (symbol, venue, …) then the first timestamp, partitioned by
+    /// day of it. Raw-byte var-data (a frame's message) is no sort key.
     #[must_use]
     pub fn shape(&self) -> Shape {
         let partition = self.first_timestamp();
-        let mut order_by: Vec<String> = self.var_data.iter().map(|v| v.column.clone()).collect();
+        let mut order_by: Vec<String> = self
+            .var_data
+            .iter()
+            .filter(|v| v.text)
+            .map(|v| v.column.clone())
+            .collect();
         order_by.extend(partition.clone());
         Shape {
             name: self.name.clone(),

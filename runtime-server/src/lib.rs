@@ -615,6 +615,14 @@ impl Writer {
         self.push_message(message, source)
     }
 
+    /// `tables.yaml` lists table `name`, so its messages are inserted.
+    #[must_use]
+    pub fn wants(&self, name: &str) -> bool {
+        self.tables
+            .iter()
+            .any(|s| s.config.is_some() && matches!(&s.source, Source::Sbe(t) if t.name == name))
+    }
+
     /// [`Writer::push`] of a message from a recording; `feed` when it is a
     /// feed's, whose tables `tables.yaml` switches here, when inserted
     /// (subscribers needed every message, so it was published regardless).

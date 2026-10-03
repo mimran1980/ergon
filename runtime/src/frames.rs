@@ -13,6 +13,89 @@
 use crate::Error;
 use crate::clock::Nanos;
 
+/// The codec generated from `schema/frames.xml`: the `Frame` table's rows.
+#[allow(
+    unsafe_code,
+    missing_docs,
+    warnings,
+    unused,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
+#[rustfmt::skip]
+pub mod codec {
+    include!(concat!(env!("OUT_DIR"), "/frames.rs"));
+}
+
+/// The `Frame` schema: an ingester loads it beside the applications' to
+/// keep raw feed frames as rows of the `frame` table.
+pub const SCHEMA: &str = include_str!("../schema/frames.xml");
+
+/// One feed frame and where the archive held it: a `frame` table row.
+#[derive(Clone, Copy, Debug)]
+pub struct FrameRow<'a> {
+    /// The frame's publish stamp.
+    pub ts: Nanos,
+    /// Its recording, and the position after it there.
+    pub recording: i64,
+    /// The position after the frame in its recording.
+    pub position: i64,
+    /// The publication's session and stream.
+    pub session: i32,
+    /// The publication's stream.
+    pub stream: i32,
+    /// The feed's service (`md-binance`).
+    pub service: &'a str,
+    /// The feed's kind (`md`).
+    pub kind: &'a str,
+    /// The frame as published, its SBE header first.
+    pub message: &'a [u8],
+}
+
+impl FrameRow<'_> {
+    /// This row as a `Frame` message, written into `out` (cleared first).
+    ///
+    /// # Errors
+    ///
+    /// A name or the message is longer than its length field holds.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<(), codec::sbe_rt::EncodeError> {
+        use codec::{FrameEncoder, FrameFixedFields};
+        let id = |at: usize| {
+            self.message
+                .get(at..at + 2)
+                .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
+        };
+        let len = FrameEncoder::compute_length_with_header(
+            self.service.len(),
+            self.kind.len(),
+            self.message.len(),
+        );
+        out.clear();
+        out.resize(len, 0);
+        let written = FrameEncoder::wrap_and_apply_header(out, 0)
+            .fixed(&FrameFixedFields {
+                ts: self.ts.0,
+                recording_id: self.recording,
+                position: self.position,
+                session_id: self.session,
+                stream_id: self.stream,
+                schema_id: id(4),
+                template_id: id(2),
+                version: id(6),
+            })
+            .service(self.service.as_bytes())?
+            .kind(self.kind.as_bytes())?
+            .message(self.message)?
+            .encoded_length_with_header();
+        out.truncate(written);
+        Ok(())
+    }
+}
+
 const MAGIC: &[u8; 8] = b"ERGNLOG1";
 /// Bytes before a record's frame.
 const RECORD: usize = 4 + 4 + 8;
@@ -269,6 +352,34 @@ mod tests {
             .collect();
         assert_eq!(records, [(0, 10, &b"abc"[..]), (1, 13, &b"defg"[..])]);
         assert!(parse(b"nope").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_frame_row_round_trips_through_its_codec() -> Result<(), Box<dyn std::error::Error>> {
+        let message = [24, 0, 7, 0, 9, 0, 2, 0, 0xAB, 0xCD];
+        let row = FrameRow {
+            ts: Nanos(1_700_000_000_000_000_123),
+            recording: 42,
+            position: 4_096,
+            session: -5,
+            stream: 2011,
+            service: "md-binance",
+            kind: "md",
+            message: &message,
+        };
+        let mut out = Vec::new();
+        row.encode(&mut out)?;
+        let d = codec::FrameDecoder::decode(&out, 0)?;
+        assert_eq!(
+            (d.ts(), d.recording_id(), d.position()),
+            (row.ts.0, 42, 4_096)
+        );
+        assert_eq!((d.session_id(), d.stream_id()), (-5, 2011));
+        assert_eq!((d.template_id(), d.schema_id(), d.version()), (7, 9, 2));
+        assert_eq!(d.service_as_str()?, "md-binance");
+        assert_eq!(d.kind_as_str()?, "md");
+        assert_eq!(d.message()?, &message[..]);
         Ok(())
     }
 }
