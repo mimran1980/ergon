@@ -1,5 +1,9 @@
-//! The engine's logic, apart from Aeron: each instrument's order book from
-//! the feeds, their aggregate per asset, the EMAs and the strategy.
+//! The engine's logic: each instrument's order book from the feeds, their
+//! aggregate per asset, the EMAs and the strategy, and [`agent::Engine`], the
+//! runtime agent that runs them live, in replay and in a backtest.
+
+pub mod agent;
+pub mod replay;
 
 use std::collections::BTreeMap;
 
@@ -165,7 +169,9 @@ impl Emas {
             Some(last) => {
                 let dt = (now_ns - last).max(0) as f64 / 1e9;
                 for (v, tau) in self.values.iter_mut().zip(HORIZONS) {
-                    *v += (1.0 - (-dt / tau).exp()) * (x - *v);
+                    // `libm`, not the platform's: the same bits on every host, so a
+                    // backtest gives the same result wherever it runs.
+                    *v += (1.0 - libm::exp(-dt / tau)) * (x - *v);
                 }
             }
         }

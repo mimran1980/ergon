@@ -13,6 +13,7 @@
 //! in the same wheel, never as a per-cycle check, and only in a cycle that
 //! found no work unless it has waited too long.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,6 +22,7 @@ use rusteron_archive::AeronExclusivePublication;
 use crate::Error;
 use crate::bus::{Bus, DropKind};
 use crate::clock::{Clock, Nanos};
+use crate::frames::FrameLog;
 use crate::idle::Idle;
 use crate::metrics::Metrics;
 use crate::persist::Persist;
@@ -28,6 +30,8 @@ use crate::streams::{Streams, Watch};
 use crate::subscription::{Delivery, PersistentSubscription, Subscription};
 use crate::timer::{self, Fired, TimerError, TimerId, TimerWheel};
 use crate::trace::Tracer;
+
+pub mod sim;
 
 /// A feed this agent subscribed to, as numbered by [`Ctx::subscribe`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -195,10 +199,19 @@ impl Feed {
 }
 
 /// Where an [`Out`] goes.
-struct Sink {
-    publication: AeronExclusivePublication,
-    max_payload: usize,
+enum Sink {
+    /// Live: an exclusive publication.
+    Aeron {
+        publication: AeronExclusivePublication,
+        max_payload: usize,
+    },
+    /// Simulation: appended to [`Ctx::captured`] under this stream. Never
+    /// dropped, so a backtest's output does not depend on back pressure.
+    Capture(u32),
 }
+
+/// The largest frame a simulated output takes: one UDP frame's payload.
+const SIM_MAX_PAYLOAD: usize = 1376;
 
 /// What the agent reaches: time, timers, feeds, outputs, metrics, persist.
 pub struct Ctx {
@@ -209,12 +222,17 @@ pub struct Ctx {
     wall_offset: i64,
     wheel: TimerWheel,
     fired: Vec<Fired>,
-    bus: Bus,
+    /// `None` in a simulation with no Aeron.
+    bus: Option<Bus>,
     persist: Option<Persist>,
     metrics: Metrics,
     streams: Streams,
     region: String,
     sinks: Vec<Sink>,
+    /// Simulation: what the outputs sent, in order.
+    captured: RefCell<FrameLog>,
+    /// Simulation: each feed's `service/kind`, by [`FeedId`].
+    sim_feeds: Vec<String>,
     /// Feeds opened since the last cycle; the runtime adopts them.
     opened: Vec<Feed>,
     feeds: u32,
@@ -315,6 +333,34 @@ impl Ctx {
         )
     }
 
+    fn bus(&self) -> Result<&Bus, Error> {
+        self.bus
+            .as_ref()
+            .ok_or_else(|| Error::Aeron("this simulation has no Aeron client".into()))
+    }
+
+    /// A simulated feed, by name: the simulation driver delivers the
+    /// recorded frames of `service/kind` to it.
+    fn sim_feed(&mut self, service: &str, kind: &str) -> FeedId {
+        self.sim_feeds.push(format!("{service}/{kind}"));
+        let id = FeedId(self.feeds);
+        self.feeds += 1;
+        id
+    }
+
+    /// Simulation: everything the outputs sent, each under its
+    /// `service/kind` and the event time it was sent at.
+    #[must_use]
+    pub fn captured(&self) -> FrameLog {
+        self.captured.borrow().clone()
+    }
+
+    /// Simulation: the `service/kind` each feed was subscribed under.
+    #[must_use]
+    pub fn sim_feeds(&self) -> &[String] {
+        &self.sim_feeds
+    }
+
     /// Stop after this event: `stop`, then the feeds close.
     pub const fn stop(&mut self) {
         self.stopping = true;
@@ -327,7 +373,10 @@ impl Ctx {
     ///
     /// `service` or `kind` is not in the registry.
     pub fn subscribe(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
-        let feed = Feed::Persistent(self.bus.subscribe(&self.streams, service, kind)?);
+        if self.sim {
+            return Ok(self.sim_feed(service, kind));
+        }
+        let feed = Feed::Persistent(self.bus()?.subscribe(&self.streams, service, kind)?);
         Ok(self.adopt(feed))
     }
 
@@ -339,8 +388,11 @@ impl Ctx {
     ///
     /// `service` or `kind` is not in the registry.
     pub fn subscribe_from_start(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
+        if self.sim {
+            return Ok(self.sim_feed(service, kind));
+        }
         let feed = self
-            .bus
+            .bus()?
             .subscribe(&self.streams, service, kind)?
             .from_start();
         Ok(self.adopt(Feed::Persistent(feed)))
@@ -353,14 +405,23 @@ impl Ctx {
     ///
     /// `service` or `kind` is not in the registry.
     pub fn subscribe_live(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
-        let feed = Feed::Live(self.bus.subscribe_live(&self.streams, service, kind)?);
+        if self.sim {
+            return Ok(self.sim_feed(service, kind));
+        }
+        let feed = Feed::Live(self.bus()?.subscribe_live(&self.streams, service, kind)?);
         Ok(self.adopt(feed))
     }
 
-    /// Subscribe to a raw `channel` and `stream_id`, off the network.
+    /// Subscribe to a raw `channel` and `stream_id`, off the network. In a
+    /// simulation its name is `channel/stream_id`.
     pub fn subscribe_channel(&mut self, channel: &str, stream_id: i32) -> FeedId {
-        let feed = Feed::Live(self.bus.subscription(channel, stream_id));
-        self.adopt(feed)
+        match &self.bus {
+            Some(bus) if !self.sim => {
+                let feed = Feed::Live(bus.subscription(channel, stream_id));
+                self.adopt(feed)
+            }
+            _ => self.sim_feed(channel, &stream_id.to_string()),
+        }
     }
 
     fn adopt(&mut self, feed: Feed) -> FeedId {
@@ -377,9 +438,22 @@ impl Ctx {
     ///
     /// The registry does not name it, or the driver did not add it.
     pub fn publish(&mut self, service: &str, kind: &str) -> Result<Out, Error> {
-        let channel = self.streams.publication(service, self.bus.host_ip())?;
+        if self.sim {
+            return Ok(self.capture(service, kind));
+        }
+        let channel = self.streams.publication(service, self.bus()?.host_ip())?;
         let stream_id = self.streams.stream(service, kind)?;
         self.publish_channel(&channel, stream_id)
+    }
+
+    fn capture(&mut self, service: &str, kind: &str) -> Out {
+        let stream = self
+            .captured
+            .borrow_mut()
+            .stream(&format!("{service}/{kind}"));
+        let out = Out(u32::try_from(self.sinks.len()).unwrap_or(u32::MAX));
+        self.sinks.push(Sink::Capture(stream));
+        out
     }
 
     /// Publish on a raw `channel` and `stream_id`, from this thread alone.
@@ -388,12 +462,15 @@ impl Ctx {
     ///
     /// The driver did not add the publication.
     pub fn publish_channel(&mut self, channel: &str, stream_id: i32) -> Result<Out, Error> {
-        let publication = self.bus.add_exclusive_publication(channel, stream_id)?;
+        if self.sim {
+            return Ok(self.capture(channel, &stream_id.to_string()));
+        }
+        let publication = self.bus()?.add_exclusive_publication(channel, stream_id)?;
         let max_payload = publication
             .max_payload_length()
             .map_err(|e| Error::Aeron(e.to_string()))?;
         let out = Out(u32::try_from(self.sinks.len()).unwrap_or(u32::MAX));
-        self.sinks.push(Sink {
+        self.sinks.push(Sink::Aeron {
             publication,
             max_payload,
         });
@@ -418,18 +495,25 @@ impl Ctx {
         len: usize,
         encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<(), E> {
-        let Some(sink) = self.sinks.get(out.0 as usize) else {
-            self.bus.count(DropKind::Other);
-            return Ok(());
+        let (publication, max_payload) = match self.sinks.get(out.0 as usize) {
+            Some(Sink::Aeron {
+                publication,
+                max_payload,
+            }) => (publication, *max_payload),
+            Some(Sink::Capture(stream)) => return self.send_captured(*stream, len, encode),
+            None => {
+                self.count(DropKind::Other);
+                return Ok(());
+            }
         };
-        if len > sink.max_payload {
-            self.bus.count(DropKind::TooLarge);
+        if len > max_payload {
+            self.count(DropKind::TooLarge);
             return Ok(());
         }
-        let claim = match crate::bus::claim_exclusive(&sink.publication, len, self.now.0) {
+        let claim = match crate::bus::claim_exclusive(publication, len, self.now.0) {
             Ok(claim) => claim,
             Err(kind) => {
-                self.bus.count(kind);
+                self.count(kind);
                 return Ok(());
             }
         };
@@ -442,7 +526,30 @@ impl Ctx {
         );
         // A wrong length would corrupt the stream: one compare, kept.
         if written != len || claim.commit().is_err() {
-            self.bus.drop_one();
+            self.count(DropKind::Other);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn count(&self, kind: DropKind) {
+        if let Some(bus) = &self.bus {
+            bus.count(kind);
+        }
+    }
+
+    fn send_captured<E>(
+        &self,
+        stream: u32,
+        len: usize,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
+    ) -> Result<(), E> {
+        let appended = self
+            .captured
+            .borrow_mut()
+            .append(stream, self.now, len, encode)?;
+        if !appended || len > SIM_MAX_PAYLOAD {
+            log::error!("simulated output {stream}: a {len}-byte frame was mis-sized or too large");
         }
         Ok(())
     }
@@ -450,25 +557,32 @@ impl Ctx {
     /// `out` is connected: a subscriber or the archive takes it.
     #[must_use]
     pub fn is_connected(&self, out: Out) -> bool {
-        self.sinks
-            .get(out.0 as usize)
-            .is_some_and(|s| s.publication.is_connected())
+        match self.sinks.get(out.0 as usize) {
+            Some(Sink::Aeron { publication, .. }) => publication.is_connected(),
+            Some(Sink::Capture(_)) => true,
+            None => false,
+        }
     }
 
     /// The longest message one frame of `out` holds.
     #[must_use]
     pub fn max_payload(&self, out: Out) -> usize {
-        self.sinks.get(out.0 as usize).map_or(0, |s| s.max_payload)
+        match self.sinks.get(out.0 as usize) {
+            Some(Sink::Aeron { max_payload, .. }) => *max_payload,
+            Some(Sink::Capture(_)) => SIM_MAX_PAYLOAD,
+            None => 0,
+        }
     }
 
     #[cold]
     fn send_source(&self, out: Out) {
-        let Some(sink) = self.sinks.get(out.0 as usize) else {
+        let (Some(Sink::Aeron { publication, .. }), Some(bus)) =
+            (self.sinks.get(out.0 as usize), &self.bus)
+        else {
             return;
         };
-        let message = self.bus.source_message();
-        if let Ok(claim) = crate::bus::claim_exclusive(&sink.publication, message.len(), self.now.0)
-        {
+        let message = bus.source_message();
+        if let Ok(claim) = crate::bus::claim_exclusive(publication, message.len(), self.now.0) {
             claim.data().copy_from_slice(message);
             let _ = claim.commit();
         }
@@ -603,19 +717,21 @@ impl Runtime {
             clock,
             fired: Vec::with_capacity(64),
             wheel,
-            bus: config.bus,
+            bus: Some(config.bus),
             persist: config.persist,
             metrics,
             streams: config.streams,
             region: config.region,
             sinks: Vec::new(),
+            captured: RefCell::new(FrameLog::new()),
+            sim_feeds: Vec::new(),
             opened: Vec::new(),
             feeds: 0,
             next_id: now.0.cast_unsigned() & !RUNTIME_TOKEN,
             stopping: false,
         };
         Ok(Self {
-            invoker: ctx.bus.is_invoker(),
+            invoker: ctx.bus.as_ref().is_some_and(Bus::is_invoker),
             conductor_ran: Nanos(0),
             feeds: Vec::new(),
             ctx,
@@ -721,7 +837,9 @@ impl Runtime {
     pub fn finish<A: Agent>(&mut self, agent: &mut A) {
         agent.stop(&mut self.ctx);
         log::info!("stopping: closing the feeds");
-        self.ctx.bus.shutdown();
+        if let Some(bus) = &self.ctx.bus {
+            bus.shutdown();
+        }
     }
 
     /// One duty cycle: every feed, then due timers. Returns the work count.
@@ -751,7 +869,7 @@ impl Runtime {
         }
         if self.invoker && (work == 0 || self.ctx.now.since(self.conductor_ran) > MS) {
             self.conductor_ran = self.ctx.now;
-            work += self.ctx.bus.do_work();
+            work += self.ctx.bus.as_ref().map_or(0, Bus::do_work);
         }
         if self.deferred != 0 && (work == 0 || self.ctx.now.since(self.deferred_since) > MAX_DEFER)
         {

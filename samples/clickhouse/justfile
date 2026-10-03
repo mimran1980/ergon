@@ -17,6 +17,7 @@
 #   just test       unit + integration tests (throwaway ClickHouse + Aeron archive driver)
 #   just test-stop  stop that throwaway ClickHouse and driver
 #   just latency    time recording on the app thread
+#   just engine-fixtures [--check]  regenerate (or check) the engine's replay fixtures
 
 set dotenv-load
 
@@ -279,3 +280,8 @@ latency: _test-clickhouse _test-aeron
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --check
+
+# Regenerate the engine's replay input and golden output; `--check` fails
+# when the checked-in ones no longer match the generator and the engine.
+engine-fixtures *args:
+    cargo run -q -p engine --example replay_fixtures -- {{args}}

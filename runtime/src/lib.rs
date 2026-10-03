@@ -21,6 +21,7 @@ pub mod app;
 pub mod bus;
 pub mod clock;
 pub mod event;
+pub mod frames;
 pub mod idle;
 pub mod metrics;
 mod os;
