@@ -305,6 +305,76 @@ impl HistogramCell {
     }
 }
 
+/// A histogram cell written and polled by one thread: four relaxed loads and
+/// stores per record, no lock and no read-modify-write. Polled from another
+/// thread it could split one sample across two summaries; the handle is
+/// `!Send`, and the runtime polls on the recording thread.
+#[repr(align(128))]
+#[derive(Default)]
+struct LocalHistCell {
+    count: AtomicU64,
+    sum: AtomicU64,
+    min: AtomicU64,
+    max: AtomicU64,
+}
+
+impl LocalHistCell {
+    fn new() -> Self {
+        let cell = Self::default();
+        cell.min.store(u64::MAX, Relaxed);
+        cell
+    }
+
+    #[inline]
+    fn record(&self, value: u64) {
+        self.count
+            .store(self.count.load(Relaxed).wrapping_add(1), Relaxed);
+        self.sum
+            .store(self.sum.load(Relaxed).wrapping_add(value), Relaxed);
+        if value < self.min.load(Relaxed) {
+            self.min.store(value, Relaxed);
+        }
+        if value > self.max.load(Relaxed) {
+            self.max.store(value, Relaxed);
+        }
+    }
+
+    fn take(&self) -> HistSample {
+        let sample = HistSample {
+            count: self.count.load(Relaxed),
+            sum: self.sum.load(Relaxed),
+            min: self.min.load(Relaxed),
+            max: self.max.load(Relaxed),
+        };
+        self.count.store(0, Relaxed);
+        self.sum.store(0, Relaxed);
+        self.min.store(u64::MAX, Relaxed);
+        self.max.store(0, Relaxed);
+        sample
+    }
+}
+
+/// A histogram for one thread that also polls it, as a runtime agent's
+/// thread does: [`Histogram`] without the lock. `!Send`.
+pub struct LocalHistogram {
+    cell: Arc<LocalHistCell>,
+    _one_thread: PhantomData<*const ()>,
+}
+
+impl LocalHistogram {
+    /// Record one value: plain loads and stores.
+    #[inline]
+    pub fn record(&self, value: u64) {
+        self.cell.record(value);
+    }
+}
+
+impl std::fmt::Debug for LocalHistogram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalHistogram").finish_non_exhaustive()
+    }
+}
+
 /// Written by one thread at a time: `Send`, not `Sync`.
 type OneWriter = PhantomData<Cell<()>>;
 
@@ -406,6 +476,7 @@ enum Source {
     Counter(Arc<CounterCell>),
     Gauge(Arc<GaugeCell>),
     Histogram(Arc<HistogramCell>),
+    LocalHistogram(Arc<LocalHistCell>),
     /// Read at each poll: an atomic kept elsewhere.
     Sampled(Box<dyn Fn() -> u64 + Send>),
 }
@@ -660,6 +731,21 @@ impl Metrics {
         Histogram {
             cell,
             _one_writer: PhantomData,
+        }
+    }
+
+    /// A [`LocalHistogram`]: for a thread that both records and polls this
+    /// registry, such as a runtime agent's.
+    #[must_use]
+    pub fn local_histogram(&self, name: &str, labels: &[(&str, &str)]) -> LocalHistogram {
+        let cell = Arc::new(LocalHistCell::new());
+        self.register(name, MetricKind::Histogram, labels, |_| {
+            Source::LocalHistogram(Arc::clone(&cell))
+        });
+        self.arm_histogram();
+        LocalHistogram {
+            cell,
+            _one_thread: PhantomData,
         }
     }
 
@@ -964,6 +1050,7 @@ impl Metrics {
             .filter(|cell| cell.def == index)
             .map(|cell| match &cell.source {
                 Source::Histogram(histogram) => histogram.sample().count,
+                Source::LocalHistogram(histogram) => histogram.count.load(Relaxed),
                 _ => 0,
             })
             .sum()
@@ -974,11 +1061,12 @@ impl State {
     /// Swap every histogram cell into one summary per series. Empty cells
     /// stay for the next millisecond. `false` when nothing was recorded.
     fn open_histogram(&mut self, now: Nanos) -> bool {
-        if !self
-            .cells
-            .iter()
-            .any(|cell| matches!(cell.source, Source::Histogram(_)))
-        {
+        if !self.cells.iter().any(|cell| {
+            matches!(
+                cell.source,
+                Source::Histogram(_) | Source::LocalHistogram(_)
+            )
+        }) {
             return false;
         }
         let end_i = now.epoch_ns().div_euclid(HISTOGRAM_MS) * HISTOGRAM_MS;
@@ -1011,10 +1099,11 @@ impl State {
         self.histogram_slots.clear();
         self.histogram_slots.resize(self.defs.len(), None);
         for cell in &self.cells {
-            let Source::Histogram(histogram) = &cell.source else {
-                continue;
+            let sample = match &cell.source {
+                Source::Histogram(histogram) => std::mem::take(&mut *histogram.sample()),
+                Source::LocalHistogram(histogram) => histogram.take(),
+                _ => continue,
             };
-            let sample = std::mem::take(&mut *histogram.sample());
             if sample.count == 0 {
                 continue;
             }
@@ -1060,7 +1149,7 @@ impl State {
                 Source::Gauge(g) => cycle
                     .gauges
                     .push((def.metric.series, f64::from_bits(g.bits.load(Relaxed)))),
-                Source::Histogram(_) => {}
+                Source::Histogram(_) | Source::LocalHistogram(_) => {}
             }
         }
         for (def, total) in self.defs.iter_mut().zip(totals.iter()) {
@@ -1424,6 +1513,39 @@ mod tests {
         assert_eq!(
             d.gauges,
             [(MetricDef::new("depth", MetricKind::Gauge, &[]).series, -2.0)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_histograms_merge_with_locked_ones_and_reset_on_publish() -> TestResult {
+        let metrics = Metrics::detached();
+        let local = metrics.local_histogram("lat", &[]);
+        let locked = metrics.histogram("lat", &[]);
+        for v in [100, 5_000, 1_000_000] {
+            local.record(v);
+        }
+        locked.record(7);
+        {
+            let mut state = metrics.state();
+            state.last_hist_end = 0;
+        }
+        let d = decode(&metrics.drain(1_000_000, 64 * 1024))?;
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
+        };
+        assert_eq!(
+            (sample.count, sample.sum, sample.min, sample.max),
+            (4, 1_005_107, 7, 1_000_000)
+        );
+        local.record(42);
+        let d = decode(&metrics.drain(2_000_000, 64 * 1024))?;
+        let [sample] = d.histograms.as_slice() else {
+            return Err(format!("{} histogram summaries", d.histograms.len()).into());
+        };
+        assert_eq!(
+            (sample.count, sample.sum, sample.min, sample.max),
+            (1, 42, 42, 42)
         );
         Ok(())
     }
