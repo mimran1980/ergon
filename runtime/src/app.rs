@@ -76,9 +76,23 @@ impl App {
     /// The node check, the bus or persist connection, the stream file,
     /// `IDLE`, or registering `SIGTERM` failed.
     pub fn start(schema: &str) -> Result<Self, Error> {
+        Self::start_with(schema, Idle::Yield, false)
+    }
+
+    /// [`App::start`] with `idle` as the `IDLE` default, and the Aeron
+    /// conductor in the application's loop unless `AERON_INVOKER` says
+    /// otherwise.
+    ///
+    /// # Errors
+    ///
+    /// As [`App::start`].
+    pub fn start_with(schema: &str, idle: Idle, invoker: bool) -> Result<Self, Error> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
         crate::streams::check_node_network()?;
-        let settings = Settings::from_env();
+        let mut settings = Settings::from_env();
+        if std::env::var_os("AERON_INVOKER").is_none() {
+            settings.aeron_invoker = invoker;
+        }
         let bus = Bus::connect(&settings)?;
         let persist = Persist::connect(schema, &bus, settings)?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -94,7 +108,7 @@ impl App {
             region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
             // Lab default: yield. For the best latency, spin (or noop) on an
             // isolated core.
-            idle: Idle::from_env("IDLE", Idle::Yield).map_err(Error::Idle)?,
+            idle: Idle::from_env("IDLE", idle).map_err(Error::Idle)?,
             stop,
         })
     }

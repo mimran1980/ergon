@@ -534,7 +534,7 @@ bench-runtime:
     mkdir -p "$lto_crit" "$no_lto_crit"
     # The dispatch bench publishes through a local media driver.
     (cd samples/clickhouse && just _test-aeron)
-    for bench in timer dispatch; do
+    for bench in timer dispatch hotpath; do
       CRITERION_HOME="$lto_crit" cargo bench -p ergon-runtime --bench "$bench"
       CARGO_TARGET_DIR="$no_lto_target" \
         CARGO_PROFILE_BENCH_LTO=false \
@@ -542,3 +542,6 @@ bench-runtime:
         CRITERION_HOME="$no_lto_crit" \
         cargo bench -p ergon-runtime --bench "$bench"
     done
+    # One allocator-metrics sample, and dispatch with the feature compiled in.
+    cargo bench -p ergon-runtime --features mimalloc --bench alloc_sample
+    cargo bench -p ergon-runtime --features mimalloc --bench dispatch

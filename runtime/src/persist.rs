@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rusteron_archive::AeronPublication;
 use serde::Deserialize;
@@ -440,7 +440,7 @@ impl Persist {
         let max_payload = publication
             .max_payload_length()
             .map_err(|e| Error::Aeron(e.to_string()))?;
-        wait_for_subscriber(&publication, &settings)?;
+        wait_for_subscriber(bus, &publication, &settings)?;
         let mut watcher = Watcher {
             ticks: 0,
             path: settings.config_path.clone(),
@@ -898,7 +898,11 @@ impl std::fmt::Debug for Persist {
     }
 }
 
-fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> Result<(), Error> {
+fn wait_for_subscriber(
+    bus: &Bus,
+    publication: &AeronPublication,
+    settings: &Settings,
+) -> Result<(), Error> {
     if settings.subscriber_timeout.is_zero() {
         return Ok(());
     }
@@ -910,7 +914,7 @@ fn wait_for_subscriber(publication: &AeronPublication, settings: &Settings) -> R
                 settings.channel, settings.subscriber_timeout
             )));
         }
-        std::thread::sleep(Duration::from_millis(1));
+        bus.pause();
     }
     Ok(())
 }

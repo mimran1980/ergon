@@ -12,15 +12,21 @@
 //!   [`event`] for rows from `tracing` events.
 //! * [`mod@metrics`], [`trace`], [`clock`], [`timer`] and [`idle`]: the hot-path tools.
 //! * [`source`]: who recorded a row.
+//! * [`rt`]: the runtime that owns the loop: an [`rt::Agent`] on one thread,
+//!   live or on simulated time.
 
+#[cfg(feature = "mimalloc")]
+pub mod alloc_stats;
 pub mod app;
 pub mod bus;
 pub mod clock;
 pub mod event;
 pub mod idle;
 pub mod metrics;
+mod os;
 pub mod persist;
 pub mod publication;
+pub mod rt;
 pub mod source;
 mod spans;
 pub mod streams;
@@ -29,8 +35,15 @@ pub mod timer;
 pub mod trace;
 mod value;
 
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// A `HashMap` with a fixed hasher: the same keys iterate in the same order on
+/// every run, which `RandomState` does not. For agent state a backtest must
+/// reproduce.
+pub type DetMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
 
 /// Everything that can go wrong outside the recording hot path.
 #[derive(Debug)]
@@ -91,6 +104,10 @@ pub struct Settings {
     pub host_ip: String,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
+    /// Run the Aeron client conductor in the application's loop
+    /// ([`bus::Bus::do_work`]) rather than on its own thread, which would
+    /// contend for a pinned core. `AERON_INVOKER`; the runtime's default.
+    pub aeron_invoker: bool,
     /// Defaults to [`persist::CHANNEL`].
     pub channel: String,
     /// Defaults to [`persist::STREAM_ID`].
@@ -115,6 +132,7 @@ impl Settings {
             pod: String::new(),
             host_ip: "127.0.0.1".into(),
             aeron_dir: None,
+            aeron_invoker: false,
             channel: persist::CHANNEL.to_string(),
             stream_id: persist::STREAM_ID,
             subscriber_timeout: Duration::from_secs(10),
@@ -145,6 +163,7 @@ impl Settings {
             host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
             metrics_interval: duration("PERSIST_METRICS_INTERVAL", Duration::from_secs(5)),
             subscriber_timeout: duration("PERSIST_SUBSCRIBER_TIMEOUT", Duration::from_secs(10)),
+            aeron_invoker: std::env::var("AERON_INVOKER").is_ok_and(|v| v == "1" || v == "true"),
             ..Self::new(
                 std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
             )

@@ -1,0 +1,15 @@
+# Agent code takes time only from the runtime, so live, replay and backtest
+# run the same code to the same result. Only ergon-runtime's clock reads the
+# hardware.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "use ctx.now() (event time) or ctx.read() (latency marks)" },
+    { path = "std::time::SystemTime::now", reason = "use ctx.wall_ns()" },
+    { path = "minstant::Instant::now", reason = "use ctx.read()" },
+    { path = "jiff::Timestamp::now", reason = "use ctx.wall_ns()" },
+]
+# RandomState iterates in a different order every run. Use BTreeMap, or
+# ergon_runtime::DetMap for point lookups.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "use ergon_runtime::DetMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "use BTreeSet" },
+]

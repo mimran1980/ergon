@@ -2121,6 +2121,7 @@ dependencies = [
  "env_logger",
  "ergo-sbe",
  "jiff",
+ "libc",
  "log",
  "minstant",
  "rusteron-archive",

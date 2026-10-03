@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use rusteron_archive::{
-    Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronOfferError, AeronPublication,
-    IntoCString,
+    Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronExclusivePublication,
+    AeronOfferError, AeronPublication, IntoCString,
 };
 
 use crate::source::Source;
@@ -37,6 +37,9 @@ struct Inner {
     aeron: Aeron,
     /// This node's IP: see [`Settings::host_ip`].
     host_ip: String,
+    /// The client conductor runs in the application's loop
+    /// ([`Bus::do_work`]), not on its own thread.
+    invoker: bool,
     /// Stamped into every frame's reserved value.
     source: Source,
     source_message: Vec<u8>,
@@ -47,6 +50,8 @@ struct Inner {
     closed: AtomicBool,
     /// Every publication made, for [`Bus::shutdown`] to close.
     publications: Mutex<Vec<AeronPublication>>,
+    /// Every exclusive publication made, likewise.
+    exclusive: Mutex<Vec<AeronExclusivePublication>>,
     not_connected: AtomicU64,
     back_pressure: AtomicU64,
     too_large: AtomicU64,
@@ -102,11 +107,13 @@ impl Bus {
             inner: Arc::new(Inner {
                 aeron,
                 host_ip: settings.host_ip.clone(),
+                invoker: settings.aeron_invoker,
                 source,
                 source_message,
                 heartbeat: AtomicU64::new(0),
                 closed: AtomicBool::new(false),
                 publications: Mutex::new(Vec::new()),
+                exclusive: Mutex::new(Vec::new()),
                 not_connected: AtomicU64::new(0),
                 back_pressure: AtomicU64::new(0),
                 too_large: AtomicU64::new(0),
@@ -121,18 +128,89 @@ impl Bus {
         channel: &str,
         stream_id: i32,
     ) -> Result<AeronPublication, Error> {
-        let publication = self
+        let adding = self
             .inner
             .aeron
             .async_add_publication(&channel.into_c_string(), stream_id)
-            .and_then(|p| p.poll_blocking(Duration::from_secs(10)))
             .map_err(|e| Error::Aeron(format!("{channel}: {e}")))?;
+        let publication = self.await_added(channel, || adding.poll())?;
         self.inner
             .publications
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(publication.clone());
         Ok(publication)
+    }
+
+    /// Add an exclusive publication (one writing thread, no CAS on the term
+    /// tail), closed by [`Bus::shutdown`].
+    pub(crate) fn add_exclusive_publication(
+        &self,
+        channel: &str,
+        stream_id: i32,
+    ) -> Result<AeronExclusivePublication, Error> {
+        let adding = self
+            .inner
+            .aeron
+            .async_add_exclusive_publication(&channel.into_c_string(), stream_id)
+            .map_err(|e| Error::Aeron(format!("{channel}: {e}")))?;
+        let publication = self.await_added(channel, || adding.poll())?;
+        self.inner
+            .exclusive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(publication.clone());
+        Ok(publication)
+    }
+
+    /// Wait up to 10 s for an asynchronous add, driving the conductor
+    /// meanwhile in invoker mode.
+    fn await_added<T>(
+        &self,
+        channel: &str,
+        mut poll: impl FnMut() -> Result<Option<T>, rusteron_archive::AeronCError>,
+    ) -> Result<T, Error> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match poll() {
+                Ok(Some(added)) => return Ok(added),
+                Ok(None) if Instant::now() < deadline => self.pause(),
+                Ok(None) => return Err(Error::Aeron(format!("{channel}: not added within 10 s"))),
+                Err(e) => return Err(Error::Aeron(format!("{channel}: {e}"))),
+            }
+        }
+    }
+
+    /// One wait step of a blocking call: the conductor's duty cycle in
+    /// invoker mode, else a millisecond's sleep.
+    pub(crate) fn pause(&self) {
+        if self.inner.invoker {
+            let _ = self.do_work();
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// The client conductor's duty cycle, when it runs in the application's
+    /// loop ([`Settings::aeron_invoker`]); otherwise nothing. Returns the
+    /// work count.
+    #[inline]
+    #[must_use = "the work count feeds the idle strategy"]
+    pub fn do_work(&self) -> usize {
+        if !self.inner.invoker {
+            return 0;
+        }
+        self.inner
+            .aeron
+            .main_do_work()
+            .map_or(0, |n| usize::try_from(n).unwrap_or(0))
+    }
+
+    /// The conductor runs in the application's loop.
+    #[must_use]
+    pub fn is_invoker(&self) -> bool {
+        self.inner.invoker
     }
 
     /// This node's IP: feeds opened from the registry bind it.
@@ -195,16 +273,24 @@ impl Bus {
                 done.fetch_add(1, Ordering::Relaxed);
             })
         };
-        let closing = u64::try_from(
-            publications
-                .into_iter()
-                .flat_map(|p| p.close_with_handler(Some(&handler)))
-                .count(),
-        )
-        .unwrap_or(u64::MAX);
+        let exclusive = std::mem::take(
+            &mut *inner
+                .exclusive
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let shared = publications
+            .into_iter()
+            .flat_map(|p| p.close_with_handler(Some(&handler)))
+            .count();
+        let exclusive = exclusive
+            .into_iter()
+            .flat_map(|p| p.close_with_handler(Some(&handler)))
+            .count();
+        let closing = u64::try_from(shared + exclusive).unwrap_or(u64::MAX);
         let deadline = Instant::now() + Duration::from_secs(1);
         while done.load(Ordering::Relaxed) < closing && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
+            self.pause();
         }
         if done.load(Ordering::Relaxed) < closing {
             log::warn!("shutdown: the driver took more than a second to close the publications");
@@ -285,6 +371,11 @@ pub(crate) struct Claim {
 
 impl Claim {
     #[inline]
+    pub(crate) const fn new(claim: AeronBufferClaim) -> Self {
+        Self { claim, done: false }
+    }
+
+    #[inline]
     pub(crate) fn data(&self) -> &mut [u8] {
         self.claim.data()
     }
@@ -305,7 +396,7 @@ impl Drop for Claim {
 }
 
 #[inline]
-fn retry_admin<T>(
+pub(crate) fn retry_admin<T>(
     mut once: impl FnMut() -> Result<T, AeronOfferError>,
 ) -> Result<T, AeronOfferError> {
     let mut left = ADMIN_ACTION_RETRIES;
@@ -320,7 +411,7 @@ fn retry_admin<T>(
     }
 }
 
-fn classify(err: &AeronOfferError) -> DropKind {
+pub(crate) fn classify(err: &AeronOfferError) -> DropKind {
     match err {
         AeronOfferError::NotConnected => DropKind::NotConnected,
         AeronOfferError::BackPressured => DropKind::BackPressure,
@@ -341,6 +432,7 @@ fn client(settings: &Settings) -> Result<Aeron, rusteron_archive::AeronCError> {
     if !settings.app.is_empty() {
         ctx.set_client_name(&settings.app.as_str().into_c_string())?;
     }
+    ctx.set_use_conductor_agent_invoker(settings.aeron_invoker)?;
     let aeron = Aeron::new(&ctx)?;
     aeron.start()?;
     Ok(aeron)

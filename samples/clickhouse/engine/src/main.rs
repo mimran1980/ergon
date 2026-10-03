@@ -1,10 +1,12 @@
-//! One thread, one loop, for one region.
+//! One region's trading engine, an [`Agent`] on the runtime's one thread.
 //!
-//! `md` streams and the exchange's fills come through `PersistentSubscription`, so a slow
-//! or restarted engine catches up from the archive. `tob` is best effort.
-//! The loop keeps each instrument's L2 book, and per asset an aggregated book,
-//! EMAs, and a strategy. Orders go to `exch-sim`. Fills come back on `exec`.
-//! Once a second it publishes `ema` and `agg_book` on `signals`.
+//! `md` streams and the exchange's fills come through persistent
+//! subscriptions, so a slow or restarted engine catches up from the archive.
+//! `tob` is best effort. The engine keeps each instrument's L2 book, and per
+//! asset an aggregated book, EMAs, and a strategy. Orders go to `exch-sim`.
+//! Fills come back on `exec`. Once a second (an aligned repeating timer) it
+//! publishes `ema` and `agg_book` on `signals`. Each order has a one-shot
+//! expiry timer, cancelled by its fill.
 //!
 //! It subscribes to every feed handler, in every region: the whole market,
 //! the far venues as late as the network makes them.
@@ -17,13 +19,22 @@
 //! Histograms beside it: `md_to_engine_ns`, `venue_to_engine_ns` and
 //! `tick_to_order_ns` per venue and its region (`from`), `order_ack_ns` and
 //! `order_fill_ns` per order.
+//!
+//! Time comes only from the runtime (`ctx.now`, `ctx.read`, `ctx.wall_ns`),
+//! so the same code runs live, in replay and in a backtest; `clippy.toml`
+//! rejects any other clock and any hash-ordered collection.
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use engine::{Book, Change, Emas, Spec, Strategy, aggregate};
-use ergon_runtime::app::App;
-use ergon_runtime::clock::{Clock, Nanos};
+use ergon_runtime::clock::Nanos;
+use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram as Histogram};
+use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId, Out, Runtime};
+use ergon_runtime::subscription::Delivery;
+use ergon_runtime::timer::TimerId;
+use ergon_runtime::trace::{Trace, TraceId, Tracer};
+use ergon_runtime::{DetMap, Error};
 use schema::market::{
     AnyMessage, BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder,
     Side as MdSide,
@@ -32,16 +43,7 @@ use schema::trading::{
     AggBookEncoder, AggBookFixedFields, AnyMessage as TradingMessage, Decimal9, EmaEncoder,
     EmaFixedFields, NewOrderEncoder, NewOrderFixedFields, OrderStatus, Side,
 };
-use std::collections::HashMap;
 
-use ergon_runtime::metrics::{Counter, Gauge, Histogram};
-use ergon_runtime::publication::Publication;
-use ergon_runtime::subscription::PersistentSubscription;
-use ergon_runtime::subscription::{Delivery, Subscription};
-use ergon_runtime::trace::{Trace, TraceId, Tracer};
-
-/// Messages taken from one subscription per loop.
-const LIMIT: usize = 64;
 /// Levels a side in each `agg_book` row.
 const AGG_LEVELS: usize = 10;
 const SECOND: i64 = 1_000_000_000;
@@ -49,136 +51,190 @@ const ORDERS: u64 = TraceId::namespace("order");
 /// An order with no answer this long is given up (its exchange ignores
 /// orders older than 10 s).
 const ORDER_TIMEOUT_NS: i64 = 30 * SECOND;
+/// The once-a-second timer's token.
+const EVERY_SECOND: u64 = 1;
+/// An order's expiry timer: this bit and the order id.
+const ORDER_EXPIRY: u64 = 1 << 62;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::start(schema::TRADING_SCHEMA)?;
-    let service = format!("engine-{}", app.region);
-    let s = &app.streams;
-    let signals = app.bus.publish(s, &service, "signals")?;
-    let orders = app.bus.publish(s, &service, "orders")?;
-    let exchange = format!("exch-sim-{}", app.region);
-    let mut exec = app.bus.subscribe(s, &exchange, "exec")?;
-    let metrics = app.metrics();
-    let (mut subs, mut venues) = (Vec::new(), Vec::new());
-    add_venues(&app, s, &metrics, &mut subs, &mut venues)?;
-    log::info!(
-        "{service}: {} venues ({}), publishing from {}",
-        venues.len(),
-        venues
+    let mut rt = Runtime::from_env(schema::TRADING_SCHEMA)?;
+    let engine = Engine::new(rt.ctx())?;
+    rt.run(engine)?;
+    Ok(())
+}
+
+/// What a feed is to this engine.
+#[derive(Clone, Copy)]
+enum Route {
+    Md(usize),
+    Tob(usize),
+    Exec,
+    Unknown,
+}
+
+struct Engine {
+    core: Core,
+    /// A trace per venue, held apart from `Core`: a trace in flight borrows
+    /// its tracer.
+    tracers: Vec<Tracer>,
+    /// By [`FeedId`].
+    routes: Vec<Route>,
+}
+
+impl Engine {
+    fn new(ctx: &mut Ctx) -> Result<Self, Error> {
+        let service = format!("engine-{}", ctx.region());
+        let signals = ctx.publish(&service, "signals")?;
+        let orders = ctx.publish(&service, "orders")?;
+        let exchange = format!("exch-sim-{}", ctx.region());
+        let exec = ctx.subscribe(&exchange, "exec")?;
+        let metrics = ctx.metrics().clone();
+        let mut engine = Self {
+            core: Core {
+                venues: Vec::new(),
+                assets: Vec::new(),
+                signals,
+                orders,
+                sent: metrics.counter("orders", &[]),
+                fills: metrics.counter("fills", &[]),
+                expired: metrics.counter("orders_expired", &[]),
+                open_gauge: metrics.gauge("orders_open", &[]),
+                drift: metrics.gauge("clock_drift_ns", &[]),
+                live: false,
+                open: DetMap::default(),
+                order_ack: metrics.local_histogram("order_ack_ns", &[]),
+                order_fill: metrics.local_histogram("order_fill_ns", &[]),
+                metrics,
+            },
+            tracers: Vec::new(),
+            routes: Vec::new(),
+        };
+        engine.route(exec, Route::Exec);
+        engine.add_venues(ctx)?;
+        ctx.every_aligned(SECOND, EVERY_SECOND)
+            .map_err(|e| Error::Config(format!("timer: {e}")))?;
+        log::info!(
+            "{service}: {} venues ({})",
+            engine.core.venues.len(),
+            engine
+                .core
+                .venues
+                .iter()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        Ok(engine)
+    }
+
+    fn route(&mut self, feed: FeedId, route: Route) {
+        let i = feed.0 as usize;
+        if self.routes.len() <= i {
+            self.routes.resize(i + 1, Route::Unknown);
+        }
+        self.routes[i] = route;
+    }
+
+    /// Subscribe to every feed handler of the registry, in every region, not
+    /// yet subscribed to: each engine sees the whole market, the far venues
+    /// as late as the network makes them. Venues are only ever added: one
+    /// taken out of the registry just goes quiet.
+    fn add_venues(&mut self, ctx: &mut Ctx) -> Result<(), Error> {
+        let feeds: Vec<(String, String)> = ctx
+            .streams()
+            .services
             .iter()
-            .map(|v| v.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-        app.bus.host_ip()
-    );
-    // A feed handler added to the registry, in any region, is subscribed to
-    // within a second or two, with no restart.
-    let mut watch = ergon_runtime::streams::Watch::new(&app.streams_path);
-    let mut core = Core {
-        venues,
-        assets: Vec::new(),
-        signals,
-        orders,
-        clock: Clock::new(),
-        next_second: 0,
-        sent: metrics.counter("orders", &[]),
-        fills: metrics.counter("fills", &[]),
-        expired: metrics.counter("orders_expired", &[]),
-        open_gauge: metrics.gauge("orders_open", &[]),
-        drift: metrics.gauge("clock_drift_ns", &[]),
-        live: false,
-        open: HashMap::new(),
-        order_ack: metrics.histogram("order_ack_ns", &[]),
-        order_fill: metrics.histogram("order_fill_ns", &[]),
-        metrics: metrics.clone(),
-    };
-    loop {
-        if app.stopping() {
-            return Ok(());
-        }
-        let mut work = 0;
-        for (i, (md, tob, t2t)) in subs.iter_mut().enumerate() {
-            work += md.poll(|m, delivery| core.on_md(t2t, i, m, delivery), LIMIT);
-            work += tob.poll(|m, _| core.on_tob(i, m), LIMIT);
-        }
-        work += exec.poll(|m, _| core.on_exec(m), LIMIT);
-        let now = core.clock.now();
-        if core.every_second(now) {
-            for (venue, (md, _, _)) in core.venues.iter().zip(&subs) {
-                venue.live.set(f64::from(u8::from(md.is_live())));
+            .filter(|(name, _)| name.starts_with("md-"))
+            .map(|(name, service)| (name.clone(), service.region.clone()))
+            .collect();
+        for (name, region) in feeds {
+            let label = name.trim_start_matches("md-").to_uppercase();
+            if self.core.venues.iter().any(|v| v.name == label) {
+                continue;
             }
-            if let Some(streams) = watch.changed()
-                && let Err(e) = add_venues(&app, &streams, &metrics, &mut subs, &mut core.venues)
-            {
-                log::error!("streams.yaml: {e}");
-            }
+            let v = self.core.venues.len();
+            let tob = ctx.subscribe_live(&name, "tob")?;
+            let md = ctx.subscribe(&name, "md")?;
+            self.route(tob, Route::Tob(v));
+            self.route(md, Route::Md(v));
+            // A trace per venue, its stages naming the venue and the route,
+            // so a slow `feed` reads as the region it crossed. Still
+            // `tick_to_trade`: sampled by tables.yaml's rule of that name.
+            self.tracers.push(ctx.tracer(
+                "tick_to_trade",
+                &[
+                    &format!("venue {label}"),
+                    &format!("feed {region}→{}", ctx.region()),
+                    "decode",
+                    "book",
+                    "signal",
+                    "decide",
+                    "send",
+                ],
+                &[],
+            ));
+            // `from`: the feed's region, so each engine's view of every
+            // region is its own series (Tokyo to London is not Tokyo to Tokyo).
+            let metrics = &self.core.metrics;
+            let l = [("venue", label.as_str()), ("from", region.as_str())];
+            log::info!("{name}: subscribing");
+            self.core.venues.push(Venue {
+                instruments: Vec::new(),
+                sessions: 0,
+                updated: ctx.now(),
+                is_live: false,
+                resyncs: metrics.counter("feed_resyncs", &l),
+                age: metrics.gauge("book_age_ns", &l),
+                live: metrics.gauge("feed_live", &l),
+                replayed: metrics.counter("feed_replayed", &l),
+                tob: metrics.counter("tob_quotes", &l),
+                tob_latency: metrics.local_histogram("tob_latency_ns", &l),
+                md_latency: metrics.local_histogram("md_to_engine_ns", &l),
+                venue_latency: metrics.local_histogram("venue_to_engine_ns", &l),
+                tick_to_order: metrics.local_histogram("tick_to_order_ns", &l),
+                name: label,
+            });
         }
-        app.persist.poll(now);
-        app.idle.idle(work);
+        Ok(())
     }
 }
 
-/// Subscribe to every feed handler of `streams`, in every region, not yet
-/// subscribed to: each engine sees the whole market, the far venues as late
-/// as the network makes them. Venues are only ever added: one taken out of
-/// the registry just goes quiet.
-fn add_venues(
-    app: &App,
-    streams: &ergon_runtime::streams::Streams,
-    metrics: &ergon_runtime::metrics::Metrics,
-    subs: &mut Vec<(PersistentSubscription, Subscription, Tracer)>,
-    venues: &mut Vec<Venue>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for (name, service) in streams
-        .services
-        .iter()
-        .filter(|(name, _)| name.starts_with("md-"))
-    {
-        let label = name.trim_start_matches("md-").to_uppercase();
-        if venues.iter().any(|v| v.name == label) {
-            continue;
-        }
-        let tob = app.bus.subscribe_live(streams, name, "tob")?;
-        let md = app.bus.subscribe(streams, name, "md")?;
-        // A trace per venue, its stages naming the venue and the route, so
-        // a slow `feed` reads as the region it crossed. Still `tick_to_trade`:
-        // sampled by tables.yaml's rule of that name. Held apart from `Core`:
-        // a trace in flight borrows its tracer.
-        let t2t = app.persist.tracer(
-            "tick_to_trade",
-            &[
-                &format!("venue {label}"),
-                &format!("feed {}→{}", service.region, app.region),
-                "decode",
-                "book",
-                "signal",
-                "decide",
-                "send",
-            ],
-            &[],
-        );
-        subs.push((md, tob, t2t));
-        // `from`: the feed's region, so each engine's view of every region
-        // is its own series (Tokyo to London is not Tokyo to Tokyo).
-        let l = [("venue", label.as_str()), ("from", service.region.as_str())];
-        log::info!("{name}: subscribing");
-        venues.push(Venue {
-            instruments: Vec::new(),
-            sessions: 0,
-            updated: Clock::new().now(),
-            resyncs: metrics.counter("feed_resyncs", &l),
-            age: metrics.gauge("book_age_ns", &l),
-            live: metrics.gauge("feed_live", &l),
-            replayed: metrics.counter("feed_replayed", &l),
-            tob: metrics.counter("tob_quotes", &l),
-            tob_latency: metrics.histogram("tob_latency_ns", &l),
-            md_latency: metrics.histogram("md_to_engine_ns", &l),
-            venue_latency: metrics.histogram("venue_to_engine_ns", &l),
-            tick_to_order: metrics.histogram("tick_to_order_ns", &l),
-            name: label,
-        });
+impl Agent for Engine {
+    fn start(&mut self, _ctx: &mut Ctx) -> Result<(), Error> {
+        Ok(())
     }
-    Ok(())
+
+    #[inline]
+    fn on_message(&mut self, ctx: &mut Ctx, feed: FeedId, msg: &[u8], delivery: Delivery) {
+        match self.routes.get(feed.0 as usize) {
+            Some(Route::Md(v)) => self.core.on_md(ctx, &self.tracers[*v], *v, msg, delivery),
+            Some(Route::Tob(v)) => self.core.on_tob(ctx, *v, msg),
+            Some(Route::Exec) => self.core.on_exec(ctx, msg),
+            Some(Route::Unknown) | None => {}
+        }
+    }
+
+    fn on_timer(&mut self, ctx: &mut Ctx, timer: Expiry) {
+        if timer.token == EVERY_SECOND {
+            self.core.every_second(ctx);
+        } else if timer.token & ORDER_EXPIRY != 0
+            && self
+                .core
+                .open
+                .remove(&(timer.token & !ORDER_EXPIRY))
+                .is_some()
+        {
+            self.core.expired.inc();
+        }
+    }
+
+    fn on_streams(&mut self, ctx: &mut Ctx) {
+        // A feed handler added to the registry, in any region, is subscribed
+        // to within a second or two, with no restart.
+        if let Err(e) = self.add_venues(ctx) {
+            log::error!("streams.yaml: {e}");
+        }
+    }
 }
 
 struct Instrument {
@@ -196,6 +252,8 @@ struct Venue {
     /// Publisher sessions seen: every one after the first is a restart.
     sessions: u64,
     updated: Nanos,
+    /// The last `md` message was live, not caught up from the archive.
+    is_live: bool,
     resyncs: Counter,
     age: Gauge,
     /// 1 on the live stream, 0 replaying (catching up) or finding it.
@@ -224,10 +282,8 @@ struct Asset {
 struct Core {
     venues: Vec<Venue>,
     assets: Vec<Asset>,
-    signals: Publication,
-    orders: Publication,
-    clock: Clock,
-    next_second: i64,
+    signals: Out,
+    orders: Out,
     sent: Counter,
     fills: Counter,
     expired: Counter,
@@ -236,9 +292,10 @@ struct Core {
     drift: Gauge,
     /// The message being handled is live, not replayed from the archive.
     live: bool,
-    /// Orders sent and not yet answered, by id: when sent. A fill applies
-    /// once, to an order here; a replayed or repeated one is ignored.
-    open: HashMap<u64, i64>,
+    /// Orders sent and not yet answered, by id: when sent, and the expiry
+    /// timer. A fill applies once, to an order here; a replayed or repeated
+    /// one is ignored.
+    open: DetMap<u64, (Nanos, TimerId)>,
     /// Order sent to the exchange's `New`, and to its `Filled`.
     order_ack: Histogram,
     order_fill: Histogram,
@@ -248,9 +305,10 @@ struct Core {
 impl Core {
     /// One message of venue `v`'s `md` stream. Never panics: a panic here
     /// would abort the process inside Aeron's callback.
-    fn on_md(&mut self, t2t: &Tracer, v: usize, m: &[u8], delivery: Delivery) {
-        let received = self.clock.now();
+    fn on_md(&mut self, ctx: &mut Ctx, t2t: &Tracer, v: usize, m: &[u8], delivery: Delivery) {
+        let received = ctx.now();
         self.live = delivery.is_live();
+        self.venues[v].is_live = self.live;
         if delivery.first {
             self.new_session(v);
         }
@@ -267,8 +325,8 @@ impl Core {
             self.venues[v].replayed.inc();
         }
         match msg {
-            AnyMessage::BookDeltas(d) => self.on_deltas(t2t, v, d, received),
-            AnyMessage::BookSnapshot(d) => self.on_snapshot(t2t, v, d, received),
+            AnyMessage::BookDeltas(d) => self.on_deltas(ctx, t2t, v, d, received),
+            AnyMessage::BookSnapshot(d) => self.on_snapshot(ctx, t2t, v, d, received),
             AnyMessage::InstrumentSpec(d) => self.on_spec(v, d),
             _ => {}
         }
@@ -342,43 +400,55 @@ impl Core {
         instrument.asset = Some(asset);
     }
 
-    fn on_snapshot(&mut self, t2t: &Tracer, v: usize, d: BookSnapshotDecoder<'_>, received: Nanos) {
+    fn on_snapshot(
+        &mut self,
+        ctx: &mut Ctx,
+        t2t: &Tracer,
+        v: usize,
+        d: BookSnapshotDecoder<'_>,
+        received: Nanos,
+    ) {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
-        let at = self.clock.from_remote(d.ts_init() as i64, received);
-        self.path_latency(v, at, d.ts_event(), received);
+        let at = ctx.from_remote(d.ts_init() as i64);
+        self.path_latency(ctx, v, at, d.ts_event(), received);
         // From the venue's event: the venue to md, then md to here.
-        let event = self.clock.from_remote(d.ts_event() as i64, received);
-        let mut trace = t2t.start(event, t2t.next_id());
+        let mut trace = t2t.start(ctx.from_remote(d.ts_event() as i64), t2t.next_id());
         trace.mark(at);
         trace.mark(received);
         let (Ok(bids), Ok(asks), Ok(symbol)) = (d.bids(), d.asks(), d.symbol()) else {
             return;
         };
         let i = self.instrument(v, symbol);
-        trace.mark(self.clock.now());
+        trace.mark(ctx.read());
         self.venues[v].instruments[i].book.snapshot(
             bids.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
             asks.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
         );
-        self.tick(v, i, d.ts_init(), at, trace);
+        self.tick(ctx, v, i, d.ts_init(), at, trace);
     }
 
-    fn on_deltas(&mut self, t2t: &Tracer, v: usize, d: BookDeltasDecoder<'_>, received: Nanos) {
+    fn on_deltas(
+        &mut self,
+        ctx: &mut Ctx,
+        t2t: &Tracer,
+        v: usize,
+        d: BookDeltasDecoder<'_>,
+        received: Nanos,
+    ) {
         // md's receive time, by its wall clock: the first stage is the
         // message's true age whatever this process's clock has drifted.
-        let at = self.clock.from_remote(d.ts_init() as i64, received);
-        self.path_latency(v, at, d.ts_event(), received);
+        let at = ctx.from_remote(d.ts_init() as i64);
+        self.path_latency(ctx, v, at, d.ts_event(), received);
         // From the venue's event: the venue to md, then md to here.
-        let event = self.clock.from_remote(d.ts_event() as i64, received);
-        let mut trace = t2t.start(event, t2t.next_id());
+        let mut trace = t2t.start(ctx.from_remote(d.ts_event() as i64), t2t.next_id());
         trace.mark(at);
         trace.mark(received);
         let (Ok(deltas), Ok(symbol)) = (d.deltas(), d.symbol()) else {
             return;
         };
         let i = self.instrument(v, symbol);
-        trace.mark(self.clock.now());
+        trace.mark(ctx.read());
         let book = &mut self.venues[v].instruments[i].book;
         if !book.synced {
             return; // until its first snapshot
@@ -395,12 +465,20 @@ impl Core {
                 },
             });
         }
-        self.tick(v, i, d.ts_init(), at, trace);
+        self.tick(ctx, v, i, d.ts_init(), at, trace);
     }
 
     /// Instrument `i` of venue `v` changed: its asset's aggregate, EMAs and
     /// strategy, and an order if it says so.
-    fn tick(&mut self, v: usize, i: usize, tick_ts: u64, at: Nanos, mut trace: Trace<'_>) {
+    fn tick(
+        &mut self,
+        ctx: &mut Ctx,
+        v: usize,
+        i: usize,
+        tick_ts: u64,
+        at: Nanos,
+        mut trace: Trace<'_>,
+    ) {
         let Some(a) = self.venues[v].instruments[i].asset else {
             return;
         };
@@ -420,7 +498,7 @@ impl Core {
                 };
             }
         }
-        let now = self.clock.now();
+        let now = ctx.read();
         trace.mark(now);
         let (Some(bid), Some(ask)) = (bid, ask) else {
             return;
@@ -428,40 +506,41 @@ impl Core {
         let asset = &mut self.assets[a];
         asset.mid = (bid + ask) as f64 / 2.0 / engine::SCALE;
         asset.emas.update(now.epoch_ns(), asset.mid);
-        trace.mark(self.clock.now());
+        trace.mark(ctx.read());
         let decision = asset
             .strategy
             .decide(now.epoch_ns(), asset.mid, &asset.emas);
-        trace.mark(self.clock.now());
+        trace.mark(ctx.read());
         if let Some(buy) = decision {
-            let order_id = self.clock.now().epoch_ns() as u64; // ponytail: unique while one engine sends per ns
+            let order_id = ctx.next_id();
             let asset = asset.name.as_bytes();
             let len = NewOrderEncoder::compute_length_with_header(asset.len());
-            let sent = self
-                .orders
-                .record(NewOrderEncoder::TEMPLATE_ID, len, |buf| {
-                    Ok::<_, schema::trading::sbe_rt::EncodeError>(
-                        NewOrderEncoder::wrap_and_apply_header(buf, 0)
-                            .fixed(&NewOrderFixedFields {
-                                // By the wall clock: the exchange compares it with its own.
-                                ts: self.clock.wall().epoch_ns() as u64,
-                                tick_ts,
-                                order_id,
-                                side: if buy { Side::Buy } else { Side::Sell },
-                                // Marketable: the aggregated best on the other side.
-                                price: Decimal9::new(if buy { ask } else { bid }),
-                                qty: Decimal9::new((Strategy::QTY * engine::SCALE) as i64),
-                            })
-                            .asset(asset)?
-                            .encoded_length_with_header(),
-                    )
-                });
-            trace.mark(self.clock.now());
+            let sent = ctx.send(self.orders, NewOrderEncoder::TEMPLATE_ID, len, |buf| {
+                Ok::<_, schema::trading::sbe_rt::EncodeError>(
+                    NewOrderEncoder::wrap_and_apply_header(buf, 0)
+                        .fixed(&NewOrderFixedFields {
+                            // By the wall clock: the exchange compares it with its own.
+                            ts: ctx.wall_ns().epoch_ns() as u64,
+                            tick_ts,
+                            order_id,
+                            side: if buy { Side::Buy } else { Side::Sell },
+                            // Marketable: the aggregated best on the other side.
+                            price: Decimal9::new(if buy { ask } else { bid }),
+                            qty: Decimal9::new((Strategy::QTY * engine::SCALE) as i64),
+                        })
+                        .asset(asset)?
+                        .encoded_length_with_header(),
+                )
+            });
+            let sent_at = ctx.read();
+            trace.mark(sent_at);
             if sent.is_ok() {
                 self.sent.inc();
-                let ordered = self.clock.now().since(at).max(0) as u64;
+                let ordered = sent_at.since(at).max(0) as u64;
                 self.venues[v].tick_to_order.record(ordered);
-                self.open.insert(order_id, order_id as i64);
+                if let Ok(expiry) = ctx.after(ORDER_TIMEOUT_NS, ORDER_EXPIRY | order_id) {
+                    self.open.insert(order_id, (sent_at, expiry));
+                }
                 trace.set_id(TraceId::new(ORDERS, order_id));
                 trace.keep();
             }
@@ -472,38 +551,36 @@ impl Core {
     /// How old a live book message of venue `v` arrives: from the feed
     /// handler's receive (`at`) and from the venue's own event time. A
     /// message caught up from the archive is as old as the outage, not the path.
-    fn path_latency(&self, v: usize, at: Nanos, ts_event: u64, received: Nanos) {
+    fn path_latency(&self, ctx: &Ctx, v: usize, at: Nanos, ts_event: u64, received: Nanos) {
         if !self.live {
             return;
         }
         let venue = &self.venues[v];
         venue.md_latency.record(received.since(at).max(0) as u64);
-        let event = self.clock.from_remote(ts_event as i64, received);
+        let event = ctx.from_remote(ts_event as i64);
         venue
             .venue_latency
             .record(received.since(event).max(0) as u64);
     }
 
     /// Best effort top of book: counted, and how old it arrives.
-    fn on_tob(&mut self, v: usize, m: &[u8]) {
+    fn on_tob(&self, ctx: &Ctx, v: usize, m: &[u8]) {
         let Ok(AnyMessage::Quote(q)) = AnyMessage::decode(m, 0) else {
             return;
         };
         let venue = &self.venues[v];
         venue.tob.inc();
-        let age = self
-            .clock
-            .wall()
-            .since(Nanos::from_epoch(q.ts_init() as i64));
+        let age = ctx.now().since(ctx.from_remote(q.ts_init() as i64));
         venue.tob_latency.record(age.max(0) as u64);
     }
 
-    fn on_exec(&mut self, m: &[u8]) {
+    fn on_exec(&mut self, ctx: &mut Ctx, m: &[u8]) {
         let Ok(TradingMessage::ExecutionReport(r)) = TradingMessage::decode(m, 0) else {
             return;
         };
         let sent = self.open.get(&r.order_id()).copied();
-        let age = |sent: i64| (self.clock.now().epoch_ns() - sent).max(0) as u64;
+        let now = ctx.now();
+        let age = |(sent, _): (Nanos, TimerId)| now.since(sent).max(0) as u64;
         match r.status() {
             OrderStatus::New => {
                 if let Some(sent) = sent {
@@ -513,19 +590,20 @@ impl Core {
             }
             OrderStatus::Filled => {}
             OrderStatus::Rejected => {
-                self.open.remove(&r.order_id());
+                if let Some((_, expiry)) = self.open.remove(&r.order_id()) {
+                    ctx.cancel(expiry);
+                }
                 return;
             }
             _ => return,
         }
         // Once: an exchange replaying its orders after a restart may answer
         // one again.
-        if self.open.remove(&r.order_id()).is_none() {
+        let Some(open) = self.open.remove(&r.order_id()) else {
             return;
-        }
-        if let Some(sent) = sent {
-            self.order_fill.record(age(sent));
-        }
+        };
+        ctx.cancel(open.1);
+        self.order_fill.record(age(open));
         let Ok(name) = r.asset_as_str() else {
             return;
         };
@@ -540,20 +618,14 @@ impl Core {
     }
 
     /// Once a second: each asset's EMAs and aggregated book on `signals`,
-    /// the gauges, and orders given up. Whether it was time.
-    fn every_second(&mut self, now: Nanos) -> bool {
-        if now.epoch_ns() < self.next_second {
-            return false;
-        }
-        self.next_second = (now.epoch_ns() / SECOND + 1) * SECOND;
-        let before = self.open.len();
-        self.open
-            .retain(|_, sent| now.epoch_ns() - *sent < ORDER_TIMEOUT_NS);
-        self.expired.add((before - self.open.len()) as u64);
+    /// and the gauges.
+    fn every_second(&mut self, ctx: &mut Ctx) {
+        let now = ctx.now();
         self.open_gauge.set(self.open.len() as f64);
-        self.drift.set(self.clock.wall().since(now) as f64);
+        self.drift.set(ctx.wall_ns().since(now) as f64);
         for venue in &self.venues {
             venue.age.set(now.since(venue.updated) as f64);
+            venue.live.set(f64::from(u8::from(venue.is_live)));
         }
         for (a, asset) in self.assets.iter().enumerate() {
             asset.position.set(asset.strategy.position);
@@ -565,7 +637,7 @@ impl Core {
             let name = asset.name.as_bytes();
             let [ema5m, ema30m, ema1h, ema4h, ema12h, ema1d] = asset.emas.values;
             let len = EmaEncoder::compute_length_with_header(name.len());
-            let _ = self.signals.record(EmaEncoder::TEMPLATE_ID, len, |buf| {
+            let _ = ctx.send(self.signals, EmaEncoder::TEMPLATE_ID, len, |buf| {
                 Ok::<_, schema::trading::sbe_rt::EncodeError>(
                     EmaEncoder::wrap_and_apply_header(buf, 0)
                         .fixed(&EmaFixedFields {
@@ -595,41 +667,38 @@ impl Core {
             let len =
                 AggBookEncoder::compute_length_with_header(bids.len(), asks.len(), name.len());
             let d9 = |x: f64| Decimal9::new((x * engine::SCALE).round() as i64);
-            let _ = self
-                .signals
-                .record(AggBookEncoder::TEMPLATE_ID, len, |buf| {
-                    Ok::<_, schema::trading::sbe_rt::EncodeError>(
-                        AggBookEncoder::wrap_and_apply_header(buf, 0)
-                            .fixed(&AggBookFixedFields { ts })
-                            .bids(bids.len() as u16, |g| {
-                                for &(price, size, venue) in &bids {
-                                    g.add_checked(|mut entry| {
-                                        entry
-                                            .price_wire(Decimal9::new(price))
-                                            .size_wire(d9(size))
-                                            .venue_str(venue)?;
-                                        Ok(entry.complete())
-                                    })?;
-                                }
-                                Ok(())
-                            })?
-                            .asks(asks.len() as u16, |g| {
-                                for &(price, size, venue) in &asks {
-                                    g.add_checked(|mut entry| {
-                                        entry
-                                            .price_wire(Decimal9::new(price))
-                                            .size_wire(d9(size))
-                                            .venue_str(venue)?;
-                                        Ok(entry.complete())
-                                    })?;
-                                }
-                                Ok(())
-                            })?
-                            .asset(name)?
-                            .encoded_length_with_header(),
-                    )
-                });
+            let _ = ctx.send(self.signals, AggBookEncoder::TEMPLATE_ID, len, |buf| {
+                Ok::<_, schema::trading::sbe_rt::EncodeError>(
+                    AggBookEncoder::wrap_and_apply_header(buf, 0)
+                        .fixed(&AggBookFixedFields { ts })
+                        .bids(bids.len() as u16, |g| {
+                            for &(price, size, venue) in &bids {
+                                g.add_checked(|mut entry| {
+                                    entry
+                                        .price_wire(Decimal9::new(price))
+                                        .size_wire(d9(size))
+                                        .venue_str(venue)?;
+                                    Ok(entry.complete())
+                                })?;
+                            }
+                            Ok(())
+                        })?
+                        .asks(asks.len() as u16, |g| {
+                            for &(price, size, venue) in &asks {
+                                g.add_checked(|mut entry| {
+                                    entry
+                                        .price_wire(Decimal9::new(price))
+                                        .size_wire(d9(size))
+                                        .venue_str(venue)?;
+                                    Ok(entry.complete())
+                                })?;
+                            }
+                            Ok(())
+                        })?
+                        .asset(name)?
+                        .encoded_length_with_header(),
+                )
+            });
         }
-        true
     }
 }

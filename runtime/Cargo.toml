@@ -21,10 +21,24 @@ signal-hook = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
+libmimalloc-sys = { version = "0.1.49", features = ["extended"], optional = true }
+mimalloc = { version = "0.1.52", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[features]
+# Allocator and process metrics from mimalloc; see `alloc_stats`.
+mimalloc = ["dep:libmimalloc-sys"]
+# Count each thread's allocations (a TLS increment per allocation, process
+# wide): `loop_allocs` should read 0 in steady state. Measure before turning on.
+alloc-count = ["mimalloc", "dep:mimalloc"]
+
 [build-dependencies]
 ergo-sbe = { workspace = true }
 
 [dev-dependencies]
+mimalloc = "0.1.52"
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.11"
 
@@ -35,6 +49,19 @@ harness = false
 [[bench]]
 name = "dispatch"
 harness = false
+
+[[bench]]
+name = "hotpath"
+harness = false
+
+[[bench]]
+name = "alloc_sample"
+harness = false
+required-features = ["mimalloc"]
+
+[[test]]
+name = "alloc_stats"
+required-features = ["alloc-count"]
 
 [lints]
 workspace = true

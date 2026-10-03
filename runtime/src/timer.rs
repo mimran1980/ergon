@@ -390,6 +390,19 @@ impl TimerWheel {
         self.count
     }
 
+    /// Write every column once, so zero-initialised pages are faulted in
+    /// now rather than by the first live timer.
+    pub fn prefault(&mut self) {
+        let free = self.slab.deadline.len();
+        self.slab.handle.fill(0);
+        self.timers.fill(Rec::default());
+        self.spoke_len.fill(0);
+        self.occupied.fill(0);
+        self.slab.deadline.fill(NIL);
+        debug_assert_eq!(self.count, 0, "prefault on a wheel with timers");
+        debug_assert_eq!(free, self.free.len(), "every handle is free");
+    }
+
     /// `true` when no timer is scheduled.
     #[must_use]
     pub const fn is_empty(&self) -> bool {

@@ -197,6 +197,25 @@ impl Clock {
         Nanos(now.0 - self.wall().since(Nanos::from_epoch(epoch_ns)))
     }
 
+    /// The wall clock less [`Clock::read`], from the tightest of 8 paired
+    /// reads, as the process anchor is paired. Adding it to a read gives the
+    /// wall-clock time with no system call; re-measure it now and then to
+    /// follow NTP slew.
+    #[must_use]
+    pub fn wall_offset(&self) -> i64 {
+        let mut best = (i64::MAX, 0);
+        for _ in 0..8 {
+            let before = self.read();
+            let wall = self.wall();
+            let after = self.read();
+            let gap = after.since(before);
+            if gap < best.0 {
+                best = (gap, wall.0 - (before.0 + gap / 2));
+            }
+        }
+        best.1
+    }
+
     /// Read the clock without caching it.
     #[inline]
     #[must_use]
