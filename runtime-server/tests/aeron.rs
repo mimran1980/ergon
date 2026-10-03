@@ -1264,9 +1264,9 @@ fn a_feed_resumed_mid_recording_keeps_its_source() -> TestResult {
         "aeron_feed_resume",
         "tables:\n  shapes: { kind: dynamic }\n",
     )?;
-    let stream_id = stream(22);
-    let feed_stream = stream(23);
-    let port = 43_000 + u16::try_from(std::process::id() % 1000).unwrap_or(0) * 2;
+    let stream_id = stream(29);
+    let feed_stream = stream(30);
+    let port = 46_000 + u16::try_from(std::process::id() % 1000).unwrap_or(0) * 2;
     let streams = ergon_runtime::streams::Streams::parse(&format!(
         "services:\n  md-resume: {{ port: {port}, region: an1, streams: {{ md: {feed_stream} }} }}\nkinds:\n  md: {{ reliable: true }}\n"
     ))?;
