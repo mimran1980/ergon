@@ -15,6 +15,15 @@ use crate::streams::Streams;
 
 mod persistent;
 
+/// The image session id of an archive replay: the low 32 bits of the
+/// replay session id `start_replay` returns. The high 32 bits number the
+/// replay, and pass `i32` once an archive has run a few billion replays
+/// (Aeron's own clients take `(int) replaySessionId`).
+#[must_use]
+pub fn replay_image_session(replay_session: i64) -> i32 {
+    u32::try_from(replay_session & 0xffff_ffff).map_or(0, u32::cast_signed)
+}
+
 pub use persistent::PersistentSubscription;
 
 /// Where a subscribed message came from.
@@ -199,5 +208,17 @@ impl Subscription {
             Self::RETRY
         );
         self.state = State::Waiting(Instant::now() + Self::RETRY);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replay_session_is_its_low_32_bits() {
+        assert_eq!(replay_image_session(82_293_028_631), 688_650_007);
+        assert_eq!(replay_image_session((19 << 32) | 0xFFFF_FFFF), -1);
+        assert_eq!(replay_image_session(1_234), 1_234);
     }
 }

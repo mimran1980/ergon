@@ -354,9 +354,7 @@ impl Ingester {
                 };
             let position = Arc::new(AtomicI64::new(from));
             let unavailable = Handler::new(ReplayPosition(Arc::clone(&position)));
-            let session_id = i32::try_from(session).map_err(|_| {
-                Error::Aeron(format!("replay session {session} does not fit an i32"))
-            })?;
+            let session_id = ergon_runtime::subscription::replay_image_session(session);
             let subscription = self
                 .aeron
                 .async_add_subscription(

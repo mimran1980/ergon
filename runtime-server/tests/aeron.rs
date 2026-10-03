@@ -1234,7 +1234,7 @@ fn an_mdc_feed_is_spy_recorded_and_reachable_by_name() -> TestResult {
     let recording = *ids.last().ok_or("the spy made no recording")?;
     let params = AeronArchiveReplayParams::new(-1, -1, 0, -1, -1, -1)?;
     let session = archive.start_replay(recording, c"aeron:ipc", stream_id + 1, &params)?;
-    let session_id = i32::try_from(session)?;
+    let session_id = ergon_runtime::subscription::replay_image_session(session);
     let replay = aeron
         .async_add_subscription(
             &format!("aeron:ipc?session-id={session_id}").into_c_string(),
