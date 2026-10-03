@@ -13,9 +13,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use runtime::app::App;
-use runtime::clock::{Clock, Nanos};
-use runtime::trace::TraceId;
+use ergon_runtime::app::App;
+use ergon_runtime::clock::{Clock, Nanos};
+use ergon_runtime::trace::TraceId;
 use schema::trading::sbe_rt::EncodeError;
 use schema::trading::{
     ExecutionReportEncoder, ExecutionReportFixedFields, NewOrderDecoder, OrderStatus,

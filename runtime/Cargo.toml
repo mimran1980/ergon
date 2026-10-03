@@ -1,0 +1,28 @@
+[package]
+name = "ergon-runtime"
+description = "What a lab application runs on: the Aeron bus, feeds, recording for ClickHouse, metrics, traces, a clock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+# The lab code is built with the repository toolchain (1.95). It does not
+# claim the workspace MSRV: the 1.88 job covers ergo-sbe only.
+
+[dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+ergo-sbe = { workspace = true }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+log = "0.4"
+minstant = "0.1"
+rusteron-archive = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+signal-hook = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+
+[build-dependencies]
+ergo-sbe = { workspace = true }
+
+[lints]
+workspace = true

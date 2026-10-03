@@ -3,7 +3,10 @@ name = "schema"
 description = "The lab's SBE schemas and the codecs generated from them."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# The sample workspace's 1.98.1 floor is Nautilus's. This crate is generated
+# codecs, and the root workspace builds it as a dev-dependency of the ingester
+# tests on the repository toolchain.
+rust-version = "1.88"
 license.workspace = true
 publish.workspace = true
 

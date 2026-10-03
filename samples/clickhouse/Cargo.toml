@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["aeron-bench", "aeron-driver", "engine", "md", "persist-server", "runtime", "schema"]
+members = ["aeron-bench", "aeron-driver", "engine", "md", "schema"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,8 +10,8 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-ergo-sbe = { path = "../../sbe" }
-runtime = { path = "runtime" }
+ergo-sbe = { path = "../../sbe", default-features = false }
+ergon-runtime = { path = "../../runtime" }
 schema = { path = "schema" }
 log = "0.4"
 mimalloc = "0.1.52"

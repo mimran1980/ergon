@@ -46,13 +46,13 @@ use nautilus_model::orderbook::{BookLevel, OrderBook};
 use nautilus_okx::OKXInstrumentType;
 use nautilus_okx::config::OKXDataClientConfig;
 use nautilus_okx::factories::OKXDataClientFactory;
-use runtime::Settings;
-use runtime::bus::Bus;
-use runtime::clock::{Clock, Nanos};
-use runtime::event::Value;
-use runtime::metrics::{Counter, Gauge, Histogram};
-use runtime::persist::Persist;
-use runtime::trace::Tracer;
+use ergon_runtime::Settings;
+use ergon_runtime::bus::Bus;
+use ergon_runtime::clock::{Clock, Nanos};
+use ergon_runtime::event::Value;
+use ergon_runtime::metrics::{Counter, Gauge, Histogram};
+use ergon_runtime::persist::Persist;
+use ergon_runtime::trace::Tracer;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use schema::market::{
@@ -267,9 +267,9 @@ struct Recorder {
 struct Feeds {
     /// Reliable: trades, order book changes and snapshots, bars, mark and
     /// index prices, funding rates.
-    md: runtime::publication::Publication,
+    md: ergon_runtime::publication::Publication,
     /// Best effort: quotes (top of book).
-    tob: runtime::publication::Publication,
+    tob: ergon_runtime::publication::Publication,
     /// Book changes per `book_deltas` message: as many as one UDP frame holds.
     deltas_per_row: usize,
 }
@@ -286,10 +286,10 @@ impl std::fmt::Debug for Feeds {
 impl Feeds {
     /// Open `service`'s feeds from the registry, on the bus's node.
     fn open(bus: &Bus, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let streams = runtime::streams::Streams::load(
+        let streams = ergon_runtime::streams::Streams::load(
             std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
         )?;
-        runtime::streams::check_node_network()?;
+        ergon_runtime::streams::check_node_network()?;
         let md = bus.publish(&streams, service, "md")?;
         let tob = bus.publish(&streams, service, "tob")?;
         // Room for the longest symbol and venue name in these feeds.
@@ -325,7 +325,7 @@ struct Telemetry {
     /// The venue's timestamp to our handler, ns.
     trade_latency: Histogram,
     quote_latency: Histogram,
-    /// How long `runtime::persist::record` of a trade takes, ns.
+    /// How long `ergon_runtime::persist::record` of a trade takes, ns.
     record_ns: Histogram,
     spread_bps: HashMap<InstrumentId, Gauge>,
     /// Each book change, from the venue's timestamp: `wire`, `convert`,
@@ -335,7 +335,7 @@ struct Telemetry {
 
 impl Telemetry {
     fn new(instruments: &[InstrumentId]) -> Self {
-        let m = runtime::persist::metrics();
+        let m = ergon_runtime::persist::metrics();
         let kind = |k| m.counter("messages", &[("kind", k)]);
         let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
         Self {
@@ -354,7 +354,7 @@ impl Telemetry {
                     (id, gauge)
                 })
                 .collect(),
-            book_update: runtime::persist::tracer(
+            book_update: ergon_runtime::persist::tracer(
                 "book_update",
                 &["wire", "convert", "record"],
                 &["deltas"],
@@ -759,8 +759,8 @@ impl DataActor for Recorder {
             return Ok(());
         }
         // Any other custom type: rare, so a JSON round trip is fine here.
-        let table = runtime::persist::snake_case(data.data.type_name());
-        if !runtime::persist::event_enabled(&table) {
+        let table = ergon_runtime::persist::snake_case(data.data.type_name());
+        if !ergon_runtime::persist::event_enabled(&table) {
             return Ok(());
         }
         // ponytail: a JSON round trip per row; these arrive a few a second.
@@ -787,7 +787,7 @@ impl DataActor for Recorder {
             };
             (k != "type").then_some((k.as_str(), value))
         });
-        runtime::persist::record_row(
+        ergon_runtime::persist::record_row(
             &table,
             scalars
                 .chain(nested.iter().map(|(k, v)| (*k, Value::Str(v))))
@@ -802,7 +802,7 @@ impl Recorder {
     /// wrote, with the decimals and ids formatted on the stack.
     fn public_trade(&self, t: &HyperliquidPublicTrade) {
         const TABLE: &str = "hyperliquid_public_trade";
-        if !runtime::persist::event_enabled(TABLE) {
+        if !ergon_runtime::persist::event_enabled(TABLE) {
             return;
         }
         let (id, price, size) = (
@@ -811,7 +811,7 @@ impl Recorder {
             text::<48>(t.size),
         );
         let side = text::<16>(t.aggressor_side);
-        runtime::persist::record_row(
+        ergon_runtime::persist::record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -832,11 +832,11 @@ impl Recorder {
     /// `hyperliquid_open_interest`, as [`Self::public_trade`].
     fn open_interest(&self, oi: &HyperliquidOpenInterest) {
         const TABLE: &str = "hyperliquid_open_interest";
-        if !runtime::persist::event_enabled(TABLE) {
+        if !ergon_runtime::persist::event_enabled(TABLE) {
             return;
         }
         let (id, open_interest) = (text::<64>(oi.instrument_id), text::<48>(oi.open_interest));
-        runtime::persist::record_row(
+        ergon_runtime::persist::record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -851,10 +851,10 @@ impl Recorder {
     /// `deribit_volatility_index`, as [`Self::public_trade`].
     fn volatility_index(&self, v: &DeribitVolatilityIndex) {
         const TABLE: &str = "deribit_volatility_index";
-        if !runtime::persist::event_enabled(TABLE) {
+        if !ergon_runtime::persist::event_enabled(TABLE) {
             return;
         }
-        runtime::persist::record_row(
+        ergon_runtime::persist::record_row(
             TABLE,
             [
                 ("index_name", Value::Str(&v.index_name)),
@@ -927,7 +927,7 @@ impl Recorder {
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
     fn ticker(&mut self, book: &OrderBook) {
-        if !runtime::persist::event_enabled("ticker") {
+        if !ergon_runtime::persist::event_enabled("ticker") {
             return;
         }
         let id = book.instrument_id;
@@ -992,7 +992,7 @@ enum Regime {
 
 /// One `book_view` row: the book's top 5 levels a side, and what they say.
 fn book_view(book: &OrderBook) {
-    if !runtime::persist::event_enabled("book_view") {
+    if !ergon_runtime::persist::event_enabled("book_view") {
         return;
     }
     let top = |side: &mut dyn Iterator<Item = &BookLevel>| -> ArrayVec<Level, 5> {
@@ -1017,7 +1017,7 @@ fn book_view(book: &OrderBook) {
         .next()
         .map_or(0, |l| l.price.value.precision);
     let tick = 10f64.powi(-i32::from(precision));
-    runtime::persist::record_value(
+    ergon_runtime::persist::record_value(
         "book_view",
         &BookView {
             instrument: book.instrument_id.symbol.as_str(),
@@ -1170,7 +1170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // After `build()`, so persist's log lines go through Nautilus' logger.
     // Installed for the process: every callback records through
-    // `runtime::persist::record` and friends, with no handle to pass around.
+    // `ergon_runtime::persist::record` and friends, with no handle to pass around.
     let settings = Settings::from_env();
     let bus = Bus::connect(&settings)?;
     let persist = Persist::connect(schema::MARKET_SCHEMA, &bus, settings)?;
@@ -1195,7 +1195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // application calls `poll` from its own loop instead, with the time it
     // has; Nautilus owns this one's.
     let polled = persist.clone();
-    let idle = runtime::idle::Idle::from_env("IDLE", runtime::idle::Idle::Sleep)?;
+    let idle = ergon_runtime::idle::Idle::from_env("IDLE", ergon_runtime::idle::Idle::Sleep)?;
     std::thread::Builder::new()
         .name("persist".into())
         .spawn(move || {

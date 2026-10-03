@@ -1,0 +1,790 @@
+//! SBE schema -> `ClickHouse` tables, and SBE message -> `RowBinary` row.
+//!
+//! Each SBE message is one table. The column list comes from the schema IR,
+//! so a field added to the XML is a column added to the table:
+//!
+//! | SBE                                        | `ClickHouse`                      |
+//! |--------------------------------------------|---------------------------------|
+//! | integer / float / double                   | `Int8`..`UInt64`, `Float32/64`  |
+//! | decimal: `mantissa` + constant `exponent`  | `Decimal(18, S)` (exact)        |
+//! | `semanticType="UTCTimestamp"` integer      | `DateTime64(9, 'UTC')`          |
+//! | timestamp: `time` + constant `unit`        | `DateTime64(0/3/6/9, 'UTC')`    |
+//! | enum                                       | `LowCardinality(String)` (name) |
+//! | `char` array                               | `String` (trailing NULs cut)    |
+//! | `presence="optional"`                      | `Nullable(T)`                   |
+//! | group `bids { price }`                     | `bids.price Array(T)`           |
+//! | var-data                                   | `String`                        |
+//!
+//! The mantissa or tick count is stored as-is. Other composites, sets,
+//! non-`char` arrays, and nested groups are rejected when the schema loads.
+//! A field past the message's acting block, or a group newer than its version,
+//! is written as its default.
+
+use ergo_sbe::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
+use ergon_runtime::persist::snake_case;
+
+use crate::Error;
+
+/// Standard SBE message header: blockLength, templateId, schemaId, version.
+pub const HEADER_LEN: usize = 8;
+
+/// One recorded SBE message and the table it is written to.
+#[derive(Clone, Debug)]
+pub struct Table {
+    /// Table name: the message name in `snake_case`.
+    pub name: String,
+    /// The schema's id: with the template id, what identifies the message.
+    pub schema_id: u16,
+    /// SBE template id.
+    pub template_id: u16,
+    fields: Vec<Field>,
+    groups: Vec<Group>,
+    var_data: Vec<VarData>,
+}
+
+/// A `ClickHouse` column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Column {
+    /// Column name (`snake_case`, groups as `group.field`).
+    pub name: String,
+    /// `ClickHouse` type, spelled the way `system.columns` reports it.
+    pub ch_type: String,
+}
+
+/// What `ClickHouse` needs to create and compare a table.
+#[derive(Clone, Debug)]
+pub struct Shape {
+    /// The `ClickHouse` table name.
+    pub name: String,
+    /// In insert order.
+    pub columns: Vec<Column>,
+    /// The `ORDER BY` key, in order.
+    pub order_by: Vec<String>,
+    /// The timestamp column partitioned by day.
+    pub partition: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct Field {
+    column: String,
+    offset: usize,
+    since_version: u16,
+    prim: PrimitiveType,
+    kind: Kind,
+    /// Null sentinel for optional fields.
+    null: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+enum Kind {
+    Number,
+    /// Ticks of 10^-precision seconds since the UNIX epoch.
+    Timestamp(u8),
+    /// A mantissa with this many decimals.
+    Decimal(u8),
+    Enum(Vec<(u64, String)>),
+    Chars(usize),
+}
+
+#[derive(Clone, Debug)]
+struct Group {
+    name: String,
+    count: Uint,
+    block: Uint,
+    header_len: usize,
+    since_version: u16,
+    fields: Vec<Field>,
+}
+
+#[derive(Clone, Debug)]
+struct VarData {
+    column: String,
+    length: Uint,
+    header_len: usize,
+    since_version: u16,
+}
+
+/// An unsigned integer inside a group or var-data header: `numInGroup`,
+/// `blockLength`, or a var-data `length`.
+#[derive(Clone, Copy, Debug)]
+struct Uint {
+    offset: usize,
+    prim: PrimitiveType,
+}
+
+impl Uint {
+    /// Read it from the header starting at `header`.
+    fn read(self, msg: &[u8], header: usize) -> Result<usize, DecodeError> {
+        let at = header + self.offset;
+        msg.get(at..at + self.prim.size())
+            .and_then(|raw| usize::try_from(uint(raw)).ok())
+            .ok_or(DecodeError("group or var-data header past end of message"))
+    }
+}
+
+/// A decode failure for one message; the row is skipped, never half-written.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DecodeError(pub &'static str);
+
+/// Build every table in a schema.
+///
+/// # Errors
+///
+/// The XML is not a little-endian schema this ingester can turn into tables.
+pub fn tables_from_schema(xml: &str) -> Result<Vec<Table>, Error> {
+    let mut ir = ergo_sbe::parse(xml).map_err(|e| Error::Schema(e.to_string()))?;
+    ergo_sbe::resolve_schema(&mut ir, Some(xml)).map_err(|e| Error::Schema(e.to_string()))?;
+    if ir.byte_order == ByteOrder::BigEndian {
+        return Err(Error::Schema(
+            "only littleEndian schemas are supported".into(),
+        ));
+    }
+    message_ranges(&ir)
+        .into_iter()
+        .map(|tokens| Table::from_tokens(tokens, ir.id))
+        .collect()
+}
+
+fn message_ranges(ir: &Ir) -> Vec<&[Token]> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, t) in ir.tokens.iter().enumerate() {
+        match t.signal {
+            Signal::BeginMessage => start = Some(i),
+            Signal::EndMessage => {
+                if let Some(s) = start.take() {
+                    out.push(&ir.tokens[s..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+impl Table {
+    fn from_tokens(tokens: &[Token], schema_id: u16) -> Result<Self, Error> {
+        let msg = &tokens[0];
+        let mut table = Self {
+            name: snake_case(&msg.name),
+            schema_id,
+            template_id: msg
+                .id
+                .ok_or_else(|| unsupported(&msg.name, "", "a message without id"))?,
+            fields: Vec::new(),
+            groups: Vec::new(),
+            var_data: Vec::new(),
+        };
+        let mut i = 1;
+        while i < tokens.len() - 1 {
+            let t = &tokens[i];
+            let end = matching_end(tokens, i);
+            match t.signal {
+                Signal::BeginField => {
+                    if let Some(f) = field(&tokens[i..=end], &msg.name)? {
+                        table.fields.push(f);
+                    }
+                }
+                Signal::BeginGroup => table.groups.push(group(&tokens[i..=end], &msg.name)?),
+                Signal::BeginVarData => {
+                    let (length, header_len) = var_header(&tokens[i..=end])
+                        .ok_or_else(|| unsupported(&msg.name, &t.name, "this var-data encoding"))?;
+                    table.var_data.push(VarData {
+                        column: snake_case(&t.name),
+                        length,
+                        header_len,
+                        since_version: t.encoding.since_version,
+                    });
+                }
+                _ => return Err(unsupported(&msg.name, &t.name, "this token")),
+            }
+            i = end + 1;
+        }
+        Ok(table)
+    }
+
+    /// The table: columns in wire order, ordered by the var-data columns
+    /// (symbol, venue, …) then the first timestamp, partitioned by day of it.
+    #[must_use]
+    pub fn shape(&self) -> Shape {
+        let partition = self.first_timestamp();
+        let mut order_by: Vec<String> = self.var_data.iter().map(|v| v.column.clone()).collect();
+        order_by.extend(partition.clone());
+        Shape {
+            name: self.name.clone(),
+            columns: self.columns(),
+            order_by,
+            partition,
+        }
+    }
+
+    /// Columns in wire order: fixed fields, group fields, var-data.
+    fn columns(&self) -> Vec<Column> {
+        let scalar = self.fields.iter().map(|f| Column {
+            name: f.column.clone(),
+            ch_type: f.ch_type(),
+        });
+        let groups = self.groups.iter().flat_map(|g| {
+            g.fields.iter().map(move |f| Column {
+                name: format!("{}.{}", g.name, f.column),
+                ch_type: format!("Array({})", f.ch_type()),
+            })
+        });
+        let var = self.var_data.iter().map(|v| Column {
+            name: v.column.clone(),
+            ch_type: "String".into(),
+        });
+        scalar.chain(groups).chain(var).collect()
+    }
+
+    /// First required timestamp column.
+    fn first_timestamp(&self) -> Option<String> {
+        self.fields
+            .iter()
+            .find(|f| matches!(f.kind, Kind::Timestamp(_)) && f.null.is_none())
+            .map(|f| f.column.clone())
+    }
+
+    /// Append `msg` (header included) as one `RowBinary` row, writing only the
+    /// columns whose `include` flag is set. On error `out` is left unchanged.
+    pub(crate) fn write_row(
+        &self,
+        msg: &[u8],
+        include: &[bool],
+        out: &mut Vec<u8>,
+    ) -> Result<(), DecodeError> {
+        let mark = out.len();
+        let result = self.write_row_inner(msg, include, out);
+        if result.is_err() {
+            out.truncate(mark);
+        }
+        result
+    }
+
+    fn write_row_inner(
+        &self,
+        msg: &[u8],
+        include: &[bool],
+        out: &mut Vec<u8>,
+    ) -> Result<(), DecodeError> {
+        let acting_block = usize::from(u16::from_le_bytes(bytes::<2>(msg, 0)?));
+        let version = u16::from_le_bytes(bytes::<2>(msg, 6)?);
+        let body = HEADER_LEN;
+        let mut col = 0;
+        for f in &self.fields {
+            if include[col] {
+                f.write(msg, body, body + acting_block, version, out)?;
+            }
+            col += 1;
+        }
+        let mut pos = body + acting_block;
+        for g in &self.groups {
+            // A group newer than the message is not on the wire: no entries.
+            let (count, block, first) = if version < g.since_version {
+                (0, 0, pos)
+            } else {
+                (
+                    g.count.read(msg, pos)?,
+                    g.block.read(msg, pos)?,
+                    pos + g.header_len,
+                )
+            };
+            let end = count
+                .checked_mul(block)
+                .and_then(|n| n.checked_add(first))
+                .ok_or(DecodeError("group size"))?;
+            if end > msg.len() {
+                return Err(DecodeError("group past end of message"));
+            }
+            for f in &g.fields {
+                if include[col] {
+                    write_varint(count as u64, out);
+                    for e in 0..count {
+                        let entry = first + e * block;
+                        f.write(msg, entry, entry + block, version, out)?;
+                    }
+                }
+                col += 1;
+            }
+            pos = end;
+        }
+        for v in &self.var_data {
+            if version < v.since_version {
+                if include[col] {
+                    write_string(b"", out);
+                }
+                col += 1;
+                continue;
+            }
+            let len = v.length.read(msg, pos)?;
+            let start = pos + v.header_len;
+            let data = msg
+                .get(start..start + len)
+                .ok_or(DecodeError("var-data past end of message"))?;
+            if include[col] {
+                write_string(data, out);
+            }
+            col += 1;
+            pos = start + len;
+        }
+        Ok(())
+    }
+}
+
+impl Field {
+    fn ch_type(&self) -> String {
+        let base = match &self.kind {
+            Kind::Number => number_type(self.prim).to_string(),
+            Kind::Timestamp(digits) => format!("DateTime64({digits}, 'UTC')"),
+            Kind::Decimal(digits) => format!("Decimal({}, {digits})", precision(self.prim)),
+            Kind::Enum(_) => return "LowCardinality(String)".to_string(),
+            Kind::Chars(_) => "String".to_string(),
+        };
+        if self.null.is_some() {
+            format!("Nullable({base})")
+        } else {
+            base
+        }
+    }
+
+    /// Write this field from the block `[start, end)`.
+    fn write(
+        &self,
+        msg: &[u8],
+        start: usize,
+        end: usize,
+        version: u16,
+        out: &mut Vec<u8>,
+    ) -> Result<(), DecodeError> {
+        let at = start + self.offset;
+        let width = match self.kind {
+            Kind::Chars(n) => n,
+            _ => self.prim.size(),
+        };
+        // Padding can fit a newer field without making it present on the wire.
+        if version < self.since_version || at + width > end {
+            self.write_absent(out);
+            return Ok(());
+        }
+        let raw = msg
+            .get(at..at + width)
+            .ok_or(DecodeError("field past end of message"))?;
+        match &self.kind {
+            Kind::Enum(values) => match values.iter().find(|(k, _)| *k == uint(raw)) {
+                Some((_, name)) => write_string(name.as_bytes(), out),
+                None => write_string(uint(raw).to_string().as_bytes(), out),
+            },
+            Kind::Chars(_) => {
+                let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+                write_string(&raw[..cut], out);
+            }
+            Kind::Number | Kind::Timestamp(_) | Kind::Decimal(_) => {
+                if let Some(null) = self.null {
+                    let is_null = self.is_null(raw, null);
+                    out.push(u8::from(is_null));
+                    if is_null {
+                        return Ok(());
+                    }
+                }
+                out.extend_from_slice(raw);
+            }
+        }
+        Ok(())
+    }
+
+    /// A field the message does not carry: null, or else zero / empty.
+    fn write_absent(&self, out: &mut Vec<u8>) {
+        match self.kind {
+            Kind::Enum(_) | Kind::Chars(_) => write_string(b"", out),
+            _ if self.null.is_some() => out.push(1),
+            _ => out.resize(out.len() + self.prim.size(), 0),
+        }
+    }
+
+    fn is_null(&self, raw: &[u8], null: u64) -> bool {
+        match self.prim {
+            PrimitiveType::Float => f32::from_bits(u32::try_from(uint(raw)).unwrap_or(0)).is_nan(),
+            PrimitiveType::Double => f64::from_bits(uint(raw)).is_nan(),
+            _ => {
+                let bits = raw.len() * 8;
+                let mask = if bits == 64 {
+                    u64::MAX
+                } else {
+                    (1 << bits) - 1
+                };
+                uint(raw) == null & mask
+            }
+        }
+    }
+}
+
+/// Parse one `BeginField..EndField` span. `None` for constant fields (not on the wire).
+fn field(tokens: &[Token], message: &str) -> Result<Option<Field>, Error> {
+    let t = &tokens[0];
+    let fail = |what: &str| unsupported(message, &t.name, what);
+    if t.encoding.presence == Presence::Constant {
+        return Ok(None);
+    }
+    let offset = t
+        .encoding
+        .offset
+        .ok_or_else(|| fail("a field without offset"))?;
+    let mut null =
+        (t.encoding.presence == Presence::Optional).then_some(t.encoding.null_value.unwrap_or(0));
+    let inner = tokens.get(1).ok_or_else(|| fail("an empty field"))?;
+    let (prim, kind) = match (t.encoding.primitive_type, inner.signal) {
+        (Some(prim), _) => match (prim, t.encoding.length) {
+            (PrimitiveType::Char, Some(n)) if n > 1 => (prim, Kind::Chars(n)),
+            (_, Some(n)) if n > 1 => return Err(fail("a non-char array")),
+            _ if t.encoding.semantic_type.as_deref() == Some("UTCTimestamp") => {
+                let unit = t.encoding.time_unit.as_deref().unwrap_or("nanosecond");
+                match (prim, unit_digits(unit)) {
+                    (PrimitiveType::Int64 | PrimitiveType::UInt64, Some(digits)) => {
+                        (prim, Kind::Timestamp(digits))
+                    }
+                    _ => {
+                        return Err(fail(
+                            "a UTCTimestamp that is not a 64-bit count of s/ms/us/ns",
+                        ));
+                    }
+                }
+            }
+            _ => (prim, Kind::Number),
+        },
+        (None, Signal::BeginComposite) => {
+            let (value, kind) = scaled_value(tokens).ok_or_else(|| {
+                fail("a composite other than a decimal (mantissa + constant exponent) or a timestamp (time + constant unit)")
+            })?;
+            let prim = value
+                .encoding
+                .primitive_type
+                .ok_or_else(|| fail("a composite member without a type"))?;
+            if value.encoding.presence == Presence::Optional {
+                null = Some(value.encoding.null_value.unwrap_or(0));
+            }
+            (prim, kind)
+        }
+        (None, Signal::BeginEnum) => {
+            let prim = inner
+                .encoding
+                .primitive_type
+                .ok_or_else(|| fail("an enum without encoding"))?;
+            let values = tokens
+                .iter()
+                .filter(|v| {
+                    v.signal == Signal::Encoding && v.encoding.presence == Presence::Constant
+                })
+                .filter_map(|v| {
+                    Some((
+                        enum_value(v.encoding.constant_value.as_deref()?, prim)?,
+                        v.name.clone(),
+                    ))
+                })
+                .collect();
+            (prim, Kind::Enum(values))
+        }
+        (None, Signal::BeginSet) => return Err(fail("a set")),
+        _ => return Err(fail("this field type")),
+    };
+    Ok(Some(Field {
+        column: snake_case(&t.name),
+        offset,
+        since_version: t.encoding.since_version,
+        prim,
+        kind,
+        null,
+    }))
+}
+
+/// A decimal (`mantissa` + constant `exponent`) or a timestamp (`time` +
+/// constant `unit`): the one member on the wire, and how it is scaled.
+fn scaled_value(tokens: &[Token]) -> Option<(&Token, Kind)> {
+    // tokens[0] is the field itself; the constant member takes no wire bytes,
+    // so the value starts the composite.
+    let members: Vec<&Token> = tokens[1..]
+        .iter()
+        .filter(|m| m.signal == Signal::BeginField)
+        .collect();
+    let [value, scale] = members[..] else {
+        return None;
+    };
+    if scale.encoding.presence != Presence::Constant
+        || value.encoding.presence == Presence::Constant
+    {
+        return None;
+    }
+    let constant = scale.encoding.constant_value.as_deref()?.trim();
+    let kind = match (
+        value.name.as_str(),
+        scale.name.as_str(),
+        value.encoding.primitive_type?,
+    ) {
+        ("mantissa", "exponent", prim @ (PrimitiveType::Int32 | PrimitiveType::Int64)) => {
+            let digits = u8::try_from(-constant.parse::<i32>().ok()?).ok()?;
+            (digits <= precision(prim)).then_some(Kind::Decimal(digits))?
+        }
+        ("time", "unit", PrimitiveType::Int64 | PrimitiveType::UInt64) => {
+            Kind::Timestamp(unit_digits(constant)?)
+        }
+        _ => return None,
+    };
+    Some((value, kind))
+}
+
+/// The decimal digits a mantissa holds: 18 for `int64`, 9 for `int32`.
+fn precision(mantissa: PrimitiveType) -> u8 {
+    if mantissa == PrimitiveType::Int64 {
+        18
+    } else {
+        9
+    }
+}
+
+/// Decimal digits of an SBE time unit: a name (`nanosecond`) or its FIX
+/// `TimeUnit` value (9).
+fn unit_digits(unit: &str) -> Option<u8> {
+    match unit {
+        "second" | "0" => Some(0),
+        "millisecond" | "3" => Some(3),
+        "microsecond" | "6" => Some(6),
+        "nanosecond" | "9" => Some(9),
+        _ => None,
+    }
+}
+
+fn group(tokens: &[Token], message: &str) -> Result<Group, Error> {
+    let name = snake_case(&tokens[0].name);
+    let fail = |what: &str| unsupported(message, &name, what);
+    let mut dimension = Vec::new();
+    let mut fields = Vec::new();
+    let mut i = 1;
+    while i < tokens.len() - 1 {
+        let end = matching_end(tokens, i);
+        let t = &tokens[i];
+        match t.signal {
+            Signal::BeginComposite if fields.is_empty() && dimension.is_empty() => {
+                dimension = tokens[i..=end]
+                    .iter()
+                    .filter(|d| d.signal == Signal::BeginField)
+                    .collect();
+            }
+            Signal::BeginField => {
+                if let Some(f) = field(&tokens[i..=end], message)? {
+                    fields.push(f);
+                }
+            }
+            Signal::BeginGroup => return Err(fail("a nested group")),
+            Signal::BeginVarData => return Err(fail("var-data inside a group")),
+            _ => {}
+        }
+        i = end + 1;
+    }
+    let count = member(dimension.iter().copied(), "numInGroup")
+        .ok_or_else(|| fail("a group without numInGroup"))?;
+    let block = member(dimension.iter().copied(), "blockLength")
+        .ok_or_else(|| fail("a group without blockLength"))?;
+    let header_len = dimension
+        .iter()
+        .filter_map(|d| Some(d.encoding.offset? + d.encoding.primitive_type?.size()))
+        .max()
+        .ok_or_else(|| fail("an empty group dimension"))?;
+    Ok(Group {
+        name,
+        count,
+        block,
+        header_len,
+        since_version: tokens[0].encoding.since_version,
+        fields,
+    })
+}
+
+/// The var-data `length` member and the offset of its bytes.
+fn var_header(tokens: &[Token]) -> Option<(Uint, usize)> {
+    Some((member(tokens, "length")?, member(tokens, "varData")?.offset))
+}
+
+/// The `name` field (offset and type) among `tokens`.
+fn member<'a>(tokens: impl IntoIterator<Item = &'a Token>, name: &str) -> Option<Uint> {
+    let t = tokens
+        .into_iter()
+        .find(|t| t.signal == Signal::BeginField && t.name == name)?;
+    Some(Uint {
+        offset: t.encoding.offset?,
+        prim: t.encoding.primitive_type?,
+    })
+}
+
+/// `Message.name: what is not supported`.
+fn unsupported(message: &str, name: &str, what: &str) -> Error {
+    Error::Schema(format!("{message}.{name}: {what} is not supported"))
+}
+
+/// Index of the token closing the one at `i` (itself for leaf tokens).
+fn matching_end(tokens: &[Token], i: usize) -> usize {
+    let close = match tokens[i].signal {
+        Signal::BeginField => Signal::EndField,
+        Signal::BeginGroup => Signal::EndGroup,
+        Signal::BeginVarData => Signal::EndVarData,
+        Signal::BeginComposite => Signal::EndComposite,
+        Signal::BeginEnum => Signal::EndEnum,
+        Signal::BeginSet => Signal::EndSet,
+        _ => return i,
+    };
+    let open = tokens[i].signal;
+    let mut depth = 0;
+    for (j, t) in tokens.iter().enumerate().skip(i) {
+        if t.signal == open {
+            depth += 1;
+        } else if t.signal == close {
+            depth -= 1;
+            if depth == 0 {
+                return j;
+            }
+        }
+    }
+    tokens.len() - 1
+}
+
+const fn number_type(prim: PrimitiveType) -> &'static str {
+    match prim {
+        PrimitiveType::Int8 => "Int8",
+        PrimitiveType::Int16 => "Int16",
+        PrimitiveType::Int32 => "Int32",
+        PrimitiveType::Int64 => "Int64",
+        PrimitiveType::Char | PrimitiveType::UInt8 => "UInt8",
+        PrimitiveType::UInt16 => "UInt16",
+        PrimitiveType::UInt32 => "UInt32",
+        PrimitiveType::UInt64 => "UInt64",
+        PrimitiveType::Float => "Float32",
+        PrimitiveType::Double => "Float64",
+    }
+}
+
+fn enum_value(text: &str, prim: PrimitiveType) -> Option<u64> {
+    if prim == PrimitiveType::Char && text.len() == 1 {
+        return Some(u64::from(text.as_bytes()[0]));
+    }
+    text.parse::<u64>()
+        .ok()
+        .or_else(|| text.parse::<i64>().ok().map(i64::cast_unsigned))
+}
+
+fn bytes<const N: usize>(msg: &[u8], at: usize) -> Result<[u8; N], DecodeError> {
+    msg.get(at..at + N)
+        .and_then(|s| s.try_into().ok())
+        .ok_or(DecodeError("message shorter than its header"))
+}
+
+/// Little-endian unsigned value of up to 8 bytes.
+fn uint(raw: &[u8]) -> u64 {
+    let mut le = [0u8; 8];
+    le[..raw.len()].copy_from_slice(raw);
+    u64::from_le_bytes(le)
+}
+
+pub fn write_varint(mut v: u64, out: &mut Vec<u8>) {
+    while v >= 0x80 {
+        // The low seven bits, with the continuation bit set. `v & 0x7f` fits in a byte.
+        out.push(u8::try_from(v & 0x7f).unwrap_or(0) | 0x80);
+        v >>= 7;
+    }
+    out.push(u8::try_from(v).unwrap_or(0));
+}
+
+pub fn write_string(data: &[u8], out: &mut Vec<u8>) {
+    write_varint(data.len() as u64, out);
+    out.extend_from_slice(data);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn versioned_fields_ignore_padding_in_message_and_group_blocks() -> TestResult {
+        let xml = r#"<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="padding" id="7" version="1" byteOrder="littleEndian">
+        <types>
+            <composite name="messageHeader">
+                <type name="blockLength" primitiveType="uint16"/>
+                <type name="templateId" primitiveType="uint16"/>
+                <type name="schemaId" primitiveType="uint16"/>
+                <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="groupSizeEncoding">
+                <type name="blockLength" primitiveType="uint16"/>
+                <type name="numInGroup" primitiveType="uint16"/>
+            </composite>
+            <type name="Code" primitiveType="char" length="4"/>
+            <enum name="State" encodingType="uint8"><validValue name="Active">1</validValue></enum>
+        </types>
+        <sbe:message name="Padded" id="1" blockLength="20">
+            <field name="old" id="1" type="uint32"/>
+            <field name="added" id="2" type="uint32" sinceVersion="1"/>
+            <field name="maybe" id="3" type="uint32" presence="optional" sinceVersion="1"/>
+            <field name="code" id="4" type="Code" sinceVersion="1"/>
+            <field name="state" id="5" type="State" sinceVersion="1"/>
+            <group name="entries" id="6" dimensionType="groupSizeEncoding" blockLength="20">
+                <field name="old" id="7" type="uint32"/>
+                <field name="added" id="8" type="uint32" sinceVersion="1"/>
+                <field name="maybe" id="9" type="uint32" presence="optional" sinceVersion="1"/>
+                <field name="code" id="10" type="Code" sinceVersion="1"/>
+                <field name="state" id="11" type="State" sinceVersion="1"/>
+            </group>
+        </sbe:message>
+        </sbe:messageSchema>"#;
+        let table = tables_from_schema(xml)?.pop().ok_or("missing table")?;
+        let mut frame = [0u8; HEADER_LEN + 20 + 4 + 20];
+        frame[..8].copy_from_slice(&[20, 0, 1, 0, 7, 0, 0, 0]);
+        frame[8..12].copy_from_slice(&1u32.to_le_bytes());
+        frame[12..16].copy_from_slice(&123u32.to_le_bytes());
+        frame[16..20].copy_from_slice(&124u32.to_le_bytes());
+        frame[20..24].copy_from_slice(b"TEXT");
+        frame[24] = 1;
+        frame[28..32].copy_from_slice(&[20, 0, 1, 0]);
+        frame[32..36].copy_from_slice(&2u32.to_le_bytes());
+        frame[36..40].copy_from_slice(&123u32.to_le_bytes());
+        frame[40..44].copy_from_slice(&124u32.to_le_bytes());
+        frame[44..48].copy_from_slice(b"GRUP");
+        frame[48] = 1;
+        let mut row = Vec::new();
+        table
+            .write_row(&frame, &[true; 10], &mut row)
+            .map_err(|e| format!("{e:?}"))?;
+        assert_eq!(
+            row,
+            [
+                1, 0, 0, 0, // old
+                0, 0, 0, 0, // absent added
+                1, 0, 0, // absent nullable, text, enum
+                1, 2, 0, 0, 0, // entries.old
+                1, 0, 0, 0, 0, // entries.added
+                1, 1, // entries.maybe: one null
+                1, 0, // entries.code: one empty string
+                1, 0, // entries.state: one empty string
+            ]
+        );
+        frame[6] = 1;
+        row.clear();
+        table
+            .write_row(&frame, &[true; 10], &mut row)
+            .map_err(|e| format!("{e:?}"))?;
+        assert_eq!(
+            row,
+            [
+                1, 0, 0, 0, 123, 0, 0, 0, 0, 124, 0, 0, 0, 4, b'T', b'E', b'X', b'T', 6, b'A',
+                b'c', b't', b'i', b'v', b'e', 1, 2, 0, 0, 0, 1, 123, 0, 0, 0, 1, 0, 124, 0, 0, 0,
+                1, 4, b'G', b'R', b'U', b'P', 1, 6, b'A', b'c', b't', b'i', b'v', b'e',
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn varint_matches_leb128() {
+        let mut out = Vec::new();
+        write_varint(300, &mut out);
+        assert_eq!(out, [0xAC, 0x02]);
+    }
+}

@@ -150,8 +150,8 @@ build:
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
         -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} \
         -e CMAKE_BUILD_PARALLEL_LEVEL={{build_jobs}} lab/builder:local \
-        sh -c 'cargo build --release -p md -p persist-server -p aeron-driver -p engine --bins && mkdir -p target/linux/schema \
-            && cp /target/release/md /target/release/ingester /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
+        sh -c 'RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/target-runtime cargo build --release --manifest-path /src/Cargo.toml -p ergon-runtime-server --bin ingester && cargo build --release -p md -p aeron-driver -p engine --bins && mkdir -p target/linux/schema \
+            && cp /target-runtime/release/ingester /target/release/md /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
             && cp schema/*.xml target/linux/schema/'
     docker build -q -t lab/app:local -f docker/app.Dockerfile target/linux
 
@@ -273,7 +273,7 @@ _aeron-jar:
 # Time recording on the app thread: SBE, tracing on and off, and a control.
 latency: _test-clickhouse _test-aeron
     for arm in control control-x100 sbe installed uninstalled event value value-nested event-off no-table counter gauge histogram counter-event gauge-event histogram-event clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
-        cargo run -q --release -p persist-server --example record_latency -- $arm; done
+        cargo run -q --release --manifest-path ../../Cargo.toml -p ergon-runtime-server --example record_latency -- $arm; done
 
 # Clippy and rustfmt for the sample
 lint:

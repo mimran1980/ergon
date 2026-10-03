@@ -169,15 +169,32 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     g.bench_function("ergo-sbe", |b| {
         let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
+            // Same 64-byte alignment as the sbe-tool arm. The no-LTO
+            // ratio otherwise follows where the loop header lands.
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             for i in 0..BATCH_SIZE {
                 let off = i * slot;
-                let _ = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap(
-                    black_box(&mut buf[off..off + slot]),
-                    0,
-                )
-                .leadership_term_id((i % 1000) as i64)
-                .cluster_session_id(42)
-                .timestamp(0);
+                let term = black_box((i % 1000) as i64);
+                let session = black_box(42_i64);
+                let timestamp = black_box(0_i64);
+                // SAFETY: each slice is `HDR + BLOCK_LENGTH` (`ENCODED_LENGTH`).
+                // `wrap` proves that extent and then panics; sbe-tool `wrap`
+                // does not, so the panic check is unequal work. The parity
+                // assert above already ran `wrap` on this shape. The slice
+                // length stays visible so both arms can drop per-field checks;
+                // the values are opaque so neither arm folds 42 and 0 into a
+                // constant vector store.
+                let _ = unsafe {
+                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_unchecked(
+                        &mut buf[off..off + slot],
+                        0,
+                    )
+                }
+                .leadership_term_id(term)
+                .cluster_session_id(session)
+                .timestamp(timestamp);
             }
             black_box(&buf);
         });
@@ -185,14 +202,20 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     g.bench_function("sbe-tool", |b| {
         let mut buf = vec![0u8; BATCH_SIZE * slot];
         b.iter(|| {
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
             for i in 0..BATCH_SIZE {
                 let off = i * slot;
-                let wb = WriteBuf::new(black_box(&mut buf[off..off + slot]));
+                let term = black_box((i % 1000) as i64);
+                let session = black_box(42_i64);
+                let timestamp = black_box(0_i64);
+                let wb = WriteBuf::new(&mut buf[off..off + slot]);
                 let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, HDR);
-                enc.leadership_term_id((i % 1000) as i64);
-                enc.cluster_session_id(42);
-                enc.timestamp(0);
+                enc.leadership_term_id(term);
+                enc.cluster_session_id(session);
+                enc.timestamp(timestamp);
             }
             black_box(&buf);
         });
@@ -336,6 +359,9 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             for _ in 0..BATCH_SIZE {
                 let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::wrap(
                     black_box(&MSG_HDR_FIXTURE[..]),
@@ -349,6 +375,9 @@ fn bench_decode_msg_header(c: &mut Criterion) {
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             use reference_sbe::{ReadBuf, session_message_header_codec::SessionMessageHeaderDecoder};
             for _ in 0..BATCH_SIZE {
                 let buf = black_box(&MSG_HDR_FIXTURE[..]);

@@ -119,7 +119,16 @@ jobs:
           java-version: "17"
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev
+        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
+
+      - name: Start ClickHouse and the archiving media driver
+        run: |
+          if ! command -v just >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to "$HOME/.local/bin"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          cd samples/clickhouse && just _test-clickhouse _test-aeron
 
       - run: ./scripts/regenerate-sbe-tool-reference.sh --check
       - run: ./scripts/regenerate-golden.sh --check

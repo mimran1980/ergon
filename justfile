@@ -106,7 +106,7 @@ preflight:
     @echo "audit: all cheap gates pass"
 
 # Full local check: hygiene, format, clippy, tests (no Java / Aeron jars).
-check-local: policy
+check-local: policy _test-ingester-services
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
@@ -288,11 +288,17 @@ audit:
 
 # ── test ──────────────────────────────────────────────────────────────────
 
+# ClickHouse and an archiving media driver. `ergon-runtime-server`'s aeron and
+# ClickHouse tests fail closed when either is absent, so every root test lane
+# that runs the workspace starts both.
+_test-ingester-services:
+    cd samples/clickhouse && just _test-clickhouse _test-aeron
+
 # Comprehensive test suite: unit, integration, doctests/rustdoc, Java cluster
 # lifecycle tests, sample tests, and benchmark compilation. Missing Java,
 # Gradle, jars, or another required dependency is a failure.
 # Everything: unit, integration, doctests, Java cluster, samples, bench compile
-test: policy
+test: policy _test-ingester-services
     @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
     @echo "=== 2/7 clippy (workspace + samples) ==="
@@ -330,7 +336,7 @@ test: policy
     @echo "=== test: complete ==="
 
 # Workspace unit tests only.
-test-unit: policy
+test-unit: policy _test-ingester-services
     cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
 

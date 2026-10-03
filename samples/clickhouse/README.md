@@ -18,8 +18,8 @@ node (one of four, three regions)
 
 | Crate | Role |
 |---|---|
-| `runtime` | What the application links, one module per concern: `app` (start a process), `bus` (the Aeron client, its identity, drop counters, shutdown), `publication` and `subscription` (UDP feeds, with a persistent one that catches up from the archive), `persist` (`record()` and a `tracing` layer for rows, counters, gauges, and histograms), `metrics`, `trace`, `clock`, `idle`, `streams`. |
-| `persist-server` | The ingester. Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
+| `ergon-runtime` | What the application links (`../../runtime`), one module per concern: `app` (start a process), `bus` (the Aeron client, its identity, drop counters, shutdown), `publication` and `subscription` (UDP feeds, with a persistent one that catches up from the archive), `persist` (`record()` and a `tracing` layer for rows, counters, gauges, and histograms), `metrics`, `trace`, `clock`, `idle`, `streams`. |
+| `ergon-runtime-server` | The ingester (`../../runtime-server`, binary `ingester`). Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
 | `schema` | `market.xml`, `trading.xml`, the codecs generated from them, and `AnySchemaMessage` for a buffer that may be either. |
 | `md` | One exchange's public market data, via NautilusTrader. No API keys. |
 | `engine` | One region's engine, and `exch-sim`, its dummy exchange. |
@@ -502,7 +502,7 @@ A checkpoint trace stamps stages on the stack. `finish` always updates
 on and the trace is sampled, slower than the threshold, or kept.
 
 ```rust
-let t2t = runtime::persist::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
+let t2t = ergon_runtime::persist::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
 let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(ORDERS, order_id));
 t.mark(clock.now());
 t.attr(0, levels);

@@ -22,8 +22,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use engine::{Book, Change, Emas, Spec, Strategy, aggregate};
-use runtime::app::App;
-use runtime::clock::{Clock, Nanos};
+use ergon_runtime::app::App;
+use ergon_runtime::clock::{Clock, Nanos};
 use schema::market::{
     AnyMessage, BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder,
     Side as MdSide,
@@ -34,11 +34,11 @@ use schema::trading::{
 };
 use std::collections::HashMap;
 
-use runtime::metrics::{Counter, Gauge, Histogram};
-use runtime::publication::Publication;
-use runtime::subscription::PersistentSubscription;
-use runtime::subscription::{Delivery, Subscription};
-use runtime::trace::{Trace, TraceId, Tracer};
+use ergon_runtime::metrics::{Counter, Gauge, Histogram};
+use ergon_runtime::publication::Publication;
+use ergon_runtime::subscription::PersistentSubscription;
+use ergon_runtime::subscription::{Delivery, Subscription};
+use ergon_runtime::trace::{Trace, TraceId, Tracer};
 
 /// Messages taken from one subscription per loop.
 const LIMIT: usize = 64;
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // A feed handler added to the registry, in any region, is subscribed to
     // within a second or two, with no restart.
-    let mut watch = runtime::streams::Watch::new(&app.streams_path);
+    let mut watch = ergon_runtime::streams::Watch::new(&app.streams_path);
     let mut core = Core {
         venues,
         assets: Vec::new(),
@@ -124,8 +124,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// the registry just goes quiet.
 fn add_venues(
     app: &App,
-    streams: &runtime::streams::Streams,
-    metrics: &runtime::metrics::Metrics,
+    streams: &ergon_runtime::streams::Streams,
+    metrics: &ergon_runtime::metrics::Metrics,
     subs: &mut Vec<(PersistentSubscription, Subscription, Tracer)>,
     venues: &mut Vec<Venue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -242,7 +242,7 @@ struct Core {
     /// Order sent to the exchange's `New`, and to its `Filled`.
     order_ack: Histogram,
     order_fill: Histogram,
-    metrics: runtime::metrics::Metrics,
+    metrics: ergon_runtime::metrics::Metrics,
 }
 
 impl Core {

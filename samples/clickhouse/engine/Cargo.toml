@@ -16,7 +16,7 @@ arrayvec = "0.7"
 log.workspace = true
 mimalloc.workspace = true
 schema.workspace = true
-runtime.workspace = true
+ergon-runtime.workspace = true
 
 [lints]
 workspace = true
