@@ -4188,7 +4188,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         self,
     ) -> Result<(&'a [u8], FuelFiguresEntryDecoderComplete<'a>), sbe_rt::DecodeError> {
         let offset = self.offset + self.acting_block_length;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "usageDescription",
                 needed: 4,
@@ -4229,7 +4229,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     #[inline]
     pub fn usage_description_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.offset + self.acting_block_length;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "usageDescription",
                 needed: 4,
@@ -6144,7 +6144,7 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
         self,
     ) -> Result<(&'a [u8], CarDecoderAfterManufacturer<'a>), sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "manufacturer",
                 needed: 4,
@@ -6185,7 +6185,7 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
     #[inline]
     pub fn manufacturer_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "manufacturer",
                 needed: 4,
@@ -6310,7 +6310,7 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
         self,
     ) -> Result<(&'a [u8], CarDecoderAfterModel<'a>), sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "model",
                 needed: 4,
@@ -6351,7 +6351,7 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
     #[inline]
     pub fn model_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "model",
                 needed: 4,
@@ -6467,7 +6467,7 @@ impl<'a> CarDecoderAfterModel<'a> {
         self,
     ) -> Result<(&'a [u8], CarDecoderComplete<'a>), sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "activationCode",
                 needed: 4,
@@ -6508,7 +6508,7 @@ impl<'a> CarDecoderAfterModel<'a> {
     #[inline]
     pub fn activation_code_slice(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_start;
-        if offset + 4 > self.buf.len() {
+        if offset.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "activationCode",
                 needed: 4,
