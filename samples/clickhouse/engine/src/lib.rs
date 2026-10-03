@@ -233,6 +233,107 @@ impl Strategy {
     }
 }
 
+/// How a venue's book `sequence` advances, so a missed message shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GapRule {
+    /// Each message is the last plus one.
+    Contiguous,
+    /// Only a regression or a repeat is a gap: the venue skips numbers
+    /// (Binance's diff depth carries `U`..`u` ranges).
+    Monotonic,
+    /// The venue has no usable sequence.
+    None,
+}
+
+impl GapRule {
+    /// `contiguous`, `monotonic` or `none`.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "contiguous" => Some(Self::Contiguous),
+            "monotonic" => Some(Self::Monotonic),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+
+    /// `seq` after `last` breaks the rule. A zero sequence is the venue
+    /// sending none, never a gap.
+    #[must_use]
+    pub const fn is_gap(self, last: u64, seq: u64) -> bool {
+        if seq == 0 || last == 0 {
+            return false;
+        }
+        match self {
+            Self::Contiguous => seq != last.wrapping_add(1),
+            Self::Monotonic => seq <= last,
+            Self::None => false,
+        }
+    }
+}
+
+/// Where one instrument's book stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FeedState {
+    /// No snapshot yet.
+    #[default]
+    Initializing,
+    /// Current: trade it.
+    Active,
+    /// A gap: stop trading it until the next snapshot. No incrementals are
+    /// buffered; snapshots arrive regularly.
+    Recovering,
+    /// No update for a while: stop trading it until the next one.
+    Stale,
+}
+
+/// One instrument's feed state and last sequence.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Sequenced {
+    pub state: FeedState,
+    pub last: u64,
+}
+
+impl Sequenced {
+    /// A snapshot: current from its sequence on.
+    pub const fn snapshot(&mut self, seq: u64) {
+        self.state = FeedState::Active;
+        self.last = seq;
+    }
+
+    /// Incrementals at `seq`: whether to apply them. A gap moves to
+    /// `Recovering`; a stale book with no gap is current again.
+    pub const fn deltas(&mut self, rule: GapRule, seq: u64) -> bool {
+        match self.state {
+            FeedState::Initializing | FeedState::Recovering => false,
+            FeedState::Active | FeedState::Stale => {
+                if rule.is_gap(self.last, seq) {
+                    self.state = FeedState::Recovering;
+                    return false;
+                }
+                if seq != 0 {
+                    self.last = seq;
+                }
+                self.state = FeedState::Active;
+                true
+            }
+        }
+    }
+
+    /// The stale timer fired: an active book stops trading.
+    pub fn stale(&mut self) {
+        if self.state == FeedState::Active {
+            self.state = FeedState::Stale;
+        }
+    }
+
+    /// Current enough to trade.
+    #[must_use]
+    pub fn tradable(&self) -> bool {
+        self.state == FeedState::Active
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,5 +490,56 @@ mod tests {
         s.fill(false, 0.25, 110.0);
         assert!((s.position - 0.25).abs() < 1e-12);
         assert!((s.pnl(120.0) - (-50.0 + 27.5 + 30.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_contiguous_venue_recovers_from_a_gap_at_the_next_snapshot() {
+        let mut f = Sequenced::default();
+        assert!(
+            !f.deltas(GapRule::Contiguous, 5),
+            "nothing before a snapshot"
+        );
+        f.snapshot(10);
+        assert!(f.deltas(GapRule::Contiguous, 11));
+        assert!(!f.deltas(GapRule::Contiguous, 13), "12 was missed");
+        assert_eq!(f.state, FeedState::Recovering);
+        assert!(!f.deltas(GapRule::Contiguous, 14), "waits for a snapshot");
+        f.snapshot(20);
+        assert!(f.deltas(GapRule::Contiguous, 21));
+        assert!(f.tradable());
+    }
+
+    #[test]
+    fn a_monotonic_venue_gaps_only_on_a_regression_or_repeat() {
+        let mut f = Sequenced::default();
+        f.snapshot(100);
+        assert!(f.deltas(GapRule::Monotonic, 150));
+        assert!(!f.deltas(GapRule::Monotonic, 150));
+        assert_eq!(f.state, FeedState::Recovering);
+        let mut g = Sequenced::default();
+        g.snapshot(100);
+        assert!(!g.deltas(GapRule::Monotonic, 99));
+    }
+
+    #[test]
+    fn no_rule_and_no_sequence_never_gap() {
+        let mut f = Sequenced::default();
+        f.snapshot(7);
+        assert!(f.deltas(GapRule::None, 3));
+        assert!(f.deltas(GapRule::Contiguous, 0), "a venue with no sequence");
+        assert_eq!(GapRule::parse("monotonic"), Some(GapRule::Monotonic));
+        assert_eq!(GapRule::parse("sometimes"), None);
+    }
+
+    #[test]
+    fn a_stale_book_trades_again_on_its_next_update() {
+        let mut f = Sequenced::default();
+        f.stale();
+        assert_eq!(f.state, FeedState::Initializing, "stale needs a book first");
+        f.snapshot(1);
+        f.stale();
+        assert!(!f.tradable());
+        assert!(f.deltas(GapRule::Contiguous, 2));
+        assert!(f.tradable());
     }
 }

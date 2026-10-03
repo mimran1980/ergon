@@ -27,7 +27,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use engine::{Book, Change, Emas, Spec, Strategy, aggregate};
+use engine::{Book, Change, Emas, FeedState, GapRule, Sequenced, Spec, Strategy, aggregate};
 use ergon_runtime::clock::Nanos;
 use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram as Histogram};
 use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId, Out, Runtime};
@@ -55,6 +55,11 @@ const ORDER_TIMEOUT_NS: i64 = 30 * SECOND;
 const EVERY_SECOND: u64 = 1;
 /// An order's expiry timer: this bit and the order id.
 const ORDER_EXPIRY: u64 = 1 << 62;
+/// An instrument's stale timer: this bit, the venue index above bit 24 and
+/// the instrument index below.
+const STALE: u64 = 1 << 61;
+/// A book with no update this long stops trading until its next one.
+const STALE_AFTER_NS: i64 = 5 * SECOND;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rt = Runtime::from_env(schema::TRADING_SCHEMA)?;
@@ -177,12 +182,20 @@ impl Engine {
             // region is its own series (Tokyo to London is not Tokyo to Tokyo).
             let metrics = &self.core.metrics;
             let l = [("venue", label.as_str()), ("from", region.as_str())];
+            // How this venue's book `sequence` advances; most skip numbers.
+            let gap = std::env::var(format!("GAP_RULE_{label}"))
+                .ok()
+                .and_then(|r| GapRule::parse(&r))
+                .unwrap_or(GapRule::Monotonic);
             log::info!("{name}: subscribing");
             self.core.venues.push(Venue {
                 instruments: Vec::new(),
                 sessions: 0,
                 updated: ctx.now(),
                 is_live: false,
+                gap,
+                gaps: metrics.counter("feed_gaps", &l),
+                stale_books: metrics.counter("book_stale", &l),
                 resyncs: metrics.counter("feed_resyncs", &l),
                 age: metrics.gauge("book_age_ns", &l),
                 live: metrics.gauge("feed_live", &l),
@@ -217,6 +230,18 @@ impl Agent for Engine {
     fn on_timer(&mut self, ctx: &mut Ctx, timer: Expiry) {
         if timer.token == EVERY_SECOND {
             self.core.every_second(ctx);
+        } else if timer.token & STALE != 0 {
+            let token = timer.token & !STALE;
+            let (v, i) = ((token >> 24) as usize, (token & 0xff_ffff) as usize);
+            if let Some(venue) = self.core.venues.get_mut(v)
+                && let Some(instrument) = venue.instruments.get_mut(i)
+            {
+                instrument.stale = None;
+                if instrument.feed.tradable() {
+                    instrument.feed.stale();
+                    venue.stale_books.inc();
+                }
+            }
         } else if timer.token & ORDER_EXPIRY != 0
             && self
                 .core
@@ -239,6 +264,10 @@ impl Agent for Engine {
 
 struct Instrument {
     symbol: Vec<u8>,
+    /// Snapshot, gap and staleness state from the venue's sequence.
+    feed: Sequenced,
+    /// Fires when the book has had no update for `STALE_AFTER_NS`.
+    stale: Option<TimerId>,
     spec: Option<Spec>,
     /// Index into `Core::assets`, once its spec arrived.
     asset: Option<usize>,
@@ -254,6 +283,12 @@ struct Venue {
     updated: Nanos,
     /// The last `md` message was live, not caught up from the archive.
     is_live: bool,
+    /// How its book `sequence` advances (`GAP_RULE_<VENUE>`).
+    gap: GapRule,
+    /// Books that missed a message and wait for a snapshot.
+    gaps: Counter,
+    /// Books that went quiet for `STALE_AFTER_NS`.
+    stale_books: Counter,
     resyncs: Counter,
     age: Gauge,
     /// 1 on the live stream, 0 replaying (catching up) or finding it.
@@ -342,6 +377,7 @@ impl Core {
             venue.resyncs.inc();
             for i in &mut venue.instruments {
                 i.book.reset();
+                i.feed = Sequenced::default();
             }
         }
     }
@@ -354,6 +390,8 @@ impl Core {
             .unwrap_or_else(|| {
                 instruments.push(Instrument {
                     symbol: symbol.to_vec(),
+                    feed: Sequenced::default(),
+                    stale: None,
                     spec: None,
                     asset: None,
                     book: Book::default(),
@@ -421,6 +459,8 @@ impl Core {
         };
         let i = self.instrument(v, symbol);
         trace.mark(ctx.read());
+        self.venues[v].instruments[i].feed.snapshot(d.sequence());
+        self.touch(ctx, v, i);
         self.venues[v].instruments[i].book.snapshot(
             bids.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
             asks.map(|l| (l.price_value().mantissa(), l.size_value().mantissa())),
@@ -449,10 +489,19 @@ impl Core {
         };
         let i = self.instrument(v, symbol);
         trace.mark(ctx.read());
-        let book = &mut self.venues[v].instruments[i].book;
-        if !book.synced {
-            return; // until its first snapshot
+        let venue = &mut self.venues[v];
+        let instrument = &mut venue.instruments[i];
+        let was = instrument.feed.state;
+        if !instrument.feed.deltas(venue.gap, d.sequence()) {
+            if was != FeedState::Recovering && instrument.feed.state == FeedState::Recovering {
+                // A missed message: the book is wrong until the next snapshot.
+                venue.gaps.inc();
+                instrument.book.reset();
+            }
+            return;
         }
+        self.touch(ctx, v, i);
+        let book = &mut self.venues[v].instruments[i].book;
         for e in deltas {
             let (bid, price) = (e.side() == MdSide::Buy, e.price_value().mantissa());
             book.apply(match e.action() {
@@ -468,6 +517,16 @@ impl Core {
         self.tick(ctx, v, i, d.ts_init(), at, trace);
     }
 
+    /// Instrument `i` of venue `v` was updated: re-arm its stale timer.
+    fn touch(&mut self, ctx: &mut Ctx, v: usize, i: usize) {
+        let instrument = &mut self.venues[v].instruments[i];
+        if let Some(old) = instrument.stale.take() {
+            ctx.cancel(old);
+        }
+        let token = STALE | ((v as u64) << 24) | i as u64;
+        instrument.stale = ctx.after(STALE_AFTER_NS, token).ok();
+    }
+
     /// Instrument `i` of venue `v` changed: its asset's aggregate, EMAs and
     /// strategy, and an order if it says so.
     fn tick(
@@ -479,7 +538,8 @@ impl Core {
         at: Nanos,
         mut trace: Trace<'_>,
     ) {
-        let Some(a) = self.venues[v].instruments[i].asset else {
+        let instrument = &self.venues[v].instruments[i];
+        let Some(a) = instrument.asset.filter(|_| instrument.feed.tradable()) else {
             return;
         };
         // Catching up from the archive: the book is rebuilt, but a price
@@ -490,7 +550,7 @@ impl Core {
         }
         let (mut bid, mut ask) = (None, None);
         for instrument in self.venues.iter().flat_map(|v| &v.instruments) {
-            if instrument.asset == Some(a) {
+            if instrument.asset == Some(a) && instrument.feed.tradable() {
                 bid = bid.max(instrument.book.best_bid());
                 ask = match (ask, instrument.book.best_ask()) {
                     (Some(x), Some(y)) => Some(i64::min(x, y)),
@@ -658,7 +718,11 @@ impl Core {
                 self.venues.iter().flat_map(move |v| {
                     v.instruments.iter().filter_map(move |i| {
                         let spec = i.spec.as_ref()?;
-                        (i.asset == Some(a)).then_some((spec, &i.book, v.name.as_str()))
+                        (i.asset == Some(a) && i.feed.tradable()).then_some((
+                            spec,
+                            &i.book,
+                            v.name.as_str(),
+                        ))
                     })
                 })
             };
