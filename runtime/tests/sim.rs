@@ -232,3 +232,211 @@ fn a_paced_run_takes_its_simulated_time_over_the_speed() -> TestResult {
     assert!(started.elapsed() >= std::time::Duration::from_millis(3));
     Ok(())
 }
+
+#[test]
+fn route_delay_reorders_feeds_before_timer_merge() -> TestResult {
+    let mut config = SimConfig::new(streams()?);
+    config.route_delays.insert("a/md".into(), 2 * MS);
+    let mut probe = Probe::default();
+    run(&mut probe, config)?;
+    let messages: Vec<_> = probe
+        .seen
+        .iter()
+        .filter_map(|s| match s {
+            Seen::Message { byte, ts, .. } => Some((*byte, *ts)),
+            Seen::Timer { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (b'C', T0 + MS),
+            (b'A', T0 + 2 * MS),
+            (b'B', T0 + 3 * MS),
+            (b'D', T0 + 3 * MS),
+            (b'E', T0 + 5 * MS)
+        ]
+    );
+    Ok(())
+}
+
+// An echo agent publishes only on the recorded input, not its loopback.
+struct Echo(Probe);
+impl Agent for Echo {
+    fn start(&mut self, ctx: &mut Ctx) -> Result<(), ergon_runtime::Error> {
+        self.0.out = Some(ctx.publish("echo", "out")?);
+        Ok(())
+    }
+    fn on_message(&mut self, ctx: &mut Ctx, feed: FeedId, msg: &[u8], d: Delivery) {
+        self.0.stop_on = None;
+        let out = self.0.out;
+        if feed == FeedId(1) {
+            self.0.out = None;
+        }
+        self.0.on_message(ctx, feed, msg, d);
+        self.0.out = out;
+    }
+    fn on_timer(&mut self, _: &mut Ctx, _: Expiry) {}
+}
+
+#[test]
+fn loopback_delivers_captured_output_after_configured_latency() -> TestResult {
+    let mut config = SimConfig::new(streams()?);
+    config.loopback.insert("echo/out".into(), MS / 2);
+    config.to = Some(Nanos(T0 + MS));
+    let mut log = FrameLog::new();
+    let feed = log.stream("a/md");
+    log.push(feed, Nanos(T0), b"A");
+    let mut sim = Sim::new(config, vec![log.to_bytes()])?;
+    sim.ctx().subscribe("a", "md")?;
+    sim.ctx().subscribe("echo", "out")?;
+    let mut probe = Probe {
+        stop_on: Some(b'A'),
+        ..Probe::default()
+    };
+    probe.stop_on = None;
+    let mut echo = Echo(probe);
+    sim.run(&mut echo)?;
+    assert_eq!(
+        echo.0.seen,
+        [
+            Seen::Message {
+                feed: 0,
+                ts: T0,
+                byte: b'A',
+                first: true
+            },
+            Seen::Message {
+                feed: 1,
+                ts: T0 + MS / 2,
+                byte: b'A',
+                first: true
+            },
+        ]
+    );
+    assert_eq!(sim.ctx().captured().records().count(), 1);
+    Ok(())
+}
+
+#[test]
+fn exact_journal_preserves_live_delivery_order_and_late_timer() -> TestResult {
+    use ergon_runtime::journal::{Input, InputEvent, Journal};
+    use ergon_runtime::subscription::Origin;
+    let data = input();
+    let mut parsed = frames::parse(&data)?;
+    let a = parsed
+        .records
+        .clone()
+        .find(|r| r.frame == b"B")
+        .ok_or("B missing")?;
+    let b = parsed
+        .records
+        .find(|r| r.frame == b"C")
+        .ok_or("C missing")?;
+    let message = |feed, record: frames::Record<'_>, ts, sequence| Input {
+        sequence,
+        wall_offset: 0,
+        next_id: sequence,
+        ts: Nanos(ts),
+        event: InputEvent::Message {
+            feed: FeedId(feed),
+            recording: 0,
+            position: i64::try_from(record.offset).unwrap_or_default(),
+            session: 0,
+            stream: 0,
+            delivery: Delivery {
+                first: true,
+                origin: Origin::Live,
+            },
+        },
+    };
+    let config = SimConfig {
+        from: Some(Nanos(T0)),
+        journal: Some(Journal {
+            inputs: vec![
+                // A live journal opens with the context `start` saw.
+                Input {
+                    sequence: 0,
+                    wall_offset: 0,
+                    next_id: 0,
+                    ts: Nanos(T0),
+                    event: InputEvent::Start,
+                },
+                message(1, b, T0 + 2 * MS, 1),
+                message(0, a, T0 + 2 * MS, 2),
+                Input {
+                    sequence: 3,
+                    wall_offset: 0,
+                    next_id: 3,
+                    ts: Nanos(T0 + 3 * MS),
+                    event: InputEvent::Timer {
+                        token: 8,
+                        deadline: Nanos(T0 + MS),
+                        missed: 0,
+                    },
+                },
+            ],
+        }),
+        ..SimConfig::new(streams()?)
+    };
+    let mut probe = Probe {
+        timers: vec![(MS, 8)],
+        ..Probe::default()
+    };
+    run(&mut probe, config)?;
+    assert_eq!(
+        probe.seen,
+        [
+            Seen::Message {
+                feed: 1,
+                ts: T0 + 2 * MS,
+                byte: b'C',
+                first: true
+            },
+            Seen::Message {
+                feed: 0,
+                ts: T0 + 2 * MS,
+                byte: b'B',
+                first: true
+            },
+            Seen::Timer {
+                token: 8,
+                ts: T0 + 3 * MS,
+                deadline: T0 + MS,
+                missed: 0
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_selects_the_replay_driver_from_mode() -> TestResult {
+    use ergon_runtime::rt::{Mode, Runtime};
+    let mut rt = Runtime::new(Mode::Replay {
+        config: SimConfig::new(streams()?),
+        logs: vec![input()],
+    })?;
+    rt.ctx().subscribe("a", "md")?;
+    let probe = rt.run(Probe::default())?;
+    assert_eq!(probe.seen.len(), 4);
+    Ok(())
+}
+
+#[test]
+fn malformed_simulated_output_fails_the_run_instead_of_losing_a_frame() -> TestResult {
+    struct BadOutput;
+    impl Agent for BadOutput {
+        fn start(&mut self, ctx: &mut Ctx) -> Result<(), ergon_runtime::Error> {
+            let out = ctx.publish("bad", "output")?;
+            let _: Result<(), std::convert::Infallible> = ctx.send(out, 0, 8, |_| Ok(7));
+            Ok(())
+        }
+        fn on_message(&mut self, _: &mut Ctx, _: FeedId, _: &[u8], _: Delivery) {}
+        fn on_timer(&mut self, _: &mut Ctx, _: Expiry) {}
+    }
+    let mut sim = Sim::new(SimConfig::new(streams()?), Vec::new())?;
+    assert!(sim.run(&mut BadOutput).is_err());
+    assert!(sim.ctx().captured().is_empty());
+    Ok(())
+}

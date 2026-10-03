@@ -23,7 +23,13 @@
 #                them: md.trade JOIN orders.new_order. With a database of
 #                their own, every metric is also a view there:
 #                SELECT * FROM metrics.tick_to_trade_ns.
+feeds:
+  # Raw history for backtests; exact service/kind entries can disable individual feeds.
+  "*": { frames: true }
 tables:
+  frame:         { kind: dynamic }
+  # JOURNAL=on live dispatch order, including actual timer firings.
+  input:         { kind: dynamic }
   trade:         { kind: static }
   quote:         { kind: static }
   mark_price:    { kind: dynamic, enabled: true }

@@ -47,7 +47,7 @@ use ergon_runtime::event;
 use ergon_runtime::metrics::{
     HISTOGRAM_TEMPLATE_ID, METRIC_DEF_TEMPLATE_ID, METRICS_TEMPLATE_ID, MetricDef,
 };
-use ergon_runtime::persist::{TableConfig, parse_config};
+use ergon_runtime::persist::{Config, FeedConfig, TableConfig};
 use ergon_runtime::source::{SOURCE_TEMPLATE_ID, Source as Origin};
 use ergon_runtime::trace::{TRACE_DEF_TEMPLATE_ID, TRACE_TEMPLATE_ID, TraceDef};
 
@@ -326,7 +326,7 @@ fn ensure_database(created: &mut BTreeSet<String>, ch: &ClickHouse) -> Result<()
 
 /// The columns every table ends with: who recorded the row. The ingester
 /// fills them from the `Source` message named by each frame's reserved value.
-const ORIGIN_COLUMNS: [&str; 3] = ["host", "pod", "app"];
+const ORIGIN_COLUMNS: [&str; 4] = ["host", "pod", "app", "run"];
 
 pub(crate) fn origin_columns() -> impl Iterator<Item = Column> {
     ORIGIN_COLUMNS.into_iter().map(|name| Column {
@@ -502,6 +502,7 @@ pub struct Writer {
     tables: Vec<TableState>,
     config_path: PathBuf,
     config_text: String,
+    feeds: BTreeMap<String, FeedConfig>,
     /// `RowBinary` for the insert in progress; reused.
     rows: Vec<u8>,
     /// Set for the uncommitted batch. Empty leaves `ClickHouse`'s content checksum.
@@ -572,6 +573,7 @@ impl Writer {
                 .collect(),
             config_path: config_path.into(),
             config_text: String::new(),
+            feeds: BTreeMap::new(),
             rows: Vec::new(),
             dedup_token: String::new(),
             max_insert_bytes: MAX_INSERT_BYTES,
@@ -621,6 +623,15 @@ impl Writer {
         self.tables
             .iter()
             .any(|s| s.config.is_some() && matches!(&s.source, Source::Sbe(t) if t.name == name))
+    }
+
+    /// Raw-frame recording opted in for `service/kind`; exact entries override `*`.
+    #[must_use]
+    pub fn wants_frames(&self, service: &str, kind: &str) -> bool {
+        self.feeds
+            .get(&format!("{service}/{kind}"))
+            .or_else(|| self.feeds.get("*"))
+            .is_some_and(|feed| feed.frames)
     }
 
     /// [`Writer::push`] of a message from a recording; `feed` when it is a
@@ -1060,7 +1071,11 @@ impl Writer {
     }
 
     fn apply_config(&mut self, text: String) -> Result<(), Error> {
-        let mut config = parse_config(&text)?;
+        let Config {
+            tables: mut config,
+            feeds,
+        } = Config::parse(&text)?;
+        self.feeds = feeds;
         self.own_databases = RESERVED_TABLES
             .iter()
             .filter_map(|name| Some(((*name).to_owned(), config.get(*name)?.database.clone()?)))
@@ -1241,14 +1256,18 @@ impl Writer {
         let mut attempted = Vec::new();
         let mut dropped = 0usize;
         for row in ready {
-            let known = self
-                .origins
-                .get(&row.source)
-                .map(|origin| (origin.host.clone(), origin.pod.clone(), origin.app.clone()));
+            let known = self.origins.get(&row.source).map(|origin| {
+                (
+                    origin.host.clone(),
+                    origin.pod.clone(),
+                    origin.app.clone(),
+                    origin.run.clone(),
+                )
+            });
             if known.is_none() && row.source != 0 {
                 self.unknown_origins += 1;
             }
-            let (host, pod, app) = known.unwrap_or_default();
+            let (host, pod, app, run) = known.unwrap_or_default();
             if row.feed && !config.as_ref().is_some_and(|c| c.is_on(&app, now)) {
                 dropped += 1;
                 continue;
@@ -1263,7 +1282,7 @@ impl Writer {
                 continue;
             };
             let mut origin = Vec::new();
-            for (name, keep) in [&host, &pod, &app].into_iter().zip(origin_flags) {
+            for (name, keep) in [&host, &pod, &app, &run].into_iter().zip(origin_flags) {
                 if *keep {
                     table::write_string(name.as_bytes(), &mut origin);
                 }
@@ -1365,8 +1384,13 @@ impl Writer {
                 if known.is_none() && source != 0 {
                     self.unknown_origins += 1;
                 }
-                let known = known.map_or(["", "", ""], |o| {
-                    [o.host.as_str(), o.pod.as_str(), o.app.as_str()]
+                let known = known.map_or(["", "", "", ""], |o| {
+                    [
+                        o.host.as_str(),
+                        o.pod.as_str(),
+                        o.app.as_str(),
+                        o.run.as_str(),
+                    ]
                 });
                 // A feed was published whatever `tables.yaml` says; whether
                 // it is kept is decided now, for the app that recorded it.
@@ -1385,7 +1409,7 @@ impl Writer {
                 match state.source.write_rows(
                     message,
                     include,
-                    (&names, known),
+                    (&names, [known[0], known[1], known[2]]),
                     &mut self.rows,
                     &dict,
                 ) {

@@ -221,6 +221,13 @@ impl Table {
             .map(|v| v.column.clone())
             .collect();
         order_by.extend(partition.clone());
+        if self.schema_id == ergon_runtime::frames::codec::FrameEncoder::SCHEMA_ID
+            && self.template_id == ergon_runtime::frames::codec::FrameEncoder::TEMPLATE_ID
+        {
+            order_by = ["service", "kind", "ts", "recording_id", "position"]
+                .map(str::to_owned)
+                .to_vec();
+        }
         Shape {
             name: self.name.clone(),
             columns: self.columns(),
@@ -712,6 +719,52 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn input_schema_keeps_dispatch_context_in_rowbinary() -> TestResult {
+        use ergon_runtime::journal::{Input, InputEvent, SCHEMA};
+        let table = tables_from_schema(SCHEMA)?
+            .pop()
+            .ok_or("missing input table")?;
+        assert_eq!(table.name, "input");
+        let shape = table.shape();
+        let columns: Vec<_> = shape.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            columns,
+            [
+                "ts",
+                "feed",
+                "recording_id",
+                "position",
+                "session_id",
+                "stream_id",
+                "token",
+                "deadline",
+                "missed",
+                "kind",
+                "first",
+                "origin",
+                "sequence",
+                "wall_offset",
+                "next_id"
+            ]
+        );
+        let input = Input {
+            sequence: 1,
+            wall_offset: -8,
+            next_id: 999,
+            ts: ergon_runtime::clock::Nanos(123),
+            event: InputEvent::Start,
+        };
+        let mut bytes = vec![0; Input::LENGTH];
+        input.encode(&mut bytes);
+        let mut row = Vec::new();
+        table
+            .write_row(&bytes, &vec![true; columns.len()], &mut row)
+            .map_err(|e| format!("{e:?}"))?;
+        assert_eq!(row, bytes[HEADER_LEN..]);
+        Ok(())
+    }
 
     #[test]
     fn versioned_fields_ignore_padding_in_message_and_group_blocks() -> TestResult {

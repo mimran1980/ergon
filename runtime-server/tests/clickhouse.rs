@@ -408,6 +408,7 @@ fn every_field_shape_round_trips() -> TestResult {
             "host\tLowCardinality(String)",
             "pod\tLowCardinality(String)",
             "app\tLowCardinality(String)",
+            "run\tLowCardinality(String)",
             "inserted_at\tDateTime64(3, \\'UTC\\')",
         ]
         .join("\n")
@@ -979,5 +980,91 @@ fn a_named_batch_over_the_insert_limit_lands_in_pieces_once() -> TestResult {
     // drops every piece that already landed.
     clean(&tick("3:4096")?)?;
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "10");
+    Ok(())
+}
+
+#[test]
+fn backtest_frame_preserves_source_run_and_streams_back_to_runtime() -> TestResult {
+    use ergon_runtime::clickhouse_source::{ClickHouseConfig, ClickHouseSource};
+    use ergon_runtime::clock::Nanos;
+    use ergon_runtime::frames::{FrameRow, SCHEMA};
+    use ergon_runtime::source::Source;
+
+    let lab = Lab::new(
+        "backtest_frame",
+        "tables:\n  frame: { kind: dynamic, enabled: true }\n",
+    )?;
+    let mut writer = lab.writer(SCHEMA)?;
+    let source = Source::at("test-node", "test-pod", "engine-test", 100, "backtest-test");
+    assert!(writer.push(&source.message()?, source.id));
+    let message = [0, 0, 1, 0, 7, 0, 0, 0];
+    let mut bytes = Vec::new();
+    FrameRow {
+        ts: Nanos(123),
+        recording: 42,
+        position: 4096,
+        session: 5,
+        stream: 2011,
+        source: source.id,
+        service: "md-test",
+        kind: "md",
+        message: &message,
+    }
+    .encode(&mut bytes)?;
+    assert!(writer.push(&bytes, source.id));
+    clean(&writer.tick())?;
+    assert_eq!(
+        lab.query("SELECT run, source, service, kind FROM DB.frame FORMAT TSV")?,
+        format!("backtest-test\t{}\tmd-test\tmd", source.id)
+    );
+    let config = ClickHouseConfig {
+        client: ergon_runtime::clickhouse::ClickHouse::new(
+            &test_url(),
+            "lab",
+            "lab",
+            &lab.ch.database,
+        ),
+        table: "frame".into(),
+    };
+    let mut input = ClickHouseSource::new(config, Nanos(100), Nanos(200));
+    input.bind(&["md-test/md".into()], Nanos(100))?;
+    assert_eq!(input.head(0), Some((Nanos(123), 42, 4096, &message[..])));
+    input.advance(0)?;
+    assert_eq!(input.head(0), None);
+    Ok(())
+}
+
+#[test]
+fn raw_frames_are_opted_in_per_feed_and_have_a_total_order_key() -> TestResult {
+    let lab = Lab::new(
+        "selective_frames",
+        "tables:\n  frame: { kind: dynamic }\nfeeds:\n  'md-a/md': { frames: true }\n  'md-b/md': { frames: false }\n",
+    )?;
+    let mut writer = lab.writer(ergon_runtime::frames::SCHEMA)?;
+    clean(&writer.tick())?;
+    assert!(writer.wants_frames("md-a", "md"));
+    assert!(!writer.wants_frames("md-b", "md"));
+    assert!(!writer.wants_frames("md-c", "md"));
+    let shapes = ergon_runtime_server::tables_from_schema(ergon_runtime::frames::SCHEMA)?;
+    assert_eq!(
+        shapes[0].shape().order_by,
+        ["service", "kind", "ts", "recording_id", "position"]
+    );
+    assert_eq!(
+        lab.query(
+            "SELECT sorting_key FROM system.tables WHERE database = 'DB' AND name = 'frame'"
+        )?,
+        "service, kind, ts, recording_id, position"
+    );
+    lab.write_config("tables:\n  frame: { kind: dynamic }\n")?;
+    clean(&writer.tick())?;
+    assert!(
+        !writer.wants_frames("md-a", "md"),
+        "global frame table does not opt in feeds"
+    );
+    lab.write_config("tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n  'md-b/md': { frames: false }\n")?;
+    clean(&writer.tick())?;
+    assert!(writer.wants_frames("md-a", "md"));
+    assert!(!writer.wants_frames("md-b", "md"));
     Ok(())
 }

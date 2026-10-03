@@ -14,6 +14,8 @@
 //! found no work unless it has waited too long.
 
 use std::cell::RefCell;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,6 +26,7 @@ use crate::bus::{Bus, DropKind};
 use crate::clock::{Clock, Nanos};
 use crate::frames::FrameLog;
 use crate::idle::Idle;
+use crate::journal::{Input, InputEvent};
 use crate::metrics::Metrics;
 use crate::persist::Persist;
 use crate::streams::{Streams, Watch};
@@ -32,9 +35,11 @@ use crate::timer::{self, Fired, TimerError, TimerId, TimerWheel};
 use crate::trace::Tracer;
 
 mod archive;
+mod driver;
 pub mod sim;
 
 pub use archive::ArchiveConfig;
+pub use driver::{Mode, Runtime};
 
 /// A feed this agent subscribed to, as numbered by [`Ctx::subscribe`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -162,6 +167,8 @@ pub struct Config {
     /// `mlockall(MCL_CURRENT | MCL_FUTURE)` at start, so the first live
     /// message takes no page fault (Linux).
     pub lock_memory: bool,
+    /// Record actual dispatches to Persist for exact replay (`JOURNAL=on`).
+    pub journal: bool,
 }
 
 impl Config {
@@ -181,6 +188,7 @@ impl Config {
             stop: Arc::new(AtomicBool::new(false)),
             cpu: None,
             lock_memory: false,
+            journal: false,
         }
     }
 }
@@ -199,6 +207,18 @@ impl Feed {
             Self::Persistent(s) => s.poll(handler, limit),
         }
     }
+
+    #[inline]
+    fn poll_metadata(
+        &mut self,
+        handler: impl FnMut(&[u8], Delivery, crate::subscription::Metadata),
+        limit: usize,
+    ) -> usize {
+        match self {
+            Self::Live(s) => s.poll_metadata(handler, limit),
+            Self::Persistent(s) => s.poll_metadata(handler, limit),
+        }
+    }
 }
 
 /// Where an [`Out`] goes.
@@ -210,7 +230,16 @@ enum Sink {
     },
     /// Simulation: appended to [`Ctx::captured`] under this stream. Never
     /// dropped, so a backtest's output does not depend on back pressure.
-    Capture(u32),
+    Capture { stream: u32, delay: Option<i64> },
+}
+
+/// A simulated publication awaiting local delivery.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Loopback {
+    ts: Nanos,
+    seq: u64,
+    stream: u32,
+    frame: Vec<u8>,
 }
 
 /// The largest frame a simulated output takes: one UDP frame's payload.
@@ -234,6 +263,10 @@ pub struct Ctx {
     sinks: Vec<Sink>,
     /// Simulation: what the outputs sent, in order.
     captured: RefCell<FrameLog>,
+    simulation_error: RefCell<Option<Error>>,
+    loopback_routes: BTreeMap<String, i64>,
+    loopback: RefCell<BinaryHeap<Reverse<Loopback>>>,
+    loopback_seq: std::cell::Cell<u64>,
     /// Simulation: each feed's `service/kind`, by [`FeedId`].
     sim_feeds: Vec<String>,
     /// Feeds opened since the last cycle; the runtime adopts them.
@@ -241,6 +274,9 @@ pub struct Ctx {
     feeds: u32,
     next_id: u64,
     stopping: bool,
+    journal: bool,
+    journal_seq: u64,
+    journal_error: Option<Error>,
 }
 
 impl Ctx {
@@ -450,12 +486,13 @@ impl Ctx {
     }
 
     fn capture(&mut self, service: &str, kind: &str) -> Out {
-        let stream = self
-            .captured
-            .borrow_mut()
-            .stream(&format!("{service}/{kind}"));
+        let name = format!("{service}/{kind}");
+        let stream = self.captured.borrow_mut().stream(&name);
         let out = Out(u32::try_from(self.sinks.len()).unwrap_or(u32::MAX));
-        self.sinks.push(Sink::Capture(stream));
+        self.sinks.push(Sink::Capture {
+            stream,
+            delay: self.loopback_routes.get(&name).copied(),
+        });
         out
     }
 
@@ -503,7 +540,9 @@ impl Ctx {
                 publication,
                 max_payload,
             }) => (publication, *max_payload),
-            Some(Sink::Capture(stream)) => return self.send_captured(*stream, len, encode),
+            Some(Sink::Capture { stream, delay }) => {
+                return self.send_captured(*stream, *delay, template_id, len, encode);
+            }
             None => {
                 self.count(DropKind::Other);
                 return Ok(());
@@ -544,15 +583,51 @@ impl Ctx {
     fn send_captured<E>(
         &self,
         stream: u32,
+        delay: Option<i64>,
+        template_id: u16,
         len: usize,
         encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<(), E> {
-        let appended = self
-            .captured
-            .borrow_mut()
-            .append(stream, self.now, len, encode)?;
-        if !appended || len > SIM_MAX_PAYLOAD {
-            log::error!("simulated output {stream}: a {len}-byte frame was mis-sized or too large");
+        let mut captured = self.captured.borrow_mut();
+        if len > SIM_MAX_PAYLOAD {
+            *self.simulation_error.borrow_mut() = Some(Error::Config(format!(
+                "simulated output {stream} exceeds its maximum payload"
+            )));
+            return Ok(());
+        }
+        let mut queued = delay.map(|_| vec![0; len]);
+        let mut recorded = self.persist.as_ref().map(|_| vec![0; len]);
+        let appended = captured.append(stream, self.now, len, |slot| {
+            let written = encode(slot)?;
+            if let Some(frame) = &mut queued {
+                frame.copy_from_slice(slot);
+            }
+            if let Some(frame) = &mut recorded {
+                frame.copy_from_slice(slot);
+            }
+            Ok(written)
+        })?;
+        if appended && let (Some(persist), Some(frame)) = (&self.persist, recorded) {
+            let _: Result<(), std::convert::Infallible> =
+                persist.record(template_id, len, |slot| {
+                    slot.copy_from_slice(&frame);
+                    Ok(len)
+                });
+        }
+        if appended && let (Some(delay), Some(frame)) = (delay, queued) {
+            let seq = self.loopback_seq.get();
+            self.loopback_seq.set(seq + 1);
+            self.loopback.borrow_mut().push(Reverse(Loopback {
+                ts: Nanos(self.now.0.saturating_add(delay)),
+                seq,
+                stream,
+                frame,
+            }));
+        }
+        if !appended {
+            *self.simulation_error.borrow_mut() = Some(Error::Config(format!(
+                "simulated output {stream} encoded a different length than {len}"
+            )));
         }
         Ok(())
     }
@@ -562,7 +637,7 @@ impl Ctx {
     pub fn is_connected(&self, out: Out) -> bool {
         match self.sinks.get(out.0 as usize) {
             Some(Sink::Aeron { publication, .. }) => publication.is_connected(),
-            Some(Sink::Capture(_)) => true,
+            Some(Sink::Capture { .. }) => true,
             None => false,
         }
     }
@@ -572,7 +647,7 @@ impl Ctx {
     pub fn max_payload(&self, out: Out) -> usize {
         match self.sinks.get(out.0 as usize) {
             Some(Sink::Aeron { max_payload, .. }) => *max_payload,
-            Some(Sink::Capture(_)) => SIM_MAX_PAYLOAD,
+            Some(Sink::Capture { .. }) => SIM_MAX_PAYLOAD,
             None => 0,
         }
     }
@@ -661,6 +736,28 @@ impl Ctx {
         self.wheel.cancel(id)
     }
 
+    fn journal_input(&mut self, event: InputEvent) -> bool {
+        if self.journal_error.is_some() {
+            return false;
+        }
+        self.journal_seq += 1;
+        let input = Input {
+            sequence: self.journal_seq,
+            wall_offset: self.wall_offset,
+            next_id: self.next_id,
+            ts: self.now,
+            event,
+        };
+        if let Some(persist) = &self.persist
+            && let Err(error) = persist.record_input(input)
+        {
+            self.journal_error = Some(error);
+            self.stopping = true;
+            return false;
+        }
+        true
+    }
+
     fn schedule_runtime(&mut self, period: i64, token: u64) {
         let Ok(first) = timer::aligned_deadline(self.now.0.saturating_add(1), period) else {
             return;
@@ -671,8 +768,9 @@ impl Ctx {
     }
 }
 
-/// The runtime: feeds, the agent's context, and the duty cycle.
-pub struct Runtime {
+/// An embedded live runtime: drives one duty cycle on the caller's thread.
+/// [`Runtime::run`] uses the same loop without a mode branch per cycle.
+pub struct Invoker {
     feeds: Vec<Feed>,
     ctx: Ctx,
     idle: Idle,
@@ -680,7 +778,7 @@ pub struct Runtime {
     stop: Arc<AtomicBool>,
     watch: Option<Watch>,
     /// The Aeron conductor runs in this loop.
-    invoker: bool,
+    conductor_inside: bool,
     cpu: Option<usize>,
     lock_memory: bool,
     #[cfg(feature = "mimalloc")]
@@ -697,13 +795,16 @@ pub struct Runtime {
 /// The longest housekeeping waits behind busy cycles.
 const MAX_DEFER: i64 = MS / 2;
 
-impl Runtime {
+impl Invoker {
     /// A live runtime on `config`.
     ///
     /// # Errors
     ///
     /// The timer settings are not powers of two.
     pub fn new(config: Config) -> Result<Self, Error> {
+        if config.journal && config.persist.is_none() {
+            return Err(Error::Config("JOURNAL=on requires Persist".into()));
+        }
         let mut wheel = TimerWheel::new(config.timers)
             .map_err(|e| Error::Config(format!("timer wheel: {e}")))?;
         wheel.prefault();
@@ -727,14 +828,21 @@ impl Runtime {
             region: config.region,
             sinks: Vec::new(),
             captured: RefCell::new(FrameLog::new()),
+            simulation_error: RefCell::new(None),
+            loopback_routes: BTreeMap::new(),
+            loopback: RefCell::new(BinaryHeap::new()),
+            loopback_seq: std::cell::Cell::new(0),
             sim_feeds: Vec::new(),
             opened: Vec::new(),
             feeds: 0,
             next_id: now.0.cast_unsigned() & !RUNTIME_TOKEN,
             stopping: false,
+            journal: config.journal,
+            journal_seq: 0,
+            journal_error: None,
         };
         Ok(Self {
-            invoker: ctx.bus.as_ref().is_some_and(Bus::is_invoker),
+            conductor_inside: ctx.bus.as_ref().is_some_and(Bus::is_invoker),
             conductor_ran: Nanos(0),
             feeds: Vec::new(),
             ctx,
@@ -768,6 +876,7 @@ impl Runtime {
             stop: app.stop,
             cpu: std::env::var("CPU").ok().and_then(|c| c.parse().ok()),
             lock_memory: std::env::var("MLOCK").is_ok_and(|v| v == "1" || v == "true"),
+            journal: std::env::var("JOURNAL").is_ok_and(|v| v == "on"),
             ..Config::new(app.bus, app.streams)
         };
         Ok(Self::new(config)?)
@@ -810,6 +919,13 @@ impl Runtime {
             self.ctx.schedule_runtime(5 * SECOND, HK_ALLOC);
         }
         self.ctx.now = self.ctx.clock.now();
+        if self.ctx.journal && !self.ctx.journal_input(InputEvent::Start) {
+            return Err(self
+                .ctx
+                .journal_error
+                .take()
+                .unwrap_or_else(|| Error::Aeron("input journal start failed".into())));
+        }
         agent.start(&mut self.ctx)?;
         self.adopt();
         self.ctx.schedule_runtime(MS, HK_PERSIST);
@@ -832,17 +948,25 @@ impl Runtime {
             let work = self.cycle(&mut agent);
             self.idle.idle(work);
         }
-        self.finish(&mut agent);
+        self.finish(&mut agent)?;
         Ok(agent)
     }
 
     /// Stop `agent` and close the feeds; [`Runtime::run`] does this.
-    pub fn finish<A: Agent>(&mut self, agent: &mut A) {
+    ///
+    /// # Errors
+    ///
+    /// The input journal could not record the stop.
+    pub fn finish<A: Agent>(&mut self, agent: &mut A) -> Result<(), Error> {
+        if self.ctx.journal {
+            self.ctx.journal_input(InputEvent::Stop);
+        }
         agent.stop(&mut self.ctx);
         log::info!("stopping: closing the feeds");
         if let Some(bus) = &self.ctx.bus {
             bus.shutdown();
         }
+        self.ctx.journal_error.take().map_or(Ok(()), Err)
     }
 
     /// One duty cycle: every feed, then due timers. Returns the work count.
@@ -854,13 +978,36 @@ impl Runtime {
         let ctx = &mut self.ctx;
         for (i, feed) in self.feeds.iter_mut().enumerate() {
             let id = FeedId(u32::try_from(i).unwrap_or(u32::MAX));
-            work += feed.poll(
-                |msg, delivery| {
+            if !ctx.journal {
+                work += feed.poll(
+                    |msg, delivery| {
+                        ctx.now = ctx.clock.now();
+                        agent.on_message(ctx, id, msg, delivery);
+                    },
+                    self.limit,
+                );
+                continue;
+            }
+            work += feed.poll_metadata(
+                |msg, delivery, metadata| {
                     ctx.now = ctx.clock.now();
+                    if !ctx.journal_input(InputEvent::Message {
+                        feed: id,
+                        recording: metadata.recording,
+                        position: metadata.position,
+                        session: metadata.session,
+                        stream: metadata.stream,
+                        delivery,
+                    }) {
+                        return;
+                    }
                     agent.on_message(ctx, id, msg, delivery);
                 },
                 self.limit,
             );
+        }
+        if self.ctx.journal_error.is_some() {
+            return work;
         }
         work += agent.do_work(&mut self.ctx);
         if !self.ctx.opened.is_empty() {
@@ -870,7 +1017,7 @@ impl Runtime {
         if self.ctx.wheel.poll(self.ctx.now, &mut self.ctx.fired, 64) > 0 {
             work += self.fire(agent, work);
         }
-        if self.invoker && (work == 0 || self.ctx.now.since(self.conductor_ran) > MS) {
+        if self.conductor_inside && (work == 0 || self.ctx.now.since(self.conductor_ran) > MS) {
             self.conductor_ran = self.ctx.now;
             work += self.ctx.bus.as_ref().map_or(0, Bus::do_work);
         }
@@ -889,8 +1036,29 @@ impl Runtime {
     #[inline(never)]
     fn fire<A: Agent>(&mut self, agent: &mut A, busy: usize) -> usize {
         let fired = std::mem::take(&mut self.ctx.fired);
+        if self.ctx.journal {
+            let count = fired
+                .iter()
+                .filter(|f| f.token & RUNTIME_TOKEN == 0)
+                .count();
+            if count > 0 {
+                self.record_input_event(InputEvent::TimerBatchStart {
+                    count: u64::try_from(count).unwrap_or(u64::MAX),
+                });
+                for f in fired.iter().filter(|f| f.token & RUNTIME_TOKEN == 0) {
+                    self.record_input_event(InputEvent::PendingTimer {
+                        token: f.token,
+                        deadline: f.deadline,
+                        missed: f.missed,
+                    });
+                }
+            }
+        }
         let mut n = 0;
         for f in &fired {
+            if self.ctx.journal_error.is_some() {
+                break;
+            }
             if self.ctx.wheel.is_suppressed(f.id) {
                 continue;
             }
@@ -899,6 +1067,15 @@ impl Runtime {
                 continue;
             }
             n += 1;
+            if self.ctx.journal
+                && !self.ctx.journal_input(InputEvent::Timer {
+                    token: f.token,
+                    deadline: f.deadline,
+                    missed: f.missed,
+                })
+            {
+                break;
+            }
             agent.on_timer(
                 &mut self.ctx,
                 Expiry {
@@ -911,6 +1088,10 @@ impl Runtime {
         }
         self.ctx.fired = fired;
         n
+    }
+
+    fn record_input_event(&mut self, event: InputEvent) {
+        self.ctx.journal_input(event);
     }
 
     fn housekeeping<A: Agent>(&mut self, agent: &mut A, token: u64, busy: usize) {
@@ -971,7 +1152,7 @@ impl Runtime {
     }
 }
 
-impl std::fmt::Debug for Runtime {
+impl std::fmt::Debug for Invoker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Runtime")
             .field("feeds", &self.feeds.len())

@@ -42,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusteron_archive::AeronPublication;
 use serde::Deserialize;
@@ -201,14 +201,49 @@ impl TableConfig {
 ///
 /// `text` is not that file, or a duration such as `slower_than` does not parse.
 pub fn parse_config(text: &str) -> Result<BTreeMap<String, TableConfig>, Error> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct File {
-        tables: BTreeMap<String, TableConfig>,
+    Config::parse(text).map(|config| config.tables)
+}
+
+/// Per-feed historical raw-frame recording, independent of decoded table switches.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeedConfig {
+    /// Store this feed's raw frames, doubling storage alongside decoded rows.
+    #[serde(default)]
+    pub frames: bool,
+}
+
+/// The recording configuration shared by applications and the ingester.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    /// Table switches and schema management policy.
+    pub tables: BTreeMap<String, TableConfig>,
+    /// Exact `service/kind` names, with optional `*` fallback.
+    #[serde(default)]
+    pub feeds: BTreeMap<String, FeedConfig>,
+}
+
+impl Config {
+    /// Parse tables and optional raw feed recording policy.
+    ///
+    /// # Errors
+    /// The YAML or a feed name is invalid.
+    pub fn parse(text: &str) -> Result<Self, Error> {
+        let config: Self = serde_yaml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
+        for name in config.feeds.keys() {
+            if name != "*"
+                && !name.split_once('/').is_some_and(|(service, kind)| {
+                    !service.is_empty() && !kind.is_empty() && !kind.contains('/')
+                })
+            {
+                return Err(Error::Config(format!(
+                    "feed must name service/kind or *: {name}"
+                )));
+            }
+        }
+        Ok(config)
     }
-    serde_yaml::from_str::<File>(text)
-        .map(|f| f.tables)
-        .map_err(|e| Error::Config(e.to_string()))
 }
 
 /// `(table name, template id)` of every message in an SBE schema.
@@ -340,11 +375,22 @@ pub struct Persist {
     pub(crate) inner: Arc<Inner>,
 }
 
+fn next_instance_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 pub(crate) struct Inner {
     /// Unique per `Persist` ever made: keys the per-thread call-site cache,
     /// which an address could not (a new `Persist` may reuse an old one's).
     pub(crate) id: u64,
     publication: Publication,
+    simulation: AtomicBool,
+    sim_now: AtomicI64,
+    sim_drops: AtomicU64,
+    sim_trace_ids: AtomicU64,
+    sim_span_ids: AtomicU64,
+    wall_watch: Mutex<std::time::Instant>,
     /// Exclusive mode: records from other threads, published by the owner's
     /// [`Persist::poll`].
     handoff: Option<Handoff>,
@@ -458,7 +504,11 @@ impl Persist {
                 read(bus.drops())
             });
         }
-        metrics.start();
+        if let Some(now) = settings.sim_start {
+            metrics.set_simulation(now);
+        } else {
+            metrics.start();
+        }
         let (publication, max_payload) = if settings.exclusive {
             let p = bus.add_exclusive_publication(&settings.channel, settings.stream_id)?;
             let max = p
@@ -496,20 +546,30 @@ impl Persist {
             bus: bus.clone(),
         };
         watcher.reload()?;
-        watcher.apply(jiff::Timestamp::now());
+        watcher.apply(
+            settings
+                .sim_start
+                .and_then(|n| jiff::Timestamp::from_nanosecond(i128::from(n.0)).ok())
+                .unwrap_or_else(jiff::Timestamp::now),
+        );
         Ok(Self {
             inner: Arc::new(Inner {
-                id: {
-                    static NEXT: AtomicU64 = AtomicU64::new(0);
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                },
+                id: next_instance_id(),
                 publication,
+                simulation: AtomicBool::new(settings.sim_start.is_some()),
+                sim_now: AtomicI64::new(settings.sim_start.unwrap_or_default().0),
+                sim_drops: AtomicU64::new(bus.drops().total()),
+                sim_trace_ids: AtomicU64::new(0),
+                sim_span_ids: AtomicU64::new(0),
+                wall_watch: Mutex::new(std::time::Instant::now()),
                 handoff,
                 max_payload,
                 metrics,
                 bus: bus.clone(),
                 shared,
-                watch_due: AtomicI64::new(Clock::new().now().0 + Watcher::EVERY_NS),
+                watch_due: AtomicI64::new(
+                    settings.sim_start.unwrap_or_else(|| Clock::new().now()).0 + Watcher::EVERY_NS,
+                ),
                 watcher: Mutex::new(watcher),
             }),
         })
@@ -540,7 +600,148 @@ impl Persist {
         self.inner
             .watch_due
             .store(now.0 + Watcher::EVERY_NS, Ordering::Relaxed);
-        watcher.tick();
+        watcher.tick(now);
+    }
+
+    /// Enable retrying transport pressure and apply table switches at the simulation epoch.
+    pub fn set_simulation(&self, now: Nanos) {
+        self.inner
+            .sim_drops
+            .store(self.inner.bus.drops().total(), Ordering::Relaxed);
+        self.inner.simulation.store(true, Ordering::Relaxed);
+        self.inner.sim_now.store(now.0, Ordering::Relaxed);
+        self.inner
+            .watch_due
+            .store(now.0.saturating_add(Watcher::EVERY_NS), Ordering::Relaxed);
+        self.inner.metrics.set_simulation(now);
+        if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
+            self.inner
+                .watcher
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .apply(timestamp);
+        }
+    }
+
+    /// Advance the timestamp used by event rows and tracing spans before agent dispatch.
+    #[inline]
+    pub fn sim_time(&self, now: Nanos) {
+        self.inner.sim_now.store(now.0, Ordering::Relaxed);
+        self.inner.metrics.sim_time(now);
+    }
+
+    pub(crate) fn next_span_id(&self) -> u64 {
+        static IDS: AtomicU64 = AtomicU64::new(0);
+        let ids = if self.inner.simulation.load(Ordering::Relaxed) {
+            &self.inner.sim_span_ids
+        } else {
+            &IDS
+        };
+        ids.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Current simulation epoch, or a live clock read.
+    #[inline]
+    #[must_use]
+    pub fn now(&self) -> Nanos {
+        if self.inner.simulation.load(Ordering::Relaxed) {
+            Nanos(self.inner.sim_now.load(Ordering::Relaxed))
+        } else {
+            crate::clock::epoch_now()
+        }
+    }
+
+    /// Publish metrics at simulation time; gate config I/O and heartbeats by wall elapsed time.
+    pub fn poll_sim(&self, now: Nanos) {
+        self.sim_time(now);
+        self.drain_handoff();
+        self.inner.metrics.poll_through(now, self);
+        if now.0 >= self.inner.watch_due.load(Ordering::Relaxed) {
+            self.inner
+                .watch_due
+                .store(now.0.saturating_add(Watcher::EVERY_NS), Ordering::Relaxed);
+            if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
+                self.inner
+                    .watcher
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .apply(timestamp);
+            }
+        }
+        let mut wall = self
+            .inner
+            .wall_watch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if wall.elapsed() >= Duration::from_secs(1) {
+            *wall = std::time::Instant::now();
+            drop(wall);
+            self.inner
+                .watcher
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .tick(now);
+        }
+    }
+
+    /// Finish queued rows, dictionaries and partial metrics at simulation EOF.
+    ///
+    /// # Errors
+    /// A queued frame is too large, malformed, or its publication has closed.
+    pub fn flush_sim(&self, now: Nanos) -> Result<(), Error> {
+        self.sim_time(now);
+        if !self.on_owner() {
+            return Err(Error::Aeron(
+                "simulation flush must run on its publication owner".into(),
+            ));
+        }
+        let pending = self
+            .inner
+            .handoff
+            .as_ref()
+            .map_or_else(Vec::new, |handoff| {
+                handoff
+                    .receive
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .try_iter()
+                    .take(HANDOFF)
+                    .collect::<Vec<_>>()
+            });
+        for bytes in pending {
+            self.publish_owned(&bytes)
+                .map_err(|_| Error::Aeron("failed to flush a handed-off frame".into()))?;
+        }
+        let drops = self.inner.sim_drops.load(Ordering::Relaxed);
+        self.inner.metrics.flush_through(now, self);
+        if self.inner.bus.drops().total() != drops {
+            return Err(Error::Aeron("failed to flush simulation metrics".into()));
+        }
+        let shared = &self.inner.shared;
+        let mut queue = shared
+            .heartbeat_queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if shared.shapes_due.swap(false, Ordering::Relaxed) {
+            queue.extend(self.heartbeat_round());
+        }
+        while let Some(beat) = queue.pop_front() {
+            if self.publish_owned(&beat.bytes).is_err() {
+                queue.push_front(beat);
+                shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
+                drop(queue);
+                return Err(Error::Aeron("failed to flush simulation dictionary".into()));
+            }
+            if let Some(shape) = beat.shape {
+                shape.mark_sent();
+            }
+            if let Some(def) = beat.def {
+                def.sent.store(true, Ordering::Relaxed);
+            }
+        }
+        drop(queue);
+        shared.heartbeat_left.store(0, Ordering::Relaxed);
+        Ok(())
     }
 
     /// A checkpoint trace (see [`trace`]): make it once, then
@@ -598,7 +799,11 @@ impl Persist {
                     Arc::new(switch)
                 }),
         );
-        let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
+        let nonce = if self.inner.simulation.load(Ordering::Relaxed) {
+            self.inner.sim_trace_ids.fetch_add(1, Ordering::Relaxed)
+        } else {
+            NONCE.fetch_add(1, Ordering::Relaxed)
+        };
         trace::Tracer::new(
             &def,
             message,
@@ -912,6 +1117,35 @@ impl Persist {
         round
     }
 
+    /// Persist one runtime Input journal row independently of application table switches.
+    pub(crate) fn record_input(&self, input: crate::journal::Input) -> Result<(), Error> {
+        let mut stalled = None;
+        let claim = loop {
+            match self.try_claim_slot(crate::journal::Input::LENGTH) {
+                Ok(claim) => break claim,
+                Err(DropKind::BackPressure | DropKind::NotConnected) => {
+                    let began = stalled.get_or_insert_with(Instant::now);
+                    if began.elapsed() >= Duration::from_secs(5) {
+                        return Err(Error::Aeron("input journal remained back pressured or disconnected for five seconds".into()));
+                    }
+                    let _ = self.inner.bus.do_work();
+                    std::thread::yield_now();
+                }
+                Err(kind) => {
+                    return Err(Error::Aeron(format!(
+                        "input journal claim failed: {kind:?}"
+                    )));
+                }
+            }
+        };
+        if input.encode(claim.data()) != crate::journal::Input::LENGTH {
+            return Err(Error::Aeron("input journal encode length mismatch".into()));
+        }
+        claim
+            .commit()
+            .map_err(|e| Error::Aeron(format!("input journal commit failed: {e}")))
+    }
+
     /// Publish a built message; why not, when Aeron could not take it.
     fn publish_owned(&self, bytes: &[u8]) -> Result<(), DropKind> {
         if !self.on_owner() {
@@ -929,12 +1163,23 @@ impl Persist {
     /// Claim `len` bytes, stamped with this application's source id.
     #[inline]
     fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
-        match &self.inner.publication {
-            Publication::Shared(p) => self.inner.bus.try_claim(p, len),
-            Publication::Exclusive(owned) => owned.claimable().map_or(Err(DropKind::Other), |p| {
-                let source = self.inner.bus.source_id();
-                crate::bus::claim_exclusive(p, len, source)
-            }),
+        loop {
+            let result = match &self.inner.publication {
+                Publication::Shared(p) => self.inner.bus.try_claim(p, len),
+                Publication::Exclusive(owned) => {
+                    owned.claimable().map_or(Err(DropKind::Other), |p| {
+                        crate::bus::claim_exclusive(p, len, self.inner.bus.source_id())
+                    })
+                }
+            };
+            if self.inner.simulation.load(Ordering::Relaxed)
+                && matches!(result, Err(DropKind::BackPressure | DropKind::NotConnected))
+            {
+                let _ = self.inner.bus.do_work();
+                std::thread::yield_now();
+                continue;
+            }
+            return result;
         }
     }
 
@@ -955,6 +1200,12 @@ impl Persist {
             self.drop_one();
             return;
         };
+        if self.inner.simulation.load(Ordering::Relaxed) {
+            if handoff.send.send(bytes).is_err() {
+                self.count(DropKind::Other);
+            }
+            return;
+        }
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
             handoff.send.try_send(bytes)
         {
@@ -1066,7 +1317,7 @@ struct Watcher {
 impl Watcher {
     const EVERY_NS: i64 = 1_000_000_000;
 
-    fn tick(&mut self) {
+    fn tick(&mut self, now: Nanos) {
         // Every 5 s, ask the next record to send every event shape again.
         // An ingester that starts after the first one, with none saved,
         // learns them from that record.
@@ -1079,7 +1330,9 @@ impl Watcher {
             log::error!("{e}; keeping the previous configuration");
         }
         // Every second, changed or not: an `until` passes by itself.
-        self.apply(jiff::Timestamp::now());
+        if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
+            self.apply(timestamp);
+        }
         let drops = self.bus.drops();
         if drops.total() > self.seen.total() {
             log::warn!(

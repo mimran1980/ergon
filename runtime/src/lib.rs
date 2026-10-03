@@ -19,10 +19,15 @@
 pub mod alloc_stats;
 pub mod app;
 pub mod bus;
+#[cfg(feature = "clickhouse")]
+pub mod clickhouse;
+#[cfg(feature = "clickhouse")]
+pub mod clickhouse_source;
 pub mod clock;
 pub mod event;
 pub mod frames;
 pub mod idle;
+pub mod journal;
 pub mod metrics;
 mod os;
 mod owned;
@@ -96,6 +101,10 @@ pub struct Settings {
     /// that table for it alone. With [`Settings::host`] and [`Settings::pod`],
     /// it is written into every row the application records.
     pub app: String,
+    /// Backtest run id, empty for live.
+    pub run: String,
+    /// Simulated connection epoch, when running a backtest.
+    pub sim_start: Option<clock::Nanos>,
     /// The machine (in Kubernetes, the node).
     pub host: String,
     /// The pod, or the process's name outside Kubernetes.
@@ -135,6 +144,8 @@ impl Settings {
         Self {
             config_path: config_path.into(),
             app: String::new(),
+            run: String::new(),
+            sim_start: None,
             host: String::new(),
             pod: String::new(),
             host_ip: "127.0.0.1".into(),
@@ -164,6 +175,7 @@ impl Settings {
         };
         Self {
             app: std::env::var("PERSIST_APP").unwrap_or_default(),
+            run: std::env::var("PERSIST_RUN").unwrap_or_default(),
             host: source::host_name(),
             pod: std::env::var("POD_NAME")
                 .or_else(|_| std::env::var("HOSTNAME"))

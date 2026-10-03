@@ -25,6 +25,8 @@ pub struct Source {
     pub pod: String,
     /// The application's name.
     pub app: String,
+    /// Backtest run identifier; empty for live applications.
+    pub run: String,
 }
 
 impl Source {
@@ -32,13 +34,22 @@ impl Source {
     /// and the start time, so each run of each application has its own.
     #[must_use]
     pub fn new(host: &str, pod: &str, app: &str) -> Self {
-        let started = crate::event::now_ns();
+        Self::at(host, pod, app, crate::event::now_ns(), "")
+    }
+
+    /// Identity at a supplied epoch, deterministic for a named simulation run.
+    #[must_use]
+    pub fn at(host: &str, pod: &str, app: &str, started: u64, run: &str) -> Self {
         let mut key = Vec::new();
         for part in [host, pod, app] {
             key.extend_from_slice(part.as_bytes());
             key.push(0);
         }
-        key.extend_from_slice(&std::process::id().to_le_bytes());
+        if run.is_empty() {
+            key.extend_from_slice(&std::process::id().to_le_bytes());
+        } else {
+            key.extend_from_slice(run.as_bytes());
+        }
         key.extend_from_slice(&started.to_le_bytes());
         Self {
             // 0 means "no source": never hand it out.
@@ -48,6 +59,7 @@ impl Source {
             host: host.to_owned(),
             pod: pod.to_owned(),
             app: app.to_owned(),
+            run: run.to_owned(),
         }
     }
 
@@ -61,6 +73,7 @@ impl Source {
             self.host.len(),
             self.pod.len(),
             self.app.len(),
+            self.run.len(),
         );
         crate::event::owned_frame(len, |message| {
             Ok(codec::SourceEncoder::wrap_and_apply_header(message, 0)
@@ -71,7 +84,8 @@ impl Source {
                 })
                 .host(self.host.as_bytes())
                 .and_then(|m| m.pod(self.pod.as_bytes()))
-                .and_then(|m| m.app(self.app.as_bytes()))?
+                .and_then(|m| m.app(self.app.as_bytes()))
+                .and_then(|m| m.run(self.run.as_bytes()))?
                 .encoded_length_with_header())
         })
     }
@@ -88,6 +102,14 @@ impl Source {
             host: d.host_as_str().ok()?.to_owned(),
             pod: d.pod_as_str().ok()?.to_owned(),
             app: d.app_as_str().ok()?.to_owned(),
+            run: if message
+                .get(6..8)
+                .is_some_and(|v| u16::from_le_bytes([v[0], v[1]]) >= 2)
+            {
+                d.run_as_str().ok()?.to_owned()
+            } else {
+                String::new()
+            },
         })
     }
 }
@@ -110,6 +132,27 @@ pub fn host_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_simulation_is_deterministic_and_old_sources_decode()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = Source::at("node", "pod", "engine", 123, "backtest-1");
+        assert_eq!(
+            source,
+            Source::at("node", "pod", "engine", 123, "backtest-1")
+        );
+        assert_ne!(
+            source.id,
+            Source::at("node", "pod", "engine", 123, "backtest-2").id
+        );
+        assert_eq!(Source::decode(&source.message()?), Some(source));
+        let live = Source::at("node", "pod", "engine", 123, "");
+        let mut legacy = live.message()?;
+        legacy[6..8].copy_from_slice(&1u16.to_le_bytes());
+        legacy.pop(); // version 1 ended after app, before run's length byte.
+        assert_eq!(Source::decode(&legacy), Some(live));
+        Ok(())
+    }
 
     #[test]
     fn a_source_round_trips_through_its_message() -> Result<(), Box<dyn std::error::Error>> {

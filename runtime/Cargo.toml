@@ -18,6 +18,7 @@ rusteron-archive = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 signal-hook = "0.3"
+ureq = { version = "2", default-features = false, optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
@@ -28,6 +29,7 @@ mimalloc = { version = "0.1.52", optional = true }
 libc = "0.2"
 
 [features]
+clickhouse = ["dep:ureq"]
 # Allocator and process metrics from mimalloc; see `alloc_stats`.
 mimalloc = ["dep:libmimalloc-sys"]
 # Count each thread's allocations (a TLS increment per allocation, process

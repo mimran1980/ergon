@@ -17,10 +17,9 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 ergo-sbe = { workspace = true }
 log = "0.4"
 mimalloc = "0.1.52"
-ergon-runtime = { path = "../runtime" }
+ergon-runtime = { path = "../runtime", features = ["clickhouse"] }
 rusteron-archive = { workspace = true }
 signal-hook = "0.3"
-ureq = { version = "2", default-features = false }
 
 [dev-dependencies]
 schema = { path = "../samples/clickhouse/schema" }

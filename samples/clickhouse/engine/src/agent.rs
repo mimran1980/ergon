@@ -79,11 +79,12 @@ pub struct Engine {
 
 impl Engine {
     /// Publish `signals` and `orders`, subscribe to the exchange's fills and
-    /// every feed handler in the registry, and fire once a second.
+    /// every feed handler in the registry. Timers are armed by [`Agent::start`]
+    /// at the runtime's recorded startup checkpoint.
     ///
     /// # Errors
     ///
-    /// The registry does not name a stream, or the timer was refused.
+    /// The registry does not name a stream.
     pub fn new(ctx: &mut Ctx) -> Result<Self, Error> {
         let service = format!("engine-{}", ctx.region());
         let signals = ctx.publish(&service, "signals")?;
@@ -113,8 +114,6 @@ impl Engine {
         };
         engine.route(exec, Route::Exec);
         engine.add_venues(ctx)?;
-        ctx.every_aligned(SECOND, EVERY_SECOND)
-            .map_err(|e| Error::Config(format!("timer: {e}")))?;
         log::info!(
             "{service}: {} venues ({})",
             engine.core.venues.len(),
@@ -210,7 +209,9 @@ impl Engine {
 }
 
 impl Agent for Engine {
-    fn start(&mut self, _ctx: &mut Ctx) -> Result<(), Error> {
+    fn start(&mut self, ctx: &mut Ctx) -> Result<(), Error> {
+        ctx.every_aligned(SECOND, EVERY_SECOND)
+            .map_err(|e| Error::Config(format!("timer: {e}")))?;
         Ok(())
     }
 

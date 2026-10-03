@@ -3,7 +3,11 @@
 //! runtime agent that runs them live, in replay and in a backtest.
 
 pub mod agent;
+pub mod backtest;
+pub mod exchange;
+pub mod matching;
 pub mod replay;
+pub mod venue;
 
 use std::collections::BTreeMap;
 

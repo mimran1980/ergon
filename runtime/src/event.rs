@@ -865,7 +865,7 @@ impl Persist {
                 _ => 0,
             })
             .sum();
-        let ts = now_ns();
+        let ts = self.now().0.cast_unsigned();
         self.claim(shape.row_len(text), |buf| {
             shape.write_row(buf, ts, |i| Some(fields[i].1));
             true
@@ -958,7 +958,7 @@ impl Persist {
                 _ => 0,
             })
             .sum();
-        let ts = now_ns();
+        let ts = self.now().0.cast_unsigned();
         self.claim(shape.row_len(text), |buf| {
             shape.write_row(buf, ts, |i| scratch.value(site.src[i]));
             true

@@ -34,7 +34,7 @@ use rusteron_archive::{
     AeronArchiveRecordingDescriptorPoller, Handler, IntoCString, PersistentSubscriptionBuilder,
 };
 
-use super::{Delivery, Origin};
+use super::{Delivery, Metadata, Origin};
 use crate::Error;
 use crate::bus::Bus;
 use crate::streams::Streams;
@@ -131,7 +131,30 @@ impl PersistentSubscription {
     /// strategy.
     #[inline]
     pub fn poll(&mut self, mut handler: impl FnMut(&[u8], Delivery), limit: usize) -> usize {
-        let State::Running { subscription, .. } = &self.state else {
+        self.poll_inner::<false>(|message, delivery, _| handler(message, delivery), limit)
+    }
+
+    #[inline]
+    pub(crate) fn poll_metadata(
+        &mut self,
+        handler: impl FnMut(&[u8], Delivery, Metadata),
+        limit: usize,
+    ) -> usize {
+        self.poll_inner::<true>(handler, limit)
+    }
+
+    #[inline]
+    fn poll_inner<const JOURNAL: bool>(
+        &mut self,
+        mut handler: impl FnMut(&[u8], Delivery, Metadata),
+        limit: usize,
+    ) -> usize {
+        let State::Running {
+            subscription,
+            recording,
+            ..
+        } = &self.state
+        else {
             self.advance();
             return 0;
         };
@@ -145,12 +168,22 @@ impl PersistentSubscription {
         let fresh = &mut self.fresh;
         let taken = subscription
             .poll_fn(
-                |m, _| {
+                |m, header| {
                     handler(
                         m,
                         Delivery {
                             first: std::mem::take(fresh),
                             origin,
+                        },
+                        Metadata {
+                            recording: *recording,
+                            position: if JOURNAL { header.position() } else { 0 },
+                            session: if JOURNAL {
+                                header.get_values().map_or(0, |v| v.frame().session_id())
+                            } else {
+                                0
+                            },
+                            stream: self.stream_id,
                         },
                     );
                 },

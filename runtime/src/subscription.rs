@@ -49,6 +49,15 @@ pub struct Delivery {
     pub origin: Origin,
 }
 
+/// Archive locator supplied only to the runtime journal.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Metadata {
+    pub recording: i64,
+    pub position: i64,
+    pub session: i32,
+    pub stream: i32,
+}
+
 impl Delivery {
     /// The message was not replayed from the archive.
     #[must_use]
@@ -130,6 +139,24 @@ impl Subscription {
     /// count for an idle strategy.
     #[inline]
     pub fn poll(&mut self, mut handler: impl FnMut(&[u8], Delivery), limit: usize) -> usize {
+        self.poll_inner::<false>(|message, delivery, _| handler(message, delivery), limit)
+    }
+
+    #[inline]
+    pub(crate) fn poll_metadata(
+        &mut self,
+        handler: impl FnMut(&[u8], Delivery, Metadata),
+        limit: usize,
+    ) -> usize {
+        self.poll_inner::<true>(handler, limit)
+    }
+
+    #[inline]
+    fn poll_inner<const JOURNAL: bool>(
+        &mut self,
+        mut handler: impl FnMut(&[u8], Delivery, Metadata),
+        limit: usize,
+    ) -> usize {
         let State::Ready(subscription) = &self.state else {
             self.connect();
             return 0;
@@ -148,14 +175,32 @@ impl Subscription {
                 };
                 if *session == Some(id) {
                     taken += 1;
-                    handler(message, live(false));
+                    handler(
+                        message,
+                        live(false),
+                        Metadata {
+                            recording: -1,
+                            position: if JOURNAL { header.position() } else { 0 },
+                            session: id,
+                            stream: self.stream_id,
+                        },
+                    );
                 } else if !superseded.contains(&Some(id)) {
                     if let Some(old) = session.replace(id) {
                         superseded.rotate_right(1);
                         superseded[0] = Some(old);
                     }
                     taken += 1;
-                    handler(message, live(true));
+                    handler(
+                        message,
+                        live(true),
+                        Metadata {
+                            recording: -1,
+                            position: if JOURNAL { header.position() } else { 0 },
+                            session: id,
+                            stream: self.stream_id,
+                        },
+                    );
                 }
             },
             limit,

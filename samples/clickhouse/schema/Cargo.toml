@@ -12,6 +12,9 @@ publish.workspace = true
 
 [dependencies]
 rust_decimal = "1"
+# A root all-features build can enable these accessor families on the
+# generator; its generated modules need the same runtime re-exports.
+ergo-sbe = { workspace = true, features = ["compact_str", "smol_str", "bytes"] }
 
 [build-dependencies]
 ergo-sbe.workspace = true

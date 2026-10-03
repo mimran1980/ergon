@@ -221,7 +221,12 @@ impl AeronStats {
         let pod = std::env::var("POD_NAME")
             .or_else(|_| std::env::var("HOSTNAME"))
             .unwrap_or_default();
-        for name in [ergon_runtime::source::host_name(), pod, "ingester".into()] {
+        for name in [
+            ergon_runtime::source::host_name(),
+            pod,
+            "ingester".into(),
+            String::new(),
+        ] {
             write_string(name.as_bytes(), &mut origin);
         }
         Ok(Self {

@@ -22,7 +22,7 @@ use ergon_runtime::clock::{Clock, Nanos};
 use ergon_runtime::event::Value;
 use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram};
 use ergon_runtime::persist::Persist;
-use ergon_runtime::rt::{Agent, Config, Ctx, Expiry, FeedId, Out, Runtime};
+use ergon_runtime::rt::{Agent, Config, Ctx, Expiry, FeedId, Invoker, Out, Runtime};
 use ergon_runtime::streams::Streams;
 use ergon_runtime::subscription::Delivery;
 use ergon_runtime::trace::Tracer;
@@ -266,7 +266,7 @@ struct Recorder {
     feeds: Feeds,
     /// Persist's housekeeping, SIGTERM, and the feeds' `Source` heartbeat:
     /// the runtime in embedded mode, driven from this actor's callbacks.
-    rt: Runtime,
+    rt: Invoker,
     housekeeping: Housekeeping,
 }
 
@@ -294,7 +294,10 @@ impl Recorder {
     fn invoke(&mut self) {
         self.rt.cycle(&mut self.housekeeping);
         if self.rt.is_stopping() {
-            self.rt.finish(&mut self.housekeeping);
+            if let Err(error) = self.rt.finish(&mut self.housekeeping) {
+                log::error!("runtime shutdown failed: {error}");
+                std::process::exit(1);
+            }
             std::process::exit(0);
         }
     }
@@ -324,7 +327,7 @@ impl std::fmt::Debug for Feeds {
 impl Feeds {
     /// Open `service`'s feeds from the registry, on this node, as
     /// exclusive publications of the actor's thread.
-    fn open(rt: &mut Runtime, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn open(rt: &mut Invoker, service: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let ctx = rt.ctx();
         let md = ctx.publish(service, "md")?;
         let tob = ctx.publish(service, "tob")?;
@@ -462,7 +465,7 @@ impl DataActor for Recorder {
     /// within seconds rather than after the node's shutdown or this
     /// client's timeout.
     fn on_stop(&mut self) -> anyhow::Result<()> {
-        self.rt.finish(&mut self.housekeeping);
+        self.rt.finish(&mut self.housekeeping)?;
         Ok(())
     }
 
@@ -1265,7 +1268,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // No thread of its own: the actor drives it (`Recorder::invoke`), from
     // every callback and a millisecond timer. It polls persist, applies
     // `tables.yaml`, refreshes the wall-clock offset, and stops on SIGTERM.
-    let mut rt = Runtime::new(Config {
+    let mut rt = Runtime::invoker(Config {
         persist: Some(persist),
         stop: ergon_runtime::rt::sigterm()?,
         ..Config::new(bus, streams)

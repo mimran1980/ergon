@@ -567,6 +567,7 @@ struct State {
 
 struct Registry {
     interval_ns: i64,
+    sim_now: AtomicI64,
     /// `Nanos` of the next interval's end; `i64::MIN` while one is being
     /// published, `i64::MAX` when nothing publishes.
     next_due: AtomicI64,
@@ -589,6 +590,7 @@ impl Metrics {
         Self {
             registry: Arc::new(Registry {
                 interval_ns,
+                sim_now: AtomicI64::new(i64::MIN),
                 next_due: AtomicI64::new(i64::MAX),
                 state: Mutex::new(State {
                     defs: Vec::new(),
@@ -618,7 +620,19 @@ impl Metrics {
     /// Publish from the end of the current interval on, once a handle made
     /// with [`Metrics::published_by`] polls.
     pub(crate) fn start(&self) {
-        let now = crate::clock::Clock::new().now();
+        self.start_at(crate::clock::Clock::new().now());
+    }
+
+    pub(crate) fn set_simulation(&self, now: Nanos) {
+        self.registry.sim_now.store(now.0, Relaxed);
+        self.start_at(now);
+    }
+
+    pub(crate) fn sim_time(&self, now: Nanos) {
+        self.registry.sim_now.store(now.0, Relaxed);
+    }
+
+    fn start_at(&self, now: Nanos) {
         let metrics_due = self.next_boundary(now).0;
         let mut state = self.state();
         state.next_metrics = metrics_due;
@@ -642,7 +656,12 @@ impl Metrics {
         if state.next_hist != i64::MAX {
             return;
         }
-        let now = crate::clock::Clock::new().now();
+        let sim = self.registry.sim_now.load(Relaxed);
+        let now = if sim == i64::MIN {
+            crate::clock::Clock::new().now()
+        } else {
+            Nanos(sim)
+        };
         Self::arm_locked(&mut state, now);
         let due = self.registry.next_due.load(Relaxed);
         if due != i64::MIN {
@@ -890,6 +909,64 @@ impl Metrics {
         if now.0 >= self.registry.next_due.load(Relaxed) {
             self.publish_due(now, persist);
         }
+    }
+
+    pub(crate) fn flush_through(&self, now: Nanos, persist: &Persist) {
+        self.flush_with(now, persist.max_payload(), |len, write| {
+            persist.claim(len, write);
+        });
+    }
+
+    /// Finish already-open cycles, then snapshot the last partial interval at EOF.
+    fn flush_with(
+        &self,
+        now: Nanos,
+        max_payload: usize,
+        mut publish: impl FnMut(usize, &mut dyn FnMut(&mut [u8]) -> bool),
+    ) {
+        type Publish<'a> = dyn FnMut(usize, &mut dyn FnMut(&mut [u8]) -> bool) + 'a;
+        let mut state = self.state();
+        let interval = self.registry.interval_ns;
+        let drain = |state: &mut State, publish: &mut Publish<'_>| {
+            while state.hist_open || state.active {
+                let next = if state.hist_open {
+                    state.next_histogram(max_payload)
+                } else {
+                    state.next_metrics(max_payload)
+                };
+                if let Some(next) = next {
+                    publish(state.len(&next), &mut |out| {
+                        state.encode(&next, interval, out).is_ok()
+                    });
+                    state.finish_publish(&next);
+                } else if state.hist_open {
+                    state.hist_open = false;
+                } else {
+                    state.active = false;
+                }
+            }
+        };
+        drain(&mut state, &mut publish);
+        state.take_histogram_samples();
+        if !state.cycle.samples.is_empty() {
+            let end = u64::try_from(now.0).unwrap_or(0);
+            state.cycle.hist_ts = end;
+            state.cycle.hist_interval = end.saturating_sub(state.last_hist_end).max(1);
+            state.last_hist_end = end;
+            state.cycle.next_sample = 0;
+            state.cycle.next_hist_def = 0;
+            state.hist_open = true;
+            drain(&mut state, &mut publish);
+        }
+        state.snapshot_metrics(u64::try_from(now.0).unwrap_or(0));
+        drain(&mut state, &mut publish);
+        state.next_metrics = self.next_boundary(now).0;
+        state.next_hist = if state.next_hist == i64::MAX {
+            i64::MAX
+        } else {
+            now.0.saturating_add(HISTOGRAM_MS)
+        };
+        self.store_due(&state);
     }
 
     #[cold]
@@ -1348,6 +1425,79 @@ mod tests {
                 [p - 3, p - 1, p, p + 1, p + p / 3, p + p / 2 + 7]
             }))
             .chain([u64::MAX - 1, u64::MAX])
+    }
+
+    #[test]
+    fn eof_before_the_first_interval_still_publishes_rows_at_eof() -> TestResult {
+        let metrics = Metrics::detached();
+        metrics.set_simulation(Nanos(0));
+        metrics.counter("c", &[]).add(7);
+        metrics.local_histogram("h", &[]).record(13);
+        let mut messages = Vec::new();
+        metrics.flush_with(Nanos(123), 64 * 1024, |len, write| {
+            let mut buffer = vec![0; len];
+            assert!(write(&mut buffer));
+            messages.push(buffer);
+        });
+        let decoded = decode(&messages)?;
+        assert_eq!(decoded.histograms.len(), 1);
+        assert_eq!(decoded.histograms[0].ts, 123);
+        assert_eq!(decoded.histograms[0].count, 1);
+        assert!(decoded.counters.iter().any(|(_, total, _)| *total == 7));
+        Ok(())
+    }
+
+    #[test]
+    fn eof_flush_finishes_a_partial_batch_and_preserves_final_samples() -> TestResult {
+        let metrics = Metrics::detached();
+        metrics.set_simulation(Nanos(0));
+        let counter = metrics.counter("c", &[]);
+        let histogram = metrics.local_histogram("h", &[]);
+        counter.add(7);
+        histogram.record(13);
+        let now = Nanos(5_000_000_123);
+        let mut messages = Vec::new();
+        metrics.poll_with(now, 64 * 1024, |len, write| {
+            let mut buffer = vec![0; len];
+            assert!(write(&mut buffer));
+            messages.push(buffer);
+        });
+        assert!(
+            metrics.state().hist_open || metrics.state().active,
+            "one poll leaves the batch incomplete"
+        );
+        metrics.flush_with(now, 64 * 1024, |len, write| {
+            let mut buffer = vec![0; len];
+            assert!(write(&mut buffer));
+            messages.push(buffer);
+        });
+        let decoded = decode(&messages)?;
+        assert_eq!(
+            decoded
+                .histograms
+                .iter()
+                .map(|sample| sample.count)
+                .sum::<u64>(),
+            1
+        );
+        assert!(decoded.counters.iter().any(|(_, total, _)| *total == 7));
+        let state = metrics.state();
+        assert!(!state.hist_open && !state.active);
+        assert!(state.next_metrics > now.0);
+        drop(state);
+        Ok(())
+    }
+
+    #[test]
+    fn simulation_arms_metrics_and_new_histograms_at_simulated_epoch() {
+        let metrics = Metrics::detached();
+        metrics.set_simulation(Nanos(123_000_000));
+        assert_eq!(metrics.state().next_metrics, 5_000_000_000);
+        metrics.sim_time(Nanos(456_000_000));
+        let hist = metrics.local_histogram("latency", &[]);
+        hist.record(10);
+        assert_eq!(metrics.state().next_hist, 457_000_000);
+        assert_eq!(metrics.registry.next_due.load(Relaxed), 457_000_000);
     }
 
     #[test]

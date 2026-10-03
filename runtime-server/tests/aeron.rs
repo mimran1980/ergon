@@ -427,6 +427,7 @@ fn nested_values_become_array_columns() -> TestResult {
             "pod\tLowCardinality(String)",
             "regime\tNullable(String)",
             "regime.Volatile.vol\tNullable(Float64)",
+            "run\tLowCardinality(String)",
             "spread.bps\tNullable(Float64)",
             "symbol\tNullable(String)",
             "ts\tDateTime64(9, \\'UTC\\')",
@@ -568,7 +569,7 @@ fn tracing_events_become_tables() -> TestResult {
     );
     assert_eq!(
         lab.query("SELECT name, type FROM system.columns WHERE database = 'DB' AND table = 'signal' ORDER BY position FORMAT TSV")?,
-        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tNullable(String)\nedge\tNullable(Float64)\nn\tNullable(Int64)\nflag\tNullable(Bool)\nhost\tLowCardinality(String)\npod\tLowCardinality(String)\napp\tLowCardinality(String)\ninserted_at\tDateTime64(3, \\'UTC\\')"
+        "ts\tDateTime64(9, \\'UTC\\')\ninstrument\tNullable(String)\nedge\tNullable(Float64)\nn\tNullable(Int64)\nflag\tNullable(Bool)\nhost\tLowCardinality(String)\npod\tLowCardinality(String)\napp\tLowCardinality(String)\nrun\tLowCardinality(String)\ninserted_at\tDateTime64(3, \\'UTC\\')"
     );
     assert_eq!(
         lab.query("SELECT DISTINCT host, pod, app FROM DB.signal FORMAT TSV")?,
@@ -1254,14 +1255,14 @@ fn an_mdc_feed_is_spy_recorded_and_reachable_by_name() -> TestResult {
     Ok(())
 }
 
-/// With a `frame` table in `tables.yaml`, every feed frame is also kept as
+/// With raw recording enabled for a feed, each frame is also kept as
 /// is: its publish stamp, recording and position, the feed's names, and the
 /// message bytes, sorted by feed and time (not by the bytes).
 #[test]
 fn feed_frames_are_kept_raw_in_the_frame_table() -> TestResult {
     let lab = Lab::new(
         "aeron_frames",
-        "tables:\n  shapes: { kind: dynamic }\n  frame: { kind: static }\n",
+        "tables:\n  shapes: { kind: dynamic }\n  frame: { kind: static }\nfeeds:\n  'md-frames/md': { frames: true }\n",
     )?;
     let stream_id = stream(31);
     let feed_stream = stream(32);
@@ -1320,7 +1321,7 @@ fn feed_frames_are_kept_raw_in_the_frame_table() -> TestResult {
         lab.query(
             "SELECT sorting_key FROM system.tables WHERE database = 'DB' AND name = 'frame'"
         )?,
-        "service, kind, ts"
+        "service, kind, ts, recording_id, position"
     );
     Ok(())
 }

@@ -11,6 +11,13 @@ publish.workspace = true
 name = "exch-sim"
 path = "src/bin/exch_sim.rs"
 
+[[bin]]
+name = "backtest"
+path = "src/bin/backtest.rs"
+
+[features]
+clickhouse = ["ergon-runtime/clickhouse"]
+
 [dependencies]
 arrayvec = "0.7"
 libm = "0.2"
@@ -21,6 +28,7 @@ ergon-runtime.workspace = true
 
 [dev-dependencies]
 proptest = "1.11"
+rusteron-media-driver = { version = "=0.2.7", features = ["static"] }
 
 [lints]
 workspace = true

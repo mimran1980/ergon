@@ -353,6 +353,75 @@ impl TimerWheel {
         self.poll_cold(now.0, fired, limit)
     }
 
+    /// Apply one journalled firing instead of polling computed deadlines.
+    /// Matches a live token and original deadline, preserving a repeating
+    /// timer's id and its recorded skipped-period count. Missing or cancelled
+    /// timers reject the replay rather than inventing a timer handle.
+    pub fn journal_fire(
+        &mut self,
+        token: u64,
+        deadline: Nanos,
+        _at: Nanos,
+        missed: u64,
+    ) -> Option<Fired> {
+        let (h, rec) = self
+            .timers
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, rec)| rec.seq != 0 && rec.token == token)
+            .filter(|(_, rec)| self.slab.deadline[ix(rec.slot)] == deadline.0)
+            .min_by_key(|(_, rec)| rec.seq)?;
+        if rec.period == 0 && missed != 0 {
+            return None;
+        }
+        let id = TimerId::pack(rec.seq, u32::try_from(h).ok()?);
+        if rec.period == 0 {
+            self.release(h);
+        } else {
+            let periods = i128::from(missed) + 1;
+            let next = i128::from(deadline.0) + periods * i128::from(rec.period);
+            let next = i64::try_from(next).ok()?;
+            if next == NIL {
+                return None;
+            }
+            self.rearm(h, deadline.0, next);
+        }
+        self.inflight.clear();
+        self.dead.clear();
+        self.inflight.push(id);
+        self.dead.push(0);
+        self.recompute_next();
+        Some(Fired {
+            id,
+            token,
+            deadline,
+            missed,
+            period: rec.period,
+        })
+    }
+
+    /// Prepare all due journal timers before dispatch, preserving live batch
+    /// cancellation semantics: one-shots are already dead and repeats rearmed.
+    /// Returns their original expiries in journal order.
+    pub fn journal_batch(
+        &mut self,
+        entries: &[(u64, Nanos, u64)],
+        at: Nanos,
+    ) -> Option<Vec<Fired>> {
+        let mut fired = Vec::with_capacity(entries.len());
+        for &(token, deadline, missed) in entries {
+            fired.push(self.journal_fire(token, deadline, at, missed)?);
+        }
+        self.inflight.clear();
+        self.dead.clear();
+        for f in &fired {
+            self.inflight.push(f.id);
+            self.dead.push(0);
+        }
+        Some(fired)
+    }
+
     /// Earliest live deadline. `None` when the wheel is empty. Cached until
     /// a schedule, cancel or fire changes it. The sim driver polls at this
     /// time, so a timer fires at its deadline rather than up to a tick late.
@@ -866,6 +935,42 @@ mod tests {
 
     fn tiny() -> Result<TimerWheel, TimerError> {
         wheel(1024, 8, 4)
+    }
+
+    #[test]
+    fn journal_batch_frees_later_one_shot_before_first_callback() -> Result<(), TimerError> {
+        let mut wheel = TimerWheel::new(Settings::default())?;
+        let a = wheel.schedule(Nanos(10), 1)?;
+        let b = wheel.schedule(Nanos(10), 2)?;
+        let batch = wheel
+            .journal_batch(&[(1, Nanos(10), 0), (2, Nanos(10), 0)], Nanos(10))
+            .ok_or(TimerError::Capacity)?;
+        assert_eq!(batch.iter().map(|f| f.id).collect::<Vec<_>>(), [a, b]);
+        assert!(
+            !wheel.cancel(b),
+            "live poll already freed B before A's callback"
+        );
+        assert!(wheel.is_suppressed(b));
+        Ok(())
+    }
+
+    #[test]
+    fn journal_preserves_repeating_id_and_coalesced_grid() -> Result<(), TimerError> {
+        let mut wheel = TimerWheel::new(Settings::default())?;
+        let id = wheel.schedule_repeating(Nanos(10), 10, 17)?;
+        let first = wheel
+            .journal_fire(17, Nanos(10), Nanos(85), 7)
+            .ok_or(TimerError::Capacity)?;
+        assert_eq!(first.id, id);
+        assert_eq!(first.missed, 7);
+        assert_eq!(wheel.next_deadline(), Some(Nanos(90)));
+        let second = wheel
+            .journal_fire(17, Nanos(90), Nanos(90), 0)
+            .ok_or(TimerError::Capacity)?;
+        assert_eq!(second.id, id);
+        assert!(wheel.cancel(id));
+        assert!(wheel.journal_fire(17, Nanos(100), Nanos(100), 0).is_none());
+        Ok(())
     }
 
     #[test]

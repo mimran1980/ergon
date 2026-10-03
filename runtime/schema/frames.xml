@@ -7,7 +7,7 @@
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="persist_frames"
                    id="65533"
-                   version="1"
+                   version="2"
                    byteOrder="littleEndian">
     <types>
         <composite name="messageHeader">
@@ -36,6 +36,7 @@
         <field name="schemaId" id="6" type="uint16"/>
         <field name="templateId" id="7" type="uint16"/>
         <field name="version" id="8" type="uint16"/>
+        <field name="source" id="12" type="uint64" sinceVersion="2"/>
         <data name="service" id="9" type="varString8"/>
         <data name="kind" id="10" type="varString8"/>
         <data name="message" id="11" type="varBytes16"/>

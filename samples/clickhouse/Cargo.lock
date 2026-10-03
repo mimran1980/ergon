@@ -1317,6 +1317,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "castaway"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1400,6 +1409,19 @@ checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "static_assertions",
+ "zmij",
 ]
 
 [[package]]
@@ -2055,6 +2077,7 @@ dependencies = [
  "log",
  "mimalloc",
  "proptest",
+ "rusteron-media-driver",
  "schema",
 ]
 
@@ -2121,12 +2144,15 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "ergo-sbe"
 version = "0.1.30"
 dependencies = [
+ "bytes",
+ "compact_str",
  "miette",
  "prettyplease 0.3.0",
  "proc-macro2",
  "quote",
  "roxmltree",
  "sha2 0.11.0",
+ "smol_str",
  "syn 3.0.6",
  "thiserror",
 ]
@@ -2147,6 +2173,7 @@ dependencies = [
  "signal-hook",
  "tracing",
  "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]
@@ -5258,6 +5285,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol_str"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9676b89cd56310a87b93dec47b11af744f34d5fc9f367b829474eec0a891350d"
+dependencies = [
+ "borsh",
+ "serde",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5858,6 +5895,18 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "once_cell",
+ "url",
+]
 
 [[package]]
 name = "url"

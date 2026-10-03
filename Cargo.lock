@@ -677,6 +677,7 @@ dependencies = [
  "signal-hook",
  "tracing",
  "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]
@@ -696,7 +697,6 @@ dependencies = [
  "signal-hook",
  "tracing",
  "tracing-subscriber",
- "ureq",
 ]
 
 [[package]]

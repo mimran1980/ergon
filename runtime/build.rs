@@ -12,5 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "schema/frames.xml",
         ergo_sbe::GenerationConfig::new("frames"),
     )?;
+    println!("cargo:rerun-if-changed=schema/input.xml");
+    ergo_sbe::generate_to_out_dir("schema/input.xml", ergo_sbe::GenerationConfig::new("input"))?;
     Ok(())
 }

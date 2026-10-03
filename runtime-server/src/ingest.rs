@@ -32,9 +32,6 @@ use ergon_runtime::frames::FrameRow;
 
 use crate::{Error, Report, Settings, Writer};
 
-/// The table of raw feed frames: kept when `tables.yaml` lists it.
-const FRAME_TABLE: &str = "frame";
-
 /// The archive's local control channel: same host, no ports.
 const CONTROL: &std::ffi::CStr = c"aeron:ipc?term-length=64k";
 
@@ -161,6 +158,7 @@ impl Ingester {
     pub fn connect(schemas: &[&str], settings: Settings) -> Result<Self, Error> {
         // Raw feed frames: a `frame` table when `tables.yaml` lists it.
         let schemas: Vec<&str> = std::iter::once(ergon_runtime::frames::SCHEMA)
+            .chain(std::iter::once(ergon_runtime::journal::SCHEMA))
             .chain(schemas.iter().copied())
             .collect();
         let mut writer = Writer::new(
@@ -473,7 +471,6 @@ impl Ingester {
         let recordings: Vec<_> = self.replays.keys().copied().collect();
         let max_queued = self.max_queued;
         let writer = &mut self.writer;
-        let frames_on = writer.wants(FRAME_TABLE);
         let frame_row = &mut self.frame_row;
         let mut learned = Vec::new();
         let mut caught_up = true;
@@ -486,11 +483,10 @@ impl Ingester {
                 }
                 let replay_meta = Meta {
                     feed: replay.feed,
-                    names: if frames_on {
-                        replay.names.as_ref()
-                    } else {
-                        None
-                    },
+                    names: replay
+                        .names
+                        .as_ref()
+                        .filter(|(service, kind)| writer.wants_frames(service, kind)),
                     session_id: replay.session_id,
                     stream_id: replay.stream_id,
                 };
@@ -697,6 +693,7 @@ fn take(
             position,
             session: meta.session_id,
             stream: meta.stream_id,
+            source: from,
             service,
             kind,
             message,

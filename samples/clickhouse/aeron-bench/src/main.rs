@@ -41,6 +41,7 @@ use std::ffi::CString;
 use std::time::{Duration, Instant};
 
 use hdrhistogram::Histogram;
+mod latency;
 use rusteron_archive::{
     Aeron, AeronArchive, AeronArchiveAsyncConnect, AeronArchiveContext, AeronArchiveReplayParams,
     AeronContext, AeronPublication, AeronSubscription, Handlers, SOURCE_LOCATION_LOCAL,
@@ -411,9 +412,13 @@ fn ping(o: &Options) -> Result<(), Error> {
         None
     };
     let mut histogram = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3)?;
+    histogram.auto(true);
     let mut message = vec![0u8; o.size];
     let total = o.warmup + o.count;
     let interval = (o.rate > 0).then(|| Duration::from_nanos(1_000_000_000 / o.rate));
+    // Correct after the timed duty cycle: histogram work at very high rates
+    // must not create the very stalls this benchmark is trying to measure.
+    let mut samples = Vec::with_capacity(usize::try_from(o.count)?);
     let epoch = Instant::now();
     let (mut sent, mut received) = (0u64, 0u64);
     let mut waiter = Waiter::default();
@@ -428,9 +433,10 @@ fn ping(o: &Options) -> Result<(), Error> {
             }
         };
         let mut got = false;
-        if let Some(at) = due {
+        if due.is_some() {
             message[..8].copy_from_slice(&sent.to_le_bytes());
-            message[8..16].copy_from_slice(&u64::try_from(at.as_nanos())?.to_le_bytes());
+            message[8..16]
+                .copy_from_slice(&u64::try_from(epoch.elapsed().as_nanos())?.to_le_bytes());
             // An overdue sender must still drain its reply queue. Blocking
             // here can fill both bounded channels and stall ping and pong.
             if link.publication.offer_raw(&message, Handlers::NONE) >= 0 {
@@ -448,7 +454,7 @@ fn ping(o: &Options) -> Result<(), Error> {
                     .unwrap_or(u64::MAX)
                     .saturating_sub(at);
                 if seq >= o.warmup {
-                    histogram.saturating_record(rtt.max(1));
+                    samples.push(rtt);
                 }
                 received += 1;
                 got = true;
@@ -461,21 +467,28 @@ fn ping(o: &Options) -> Result<(), Error> {
             waiter.idle(o.idle);
         }
     }
+    for rtt in samples {
+        latency::record(
+            &mut histogram,
+            rtt,
+            interval.map_or(0, |d| d.as_nanos() as u64),
+        );
+    }
     // Stop recording, so the next run is neither recorded nor replayed with this one.
     if let Some(archive) = &archive {
         archive.stop_recording_channel_and_stream(&CString::new(o.ping.as_str())?, PING_STREAM)?;
     }
     let q = |p: f64| histogram.value_at_quantile(p);
     println!(
-        "{{\"kind\":\"ping\",\"record\":{},\"label\":\"{}\",\"driver\":\"{}\",\"idle\":\"{:?}\",\"rate\":{},\"size\":{},\"count\":{},\"mean_ns\":{:.0},\"min_ns\":{},\"p50_ns\":{},\"p90_ns\":{},\"p99_ns\":{},\"p999_ns\":{},\"p9999_ns\":{},\"max_ns\":{}}}",
+        "{{\"kind\":\"ping\",\"record\":{},\"label\":\"{}\",\"driver\":\"{}\",\"idle\":\"{:?}\",\"rate\":{},\"size\":{},\"count\":{},\"corrected_count\":{},\"min_ns\":{},\"p50_ns\":{},\"p90_ns\":{},\"p99_ns\":{},\"p999_ns\":{},\"p9999_ns\":{},\"max_ns\":{}}}",
         o.record,
         o.label.replace('"', "'"),
         o.driver,
         o.idle,
         o.rate,
         o.size,
+        received - o.warmup,
         histogram.len(),
-        histogram.mean(),
         histogram.min(),
         q(0.5),
         q(0.9),

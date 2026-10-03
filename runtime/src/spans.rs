@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
@@ -20,7 +20,7 @@ use tracing::{Metadata, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::clock::{Clock, Nanos};
+use crate::clock::Nanos;
 use crate::event::{Kind, codec};
 use crate::persist::Persist;
 use crate::trace::{DefMessage, TraceDef, TraceId};
@@ -95,10 +95,6 @@ impl Visit for Collect<'_> {
     }
 }
 
-/// Span ids: unique in the process, mixed with its source id so they
-/// differ across processes too.
-static IDS: AtomicU64 = AtomicU64::new(0);
-
 /// Each span callsite's trace definition, by its metadata's address.
 #[derive(Default)]
 pub struct SpanDefs(std::sync::Mutex<HashMap<usize, (u64, Arc<DefMessage>)>>);
@@ -115,7 +111,7 @@ where
         ext.get::<SpanData>().map(|d| (d.trace, d.span))
     });
     let source = persist.bus().source().id;
-    let n = IDS.fetch_add(1, Relaxed) + 1;
+    let n = persist.next_span_id();
     // Not `Tracer::next_id`'s namespace (`rotate_left(17) ^ nonce`).
     let (trace, parent) = parent.unwrap_or_else(|| (TraceId::new(source.rotate_left(41), n), 0));
     let mut values = Vec::new();
@@ -125,7 +121,7 @@ where
         trace,
         span: source.rotate_left(29) ^ n,
         parent,
-        start: Clock::new().now(),
+        start: persist.now(),
         values,
     });
 }
@@ -151,7 +147,7 @@ where
     let Some(data) = span.extensions_mut().remove::<SpanData>() else {
         return;
     };
-    let duration = Clock::new().now().since(data.start);
+    let duration = persist.now().since(data.start);
     let Some((def, message)) = def_of(persist, span.metadata()) else {
         return;
     };

@@ -100,7 +100,23 @@ impl Bus {
     /// be encoded.
     pub fn connect(settings: &Settings) -> Result<Self, Error> {
         let aeron = client(settings).map_err(|e| Error::Aeron(e.to_string()))?;
-        let mut source = Source::new(&settings.host, &settings.pod, &settings.app);
+        let mut source = settings.sim_start.map_or_else(
+            || Source::new(&settings.host, &settings.pod, &settings.app),
+            |start| {
+                Source::at(
+                    &settings.host,
+                    &settings.pod,
+                    &settings.app,
+                    start.0.cast_unsigned(),
+                    &settings.run,
+                )
+            },
+        );
+        if source.run.is_empty() && std::env::var("JOURNAL").is_ok_and(|v| v == "on") {
+            source.run = format!("live-{}", source.id);
+        } else if source.run.is_empty() {
+            source.run.clone_from(&settings.run);
+        }
         source.client = aeron.client_id();
         let source_message = source.message()?;
         Ok(Self {
@@ -447,7 +463,7 @@ pub(crate) fn retry_admin<T>(
 pub(crate) fn classify(err: &AeronOfferError) -> DropKind {
     match err {
         AeronOfferError::NotConnected => DropKind::NotConnected,
-        AeronOfferError::BackPressured => DropKind::BackPressure,
+        AeronOfferError::BackPressured | AeronOfferError::AdminAction => DropKind::BackPressure,
         // Aeron returns this when the claim is longer than `max_payload`.
         AeronOfferError::Error(inner) if inner.kind() == AeronErrorType::PublicationError => {
             DropKind::TooLarge

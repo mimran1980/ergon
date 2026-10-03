@@ -8,7 +8,7 @@
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="persist_events"
                    id="65534"
-                   version="1"
+                   version="2"
                    byteOrder="littleEndian">
     <types>
         <composite name="messageHeader">
@@ -92,6 +92,8 @@
         <data name="host" id="3" type="varString8"/>
         <data name="pod" id="4" type="varString8"/>
         <data name="app" id="5" type="varString8"/>
+        <!-- The backtest or replay run that recorded this; empty live. -->
+        <data name="run" id="7" type="varString8" sinceVersion="2"/>
     </sbe:message>
 
     <!-- A metric series: its name and labels, once, keyed by `series` (a hash

@@ -285,3 +285,8 @@ lint:
 # when the checked-in ones no longer match the generator and the engine.
 engine-fixtures *args:
     cargo run -q -p engine --example replay_fixtures -- {{args}}
+
+# Engine and venue on one thread; the default synthetic fixture needs no services.
+# Pass --source archive|clickhouse --from EPOCH_NS --to EPOCH_NS for lab history.
+backtest *args:
+    cargo run -q -p engine --features clickhouse --bin backtest -- {{args}}

@@ -48,6 +48,8 @@ pub struct FrameRow<'a> {
     pub session: i32,
     /// The publication's stream.
     pub stream: i32,
+    /// Source identity learned from this recording's Source message.
+    pub source: u64,
     /// The feed's service (`md-binance`).
     pub service: &'a str,
     /// The feed's kind (`md`).
@@ -83,6 +85,7 @@ impl FrameRow<'_> {
                 position: self.position,
                 session_id: self.session,
                 stream_id: self.stream,
+                source: self.source,
                 schema_id: id(4),
                 template_id: id(2),
                 version: id(6),
@@ -364,6 +367,7 @@ mod tests {
             position: 4_096,
             session: -5,
             stream: 2011,
+            source: 17,
             service: "md-binance",
             kind: "md",
             message: &message,
@@ -376,6 +380,7 @@ mod tests {
             (row.ts.0, 42, 4_096)
         );
         assert_eq!((d.session_id(), d.stream_id()), (-5, 2011));
+        assert_eq!(d.source(), Some(17));
         assert_eq!((d.template_id(), d.schema_id(), d.version()), (7, 9, 2));
         assert_eq!(d.service_as_str()?, "md-binance");
         assert_eq!(d.kind_as_str()?, "md");

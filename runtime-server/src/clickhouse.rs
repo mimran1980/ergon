@@ -1,7 +1,5 @@
 //! A small `ClickHouse` HTTP client plus the table schema sync.
 
-use std::time::Duration;
-
 use ergon_runtime::persist::TableKind;
 
 use crate::Error;
@@ -11,15 +9,15 @@ use crate::table::{Column, Shape};
 /// nothing until this is set; a retry of one of those inserts is dropped.
 pub const DEDUP_WINDOW: u64 = 1000;
 
-/// Where and as whom to connect.
+/// Shared HTTP client with ingester table synchronization.
 #[derive(Clone, Debug)]
-pub struct ClickHouse {
-    url: String,
-    user: String,
-    password: String,
-    /// Database every table lives in.
-    pub database: String,
-    agent: ureq::Agent,
+pub struct ClickHouse(ergon_runtime::clickhouse::ClickHouse);
+
+impl std::ops::Deref for ClickHouse {
+    type Target = ergon_runtime::clickhouse::ClickHouse;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// Outcome of comparing a table with the schema.
@@ -34,27 +32,18 @@ pub struct Sync {
 }
 
 impl ClickHouse {
-    /// Connect settings; nothing is sent until the first query.
+    /// Connection settings; no request until the first query.
     #[must_use]
     pub fn new(url: &str, user: &str, password: &str, database: &str) -> Self {
-        Self {
-            url: url.trim_end_matches('/').to_string(),
-            user: user.to_string(),
-            password: password.to_string(),
-            database: database.to_string(),
-            agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(10))
-                .build(),
-        }
+        Self(ergon_runtime::clickhouse::ClickHouse::new(
+            url, user, password, database,
+        ))
     }
 
-    /// The same server and user, in `database`.
+    /// Same connection in another database.
     #[must_use]
     pub fn in_database(&self, database: &str) -> Self {
-        Self {
-            database: database.to_string(),
-            ..self.clone()
-        }
+        Self(self.0.in_database(database))
     }
 
     /// `CREATE VIEW IF NOT EXISTS name AS SELECT * FROM table WHERE name = 'name'`
@@ -78,23 +67,20 @@ impl ClickHouse {
         self.query(&sql).map(drop)
     }
 
-    /// Run a statement and return the response body.
+    /// Run SQL and return its text response.
     ///
     /// # Errors
-    ///
-    /// The HTTP request failed, or `ClickHouse` returned an error body.
+    /// The transport or server refused the query.
     pub fn query(&self, sql: &str) -> Result<String, Error> {
-        self.post(sql, &[])
+        self.0
+            .query(sql)
+            .map_err(|e| Error::ClickHouse(e.to_string()))
     }
-
-    /// `INSERT INTO table (columns) FORMAT RowBinary` with `rows` as the body.
     pub(crate) fn insert(&self, table: &str, columns: &[&str], rows: &[u8]) -> Result<(), Error> {
-        self.insert_token(table, columns, rows, "")
+        self.0
+            .insert(table, columns, rows)
+            .map_err(|e| Error::ClickHouse(e.to_string()))
     }
-
-    /// [`Self::insert`] identified by `token`. `ClickHouse` drops the insert
-    /// when that token was already used for this table, so a retry of the
-    /// same batch does not add rows. An empty token keeps the content checksum.
     pub(crate) fn insert_token(
         &self,
         table: &str,
@@ -102,46 +88,9 @@ impl ClickHouse {
         rows: &[u8],
         token: &str,
     ) -> Result<(), Error> {
-        let cols: Vec<String> = columns.iter().map(|c| quote(c)).collect();
-        let settings = if token.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " SETTINGS insert_deduplication_token = '{}'",
-                token.replace('\'', "\\'")
-            )
-        };
-        let sql = format!(
-            "INSERT INTO {}.{} ({}){settings} FORMAT RowBinary",
-            quote(&self.database),
-            quote(table),
-            cols.join(", ")
-        );
-        self.post(&sql, rows).map(drop)
-    }
-
-    fn post(&self, sql: &str, body: &[u8]) -> Result<String, Error> {
-        let request = self
-            .agent
-            .post(&self.url)
-            .set("X-ClickHouse-User", &self.user)
-            .set("X-ClickHouse-Key", &self.password);
-        // With a body, the statement travels in the URL; otherwise it is the body.
-        let response = if body.is_empty() {
-            request.send_string(sql)
-        } else {
-            request.query("query", sql).send_bytes(body)
-        };
-        match response {
-            Ok(r) => r
-                .into_string()
-                .map_err(|e| Error::ClickHouse(e.to_string())),
-            Err(ureq::Error::Status(code, r)) => {
-                let text = r.into_string().unwrap_or_default();
-                Err(Error::ClickHouse(format!("HTTP {code}: {}", text.trim())))
-            }
-            Err(e) => Err(Error::ClickHouse(e.to_string())),
-        }
+        self.0
+            .insert_token(table, columns, rows, token)
+            .map_err(|e| Error::ClickHouse(e.to_string()))
     }
 
     /// `(name, type)` of every column, or `None` when the table does not exist.
@@ -201,7 +150,7 @@ impl ClickHouse {
                         "ALTER TABLE {target} ADD COLUMN IF NOT EXISTS {} {ch_type}",
                         quote(name)
                     );
-                    if kind == TableKind::Dynamic {
+                    if kind == TableKind::Dynamic || name == "run" {
                         self.query(&ddl)?;
                         sync.applied.push(ddl);
                         sync.include.push(true);
