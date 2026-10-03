@@ -523,6 +523,7 @@ bench-cluster:
 # expiries, prints PERCENTILES, and exits non-zero when the wheel's p50 is
 # slower in any scenario: schedule (ascending and mixed), cancel with the
 # heap's tombstones drained, idle poll, fire, and order-timeout churn.
+# Then the per-message cost of an application loop over an IPC feed.
 bench-runtime:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -531,9 +532,13 @@ bench-runtime:
     no_lto_crit="$root/target/bench-no-lto/criterion"
     no_lto_target="$root/target/bench-no-lto"
     mkdir -p "$lto_crit" "$no_lto_crit"
-    CRITERION_HOME="$lto_crit" cargo bench -p ergon-runtime --bench timer
-    CARGO_TARGET_DIR="$no_lto_target" \
-      CARGO_PROFILE_BENCH_LTO=false \
-      CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
-      CRITERION_HOME="$no_lto_crit" \
-      cargo bench -p ergon-runtime --bench timer
+    # The dispatch bench publishes through a local media driver.
+    (cd samples/clickhouse && just _test-aeron)
+    for bench in timer dispatch; do
+      CRITERION_HOME="$lto_crit" cargo bench -p ergon-runtime --bench "$bench"
+      CARGO_TARGET_DIR="$no_lto_target" \
+        CARGO_PROFILE_BENCH_LTO=false \
+        CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
+        CRITERION_HOME="$no_lto_crit" \
+        cargo bench -p ergon-runtime --bench "$bench"
+    done

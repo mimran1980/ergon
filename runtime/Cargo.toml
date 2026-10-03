@@ -32,5 +32,9 @@ proptest = "1.11"
 name = "timer"
 harness = false
 
+[[bench]]
+name = "dispatch"
+harness = false
+
 [lints]
 workspace = true
