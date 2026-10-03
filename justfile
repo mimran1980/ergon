@@ -517,3 +517,23 @@ bench-cluster:
     ./scripts/check-bench-gate.sh "$lto_crit" 0 cluster --run-id "$run_id"
     echo "=== Gate (no-LTO) ==="
     ./scripts/check-bench-gate.sh "$no_lto_crit" 0 cluster --run-id "$run_id"
+
+# Deadline wheel against a pre-reserved lazy-delete heap held to the same
+# contract, both LTO profiles. The bench binary checks both fire the same
+# expiries, prints PERCENTILES, and exits non-zero when the wheel's p50 is
+# slower in any scenario: schedule (ascending and mixed), cancel with the
+# heap's tombstones drained, idle poll, fire, and order-timeout churn.
+bench-runtime:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{justfile_directory()}}"
+    lto_crit="$root/target/criterion"
+    no_lto_crit="$root/target/bench-no-lto/criterion"
+    no_lto_target="$root/target/bench-no-lto"
+    mkdir -p "$lto_crit" "$no_lto_crit"
+    CRITERION_HOME="$lto_crit" cargo bench -p ergon-runtime --bench timer
+    CARGO_TARGET_DIR="$no_lto_target" \
+      CARGO_PROFILE_BENCH_LTO=false \
+      CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
+      CRITERION_HOME="$no_lto_crit" \
+      cargo bench -p ergon-runtime --bench timer

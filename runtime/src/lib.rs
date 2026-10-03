@@ -10,7 +10,7 @@
 //! * [`streams`]: the feed registry (`streams.yaml`).
 //! * [`persist`]: rows recorded for the ingester, which writes `ClickHouse`;
 //!   [`event`] for rows from `tracing` events.
-//! * [`mod@metrics`], [`trace`], [`clock`] and [`idle`]: the hot-path tools.
+//! * [`mod@metrics`], [`trace`], [`clock`], [`timer`] and [`idle`]: the hot-path tools.
 //! * [`source`]: who recorded a row.
 
 pub mod app;
@@ -25,6 +25,7 @@ pub mod source;
 mod spans;
 pub mod streams;
 pub mod subscription;
+pub mod timer;
 pub mod trace;
 mod value;
 

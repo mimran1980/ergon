@@ -165,7 +165,7 @@ fn add_venues(
         venues.push(Venue {
             instruments: Vec::new(),
             sessions: 0,
-            updated: Nanos(0),
+            updated: Clock::new().now(),
             resyncs: metrics.counter("feed_resyncs", &l),
             age: metrics.gauge("book_age_ns", &l),
             live: metrics.gauge("feed_live", &l),

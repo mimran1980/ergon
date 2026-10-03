@@ -24,5 +24,13 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 [build-dependencies]
 ergo-sbe = { workspace = true }
 
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.11"
+
+[[bench]]
+name = "timer"
+harness = false
+
 [lints]
 workspace = true

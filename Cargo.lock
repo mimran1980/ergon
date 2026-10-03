@@ -655,11 +655,13 @@ dependencies = [
 name = "ergon-runtime"
 version = "0.1.30"
 dependencies = [
+ "criterion",
  "env_logger",
  "ergo-sbe",
  "jiff",
  "log",
  "minstant",
+ "proptest",
  "rusteron-archive",
  "serde",
  "serde_yaml",

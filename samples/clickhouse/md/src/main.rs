@@ -16,6 +16,13 @@ use std::num::NonZeroUsize;
 
 use arrayvec::{ArrayString, ArrayVec};
 
+use ergon_runtime::Settings;
+use ergon_runtime::bus::Bus;
+use ergon_runtime::clock::{Clock, Nanos};
+use ergon_runtime::event::Value;
+use ergon_runtime::metrics::{Counter, Gauge, Histogram};
+use ergon_runtime::persist::Persist;
+use ergon_runtime::trace::Tracer;
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
 use nautilus_binance::factories::BinanceDataClientFactory;
 use nautilus_bybit::common::enums::BybitProductType;
@@ -46,13 +53,6 @@ use nautilus_model::orderbook::{BookLevel, OrderBook};
 use nautilus_okx::OKXInstrumentType;
 use nautilus_okx::config::OKXDataClientConfig;
 use nautilus_okx::factories::OKXDataClientFactory;
-use ergon_runtime::Settings;
-use ergon_runtime::bus::Bus;
-use ergon_runtime::clock::{Clock, Nanos};
-use ergon_runtime::event::Value;
-use ergon_runtime::metrics::{Counter, Gauge, Histogram};
-use ergon_runtime::persist::Persist;
-use ergon_runtime::trace::Tracer;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use schema::market::{

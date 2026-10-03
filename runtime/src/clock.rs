@@ -7,11 +7,13 @@
 //! let clock = Clock::new();
 //! let now = clock.now(); // one read of the hardware clock, cached
 //! assert_eq!(clock.cached(), now); // a plain load: no clock read
-//! assert!(now.epoch_ns() > 1_700_000_000_000_000_000); // anchor + offset: no system call
+//! assert!(now.epoch_ns() > 1_700_000_000_000_000_000); // epoch ns: no system call
 //! ```
 //!
-//! Times are [`Nanos`]: signed nanoseconds since one anchor per process,
-//! taken when the first clock is made, so every clock in the process agrees.
+//! Times are [`Nanos`]: signed UNIX-epoch nanoseconds. A live read is the
+//! process anchor's epoch plus monotonic elapsed since that anchor, one add,
+//! so every clock in the process agrees. [`SimClock`] is the sim driver's
+//! time; [`Clock::read`] does not branch on it.
 //! On Linux the read is `minstant` (the time-stamp counter when it is
 //! available). Elsewhere it is [`std::time::Instant`]: `minstant`'s fallback
 //! there is the wall clock, which can step backwards.
@@ -28,25 +30,24 @@ type Mono = minstant::Instant;
 #[cfg(not(target_os = "linux"))]
 type Mono = std::time::Instant;
 
-/// Nanoseconds since the process's anchor. Signed: a time converted from
-/// another clock (a venue's timestamp, say) may be before the anchor.
+/// UNIX-epoch nanoseconds. Signed so a converted venue timestamp can fall
+/// before the epoch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Nanos(pub i64);
 
 impl Nanos {
-    /// UNIX nanoseconds: the anchor's wall-clock time plus this offset.
+    /// This value as UNIX nanoseconds. [`Nanos`] is already an epoch time.
     #[inline]
     #[must_use]
-    pub fn epoch_ns(self) -> i64 {
-        ANCHOR.epoch_ns + self.0
+    pub const fn epoch_ns(self) -> i64 {
+        self.0
     }
 
-    /// The `Nanos` of a UNIX nanosecond timestamp, such as a venue's
-    /// `ts_event`: comparable with [`Clock::now`].
+    /// A UNIX nanosecond timestamp, such as a venue's `ts_event`.
     #[inline]
     #[must_use]
-    pub fn from_epoch(epoch_ns: i64) -> Self {
-        Self(epoch_ns - ANCHOR.epoch_ns)
+    pub const fn from_epoch(epoch_ns: i64) -> Self {
+        Self(epoch_ns)
     }
 
     /// `self - earlier` in nanoseconds; negative when `earlier` is later.
@@ -92,8 +93,47 @@ static ANCHOR: LazyLock<Anchor> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Clock {
     cached: Cell<Nanos>,
-    /// The process's anchor, copied so a read touches only this clock.
+    /// The process's monotonic anchor, copied so a read touches only this clock.
     mono: Mono,
+    /// The anchor's UNIX epoch, copied for the same reason.
+    epoch_base: i64,
+}
+
+/// Sim-driver time. [`Clock::read`] stays the live path and does not consult
+/// this clock.
+#[derive(Debug)]
+pub struct SimClock {
+    now: Cell<Nanos>,
+}
+
+impl SimClock {
+    /// A clock fixed at `start` until [`SimClock::set`].
+    #[must_use]
+    pub const fn new(start: Nanos) -> Self {
+        Self {
+            now: Cell::new(start),
+        }
+    }
+
+    /// Move the sim time. The next [`SimClock::now`] returns `now`.
+    pub fn set(&self, now: Nanos) {
+        self.now.set(now);
+    }
+
+    /// The sim time last set.
+    #[inline]
+    #[must_use]
+    pub const fn now(&self) -> Nanos {
+        self.now.get()
+    }
+
+    /// Intra-event read. In sim this is [`SimClock::now`]: time does not
+    /// advance inside a dispatch.
+    #[inline]
+    #[must_use]
+    pub const fn read(&self) -> Nanos {
+        self.now()
+    }
 }
 
 impl Default for Clock {
@@ -109,6 +149,7 @@ impl Clock {
         let clock = Self {
             cached: Cell::new(Nanos(0)),
             mono: ANCHOR.mono,
+            epoch_base: ANCHOR.epoch_ns,
         };
         clock.now();
         clock
@@ -131,8 +172,8 @@ impl Clock {
 
     /// The wall clock now, as [`Nanos`]: for comparing with another
     /// process's timestamps (a feed handler's receive time, a venue's
-    /// event time). [`Clock::now`] is this process's monotonic clock from
-    /// its anchor, which is right within the process but drifts from the
+    /// event time). [`Clock::now`] is the anchor epoch plus a monotonic
+    /// elapsed time, which is right within the process but drifts from the
     /// wall clock as that is corrected (a VM's clock resynced from its host,
     /// NTP): tens of milliseconds after a few minutes here. A vDSO read,
     /// tens of nanoseconds; not cached.
@@ -160,7 +201,8 @@ impl Clock {
     #[inline]
     #[must_use]
     pub fn read(&self) -> Nanos {
-        Nanos(i64::try_from(self.mono.elapsed().as_nanos()).unwrap_or(i64::MAX))
+        let elapsed = i64::try_from(self.mono.elapsed().as_nanos()).unwrap_or(i64::MAX);
+        Nanos(self.epoch_base.saturating_add(elapsed))
     }
 }
 
@@ -204,8 +246,25 @@ mod tests {
         let now = Clock::new().now();
         assert_eq!(Nanos::from_epoch(now.epoch_ns()), now);
         let venue = Nanos::from_epoch(now.epoch_ns() - 5_000_000_000_000);
-        assert!(venue.0 < 0, "an hour-plus before the anchor stays signed");
+        assert!(
+            venue.0 > 0,
+            "an hour before now is still a positive epoch, not an offset"
+        );
+        assert_eq!(venue.epoch_ns(), now.epoch_ns() - 5_000_000_000_000);
+        assert_eq!(
+            Nanos::from_epoch(1_700_000_000_000_000_000).0,
+            1_700_000_000_000_000_000
+        );
         assert_eq!(now.since(venue), 5_000_000_000_000);
         assert_eq!(venue.since(now), -5_000_000_000_000);
+    }
+
+    #[test]
+    fn a_sim_clock_returns_the_time_the_driver_set() {
+        let sim = SimClock::new(Nanos::from_epoch(1_700_000_000_000_000_000));
+        assert_eq!(sim.read(), sim.now());
+        sim.set(Nanos::from_epoch(1_700_000_000_500_000_000));
+        assert_eq!(sim.now().epoch_ns(), 1_700_000_000_500_000_000);
+        assert_eq!(sim.read(), sim.now());
     }
 }
