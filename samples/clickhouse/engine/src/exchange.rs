@@ -79,7 +79,7 @@ impl Agent for Exchange {
                 Ok::<_, EncodeError>(
                     ExecutionReportEncoder::wrap_and_apply_header(buf, 0)
                         .fixed(&ExecutionReportFixedFields {
-                            ts: ctx.read().epoch_ns() as u64,
+                            ts: now.epoch_ns() as u64,
                             order_id: o.order_id(),
                             status,
                             side: o.side(),

@@ -11,15 +11,15 @@
 //! ```
 //!
 //! Times are [`Nanos`]: signed UNIX-epoch nanoseconds. A live read is the
-//! process anchor's epoch plus monotonic elapsed since that anchor, one add,
-//! so every clock in the process agrees. [`SimClock`] is the sim driver's
-//! time; [`Clock::read`] does not branch on it.
+//! epoch the clock paired with the monotonic clock when it was made, plus
+//! monotonic elapsed since, one add. Clocks made apart differ by how far the
+//! wall clock was corrected in between. A clock is the live path only: in a
+//! simulation the runtime's [`Ctx::now`](crate::rt::Ctx::now) is the time.
 //! On Linux the read is `minstant` (the time-stamp counter when it is
 //! available). Elsewhere it is [`std::time::Instant`]: `minstant`'s fallback
 //! there is the wall clock, which can step backwards.
 
 use std::cell::Cell;
-use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Monotonic clock for this process. Linux uses `minstant`. Other operating
@@ -58,91 +58,107 @@ impl Nanos {
     }
 }
 
-/// The process clock now, as UNIX-epoch nanoseconds, from any thread: the
-/// anchor's epoch plus its monotonic elapsed time, no [`Clock`] needed.
-#[inline]
-#[must_use]
-pub fn epoch_now() -> Nanos {
-    let elapsed = i64::try_from(ANCHOR.mono.elapsed().as_nanos()).unwrap_or(i64::MAX);
-    Nanos(ANCHOR.epoch_ns.saturating_add(elapsed))
-}
-
-/// One pairing of the monotonic clock with the wall clock.
-struct Anchor {
+/// One pairing of the monotonic clock with the wall clock: a [`Clock`]
+/// without its cache, which the `tracing` bridge shares between threads.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Anchor {
     mono: Mono,
     epoch_ns: i64,
 }
 
-static ANCHOR: LazyLock<Anchor> = LazyLock::new(|| {
-    // The tightest of a few paired reads: the wall clock read between two
-    // monotonic reads that are closest together.
-    let mut best: Option<(Duration, Anchor)> = None;
-    for _ in 0..8 {
-        let mono = Mono::now();
-        let wall = SystemTime::now();
-        let gap = mono.elapsed();
-        if best.as_ref().is_none_or(|(g, _)| gap < *g) {
-            let epoch_ns = wall
+/// Wall-clock steps a pairing brackets at least, keeping the narrowest.
+const STEPS: u32 = 8;
+/// A bracket this narrow, a few reads, ends the search after [`STEPS`].
+const NARROW: Duration = Duration::from_nanos(250);
+/// After [`STEPS`] and this long, the narrowest bracket is taken however
+/// wide: where reading the wall clock is slow.
+const SEARCH: Duration = Duration::from_millis(1);
+/// A wall clock that has not stepped for this long ends the search with
+/// what it has.
+const NO_STEP: Duration = Duration::from_millis(100);
+
+impl Anchor {
+    /// Paired where the wall clock steps: it read its new value somewhere
+    /// between the monotonic reads either side of the read before, and of
+    /// this one, and the pairing is the middle of them, within half their
+    /// width. Where the wall clock counts whole microseconds (macOS), only a
+    /// step tells when it read, so two clocks made apart agree to within
+    /// their brackets rather than a microsecond.
+    ///
+    /// The narrowest of at least [`STEPS`] brackets, searching on while that
+    /// is wider than [`NARROW`], until [`SEARCH`]: about 8 µs where the wall
+    /// clock counts microseconds, unless reads are slow. A preemption widens
+    /// only the bracket it lands in, and cannot end the search: the wall
+    /// clock steps across it. Before [`STEPS`], only a wall clock that stops
+    /// stepping for [`NO_STEP`] ends it, unbracketed only if it never
+    /// stepped.
+    pub(crate) fn new() -> Self {
+        Self::paired().0
+    }
+
+    /// The pairing, and the width of its bracket: [`Duration::MAX`] when the
+    /// wall clock did not step.
+    fn paired() -> (Self, Duration) {
+        let wall_ns = || {
+            SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
-            best = Some((gap, Anchor { mono, epoch_ns }));
+                .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+        };
+        let start = Mono::now();
+        let mut last = wall_ns();
+        // Monotonic reads before and after the wall clock last read `last`.
+        let (mut before, mut after) = (start, Mono::now());
+        let mut best = (
+            Self {
+                mono: start,
+                epoch_ns: last,
+            },
+            Duration::MAX,
+        );
+        let (mut steps, mut stepped) = (0, start);
+        loop {
+            let epoch_ns = wall_ns();
+            let now = Mono::now();
+            if epoch_ns != last {
+                let width = now.duration_since(before);
+                if width < best.1 {
+                    best = (
+                        Self {
+                            mono: before + width / 2,
+                            epoch_ns,
+                        },
+                        width,
+                    );
+                }
+                last = epoch_ns;
+                (steps, stepped) = (steps + 1, now);
+            }
+            (before, after) = (after, now);
+            let done = if steps < STEPS {
+                now.duration_since(stepped) >= NO_STEP
+            } else {
+                best.1 <= NARROW || now.duration_since(start) >= SEARCH
+            };
+            if done {
+                return best;
+            }
         }
     }
-    best.map_or_else(
-        || Anchor {
-            mono: Mono::now(),
-            epoch_ns: 0,
-        },
-        |(_, a)| a,
-    )
-});
 
-/// A per-thread clock that remembers its last read. `!Sync`: each thread
-/// makes its own, and they all share the process's anchor.
+    /// The epoch plus the monotonic time since the pairing.
+    #[inline]
+    pub(crate) fn read(&self) -> Nanos {
+        let elapsed = i64::try_from(self.mono.elapsed().as_nanos()).unwrap_or(i64::MAX);
+        Nanos(self.epoch_ns.saturating_add(elapsed))
+    }
+}
+
+/// A clock that remembers its last read, paired with the wall clock when it
+/// is made. `!Sync`: its owner reads it.
 #[derive(Debug)]
 pub struct Clock {
     cached: Cell<Nanos>,
-    /// The process's monotonic anchor, copied so a read touches only this clock.
-    mono: Mono,
-    /// The anchor's UNIX epoch, copied for the same reason.
-    epoch_base: i64,
-}
-
-/// Sim-driver time. [`Clock::read`] stays the live path and does not consult
-/// this clock.
-#[derive(Debug)]
-pub struct SimClock {
-    now: Cell<Nanos>,
-}
-
-impl SimClock {
-    /// A clock fixed at `start` until [`SimClock::set`].
-    #[must_use]
-    pub const fn new(start: Nanos) -> Self {
-        Self {
-            now: Cell::new(start),
-        }
-    }
-
-    /// Move the sim time. The next [`SimClock::now`] returns `now`.
-    pub fn set(&self, now: Nanos) {
-        self.now.set(now);
-    }
-
-    /// The sim time last set.
-    #[inline]
-    #[must_use]
-    pub const fn now(&self) -> Nanos {
-        self.now.get()
-    }
-
-    /// Intra-event read. In sim this is [`SimClock::now`]: time does not
-    /// advance inside a dispatch.
-    #[inline]
-    #[must_use]
-    pub const fn read(&self) -> Nanos {
-        self.now()
-    }
+    anchor: Anchor,
 }
 
 impl Default for Clock {
@@ -152,13 +168,19 @@ impl Default for Clock {
 }
 
 impl Clock {
-    /// A clock, cached at the time it was made.
+    /// A clock, paired with the wall clock where that steps, from the
+    /// narrowest of at least 8 brackets, and cached at the time it was made.
+    ///
+    /// Not cheap: it reads the wall clock until it has stepped 8 times,
+    /// about 8 µs where it counts microseconds, and up to a millisecond
+    /// where reading it is slow (a VM with no vDSO clock source). Make one
+    /// per thread at start-up and keep it; a one-off wall-clock read
+    /// (`SystemTime::now`) needs none.
     #[must_use]
     pub fn new() -> Self {
         let clock = Self {
             cached: Cell::new(Nanos(0)),
-            mono: ANCHOR.mono,
-            epoch_base: ANCHOR.epoch_ns,
+            anchor: Anchor::new(),
         };
         clock.now();
         clock
@@ -181,11 +203,11 @@ impl Clock {
 
     /// The wall clock now, as [`Nanos`]: for comparing with another
     /// process's timestamps (a feed handler's receive time, a venue's
-    /// event time). [`Clock::now`] is the anchor epoch plus a monotonic
-    /// elapsed time, which is right within the process but drifts from the
-    /// wall clock as that is corrected (a VM's clock resynced from its host,
-    /// NTP): tens of milliseconds after a few minutes here. A vDSO read,
-    /// tens of nanoseconds; not cached.
+    /// event time). [`Clock::now`] is the paired epoch plus a monotonic
+    /// elapsed time, which never steps but drifts from the wall clock as
+    /// that is corrected (a VM's clock resynced from its host, NTP): tens of
+    /// milliseconds after a few minutes here. A vDSO read, tens of
+    /// nanoseconds; not cached.
     #[inline]
     #[must_use]
     pub fn wall(&self) -> Nanos {
@@ -207,9 +229,8 @@ impl Clock {
     }
 
     /// The wall clock less [`Clock::read`], from the tightest of 8 paired
-    /// reads, as the process anchor is paired. Adding it to a read gives the
-    /// wall-clock time with no system call; re-measure it now and then to
-    /// follow NTP slew.
+    /// reads. Adding it to a read gives the wall-clock time with no system
+    /// call; re-measure it now and then to follow NTP slew.
     #[must_use]
     pub fn wall_offset(&self) -> i64 {
         let mut best = (i64::MAX, 0);
@@ -229,8 +250,7 @@ impl Clock {
     #[inline]
     #[must_use]
     pub fn read(&self) -> Nanos {
-        let elapsed = i64::try_from(self.mono.elapsed().as_nanos()).unwrap_or(i64::MAX);
-        Nanos(self.epoch_base.saturating_add(elapsed))
+        self.anchor.read()
     }
 }
 
@@ -288,11 +308,43 @@ mod tests {
     }
 
     #[test]
-    fn a_sim_clock_returns_the_time_the_driver_set() {
-        let sim = SimClock::new(Nanos::from_epoch(1_700_000_000_000_000_000));
-        assert_eq!(sim.read(), sim.now());
-        sim.set(Nanos::from_epoch(1_700_000_000_500_000_000));
-        assert_eq!(sim.now().epoch_ns(), 1_700_000_000_500_000_000);
-        assert_eq!(sim.read(), sim.now());
+    fn two_clocks_made_apart_read_alike() {
+        // Each pairing is within half its bracket of the wall clock's step,
+        // give or take a monotonic tick at either end. Paired at a read that
+        // is not a step, a wall clock that counts whole microseconds (macOS)
+        // leaves two clocks up to a microsecond apart.
+        let tick = (0..10_000)
+            .map(|_| {
+                let at = Mono::now();
+                Mono::now().duration_since(at)
+            })
+            .filter(|d| !d.is_zero())
+            .min()
+            .unwrap_or_default();
+        for _ in 0..8 {
+            // Back to back: the wall clock's slew between the two pairings,
+            // which no pairing can see, is a few nanoseconds at most.
+            let (first, first_width) = Anchor::paired();
+            let (other, other_width) = Anchor::paired();
+            assert!(
+                first_width != Duration::MAX && other_width != Duration::MAX,
+                "a pairing is unbracketed: the wall clock did not step"
+            );
+            // The closest of many reads side by side: a preemption between
+            // two reads is not the clocks' difference.
+            let apart = (0..1_000)
+                .map(|_| {
+                    let (x, y) = (first.read(), other.read());
+                    y.since(x).unsigned_abs()
+                })
+                .min()
+                .unwrap_or(u64::MAX);
+            let allowed = (first_width + other_width) / 2 + 2 * tick;
+            assert!(
+                u128::from(apart) <= allowed.as_nanos(),
+                "two clocks read {apart} ns apart, brackets {first_width:?} and {other_width:?} allow {allowed:?}"
+            );
+            std::thread::sleep(Duration::from_micros(300));
+        }
     }
 }

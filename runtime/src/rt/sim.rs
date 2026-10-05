@@ -16,13 +16,22 @@
 //! simulated time, [`Ctx::wall_ns`] equals it, and [`Ctx::next_id`] counts
 //! from 1. Outputs are captured ([`Ctx::captured`]), never dropped. Two runs
 //! over the same input give the same output, byte for byte.
+//!
+//! A simulation that records through persist, or replays an Aeron Archive,
+//! owns the [`Bus`] it does it through ([`SimConfig::bus`]). The client has
+//! no conductor thread: the simulation runs the conductor every 1024
+//! dispatches, while it paces, and around each `ClickHouse` query, so no
+//! stretch of the run goes the client's 10 s liveness timeout without it
+//! unless one query does.
+
+use std::time::{Duration, Instant};
 
 use crate::Error;
 use crate::clock::{Clock, Nanos};
+use crate::directory::{Directory, NoDirectory};
 use crate::frames::{self, FrameLog};
 use crate::metrics::Metrics;
 use crate::persist::Persist;
-use crate::streams::Streams;
 use crate::subscription::{Delivery, Origin};
 use crate::timer::{self, SimKey, TimerWheel};
 use std::collections::{BTreeMap, BinaryHeap};
@@ -33,8 +42,10 @@ use crate::bus::Bus;
 
 /// What a simulation runs on.
 pub struct SimConfig {
-    /// The registry an agent resolves names in (`engine-<region>`, `md-*`).
-    pub streams: Streams,
+    /// Names to stream ids, for an archive replay to find a subscribed
+    /// feed's recordings; a simulation of logs or `ClickHouse` frames needs
+    /// none.
+    pub directory: Box<dyn Directory>,
     /// `REGION`.
     pub region: String,
     /// Rows and metrics, stamped with simulated time.
@@ -48,9 +59,14 @@ pub struct SimConfig {
     /// Pace the run against the wall clock: `Some(1.0)` replays in real time,
     /// `Some(10.0)` ten times faster; `None` runs as fast as it can.
     pub speed: Option<f64>,
-    /// Replay subscribed feeds from this Aeron Archive, through this client.
-    /// Needs `from`: an agent schedules its timers before the first frame.
-    pub archive: Option<(Bus, ArchiveConfig)>,
+    /// The Aeron client the run records through ([`SimConfig::persist`]) or
+    /// replays [`SimConfig::archive`] from; the simulation owns it and runs
+    /// its conductor. `None` for a run that touches no Aeron.
+    pub bus: Option<Bus>,
+    /// Replay subscribed feeds from this Aeron Archive, through
+    /// [`SimConfig::bus`]. Needs `from`: an agent schedules its timers before
+    /// the first frame.
+    pub archive: Option<ArchiveConfig>,
     /// Receive delay in ns, by `service/kind`, applied before the merge.
     pub route_delays: BTreeMap<String, i64>,
     /// Local outputs delivered to matching feeds after this latency in ns.
@@ -146,18 +162,26 @@ impl ReplayTimers {
     }
 }
 
+impl Default for SimConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimConfig {
-    /// No persist, the default wheel, the whole input.
+    /// No directory (an archive replay needs one), bus or persist, the
+    /// default wheel, the whole input, region `unknown`.
     #[must_use]
-    pub fn new(streams: Streams) -> Self {
+    pub fn new() -> Self {
         Self {
-            streams,
-            region: String::new(),
+            directory: Box::new(NoDirectory),
+            region: crate::UNKNOWN_REGION.into(),
             persist: None,
             timers: timer::Settings::default(),
             from: None,
             to: None,
             speed: None,
+            bus: None,
             archive: None,
             route_delays: BTreeMap::new(),
             loopback: BTreeMap::new(),
@@ -214,6 +238,8 @@ impl Source {
         }
     }
 
+    // Only the ClickHouse source can fail to advance.
+    #[cfg_attr(not(feature = "clickhouse"), allow(clippy::unnecessary_wraps))]
     fn advance(&mut self, head: usize) -> Result<(), Error> {
         match self {
             Self::Log(l) => l.cursor[head] += 1,
@@ -298,9 +324,16 @@ impl LogSource {
     }
 }
 
+/// Dispatches between two runs of the conductor.
+const CONDUCT_EVERY: u32 = 1024;
+
 /// A simulation: sources, the agent's context, and the merge.
 pub struct Sim {
     ctx: Ctx,
+    /// The client the run records or replays through: see [`SimConfig::bus`].
+    bus: Option<Bus>,
+    /// Dispatches since the conductor last ran.
+    undriven: u32,
     sources: Vec<Source>,
     started: bool,
     /// Wall-clock pacing: the speed, and the wall and simulated time it
@@ -316,7 +349,15 @@ pub struct Sim {
     exact: bool,
     #[cfg(feature = "clickhouse")]
     journal_frames: Option<crate::clickhouse_source::ClickHouseConfig>,
+    /// The journal's frames fetched so far, and the input they run up to.
+    #[cfg(feature = "clickhouse")]
+    journal_fetched: (crate::journal::clickhouse::Frames, usize),
 }
+
+/// Journal inputs whose frames one `ClickHouse` fetch brings: a few
+/// megabytes, and one query per feed and publication.
+#[cfg(feature = "clickhouse")]
+const JOURNAL_FETCH: usize = 16_384;
 
 impl Sim {
     /// A simulation of the frame logs `logs`, and of the archive when the
@@ -324,10 +365,12 @@ impl Sim {
     ///
     /// # Errors
     ///
-    /// A log does not parse, the timer settings are not powers of two, or an
-    /// archive was named without `from` or did not connect.
-    pub fn new(config: SimConfig, logs: Vec<Vec<u8>>) -> Result<Self, Error> {
+    /// A log does not parse, the timer settings are not powers of two,
+    /// `persist` was given without a bus, or an archive was named without
+    /// `from` or a bus, or did not connect.
+    pub fn new(mut config: SimConfig, logs: Vec<Vec<u8>>) -> Result<Self, Error> {
         let (sources, start) = Self::open_sources(&config, logs)?;
+        let bus = config.bus.take();
         #[cfg(feature = "clickhouse")]
         let journal_frames = config.clickhouse.clone();
         if let Some(persist) = &config.persist {
@@ -352,7 +395,7 @@ impl Sim {
             bus: None,
             persist: config.persist,
             metrics,
-            streams: config.streams,
+            directory: config.directory,
             region: config.region,
             sinks: Vec::new(),
             captured: std::cell::RefCell::new(FrameLog::new()),
@@ -368,6 +411,8 @@ impl Sim {
         };
         Ok(Self {
             ctx,
+            bus,
+            undriven: 0,
             sources,
             started: false,
             pace: config
@@ -382,6 +427,8 @@ impl Sim {
             journal: config.journal,
             #[cfg(feature = "clickhouse")]
             journal_frames,
+            #[cfg(feature = "clickhouse")]
+            journal_fetched: Default::default(),
         })
     }
 
@@ -397,6 +444,13 @@ impl Sim {
                 "simulation speed must be finite and positive; delays nonnegative".into(),
             ));
         }
+        // Persist's client is driven only through the bus the simulation
+        // owns: without it, the driver closes the client after 10 s.
+        if config.persist.is_some() && config.bus.is_none() {
+            return Err(Error::Config(
+                "recording through persist needs the bus that drives its client".into(),
+            ));
+        }
         let logs = logs
             .into_iter()
             .map(LogSource::new)
@@ -410,10 +464,14 @@ impl Sim {
             .or(first)
             .unwrap_or_default();
         let mut sources: Vec<Source> = logs.into_iter().map(Source::Log).collect();
-        if let Some((bus, archive)) = &config.archive {
+        if let Some(archive) = &config.archive {
             if config.from.is_none() {
                 return Err(Error::Config("an archive replay needs `from`".into()));
             }
+            let bus = config
+                .bus
+                .as_ref()
+                .ok_or_else(|| Error::Config("an archive replay needs a bus".into()))?;
             sources.push(Source::Archive(Box::new(ArchiveSource::connect(
                 bus, archive,
             )?)));
@@ -564,7 +622,7 @@ impl Sim {
                             feed.0
                         )));
                     }
-                    let frame = self.resolve_journal(input)?;
+                    let frame = self.resolve_journal(&journal.inputs, index)?;
                     agent.on_message(&mut self.ctx, feed, &frame, delivery);
                 }
                 InputEvent::Timer {
@@ -592,7 +650,12 @@ impl Sim {
         Ok(())
     }
 
-    fn resolve_journal(&mut self, input: &crate::journal::Input) -> Result<Vec<u8>, Error> {
+    fn resolve_journal(
+        &mut self,
+        inputs: &[crate::journal::Input],
+        index: usize,
+    ) -> Result<Vec<u8>, Error> {
+        let input = &inputs[index];
         let crate::journal::InputEvent::Message {
             feed,
             recording,
@@ -636,7 +699,9 @@ impl Sim {
                         break;
                     }
                 },
-                _ => {}
+                Source::Log(_) => {}
+                #[cfg(feature = "clickhouse")]
+                Source::ClickHouse(_) => {}
             }
         }
         #[cfg(feature = "clickhouse")]
@@ -646,7 +711,26 @@ impl Sim {
                 .sim_feeds
                 .get(feed.0 as usize)
                 .ok_or_else(|| Error::Config("journal feed is unknown".into()))?;
-            return crate::journal::clickhouse::resolve(&config.client, &config.table, input, name);
+            // From the frames fetched with this stretch of the journal; past
+            // it, or on a feed subscribed since that fetch, fetch from here.
+            for fetch in [index >= self.journal_fetched.1, true] {
+                if fetch {
+                    let end = inputs.len().min(index + JOURNAL_FETCH);
+                    self.journal_fetched = (
+                        crate::journal::clickhouse::fetch(
+                            &config.client,
+                            &config.table,
+                            &inputs[index..end],
+                            &self.ctx.sim_feeds,
+                            || conduct(self.bus.as_ref()),
+                        )?,
+                        end,
+                    );
+                }
+                if let Some(frame) = self.journal_fetched.0.take(name, input) {
+                    return Ok(frame);
+                }
+            }
         }
         Err(Error::Config(format!(
             "journal frame {recording}/{position} was not found"
@@ -729,17 +813,22 @@ impl Sim {
         self.poll_persist();
     }
 
-    /// Wait until the wall clock reaches simulated time `at` at the speed.
+    /// Wait until the wall clock reaches simulated time `at` at the speed,
+    /// asleep in slices of at most a millisecond, running the conductor
+    /// between them.
     fn pace(&self, at: Nanos) {
         let Some((speed, wall, start)) = self.pace else {
             return;
         };
-        let ahead = std::time::Duration::from_nanos(
-            u64::try_from(at.0.saturating_sub(start.0)).unwrap_or(0),
-        );
+        let ahead = Duration::from_nanos(u64::try_from(at.0.saturating_sub(start.0)).unwrap_or(0));
         let due = wall + ahead.div_f64(speed);
-        while std::time::Instant::now() < due {
-            std::hint::spin_loop();
+        loop {
+            let left = due.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            conduct(self.bus.as_ref());
+            std::thread::sleep(left.min(Duration::from_millis(1)));
         }
     }
 
@@ -777,7 +866,18 @@ impl Sim {
                 agent.on_message(&mut self.ctx, feed, frame, delivery);
             }
         }
+        // Its next page waits on `ClickHouse`: the conductor runs around it.
+        #[cfg(feature = "clickhouse")]
+        let fetches = matches!(&self.sources[source], Source::ClickHouse(c) if c.fetches(stream));
+        #[cfg(not(feature = "clickhouse"))]
+        let fetches = false;
+        if fetches {
+            conduct(self.bus.as_ref());
+        }
         self.sources[source].advance(stream)?;
+        if fetches {
+            conduct(self.bus.as_ref());
+        }
         self.poll_persist();
         Ok(())
     }
@@ -808,9 +908,16 @@ impl Sim {
         self.poll_persist();
     }
 
-    fn poll_persist(&self) {
+    /// After each dispatch: persist's housekeeping, and every
+    /// [`CONDUCT_EVERY`] dispatches the conductor.
+    fn poll_persist(&mut self) {
         if let Some(persist) = &self.ctx.persist {
             persist.poll_sim(self.ctx.now);
+        }
+        self.undriven += 1;
+        if self.undriven >= CONDUCT_EVERY {
+            self.undriven = 0;
+            conduct(self.bus.as_ref());
         }
     }
 
@@ -853,17 +960,24 @@ impl Sim {
                 }
             })
             .collect();
-        let (feeds, streams, now) = (&remote_feeds, &self.ctx.streams, self.ctx.now);
+        let (feeds, directory, now) = (&remote_feeds, &*self.ctx.directory, self.ctx.now);
         for source in &mut self.sources {
             match source {
                 Source::Log(l) => l.bind(feeds, now),
-                Source::Archive(a) => a.bind(feeds, streams, now, self.started && !self.exact)?,
+                Source::Archive(a) => a.bind(feeds, directory, now, self.started && !self.exact)?,
                 #[cfg(feature = "clickhouse")]
-                Source::ClickHouse(c) => c.bind(feeds, now)?,
+                Source::ClickHouse(c) => c.bind(feeds, now, || conduct(self.bus.as_ref()))?,
             }
         }
         self.delivered.resize(subscribed, false);
         self.bound = subscribed;
         Ok(())
+    }
+}
+
+/// Run `bus`'s conductor once, when the run has one.
+fn conduct(bus: Option<&Bus>) {
+    if let Some(bus) = bus {
+        let _ = bus.poll();
     }
 }

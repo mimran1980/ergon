@@ -48,10 +48,6 @@ spec:
             # How long to wait at start for the node's archive to record this
             # app's stream: while the node's ingester restarts, it is behind.
             - { name: PERSIST_SUBSCRIBER_TIMEOUT, value: 60s }
-            # Idle strategy of the threads md owns (the persist poller):
-            # spin, noop, yield or sleep. Its market data arrives on
-            # NautilusTrader's runtime, which this does not change.
-            - { name: IDLE, value: sleep }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP

@@ -2,34 +2,36 @@
 //!
 //! The ingester writes `ClickHouse`. The application does not talk to
 //! `ClickHouse` and does not wait for it. [`Persist`] publishes on its own
-//! stream through the application's [`Bus`].
+//! stream, from the application's loop, on an exclusive publication of its
+//! own that it adds through the application's [`Bus`]: one writer, no CAS on
+//! the term tail. It keeps a handle to the Aeron client, to drive the
+//! conductor while a record waits, and a copy of the application's identity,
+//! not the bus: the runtime owns that, and closes persist's publication with
+//! its outputs at shutdown.
 //!
 //! * [`Persist::record`] encodes an SBE message into the Aeron term. The table
 //!   is the message name.
-//! * [`Persist::layer`] records `tracing` events that set `table`, and
-//!   `counter`, `gauge`, or `histogram`. Columns and labels are the other
-//!   fields. See [`event`].
+//! * [`Persist::record_row`] and [`Persist::record_value`] record rows of
+//!   tables with no SBE message. See [`event`].
 //! * [`mod@metrics`], [`trace`], and [`clock`](crate::clock) are the hot-path
-//!   tools. The same metrics and span traces can also be emitted with the
-//!   `tracing` macros.
+//!   tools: [`Persist::metrics`] and [`Persist::tracer`].
+//! * [`Persist::layer`] makes the [`bridge`]: `tracing` events
+//!   that name a `table`, and spans, from any thread, on a publication of
+//!   its own. It records nothing through this handle.
 //!
-//! Keep a [`Persist`] instance and use its methods, [`Persist::metrics`],
-//! [`Persist::tracer`], and [`Persist::layer`] without installing a static.
-//! The layer owns a clone of that instance; tracing macros use its registry.
-//! Poll that instance's metrics to publish macro updates.
+//! The runtime owns the [`Persist`] and its loop calls the methods; there is
+//! no process-wide handle.
 //!
-//! Optionally [`Persist::install`] one handle per process. The free functions then work
-//! from any thread. With nothing installed they do nothing and do not call
-//! `encode`.
+//! A disabled SBE table is one load, and `encode` is not called. An enabled
+//! one is a claim, the encode, and a commit, after the application's `Source`
+//! message the first time, and again once the stream had no subscriber. A
+//! term rotation is tried eight times and then dropped.
 //!
-//! A disabled SBE table is one relaxed load, and `encode` is not called. An
-//! enabled one is a claim, the encode, and a commit. If a dictionary heartbeat
-//! is queued, the call also publishes one of those messages. A term rotation
-//! is tried eight times and then dropped.
-//!
-//! [`Persist::poll`] from the application's loop re-reads `tables.yaml` every
-//! second and publishes the metrics. `enabled` is applied here. `kind` is
-//! applied by the ingester.
+//! [`Persist::poll`] from the application's loop checks `tables.yaml` every
+//! second (one `stat`, and a read only when the file changed), publishes the
+//! metrics, and every 5 s sends the dictionary again (`Source`, the event
+//! shapes, the trace definitions), a few messages a call. `enabled` is
+//! applied here. `kind` is applied by the ingester.
 //!
 //! ```yaml
 //! tables:
@@ -37,23 +39,22 @@
 //!   book_snapshot: { kind: dynamic, enabled: false }
 //! ```
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
-use rusteron_archive::AeronPublication;
+use rusteron_archive::{Aeron, AeronExclusivePublication};
 use serde::Deserialize;
 use tracing::Subscriber;
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::dynamic_filter_fn;
+use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::bus::{Bus, Claim, DropKind, Drops};
+use crate::bus::{Bus, Claim, DropCounts, DropKind, Drops};
 use crate::clock::{Clock, Nanos};
-use crate::{Error, Settings, event, metrics, spans, trace};
+use crate::{Error, Settings, bridge, event, metrics, trace, value};
 
 /// The stream applications publish on and the ingester's archive records.
 pub const STREAM_ID: i32 = 1001;
@@ -278,193 +279,89 @@ pub fn snake_case(name: &str) -> String {
     out
 }
 
-/// The handle the free functions use; see [`Persist::install`].
-static INSTALLED: OnceLock<Persist> = OnceLock::new();
-
-/// The handle [`Persist::install`] installed, if any.
-#[inline]
-#[must_use]
-pub fn installed() -> Option<&'static Persist> {
-    INSTALLED.get()
-}
-
-/// [`Persist::record`] with the installed handle. With none installed it
-/// does nothing and never calls `encode`.
-///
-/// # Errors
-///
-/// Returns the error from `encode`.
-#[inline]
-pub fn record<E>(
-    template_id: u16,
-    len: usize,
-    encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
-) -> Result<(), E> {
-    INSTALLED.get().map_or_else(
-        || Ok(()),
-        |persist| persist.record(template_id, len, encode),
-    )
-}
-
-/// [`Persist::enabled`] with the installed handle; `false` with none.
-#[inline]
-#[must_use]
-pub fn enabled(template_id: u16) -> bool {
-    INSTALLED.get().is_some_and(|p| p.enabled(template_id))
-}
-
-/// [`Persist::event_enabled`] with the installed handle; `false` with none.
-#[inline]
-#[must_use]
-pub fn event_enabled(table: &str) -> bool {
-    INSTALLED.get().is_some_and(|p| p.event_enabled(table))
-}
-
-/// [`Persist::record_row`] with the installed handle. With none installed it
-/// does nothing.
-pub fn record_row<'a>(table: &str, fields: impl IntoIterator<Item = (&'a str, event::Value<'a>)>) {
-    if let Some(persist) = INSTALLED.get() {
-        persist.record_row(table, fields);
-    }
-}
-
-/// [`Persist::record_value`] with the installed handle. With none installed
-/// it does nothing.
-#[inline]
-pub fn record_value<T: ?Sized + serde::Serialize>(table: &str, value: &T) {
-    if let Some(persist) = INSTALLED.get() {
-        persist.record_value(table, value);
-    }
-}
-
-/// [`Persist::metrics`] of the installed handle. With none installed, a
-/// registry that publishes nothing: its handles still work.
-#[must_use]
-pub fn metrics() -> metrics::Metrics {
-    INSTALLED
-        .get()
-        .map_or_else(metrics::Metrics::detached, Persist::metrics)
-}
-
-/// [`Persist::tracer`] of the installed handle. With none installed, a
-/// tracer that publishes nothing: its stage histograms still count.
-#[must_use]
-pub fn tracer(name: &str, stages: &[&str], attrs: &[&str]) -> trace::Tracer {
-    INSTALLED.get().map_or_else(
-        || {
-            trace::Tracer::new(
-                &trace::TraceDef::new(name, stages, attrs),
-                Arc::new(trace::DefMessage {
-                    message: Vec::new(),
-                    sent: AtomicBool::new(true),
-                }),
-                Arc::default(),
-                &metrics::Metrics::detached(),
-                None,
-                0,
-            )
-        },
-        |persist| persist.tracer(name, stages, attrs),
-    )
-}
-
-/// The recording handle. Cheap to clone; share it with every callback, or
-/// [`install`](Persist::install) it once and use the free functions.
+/// The recording handle. The runtime owns it; the loop records through it,
+/// on its one thread: neither `Send` nor `Sync`.
 #[derive(Clone)]
 pub struct Persist {
-    pub(crate) inner: Arc<Inner>,
+    pub(crate) inner: Rc<Inner>,
 }
 
-fn next_instance_id() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
+/// Heartbeat messages one poll publishes at most.
+const BEATS: usize = 8;
+
+/// No heartbeat round under way.
+const IDLE: usize = usize::MAX;
 
 pub(crate) struct Inner {
-    /// Unique per `Persist` ever made: keys the per-thread call-site cache,
-    /// which an address could not (a new `Persist` may reuse an old one's).
-    pub(crate) id: u64,
-    publication: Publication,
-    simulation: AtomicBool,
-    sim_now: AtomicI64,
-    sim_drops: AtomicU64,
-    sim_trace_ids: AtomicU64,
-    sim_span_ids: AtomicU64,
-    wall_watch: Mutex<std::time::Instant>,
-    /// Exclusive mode: records from other threads, published by the owner's
-    /// [`Persist::poll`].
-    handoff: Option<Handoff>,
+    /// Only this handle claims on it: no CAS on the term tail.
+    publication: AeronExclusivePublication,
+    /// Stamps rows live.
+    clock: Clock,
+    simulation: Cell<bool>,
+    sim_now: Cell<i64>,
+    /// [`Persist::dropped`] when the simulation began.
+    sim_drops: Cell<u64>,
+    /// The next tracer's id namespace, counted from the start time live,
+    /// so runs differ, and from 0 in simulation, so a replay mints the same
+    /// trace ids.
+    trace_ids: Cell<u64>,
+    /// Simulation: when `tables.yaml` was last read, by the wall clock.
+    wall_watch: Cell<Instant>,
     /// Largest `try_claim`. Longer records are dropped.
     max_payload: usize,
+    /// The stream it records on; the `tracing` bridge publishes there too.
+    stream_id: i32,
     /// Series and their publishing; see [`Persist::metrics`].
     metrics: metrics::Metrics,
-    /// Its `Source` message is sent ahead of the shapes.
-    bus: Bus,
-    pub(crate) shared: Arc<Shared>,
+    /// The application's client: driven while a record waits on Aeron.
+    aeron: Aeron,
+    /// The application's source id, stamped into every frame.
+    source: u64,
+    /// Its `Source` message goes ahead of the rows.
+    source_message: Vec<u8>,
+    /// This handle's records Aeron did not take, by reason; the
+    /// `persist_dropped` series read them too.
+    drops: DropCounts,
+    /// The bus's feeds' drops, which [`Persist::drops`] adds.
+    feeds: DropCounts,
     /// `Nanos` of the next [`Watcher::tick`].
-    watch_due: AtomicI64,
-    watcher: Mutex<Watcher>,
-}
-
-/// The publication persist records on.
-enum Publication {
-    /// Any thread may record.
-    Shared(AeronPublication),
-    /// Only its owner claims: no CAS on the term tail.
-    Exclusive(crate::owned::OwnedPublication),
-}
-
-/// Records made off the owner thread in exclusive mode: copied, queued, and
-/// published by the owner. Off the hot path by construction (a `tracing`
-/// span from a library's worker thread, say), so a copy is fine.
-struct Handoff {
-    send: SyncSender<Vec<u8>>,
-    receive: Mutex<Receiver<Vec<u8>>>,
-}
-
-/// Messages a hand-off holds before it drops and counts.
-const HANDOFF: usize = 4_096;
-
-/// One message of a heartbeat round.
-struct Beat {
-    bytes: Vec<u8>,
-    shape: Option<Arc<event::Shape>>,
-    def: Option<Arc<trace::DefMessage>>,
-}
-
-/// State the config watcher writes and the hot path reads.
-pub(crate) struct Shared {
-    /// Indexed by SBE template id.
-    enabled: Vec<AtomicBool>,
+    watch_due: Cell<i64>,
+    watcher: RefCell<Watcher>,
+    /// The SBE tables' switches, indexed by template id.
+    enabled: Box<[Cell<bool>]>,
     /// Event tables' switches by name, including tables `tables.yaml` does
-    /// not list (off). Call sites cache theirs, so the lock is taken when a
-    /// call site first names a table, not per event.
-    events: RwLock<HashMap<String, Arc<AtomicBool>>>,
-    /// Every event shape made so far, by id. A heartbeat round sends them
-    /// again, one message per record, after the watcher marks them due.
-    pub(crate) shapes: Mutex<HashMap<u32, Arc<event::Shape>>>,
-    shapes_due: AtomicBool,
-    /// The heartbeat round still to send: `Source`, then each shape, then
-    /// each trace definition. Empty when nothing is due.
-    heartbeat_queue: Mutex<VecDeque<Beat>>,
-    /// [`Shared::heartbeat_queue`]'s length, so an idle record is one load.
-    heartbeat_left: AtomicUsize,
+    /// not list (off). Call sites keep theirs.
+    events: RefCell<HashMap<String, Rc<Cell<bool>>>>,
+    /// Every event shape made so far, in the order made.
+    pub(crate) shapes: RefCell<Vec<Rc<event::ShapeEntry>>>,
+    /// `record_value`'s call sites.
+    pub(crate) values: RefCell<value::Sites>,
+    /// The `Source` message is in the stream this round: rows may follow.
+    source_sent: Cell<bool>,
+    /// The heartbeat round's next message: 0 is `Source`, then each shape,
+    /// then each trace definition; [`IDLE`] between rounds.
+    beat: Cell<usize>,
     /// Each trace's switch by name, set from `otel_traces` by the watcher.
-    traces: RwLock<HashMap<String, Arc<trace::TraceSwitch>>>,
+    traces: RefCell<HashMap<String, Rc<trace::TraceSwitch>>>,
     /// Every trace definition made, re-sent with the shapes.
-    pub(crate) trace_defs: Mutex<Vec<Arc<trace::DefMessage>>>,
-    /// `otel_traces` is on for this app: `tracing` spans are recorded, and a
-    /// new tracer starts on.
-    spans_on: AtomicBool,
+    trace_defs: RefCell<Vec<Rc<trace::DefMessage>>>,
+    /// `otel_traces` is on for this app: a new tracer starts on.
+    traces_on: Cell<bool>,
     /// `otel_traces`' sampling by trace name, as last applied: what a new
     /// tracer starts with.
-    trace_rules: RwLock<BTreeMap<String, TraceConfig>>,
-    pub(crate) span_defs: spans::SpanDefs,
+    trace_rules: RefCell<BTreeMap<String, TraceConfig>>,
+}
+
+/// A heartbeat message after `Source`, and the flag its send sets.
+enum Beat {
+    Shape(Rc<event::ShapeEntry>),
+    Def(Rc<trace::DefMessage>),
 }
 
 impl Persist {
     /// Read the schema and `tables.yaml`, and publish on `settings.channel`
-    /// through `bus`. [`Persist::poll`] applies later edits.
+    /// through `bus`, on an exclusive publication of this handle's.
+    /// [`Persist::poll`] applies later edits.
     ///
     /// # Errors
     ///
@@ -475,23 +372,8 @@ impl Persist {
         type Read = fn(Drops) -> u64;
         let schema = schema_tables(schema_xml)?;
         let slots = schema.iter().map(|(_, id)| usize::from(*id) + 1).max();
-        let shared = Arc::new(Shared {
-            enabled: (0..slots.unwrap_or(0))
-                .map(|_| AtomicBool::new(false))
-                .collect(),
-            events: RwLock::new(HashMap::new()),
-            shapes: Mutex::new(HashMap::new()),
-            // The first record sends the `Source` message first.
-            shapes_due: AtomicBool::new(true),
-            heartbeat_queue: Mutex::new(VecDeque::new()),
-            heartbeat_left: AtomicUsize::new(0),
-            traces: RwLock::new(HashMap::new()),
-            trace_defs: Mutex::new(Vec::new()),
-            spans_on: AtomicBool::new(false),
-            trace_rules: RwLock::new(BTreeMap::new()),
-            span_defs: spans::SpanDefs::default(),
-        });
         let metrics = metrics::Metrics::new(settings.metrics_interval);
+        let drops = DropCounts::default();
         let reasons: [(&str, Read); 4] = [
             ("not_connected", |d| d.not_connected),
             ("back_pressure", |d| d.back_pressure),
@@ -499,9 +381,9 @@ impl Persist {
             ("other", |d| d.other),
         ];
         for (reason, read) in reasons {
-            let bus = bus.clone();
+            let (feeds, drops) = (bus.drop_counts().clone(), drops.clone());
             metrics.counter_fn("persist_dropped", &[("reason", reason)], move || {
-                read(bus.drops())
+                read(drops.get() + feeds.get())
             });
         }
         if let Some(now) = settings.sim_start {
@@ -509,238 +391,177 @@ impl Persist {
         } else {
             metrics.start();
         }
-        let (publication, max_payload) = if settings.exclusive {
-            let p = bus.add_exclusive_publication(&settings.channel, settings.stream_id)?;
-            let max = p
-                .max_payload_length()
-                .map_err(|e| Error::Aeron(e.to_string()))?;
-            (
-                Publication::Exclusive(crate::owned::OwnedPublication::new(p)),
-                max,
-            )
-        } else {
-            let p = bus.add_publication(&settings.channel, settings.stream_id)?;
-            let max = p
-                .max_payload_length()
-                .map_err(|e| Error::Aeron(e.to_string()))?;
-            (Publication::Shared(p), max)
-        };
-        let handoff = settings.exclusive.then(|| {
-            let (send, receive) = std::sync::mpsc::sync_channel(HANDOFF);
-            Handoff {
-                send,
-                receive: Mutex::new(receive),
-            }
-        });
+        let publication = bus.add_exclusive_publication(&settings.channel, settings.stream_id)?;
+        let max_payload = publication
+            .max_payload_length()
+            .map_err(|e| Error::Aeron(e.to_string()))?;
         wait_for_subscriber(bus, &publication, &settings)?;
-        let mut watcher = Watcher {
-            ticks: 0,
-            path: settings.config_path.clone(),
-            app: settings.app,
-            text: String::new(),
-            config: BTreeMap::new(),
-            applied: false,
-            seen: Drops::default(),
-            schema,
-            shared: Arc::clone(&shared),
-            bus: bus.clone(),
+        let clock = Clock::new();
+        let started = clock.read();
+        let sim_start = settings.sim_start;
+        let persist = Self {
+            inner: Rc::new(Inner {
+                publication,
+                clock,
+                simulation: Cell::new(sim_start.is_some()),
+                sim_now: Cell::new(sim_start.unwrap_or_default().0),
+                sim_drops: Cell::new(bus.dropped()),
+                trace_ids: Cell::new(sim_start.map_or_else(|| started.0.cast_unsigned(), |_| 0)),
+                wall_watch: Cell::new(Instant::now()),
+                max_payload,
+                stream_id: settings.stream_id,
+                metrics,
+                aeron: bus.aeron().clone(),
+                source: bus.source().id,
+                source_message: bus.source_message().to_vec(),
+                drops,
+                feeds: bus.drop_counts().clone(),
+                watch_due: Cell::new(sim_start.unwrap_or(started).0 + Watcher::EVERY_NS),
+                watcher: RefCell::new(Watcher {
+                    ticks: 0,
+                    path: settings.config_path,
+                    app: settings.app,
+                    stamp: None,
+                    text: String::new(),
+                    config: BTreeMap::new(),
+                    applied: false,
+                    seen: Drops::default(),
+                    schema,
+                }),
+                enabled: (0..slots.unwrap_or(0)).map(|_| Cell::new(false)).collect(),
+                events: RefCell::default(),
+                shapes: RefCell::default(),
+                values: RefCell::default(),
+                source_sent: Cell::new(false),
+                // Due at once: the first round starts the stream.
+                beat: Cell::new(0),
+                traces: RefCell::default(),
+                trace_defs: RefCell::default(),
+                traces_on: Cell::new(false),
+                trace_rules: RefCell::default(),
+            }),
         };
-        watcher.reload()?;
-        watcher.apply(
-            settings
-                .sim_start
+        persist.inner.watcher.borrow_mut().reload()?;
+        persist.apply(
+            sim_start
                 .and_then(|n| jiff::Timestamp::from_nanosecond(i128::from(n.0)).ok())
                 .unwrap_or_else(jiff::Timestamp::now),
         );
-        Ok(Self {
-            inner: Arc::new(Inner {
-                id: next_instance_id(),
-                publication,
-                simulation: AtomicBool::new(settings.sim_start.is_some()),
-                sim_now: AtomicI64::new(settings.sim_start.unwrap_or_default().0),
-                sim_drops: AtomicU64::new(bus.drops().total()),
-                sim_trace_ids: AtomicU64::new(0),
-                sim_span_ids: AtomicU64::new(0),
-                wall_watch: Mutex::new(std::time::Instant::now()),
-                handoff,
-                max_payload,
-                metrics,
-                bus: bus.clone(),
-                shared,
-                watch_due: AtomicI64::new(
-                    settings.sim_start.unwrap_or_else(|| Clock::new().now()).0 + Watcher::EVERY_NS,
-                ),
-                watcher: Mutex::new(watcher),
-            }),
-        })
+        Ok(persist)
     }
 
-    /// Publish the metrics that are due and, once a second, apply
-    /// `tables.yaml` and queue the dictionary heartbeat. Call it from the
-    /// application's loop with its clock's time: nothing else does. Until
-    /// something is due, two relaxed loads and compares.
+    /// Publish the metrics that are due, apply `tables.yaml` once a second,
+    /// and every 5 s send the dictionary again: at most one metrics message
+    /// and 8 dictionary messages a call. Call it from the application's loop
+    /// with its clock's time: nothing else does. Until something is due,
+    /// three compares.
     #[inline]
     pub fn poll(&self, now: Nanos) {
-        self.drain_handoff();
         self.inner.metrics.poll_through(now, self);
-        if now.0 >= self.inner.watch_due.load(Ordering::Relaxed) {
+        if now.0 >= self.inner.watch_due.get() {
             self.watch(now);
+        }
+        if self.inner.beat.get() != IDLE {
+            self.beats(BEATS);
         }
     }
 
     #[cold]
     fn watch(&self, now: Nanos) {
-        // Another thread is polling: it applies.
-        let Ok(mut watcher) = self.inner.watcher.try_lock() else {
+        // Reached from inside a publish: the outer call applies.
+        let Ok(mut watcher) = self.inner.watcher.try_borrow_mut() else {
             return;
         };
-        if now.0 < self.inner.watch_due.load(Ordering::Relaxed) {
-            return;
+        self.inner.watch_due.set(now.0 + Watcher::EVERY_NS);
+        watcher.tick(self, now);
+    }
+
+    /// Switch every table as `tables.yaml`, as last read, says at `now`.
+    fn apply(&self, now: jiff::Timestamp) {
+        // Reached from inside a publish: the outer call applies.
+        if let Ok(mut watcher) = self.inner.watcher.try_borrow_mut() {
+            watcher.apply(self, now);
         }
-        self.inner
-            .watch_due
-            .store(now.0 + Watcher::EVERY_NS, Ordering::Relaxed);
-        watcher.tick(now);
     }
 
     /// Enable retrying transport pressure and apply table switches at the simulation epoch.
     pub fn set_simulation(&self, now: Nanos) {
-        self.inner
-            .sim_drops
-            .store(self.inner.bus.drops().total(), Ordering::Relaxed);
-        self.inner.simulation.store(true, Ordering::Relaxed);
-        self.inner.sim_now.store(now.0, Ordering::Relaxed);
-        self.inner
-            .watch_due
-            .store(now.0.saturating_add(Watcher::EVERY_NS), Ordering::Relaxed);
-        self.inner.metrics.set_simulation(now);
+        let inner = &self.inner;
+        inner.sim_drops.set(self.dropped());
+        if !inner.simulation.replace(true) {
+            // Tracers made from here on count from 0, as a replay's do.
+            inner.trace_ids.set(0);
+        }
+        inner.sim_now.set(now.0);
+        inner.watch_due.set(now.0.saturating_add(Watcher::EVERY_NS));
+        inner.metrics.set_simulation(now);
         if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
-            self.inner
-                .watcher
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .apply(timestamp);
+            self.apply(timestamp);
         }
     }
 
-    /// Advance the timestamp used by event rows and tracing spans before agent dispatch.
+    /// Advance the timestamp used by event rows before agent dispatch.
     #[inline]
     pub fn sim_time(&self, now: Nanos) {
-        self.inner.sim_now.store(now.0, Ordering::Relaxed);
+        self.inner.sim_now.set(now.0);
         self.inner.metrics.sim_time(now);
     }
 
-    pub(crate) fn next_span_id(&self) -> u64 {
-        static IDS: AtomicU64 = AtomicU64::new(0);
-        let ids = if self.inner.simulation.load(Ordering::Relaxed) {
-            &self.inner.sim_span_ids
-        } else {
-            &IDS
-        };
-        ids.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// Current simulation epoch, or a live clock read.
+    /// Current simulation epoch, or a read of this handle's clock.
     #[inline]
     #[must_use]
     pub fn now(&self) -> Nanos {
-        if self.inner.simulation.load(Ordering::Relaxed) {
-            Nanos(self.inner.sim_now.load(Ordering::Relaxed))
+        if self.inner.simulation.get() {
+            Nanos(self.inner.sim_now.get())
         } else {
-            crate::clock::epoch_now()
+            self.inner.clock.read()
         }
     }
 
     /// Publish metrics at simulation time; gate config I/O and heartbeats by wall elapsed time.
     pub fn poll_sim(&self, now: Nanos) {
         self.sim_time(now);
-        self.drain_handoff();
-        self.inner.metrics.poll_through(now, self);
-        if now.0 >= self.inner.watch_due.load(Ordering::Relaxed) {
-            self.inner
-                .watch_due
-                .store(now.0.saturating_add(Watcher::EVERY_NS), Ordering::Relaxed);
+        let inner = &self.inner;
+        inner.metrics.poll_through(now, self);
+        if now.0 >= inner.watch_due.get() {
+            inner.watch_due.set(now.0.saturating_add(Watcher::EVERY_NS));
             if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
-                self.inner
-                    .watcher
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .apply(timestamp);
+                self.apply(timestamp);
             }
         }
-        let mut wall = self
-            .inner
-            .wall_watch
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if wall.elapsed() >= Duration::from_secs(1) {
-            *wall = std::time::Instant::now();
-            drop(wall);
-            self.inner
-                .watcher
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .tick(now);
+        if inner.wall_watch.get().elapsed() >= Duration::from_secs(1)
+            && let Ok(mut watcher) = inner.watcher.try_borrow_mut()
+        {
+            inner.wall_watch.set(Instant::now());
+            watcher.tick(self, now);
+        }
+        if inner.beat.get() != IDLE {
+            self.beats(BEATS);
         }
     }
 
-    /// Finish queued rows, dictionaries and partial metrics at simulation EOF.
+    /// Finish the dictionary round under way and partial metrics at
+    /// simulation EOF.
     ///
     /// # Errors
-    /// A queued frame is too large, malformed, or its publication has closed.
+    /// Any record was dropped since the simulation began, the final metrics
+    /// included: a simulation waits out back pressure, so a drop is a record
+    /// the run lost (too large or mis-sized; a record after the publication
+    /// closed is not counted). Or a dictionary message could not be
+    /// published.
     pub fn flush_sim(&self, now: Nanos) -> Result<(), Error> {
         self.sim_time(now);
-        if !self.on_owner() {
-            return Err(Error::Aeron(
-                "simulation flush must run on its publication owner".into(),
-            ));
-        }
-        let pending = self
-            .inner
-            .handoff
-            .as_ref()
-            .map_or_else(Vec::new, |handoff| {
-                handoff
-                    .receive
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .try_iter()
-                    .take(HANDOFF)
-                    .collect::<Vec<_>>()
-            });
-        for bytes in pending {
-            self.publish_owned(&bytes)
-                .map_err(|_| Error::Aeron("failed to flush a handed-off frame".into()))?;
-        }
-        let drops = self.inner.sim_drops.load(Ordering::Relaxed);
+        let drops = self.inner.sim_drops.get();
         self.inner.metrics.flush_through(now, self);
-        if self.inner.bus.drops().total() != drops {
-            return Err(Error::Aeron("failed to flush simulation metrics".into()));
+        let lost = self.dropped().saturating_sub(drops);
+        if lost != 0 {
+            return Err(Error::Aeron(format!(
+                "{lost} records were dropped during the simulation"
+            )));
         }
-        let shared = &self.inner.shared;
-        let mut queue = shared
-            .heartbeat_queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if shared.shapes_due.swap(false, Ordering::Relaxed) {
-            queue.extend(self.heartbeat_round());
+        if !self.beats(usize::MAX) {
+            return Err(Error::Aeron("failed to flush simulation dictionary".into()));
         }
-        while let Some(beat) = queue.pop_front() {
-            if self.publish_owned(&beat.bytes).is_err() {
-                queue.push_front(beat);
-                shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
-                drop(queue);
-                return Err(Error::Aeron("failed to flush simulation dictionary".into()));
-            }
-            if let Some(shape) = beat.shape {
-                shape.mark_sent();
-            }
-            if let Some(def) = beat.def {
-                def.sent.store(true, Ordering::Relaxed);
-            }
-        }
-        drop(queue);
-        shared.heartbeat_left.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -749,99 +570,74 @@ impl Persist {
     /// [`trace::MAX_STAGES`] stages and [`trace::MAX_ATTRS`] attributes.
     #[must_use]
     pub fn tracer(&self, name: &str, stages: &[&str], attrs: &[&str]) -> trace::Tracer {
-        static NONCE: AtomicU64 = AtomicU64::new(0);
         let def = trace::TraceDef::new(name, stages, attrs);
         let bytes = def.message().unwrap_or_else(|e| {
             log::error!("trace {name}: {e}");
             Vec::new()
         });
-        let shared = &self.inner.shared;
-        // One definition however many threads make this tracer.
-        let message = shared
+        let inner = &self.inner;
+        // One definition however many tracers share it.
+        let known = inner
             .trace_defs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .borrow()
             .iter()
             .find(|d| d.message == bytes)
-            .map(Arc::clone);
-        let message = message.unwrap_or_else(|| {
-            let made = Arc::new(trace::DefMessage {
-                message: bytes,
-                sent: AtomicBool::new(false),
-            });
-            let mut defs = shared
-                .trace_defs
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(known) = defs.iter().find(|d| d.message == made.message) {
-                return Arc::clone(known);
+            .cloned();
+        let message = known.unwrap_or_else(|| {
+            let (len, max) = (bytes.len(), inner.max_payload);
+            if len > max {
+                log::error!(
+                    "trace {name}: its definition is {len} bytes, more than one claim holds ({max}): its traces are dropped"
+                );
             }
-            defs.push(Arc::clone(&made));
+            let made = Rc::new(trace::DefMessage {
+                message: bytes,
+                sent: Cell::new(false),
+            });
+            inner.trace_defs.borrow_mut().push(Rc::clone(&made));
             made
         });
-        // A new switch starts as the watcher last decided. Made under the
-        // lock the watcher sets switches under, so it is never left behind.
-        let switch = Arc::clone(
-            shared
+        // A new switch starts as the watcher last decided.
+        let switch = Rc::clone(
+            inner
                 .traces
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
+                .borrow_mut()
                 .entry(name.to_owned())
                 .or_insert_with(|| {
-                    let rule = shared
-                        .trace_rules
-                        .read()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .get(name)
-                        .copied();
+                    let rule = inner.trace_rules.borrow().get(name).copied();
                     let switch = trace::TraceSwitch::default();
-                    switch.set(shared.spans_on.load(Ordering::Relaxed), rule.as_ref());
-                    Arc::new(switch)
+                    switch.set(inner.traces_on.get(), rule.as_ref());
+                    Rc::new(switch)
                 }),
         );
-        let nonce = if self.inner.simulation.load(Ordering::Relaxed) {
-            self.inner.sim_trace_ids.fetch_add(1, Ordering::Relaxed)
-        } else {
-            NONCE.fetch_add(1, Ordering::Relaxed)
-        };
+        let nonce = inner.trace_ids.get();
+        inner.trace_ids.set(nonce.wrapping_add(1));
         trace::Tracer::new(
             &def,
             message,
             switch,
-            &self.inner.metrics,
+            &inner.metrics,
             Some(self.clone()),
-            self.inner.bus.source().id.rotate_left(17) ^ nonce,
+            inner.source.rotate_left(17) ^ nonce,
         )
     }
 
     /// This application's metrics: make counters, gauges and histograms
-    /// from it, and call [`Persist::poll`] from the loop. With
-    /// [`Self::layer`] installed, `tracing` counter, gauge, and histogram
-    /// events update the same registry. The handles are the path that does
-    /// not allocate.
+    /// from it, and call [`Persist::poll`] from the loop.
     #[must_use]
     pub fn metrics(&self) -> metrics::Metrics {
-        self.inner.metrics.published_by(self.clone())
+        self.inner.metrics.clone()
     }
 
-    /// Make this the process's handle, for [`record`], [`enabled`],
-    /// [`record_row`] and [`event_enabled`] to use from anywhere. It stays
-    /// installed until the process exits. Only the first call installs; a
-    /// later one returns `false` and changes nothing.
-    pub fn install(&self) -> bool {
-        INSTALLED.set(self.clone()).is_ok()
-    }
-
-    /// Is `template_id` recorded right now? One relaxed atomic load. Check it
-    /// before preparing a message that is costly to size or encode.
+    /// Is `template_id` recorded right now? One load. Check it before
+    /// preparing a message that is costly to size or encode.
     #[inline]
     #[must_use]
     pub fn enabled(&self, template_id: u16) -> bool {
         self.inner
-            .shared
             .enabled
             .get(usize::from(template_id))
-            .is_some_and(|e| e.load(Ordering::Relaxed))
+            .is_some_and(Cell::get)
     }
 
     /// Record one message of `template_id` that is exactly `len` bytes,
@@ -850,12 +646,14 @@ impl Persist {
     /// `len` bytes of the Aeron term buffer and returns the length it wrote;
     /// otherwise `encode` is never called.
     ///
-    /// The record is dropped and counted in [`Bus::drops`] when Aeron
-    /// cannot take it (no subscriber yet, back pressure, larger than one
-    /// claim), when a term rotation does not finish within eight retries,
-    /// when `encode` wrote another length or
-    /// template than claimed (debug builds panic on that). An error from
-    /// `encode` is returned as is, and nothing is published.
+    /// The record is dropped and counted in [`Persist::drops`] when Aeron
+    /// cannot take it, or the `Source` message that goes first (no
+    /// subscriber yet, back pressure, larger than one claim), when a term
+    /// rotation does not finish within eight retries, when `encode` wrote
+    /// another length or template than claimed (debug builds panic on
+    /// that). An error from `encode` is returned as is, and nothing is
+    /// published. After [`Invoker::finish`](crate::rt::Invoker::finish)
+    /// closed the publication, nothing is published or counted.
     ///
     /// # Errors
     ///
@@ -870,26 +668,11 @@ impl Persist {
         if !self.enabled(template_id) {
             return Ok(());
         }
-        if !self.on_owner() {
-            debug_assert!(
-                false,
-                "an exclusive persist recorded template {template_id} off its owner thread"
-            );
-            let mut copy = vec![0; len];
-            let written = encode(&mut copy)?;
-            if written == len {
-                self.hand_off(copy);
-            } else {
-                self.drop_one();
-            }
-            return Ok(());
-        }
-        self.flush_due_shapes();
         if len > self.inner.max_payload {
             self.count(DropKind::TooLarge);
             return Ok(());
         }
-        let claim = match self.try_claim_slot(len) {
+        let claim = match self.sourced().and_then(|()| self.try_claim_slot(len)) {
             Ok(claim) => claim,
             Err(kind) => {
                 self.count(kind);
@@ -911,106 +694,76 @@ impl Persist {
         Ok(())
     }
 
-    /// A `tracing` layer that records events naming an enabled table
-    /// (`tracing::info!(table = "signal", instrument = %id, edge = 0.25)`),
-    /// counter, gauge, and histogram events
-    /// (`tracing::info!(counter = "orders_sent", venue = "binance")`),
-    /// and, while `otel_traces` is on for this app, spans at INFO and above
-    /// (below INFO: libraries' internals).
-    /// Add it to the application's subscriber. Its filter is its own: it
-    /// takes only those, and leaves every other callsite to the other
-    /// layers (or disabled, when it is alone).
-    #[must_use]
-    pub fn layer<S>(&self) -> impl Layer<S> + Send + Sync + 'static
+    /// The `tracing` bridge ([`bridge`]): a layer that records, from any
+    /// thread, events naming a table
+    /// (`tracing::info!(table = "signal", instrument = %id, edge = 0.25)`)
+    /// as rows, and spans at INFO and above (below INFO: libraries'
+    /// internals) as `otel_traces` spans, on a concurrent publication of its
+    /// own on this stream. It records nothing through this handle and
+    /// switches nothing: the ingester keeps what `tables.yaml` has on for
+    /// this app. Make it once, on the loop thread at start-up (it drives the
+    /// conductor until its publication is added), and add it to the
+    /// application's subscriber. Its filter is its own: it takes only those,
+    /// and leaves every other call site to the other layers (or disabled,
+    /// when it is alone).
+    ///
+    /// # Errors
+    ///
+    /// The bridge's publication could not be added: the driver refuses
+    /// another concurrent publication of this stream that is not on
+    /// [`bridge::BRIDGE_CHANNEL`].
+    pub fn layer<S>(&self) -> Result<impl Layer<S> + Send + Sync + 'static, Error>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
-        let shared = Arc::clone(&self.inner.shared);
-        event::PersistLayer {
-            persist: self.clone(),
-        }
-        .with_filter(
-            dynamic_filter_fn(move |meta, _| {
-                if meta.is_span() {
-                    shared.spans_on.load(Ordering::Relaxed)
-                } else {
-                    event::layer_wants(meta)
-                }
-            })
-            // A span's answer changes with `tables.yaml`, so it is asked
-            // each time (one relaxed load); an event's never does.
-            .with_callsite_filter(move |meta| {
-                // Spans at INFO and above: the application's own. Libraries'
-                // internals (h2, hyper, tokio) are DEBUG and TRACE spans.
-                if meta.is_span() && *meta.level() <= tracing::Level::INFO {
-                    tracing::subscriber::Interest::sometimes()
-                } else if event::layer_wants(meta) {
-                    tracing::subscriber::Interest::always()
-                } else {
-                    tracing::subscriber::Interest::never()
-                }
-            }),
-        )
+        let inner = &self.inner;
+        Ok(bridge::Bridge::new(
+            &inner.aeron,
+            inner.source,
+            &inner.source_message,
+            inner.stream_id,
+        )?
+        .with_filter(filter_fn(bridge::wants)))
     }
 
     /// Is the event table `table` recorded right now? Check it before
     /// building a row that is costly to make.
     #[must_use]
     pub fn event_enabled(&self, table: &str) -> bool {
-        let events = self
-            .inner
-            .shared
+        self.inner
             .events
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        events
-            .get(table)
-            .is_some_and(|on| on.load(Ordering::Relaxed))
+            .try_borrow()
+            .is_ok_and(|events| events.get(table).is_some_and(|on| on.get()))
     }
 
     /// The switch of event table `table`, made (off) if `tables.yaml` does
     /// not list it; the config watcher flips it.
-    pub(crate) fn event_switch(&self, table: &str) -> Arc<AtomicBool> {
-        let events = &self.inner.shared.events;
-        if let Some(on) = events
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(table)
-        {
-            return Arc::clone(on);
+    pub(crate) fn event_switch(&self, table: &str) -> Rc<Cell<bool>> {
+        let mut events = self.inner.events.borrow_mut();
+        if let Some(on) = events.get(table) {
+            return Rc::clone(on);
         }
-        let mut events = events.write().unwrap_or_else(PoisonError::into_inner);
-        Arc::clone(events.entry(table.to_owned()).or_default())
+        Rc::clone(events.entry(table.to_owned()).or_default())
     }
 
-    /// Publish a message that is already built. `false` when it was not
-    /// published; the drop is already counted.
+    /// Publish a message that is already built, after the `Source` message.
+    /// `false` when it was not published; the drop is already counted.
     pub(crate) fn publish(&self, bytes: &[u8]) -> bool {
-        self.flush_due_shapes();
-        self.publish_owned(bytes)
+        self.sourced()
+            .and_then(|()| self.publish_raw(bytes))
             .map_err(|kind| self.count(kind))
             .is_ok()
     }
 
-    /// Claim exactly `len` bytes, let `write` fill them, and commit when
-    /// `write` returns `true`. A `false` write aborts the claim. Either
-    /// failure is counted.
+    /// Claim exactly `len` bytes, after the `Source` message, let `write`
+    /// fill them, and commit when `write` returns `true`. A `false` write
+    /// aborts the claim. Either failure is counted.
     pub(crate) fn claim(&self, len: usize, write: impl FnOnce(&mut [u8]) -> bool) {
-        if !self.on_owner() {
-            let mut copy = vec![0; len];
-            if write(&mut copy) {
-                self.hand_off(copy);
-            } else {
-                self.drop_one();
-            }
-            return;
-        }
-        self.flush_due_shapes();
         if len > self.inner.max_payload {
             self.count(DropKind::TooLarge);
             return;
         }
-        let claim = match self.try_claim_slot(len) {
+        let claim = match self.sourced().and_then(|()| self.try_claim_slot(len)) {
             Ok(claim) => claim,
             Err(kind) => {
                 self.count(kind);
@@ -1022,114 +775,98 @@ impl Persist {
         }
     }
 
-    /// One dictionary message, when a heartbeat round is due or unfinished.
-    /// An idle call is two relaxed loads. A new shape is still published
-    /// ahead of its first row by `send_shape`; this only repeats what was
-    /// already sent.
+    /// The `Source` message ahead of this round's first record: one load
+    /// once it is out. `Err` when Aeron could not take it, and nothing may
+    /// follow it yet.
     #[inline]
-    fn flush_due_shapes(&self) {
-        let shared = &self.inner.shared;
-        if shared.heartbeat_left.load(Ordering::Relaxed) == 0
-            && !shared.shapes_due.load(Ordering::Relaxed)
-        {
-            return;
+    fn sourced(&self) -> Result<(), DropKind> {
+        if self.inner.source_sent.get() {
+            return Ok(());
         }
-        self.send_one_heartbeat();
+        self.send_source()
     }
 
-    /// Publish the next heartbeat message. These repeat, so one Aeron cannot
-    /// take is not a dropped record: an unsent `Source` stays at the front
-    /// of the queue, and a shape is sent by its next row or the next round.
-    fn send_one_heartbeat(&self) {
-        let shared = &self.inner.shared;
-        let mut queue = shared
-            .heartbeat_queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if queue.is_empty() {
-            if !shared.shapes_due.swap(false, Ordering::Relaxed) {
-                return;
-            }
-            queue.extend(self.heartbeat_round());
-        }
-        let Some(beat) = queue.pop_front() else {
-            shared.heartbeat_left.store(0, Ordering::Relaxed);
-            return;
-        };
-        // Held across the publish so two threads cannot reorder the round.
-        let sent = self.publish_owned(&beat.bytes).is_ok();
-        if sent {
-            shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
-            if let Some(shape) = &beat.shape {
-                shape.mark_sent();
-            }
-            if let Some(def) = &beat.def {
-                def.sent.store(true, Ordering::Relaxed);
-            }
-            return;
-        }
-        // The `Source` message has to stay ahead of the rows that follow.
-        // A shape or a trace definition can wait for its own next send.
-        if beat.shape.is_none() && beat.def.is_none() {
-            queue.push_front(beat);
-        }
-        shared.heartbeat_left.store(queue.len(), Ordering::Relaxed);
+    #[cold]
+    fn send_source(&self) -> Result<(), DropKind> {
+        self.publish_raw(&self.inner.source_message)?;
+        self.inner.source_sent.set(true);
+        Ok(())
     }
 
-    /// `Source`, then every shape, then every trace definition.
-    fn heartbeat_round(&self) -> VecDeque<Beat> {
-        let mut round = VecDeque::new();
-        round.push_back(Beat {
-            bytes: self.inner.bus.source_message().to_vec(),
-            shape: None,
-            def: None,
-        });
-        let shapes: Vec<_> = self
-            .inner
-            .shared
-            .shapes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect();
-        for shape in shapes {
-            round.push_back(Beat {
-                bytes: shape.message().to_vec(),
-                shape: Some(shape),
-                def: None,
-            });
+    /// Publish up to `n` messages of the heartbeat round under way, from
+    /// the bytes they keep: `Source` (unless a record sent it this round),
+    /// each shape, then each trace definition, `Source` first again if the
+    /// stream lost its subscriber meanwhile. They repeat, so one Aeron
+    /// cannot take is not a drop. With no subscriber or back pressure it is
+    /// the next one tried, at the next poll. One refused otherwise is passed
+    /// over, and the round goes on: longer than a claim (logged once, when
+    /// it was made; a length compare, no claim), the publication closed, or
+    /// another error. `false` when any of them happened.
+    #[cold]
+    fn beats(&self, n: usize) -> bool {
+        let inner = &self.inner;
+        let mut all = true;
+        for _ in 0..n {
+            let at = inner.beat.get();
+            if at == IDLE {
+                return all;
+            }
+            let published = match at.checked_sub(1).map(|i| self.dictionary(i)) {
+                None => self.sourced(),
+                Some(None) => {
+                    inner.beat.set(IDLE);
+                    return all;
+                }
+                Some(Some(beat)) => {
+                    let (bytes, sent) = match &beat {
+                        Beat::Shape(entry) => (entry.shape.message(), &entry.sent),
+                        Beat::Def(def) => (def.message.as_slice(), &def.sent),
+                    };
+                    let published = self.sourced().and_then(|()| self.publish_raw(bytes));
+                    published.map(|()| sent.set(true))
+                }
+            };
+            match published {
+                Ok(()) => {}
+                Err(DropKind::NotConnected | DropKind::BackPressure) => return false,
+                Err(DropKind::TooLarge | DropKind::Other | DropKind::Closed) => all = false,
+            }
+            inner.beat.set(at + 1);
         }
-        let defs = self
-            .inner
-            .shared
-            .trace_defs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        for def in defs {
-            round.push_back(Beat {
-                bytes: def.message.clone(),
-                shape: None,
-                def: Some(def),
-            });
-        }
-        round
+        all
     }
 
-    /// Persist one runtime Input journal row independently of application table switches.
+    /// The heartbeat round's message `i` after `Source`: each shape, then
+    /// each trace definition. `None` past the last, or when reached while
+    /// one is being added, which ends the round.
+    fn dictionary(&self, i: usize) -> Option<Beat> {
+        let shapes = self.inner.shapes.try_borrow().ok()?;
+        if let Some(entry) = shapes.get(i) {
+            return Some(Beat::Shape(Rc::clone(entry)));
+        }
+        let i = i - shapes.len();
+        drop(shapes);
+        let defs = self.inner.trace_defs.try_borrow().ok()?;
+        defs.get(i).cloned().map(Beat::Def)
+    }
+
+    /// Persist one runtime Input journal row independently of application
+    /// table switches, after the `Source` message as every record, so the
+    /// ingester knows the row's run before it stores it.
     pub(crate) fn record_input(&self, input: crate::journal::Input) -> Result<(), Error> {
         let mut stalled = None;
         let claim = loop {
-            match self.try_claim_slot(crate::journal::Input::LENGTH) {
+            match self
+                .sourced()
+                .and_then(|()| self.try_claim_slot(crate::journal::Input::LENGTH))
+            {
                 Ok(claim) => break claim,
                 Err(DropKind::BackPressure | DropKind::NotConnected) => {
                     let began = stalled.get_or_insert_with(Instant::now);
                     if began.elapsed() >= Duration::from_secs(5) {
                         return Err(Error::Aeron("input journal remained back pressured or disconnected for five seconds".into()));
                     }
-                    let _ = self.inner.bus.do_work();
-                    std::thread::yield_now();
+                    crate::bus::pause(&self.inner.aeron);
                 }
                 Err(kind) => {
                     return Err(Error::Aeron(format!(
@@ -1147,11 +884,7 @@ impl Persist {
     }
 
     /// Publish a built message; why not, when Aeron could not take it.
-    fn publish_owned(&self, bytes: &[u8]) -> Result<(), DropKind> {
-        if !self.on_owner() {
-            self.hand_off(bytes.to_vec());
-            return Ok(());
-        }
+    fn publish_raw(&self, bytes: &[u8]) -> Result<(), DropKind> {
         if bytes.len() > self.inner.max_payload {
             return Err(DropKind::TooLarge);
         }
@@ -1163,76 +896,39 @@ impl Persist {
     /// Claim `len` bytes, stamped with this application's source id.
     #[inline]
     fn try_claim_slot(&self, len: usize) -> Result<Claim, DropKind> {
+        let inner = &self.inner;
         loop {
-            let result = match &self.inner.publication {
-                Publication::Shared(p) => self.inner.bus.try_claim(p, len),
-                Publication::Exclusive(owned) => {
-                    owned.claimable().map_or(Err(DropKind::Other), |p| {
-                        crate::bus::claim_exclusive(p, len, self.inner.bus.source_id())
-                    })
+            match crate::bus::claim_exclusive(&inner.publication, len, inner.source.cast_signed()) {
+                Ok(claim) => return Ok(claim),
+                Err(DropKind::BackPressure | DropKind::NotConnected) if inner.simulation.get() => {
+                    crate::bus::pause(&inner.aeron);
                 }
-            };
-            if self.inner.simulation.load(Ordering::Relaxed)
-                && matches!(result, Err(DropKind::BackPressure | DropKind::NotConnected))
-            {
-                let _ = self.inner.bus.do_work();
-                std::thread::yield_now();
-                continue;
+                Err(kind) => return Err(self.refused(kind)),
             }
-            return result;
         }
     }
 
-    /// Shared mode, or the owner thread of an exclusive one.
-    #[inline]
-    fn on_owner(&self) -> bool {
-        match &self.inner.publication {
-            Publication::Shared(_) => true,
-            Publication::Exclusive(owned) => owned.is_owner(),
-        }
-    }
-
-    /// Queue a record made off the owner thread; dropped and counted when
-    /// the owner has fallen this far behind.
+    /// Why a claim was refused. After the runtime closed the publication at
+    /// shutdown, it is closed, which is not a drop. With no subscriber,
+    /// perhaps a new recording follows: the `Source` message goes again
+    /// before the next record.
     #[cold]
-    fn hand_off(&self, bytes: Vec<u8>) {
-        let Some(handoff) = &self.inner.handoff else {
-            self.drop_one();
-            return;
-        };
-        if self.inner.simulation.load(Ordering::Relaxed) {
-            if handoff.send.send(bytes).is_err() {
-                self.count(DropKind::Other);
-            }
-            return;
+    fn refused(&self, kind: DropKind) -> DropKind {
+        if self.inner.publication.is_closed() {
+            return DropKind::Closed;
         }
-        if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
-            handoff.send.try_send(bytes)
-        {
-            self.count(DropKind::BackPressure);
+        if kind == DropKind::NotConnected {
+            self.inner.source_sent.set(false);
         }
+        kind
     }
 
-    /// Publish what other threads handed off, on the owner thread.
-    fn drain_handoff(&self) {
-        let Some(handoff) = &self.inner.handoff else {
-            return;
-        };
-        if !self.on_owner() {
-            return;
-        }
-        let Ok(receive) = handoff.receive.try_lock() else {
-            return;
-        };
-        while let Ok(bytes) = receive.try_recv() {
-            if let Err(kind) = self.publish_owned(&bytes) {
-                self.count(kind);
-            }
-        }
-    }
-
+    /// One more drop of `kind`, unless the runtime closed the publication at
+    /// shutdown: a record after that is not a drop, whatever stopped it.
     pub(crate) fn count(&self, kind: DropKind) {
-        self.inner.bus.count(kind);
+        if !self.inner.publication.is_closed() {
+            self.inner.drops.count(kind);
+        }
     }
 
     /// The longest message one claim holds.
@@ -1244,47 +940,55 @@ impl Persist {
     /// is dropped and counted.
     #[must_use]
     pub fn is_connected(&self) -> bool {
-        match &self.inner.publication {
-            Publication::Shared(p) => p.is_connected(),
-            Publication::Exclusive(owned) => owned.is_connected(),
-        }
+        self.inner.publication.is_connected()
     }
 
     #[cold]
     pub(crate) fn drop_one(&self) {
-        self.inner.bus.drop_one();
+        self.count(DropKind::Other);
     }
 
-    /// The bus this records through: its [`Bus::drops`] count this
-    /// handle's dropped records, and [`Bus::shutdown`] closes it.
+    /// Records dropped so far, by reason: this handle's, and those of the
+    /// feeds published through the bus it connected with ([`Bus::drops`]).
+    /// What the `persist_dropped` series publish; also logged, once a second
+    /// while the total grows.
     #[must_use]
-    pub fn bus(&self) -> &Bus {
-        &self.inner.bus
+    pub fn drops(&self) -> Drops {
+        self.inner.drops.get() + self.inner.feeds.get()
+    }
+
+    /// [`Drops::total`] of [`Persist::drops`].
+    #[must_use]
+    pub fn dropped(&self) -> u64 {
+        self.drops().total()
+    }
+
+    /// Its publication, for the runtime to close at shutdown: closing this
+    /// handle closes every one, and a record after it is not a drop.
+    pub(crate) fn publication(&self) -> AeronExclusivePublication {
+        self.inner.publication.clone()
     }
 }
 
 impl std::fmt::Debug for Persist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Persist")
-            .field("bus", &self.inner.bus)
+            .field("source", &self.inner.source)
+            .field("dropped", &self.dropped())
             .finish_non_exhaustive()
     }
 }
 
 fn wait_for_subscriber(
     bus: &Bus,
-    publication: &Publication,
+    publication: &AeronExclusivePublication,
     settings: &Settings,
 ) -> Result<(), Error> {
-    let connected = || match publication {
-        Publication::Shared(p) => p.is_connected(),
-        Publication::Exclusive(owned) => owned.is_connected(),
-    };
     if settings.subscriber_timeout.is_zero() {
         return Ok(());
     }
     let deadline = Instant::now() + settings.subscriber_timeout;
-    while !connected() {
+    while !publication.is_connected() {
         if Instant::now() >= deadline {
             return Err(Error::Aeron(format!(
                 "{}: no subscriber is recording the stream after {:?}",
@@ -1296,12 +1000,15 @@ fn wait_for_subscriber(
     Ok(())
 }
 
-/// Applies `tables.yaml` to [`Shared::enabled`], from [`Persist::poll`].
+/// Applies `tables.yaml` to the switches of the [`Persist`] it is handed,
+/// from [`Persist::poll`].
 struct Watcher {
     ticks: u64,
     path: PathBuf,
     /// This application's name, for the tables' `apps` switches.
     app: String,
+    /// The file's length and modification time when it was last read.
+    stamp: Option<(u64, SystemTime)>,
     /// The last `tables.yaml` read, good or bad, and the last good one's
     /// tables.
     text: String,
@@ -1310,30 +1017,29 @@ struct Watcher {
     applied: bool,
     seen: Drops,
     schema: Vec<(String, u16)>,
-    shared: Arc<Shared>,
-    bus: Bus,
 }
 
 impl Watcher {
     const EVERY_NS: i64 = 1_000_000_000;
 
-    fn tick(&mut self, now: Nanos) {
-        // Every 5 s, ask the next record to send every event shape again.
-        // An ingester that starts after the first one, with none saved,
-        // learns them from that record.
+    fn tick(&mut self, persist: &Persist, now: Nanos) {
+        let inner = &persist.inner;
+        // Every 5 s, start a round that sends the `Source` message, every
+        // event shape and every trace definition again. An ingester that
+        // starts after the first one, with none saved, learns them from it.
         self.ticks += 1;
         if self.ticks.is_multiple_of(5) {
-            self.shared.shapes_due.store(true, Ordering::Relaxed);
-            self.bus.beat();
+            inner.source_sent.set(false);
+            inner.beat.set(0);
         }
         if let Err(e) = self.reload() {
             log::error!("{e}; keeping the previous configuration");
         }
         // Every second, changed or not: an `until` passes by itself.
         if let Ok(timestamp) = jiff::Timestamp::from_nanosecond(i128::from(now.0)) {
-            self.apply(timestamp);
+            self.apply(persist, timestamp);
         }
-        let drops = self.bus.drops();
+        let drops = persist.drops();
         if drops.total() > self.seen.total() {
             log::warn!(
                 "{} records dropped in the last second ({} in all: {} not connected, {} back pressure, {} too large, {} other)",
@@ -1348,13 +1054,25 @@ impl Watcher {
         }
     }
 
-    /// Read `tables.yaml` again if it changed since the last call. A bad
-    /// version is reported once.
+    /// Read `tables.yaml` again if it changed since the last call: one
+    /// `stat` while it has not, so the loop allocates nothing. A bad version
+    /// is reported once.
     fn reload(&mut self) -> Result<(), Error> {
-        let text = std::fs::read_to_string(&self.path)
-            .map_err(|e| Error::Config(format!("{}: {e}", self.path.display())))?;
+        let stamp = std::fs::metadata(&self.path)
+            .ok()
+            .and_then(|meta| Some((meta.len(), meta.modified().ok()?)));
+        if stamp.is_some() && stamp == self.stamp {
+            return Ok(());
+        }
+        let in_file =
+            |e: &dyn std::fmt::Display| Error::Config(format!("{}: {e}", self.path.display()));
+        let text = std::fs::read_to_string(&self.path).map_err(|e| in_file(&e))?;
+        self.stamp = stamp;
         if text != self.text {
-            let parsed = parse_config(&text);
+            let parsed = parse_config(&text).map_err(|e| match e {
+                Error::Config(m) => in_file(&m),
+                other => other,
+            });
             self.text = text;
             self.config = parsed?;
         }
@@ -1362,7 +1080,8 @@ impl Watcher {
     }
 
     /// Switch every table on or off for this app at `now`.
-    fn apply(&mut self, now: jiff::Timestamp) {
+    fn apply(&mut self, persist: &Persist, now: jiff::Timestamp) {
+        let inner = &persist.inner;
         let first = !std::mem::replace(&mut self.applied, true);
         let (app, config) = (&self.app, &self.config);
         let toggled = |name: &str, was: bool, on: bool| {
@@ -1382,43 +1101,34 @@ impl Watcher {
         let is_on = |name: &str| config.get(name).is_some_and(|c| c.is_on(app, now));
         for (name, id) in &self.schema {
             let on = is_on(name);
-            toggled(
-                name,
-                self.shared.enabled[usize::from(*id)].swap(on, Ordering::Relaxed),
-                on,
-            );
+            toggled(name, inner.enabled[usize::from(*id)].replace(on), on);
         }
         // Traces: `otel_traces` switches them all, and names their sampling.
         let traces = config.get(OTEL_TRACES);
         let traces_on = is_on(OTEL_TRACES);
         // First what a new tracer starts with, then every existing one.
-        self.shared.spans_on.store(traces_on, Ordering::Relaxed);
-        *self
-            .shared
-            .trace_rules
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) =
-            traces.map(|c| c.traces.clone()).unwrap_or_default();
-        for (name, switch) in self
-            .shared
-            .traces
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-        {
+        // Copied only when they changed: this runs every second.
+        inner.traces_on.set(traces_on);
+        let mut rules = inner.trace_rules.borrow_mut();
+        match traces {
+            Some(c) if c.traces != *rules => rules.clone_from(&c.traces),
+            None if !rules.is_empty() => rules.clear(),
+            _ => {}
+        }
+        drop(rules);
+        for (name, switch) in inner.traces.borrow().iter() {
             switch.set(traces_on, traces.and_then(|c| c.traces.get(name)));
         }
-        // Every other table is recorded from `tracing` events. Log after the
-        // map lock so a slow log does not hold it.
+        // Every other table is an event table (`record_row`,
+        // `record_value`). Logged once the map is released. A switch is made
+        // only for a table seen for the first time, and a note kept only for
+        // what may be logged: a second that changed nothing allocates
+        // nothing.
         let notes = {
-            let mut switches = self
-                .shared
-                .events
-                .write()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut switches = inner.events.borrow_mut();
             let mut notes = Vec::new();
             for (name, switch) in switches.iter() {
-                if !config.contains_key(name) && switch.swap(false, Ordering::Relaxed) {
+                if !config.contains_key(name) && switch.replace(false) {
                     notes.push((name.clone(), true, false));
                 }
             }
@@ -1427,13 +1137,15 @@ impl Watcher {
                 .filter(|name| !self.schema.iter().any(|(n, _)| n == *name))
             {
                 let on = is_on(name);
-                let was = switches
-                    .entry(name.clone())
-                    .or_default()
-                    .swap(on, Ordering::Relaxed);
-                notes.push((name.clone(), was, on));
+                let known = switches.get(name).map(|switch| switch.replace(on));
+                if known.is_none() {
+                    switches.insert(name.clone(), Rc::new(Cell::new(on)));
+                }
+                let was = known.unwrap_or(false);
+                if first || was != on {
+                    notes.push((name.clone(), was, on));
+                }
             }
-            drop(switches);
             notes
         };
         for (name, was, on) in &notes {
@@ -1447,16 +1159,6 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    /// Nothing in this test binary installs a handle.
-    #[test]
-    fn without_an_installed_handle_recording_does_nothing() -> TestResult {
-        assert!(installed().is_none());
-        record(1, 64, |_| Err("encoded with nothing installed"))?;
-        assert!(!enabled(1) && !event_enabled("spread"));
-        record_row("spread", [("bps", event::Value::F64(1.0))]);
-        Ok(())
-    }
 
     #[test]
     fn a_table_is_switched_per_app_and_until_a_time() -> TestResult {

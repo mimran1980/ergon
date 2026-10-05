@@ -22,6 +22,9 @@ spec:
             - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
             - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /lab/grafana/dashboards/market.json }
             - { name: GF_PATHS_PROVISIONING, value: /lab/grafana/provisioning }
+            # The datasource reads it as $CLICKHOUSE_PASSWORD.
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: clickhouse, key: password } }
             # Go returns memory to the OS near this, instead of at twice the heap.
             - { name: GOMEMLIMIT, value: 96MiB }
           ports: [{ containerPort: 3000 }]

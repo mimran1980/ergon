@@ -4,8 +4,8 @@ use engine::replay;
 use ergon_runtime::clock::Nanos;
 use ergon_runtime::rt::sim::{Sim, SimConfig};
 use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId};
-use ergon_runtime::streams::Streams;
 use ergon_runtime::subscription::Delivery;
+use lab::Streams;
 
 struct DeferredStart {
     engine: Engine,
@@ -47,10 +47,10 @@ fn constructor_does_not_arm_timers_before_the_start_checkpoint()
     let config = SimConfig {
         region: replay::REGION.into(),
         from: Some(Nanos(first.0 - 3_000_000_000)),
-        ..SimConfig::new(Streams::parse(replay::STREAMS)?)
+        ..SimConfig::new()
     };
     let mut sim = Sim::new(config, vec![input])?;
-    let engine = Engine::new(sim.ctx())?;
+    let engine = Engine::new(sim.ctx(), Streams::parse(replay::STREAMS)?)?;
     let mut deferred = DeferredStart {
         engine,
         started: false,

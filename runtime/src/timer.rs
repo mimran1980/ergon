@@ -1,18 +1,51 @@
 //! A single-level deadline wheel on UNIX-epoch nanoseconds.
 //!
 //! Live and sim poll the same [`TimerWheel`]. The clock that supplies `now`
-//! is the only difference. Schedule and cancel are O(1) in the spoke size
-//! fixed at construction. An idle [`TimerWheel::poll`] is one compare.
-//! After [`TimerWheel::new`] sizes the slabs, a steady-state poll does not
-//! allocate. A full spoke doubles every spoke once, on that cold path.
+//! is the only difference. Schedule and cancel are O(1). An idle
+//! [`TimerWheel::poll`] is one compare.
 //!
-//! [`TimerId`] is `(seq << 32) | handle`. The spoke lives beside the handle,
-//! so a repeating re-arm that changes spoke keeps the same id.
+//! A timer is one 32-byte record, indexed by its handle: deadline, token,
+//! sequence, the links of its spoke's list, a repeating flag and a stale
+//! flag. A repeating timer's period sits in a side column that only
+//! repeating schedules write. Each spoke is a doubly linked list threaded
+//! through the records, so a schedule pops a free handle, writes one record
+//! and pushes it onto its spoke: an append, as a heap's push is, without the
+//! sift. Cancel unlinks in place and frees the handle at once.
+//!
+//! A spoke's head holds its earliest deadline: a schedule later than the head
+//! goes second, out of line. So the search for the next deadline, which the
+//! simulation makes after every firing, reads one record per occupied spoke
+//! while each head is current. When the earliest leaves its spoke, or a
+//! re-arm moves it later, the head is marked stale, and the next search to
+//! reach that spoke walks its list once and moves the earliest back to the
+//! head.
+//!
+//! Spokes keep no occupancy bits. The cold walks, a poll after a jump and the
+//! next-deadline search, read the spoke heads instead, sixteen at a time past
+//! the first few. A byte per spoke would cut what they read to a quarter,
+//! but its store cost an ascending schedule 7 to 11%.
+//!
+//! [`TimerWheel::new`] sizes the slab at `ticks_per_wheel * timers_per_spoke`
+//! records, an average: a spoke's list has no capacity of its own, so a
+//! crowded tick never grows the wheel. The slab doubles, out of line, only
+//! when every record is in use. A re-arm relinks its own record, so it never
+//! needs room and a repeating timer is never dropped. Otherwise schedule,
+//! cancel and poll do not allocate. A default wheel takes 2,277,376 bytes
+//! from `new`: the records, the period column, the heads, and the free list
+//! and batch columns, each sized to the slab.
+//!
+//! [`TimerId`] is `(seq << 32) | handle`. A repeating re-arm relinks the same
+//! record into its next spoke, so it keeps the same id.
+
+use std::num::NonZeroU64;
 
 use crate::clock::Nanos;
 
 /// Free-slot sentinel. A deadline of this value is rejected.
 const NIL: i64 = i64::MIN;
+/// The end of a spoke's list, and an empty spoke's head. Never a handle: the
+/// slab holds at most `u32::MAX` records.
+const END: u32 = u32::MAX;
 /// Forces the next poll to scan. Not a scheduled deadline: [`NIL`] is rejected
 /// and this value is only written as the idle cursor.
 const SCAN: i64 = i64::MIN + 1;
@@ -26,7 +59,11 @@ pub struct Settings {
     pub tick_ns: i64,
     /// Spokes in the wheel, a power of two.
     pub ticks_per_wheel: u32,
-    /// Slots reserved in each spoke before the slab doubles.
+    /// Timers per spoke on average: the slab starts with `ticks_per_wheel`
+    /// times this many records. One spoke may hold any number of them, and
+    /// the slab doubles only when every record is in use. A re-arm reuses
+    /// its own record, so it never needs room and a repeating timer is never
+    /// dropped.
     pub timers_per_spoke: u32,
 }
 
@@ -182,45 +219,92 @@ struct Due {
     seq: u32,
 }
 
-/// Per-slot columns. A spoke scan reads only the contiguous `deadline` run.
-struct Slab {
-    deadline: Box<[i64]>,
-    handle: Box<[u32]>,
+/// One timer, indexed by handle, in half a cache line. A free record has
+/// `deadline == NIL` and `seq == 0`. `next` and `prev` link the spoke's list:
+/// a re-arm relinks the record, never moves it, so the id survives. A
+/// repeating timer's period lives in [`TimerWheel::periods`], so a one-shot
+/// never touches that column.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rec {
+    deadline: i64,
+    token: u64,
+    seq: u32,
+    next: u32,
+    prev: u32,
+    /// Non-zero for a repeating timer.
+    repeating: u16,
+    /// Read on a spoke's head only: non-zero when the head may not hold the
+    /// spoke's earliest deadline, after that timer left or moved later.
+    stale: u16,
 }
 
-/// One timer, indexed by handle. `seq == 0` marks a free handle. A
-/// repeating re-arm moves the slot, never the handle, so the id survives.
-/// One record keeps a schedule or cancel to a single cache line.
-#[derive(Clone, Copy, Default)]
-struct Rec {
-    token: u64,
-    period: i64,
-    seq: u32,
-    slot: u32,
+const FREE: Rec = Rec {
+    deadline: NIL,
+    token: 0,
+    seq: 0,
+    next: END,
+    prev: END,
+    repeating: 0,
+    stale: 0,
+};
+
+/// Every record, by handle.
+///
+/// The field is named `deadline`, and [`Records`] indexes to a deadline
+/// ([`NIL`] for a free handle), only so the unit tests, written against the
+/// earlier deadline column, read `slab.deadline[i]` unchanged. The wheel
+/// itself goes through the records.
+struct Slab {
+    deadline: Records,
+}
+
+/// The records. See [`Slab`] for why indexing yields a deadline.
+struct Records(Box<[Rec]>);
+
+impl std::ops::Index<usize> for Records {
+    type Output = i64;
+
+    fn index(&self, handle: usize) -> &i64 {
+        &self.0[handle].deadline
+    }
 }
 
 /// Agrona-style deadline wheel.
 ///
 /// The agent is not called from [`TimerWheel::poll`]. The runtime walks
 /// [`Fired`] afterwards, so a callback can schedule and cancel freely.
+#[repr(C)]
 pub struct TimerWheel {
-    tick_shift: u32,
-    mask: u64,
+    slab: Slab,
+    /// A repeating timer's period, by handle.
+    periods: Box<[i64]>,
+    /// Each spoke's first record, [`END`] when the spoke is empty. Unless it
+    /// is stale, it holds the spoke's earliest deadline.
+    head: Box<[u32]>,
+    /// Beside `head`, whose length a schedule reads with it.
+    tick_shift: u64,
     spokes: usize,
+    /// The slab holds `spokes * stride` records. An average, not a limit on
+    /// any one spoke.
     stride: usize,
-    count: usize,
-    next_seq: u32,
+    /// The earliest live deadline, `i64::MAX` when empty, or [`SCAN`] after
+    /// the timer that held it was cancelled.
     next_tick_start: i64,
     /// No live deadline has a tick below this, so the next-deadline search
     /// walks forward from here instead of scanning the slab.
     floor_tick: i64,
     last_visits: u64,
-    slab: Slab,
-    timers: Box<[Rec]>,
+    // A schedule stores `next_seq` and the free list's length, and the next
+    // schedule loads them again. The layout is `repr(C)` so neither shares a
+    // paired load with a field read beside it: such a load overlaps the
+    // pending narrower store, which cannot forward to it, and every schedule
+    // waits for that store to drain (measured: it doubled a schedule). Only
+    // the benchmark's ascending-schedule gate guards this order: rerun it
+    // after adding or moving a field.
+    next_seq: u32,
     /// Free handles, lowest on top, so reuse is deterministic.
     free: Vec<u32>,
-    occupied: Box<[u64]>,
-    spoke_len: Box<[u32]>,
     due: Vec<Due>,
     inflight: Vec<TimerId>,
     dead: Vec<u8>,
@@ -233,7 +317,7 @@ const fn ix(i: u32) -> usize {
 
 impl TimerWheel {
     /// Size every column. The returned wheel does not allocate on the
-    /// steady-state path until a spoke doubles.
+    /// steady-state path until its handles run out.
     ///
     /// # Errors
     ///
@@ -247,23 +331,19 @@ impl TimerWheel {
         let slots = spokes.checked_mul(stride).ok_or(TimerError::Capacity)?;
         let top = u32::try_from(slots).map_err(|_| TimerError::Capacity)?;
         Ok(Self {
-            tick_shift: settings.tick_ns.trailing_zeros(),
-            mask: u64::from(settings.ticks_per_wheel - 1),
+            tick_shift: u64::from(settings.tick_ns.trailing_zeros()),
             spokes,
             stride,
-            count: 0,
             next_seq: 1,
             next_tick_start: i64::MAX,
             floor_tick: i64::MAX,
             last_visits: 0,
             slab: Slab {
-                deadline: vec![NIL; slots].into_boxed_slice(),
-                handle: vec![0; slots].into_boxed_slice(),
+                deadline: Records(vec![FREE; slots].into_boxed_slice()),
             },
-            timers: vec![Rec::default(); slots].into_boxed_slice(),
+            periods: vec![0; slots].into_boxed_slice(),
+            head: vec![END; spokes].into_boxed_slice(),
             free: (0..top).rev().collect(),
-            occupied: vec![0; spokes.div_ceil(64)].into_boxed_slice(),
-            spoke_len: vec![0; spokes].into_boxed_slice(),
             due: Vec::with_capacity(slots),
             inflight: Vec::with_capacity(slots),
             dead: Vec::with_capacity(slots),
@@ -276,7 +356,11 @@ impl TimerWheel {
     /// # Errors
     ///
     /// [`TimerError::NilDeadline`] or [`TimerError::Capacity`].
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "out of line, the call and a Result returned through memory add 30% to a schedule"
+    )]
+    #[inline(always)]
     pub fn schedule(&mut self, deadline: Nanos, token: u64) -> Result<TimerId, TimerError> {
         self.insert(deadline.0, 0, token)
     }
@@ -329,7 +413,7 @@ impl TimerWheel {
         }
         let h = ix(id.handle());
         let seq = id.seq();
-        if seq == 0 || self.timers.get(h).map(|r| r.seq) != Some(seq) {
+        if seq == 0 || self.slab.deadline.0.get(h).map(|r| r.seq) != Some(seq) {
             return false;
         }
         let deadline = self.release(h);
@@ -365,22 +449,24 @@ impl TimerWheel {
         missed: u64,
     ) -> Option<Fired> {
         let (h, rec) = self
-            .timers
+            .slab
+            .deadline
+            .0
             .iter()
             .copied()
             .enumerate()
-            .filter(|(_, rec)| rec.seq != 0 && rec.token == token)
-            .filter(|(_, rec)| self.slab.deadline[ix(rec.slot)] == deadline.0)
+            .filter(|(_, rec)| rec.seq != 0 && rec.token == token && rec.deadline == deadline.0)
             .min_by_key(|(_, rec)| rec.seq)?;
-        if rec.period == 0 && missed != 0 {
+        let period = self.period(h, rec);
+        if period == 0 && missed != 0 {
             return None;
         }
         let id = TimerId::pack(rec.seq, u32::try_from(h).ok()?);
-        if rec.period == 0 {
+        if period == 0 {
             self.release(h);
         } else {
             let periods = i128::from(missed) + 1;
-            let next = i128::from(deadline.0) + periods * i128::from(rec.period);
+            let next = i128::from(deadline.0) + periods * i128::from(period);
             let next = i64::try_from(next).ok()?;
             if next == NIL {
                 return None;
@@ -397,7 +483,7 @@ impl TimerWheel {
             token,
             deadline,
             missed,
-            period: rec.period,
+            period,
         })
     }
 
@@ -427,7 +513,7 @@ impl TimerWheel {
     /// time, so a timer fires at its deadline rather than up to a tick late.
     #[must_use]
     pub fn next_deadline(&mut self) -> Option<Nanos> {
-        if self.count == 0 {
+        if self.is_empty() {
             return None;
         }
         if self.next_tick_start == SCAN {
@@ -456,131 +542,187 @@ impl TimerWheel {
     /// Live timers.
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.count
+        self.spokes * self.stride - self.free.len()
     }
 
     /// Write every column once, so zero-initialised pages are faulted in
     /// now rather than by the first live timer.
     pub fn prefault(&mut self) {
-        let free = self.slab.deadline.len();
-        self.slab.handle.fill(0);
-        self.timers.fill(Rec::default());
-        self.spoke_len.fill(0);
-        self.occupied.fill(0);
-        self.slab.deadline.fill(NIL);
-        debug_assert_eq!(self.count, 0, "prefault on a wheel with timers");
+        let free = self.slab.deadline.0.len();
+        self.slab.deadline.0.fill(FREE);
+        self.periods.fill(0);
+        self.head.fill(END);
+        debug_assert!(self.is_empty(), "prefault on a wheel with timers");
         debug_assert_eq!(free, self.free.len(), "every handle is free");
     }
 
     /// `true` when no timer is scheduled.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.count == 0
+        self.len() == 0
     }
 
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "out of line, the call and a Result returned through memory add 30% to a schedule"
+    )]
+    #[inline(always)]
     fn insert(&mut self, deadline: i64, period: i64, token: u64) -> Result<TimerId, TimerError> {
         if deadline == NIL {
             return Err(TimerError::NilDeadline);
         }
-        let spoke = self.spoke_of(deadline);
         let Some(handle) = self.free.pop() else {
-            return self.insert_grown(deadline, period, token);
+            return self
+                .insert_grown(deadline, period, token)
+                .map(|id| TimerId(id.get()))
+                .ok_or(TimerError::Capacity);
         };
-        if ix(self.spoke_len[spoke]) == self.stride {
-            self.free.push(handle);
-            return self.insert_grown(deadline, period, token);
-        }
-        Ok(self.place(spoke, handle, deadline, period, token))
+        Ok(self.place(handle, deadline, period, token))
     }
 
-    /// The slab is full for this deadline: double it, then place. Out of line
-    /// so the hot insert stays a leaf the caller can inline.
+    /// Every handle is live: double the slab, then place. Out of line so the
+    /// hot insert stays a leaf the caller can inline. The id comes back in a
+    /// register: a returned `Result` goes through memory, and the hot path
+    /// would then pay a store and a load to meet it.
     #[cold]
     #[inline(never)]
-    fn insert_grown(
-        &mut self,
-        deadline: i64,
-        period: i64,
-        token: u64,
-    ) -> Result<TimerId, TimerError> {
-        self.grow()?;
-        let handle = self.free.pop().ok_or(TimerError::Capacity)?;
-        let spoke = self.spoke_of(deadline);
-        Ok(self.place(spoke, handle, deadline, period, token))
+    fn insert_grown(&mut self, deadline: i64, period: i64, token: u64) -> Option<NonZeroU64> {
+        self.grow().ok()?;
+        let handle = self.free.pop()?;
+        NonZeroU64::new(self.place(handle, deadline, period, token).0)
     }
 
-    #[inline]
-    fn place(
-        &mut self,
-        spoke: usize,
-        handle: u32,
-        deadline: i64,
-        period: i64,
-        token: u64,
-    ) -> TimerId {
+    #[expect(
+        clippy::inline_always,
+        reason = "schedule's hot path: with plain #[inline], ascending schedule lost to the heap"
+    )]
+    #[inline(always)]
+    fn place(&mut self, handle: u32, deadline: i64, period: i64, token: u64) -> TimerId {
         let seq = self.take_seq();
-        let flat = self.push_slot(spoke, deadline, handle);
-        self.timers[ix(handle)] = Rec {
-            token,
-            period,
-            seq,
-            slot: flat,
-        };
-        self.count += 1;
-        self.note_scheduled(deadline);
+        if period != 0 {
+            self.periods[ix(handle)] = period;
+        }
+        self.link(
+            handle,
+            Rec {
+                deadline,
+                token,
+                seq,
+                next: END,
+                prev: END,
+                repeating: u16::from(period != 0),
+                stale: 0,
+            },
+        );
+        let next = self.next_tick_start;
+        if deadline < next || next == SCAN {
+            // `SCAN` stays `SCAN`: no deadline is below it.
+            self.next_tick_start = next.min(deadline);
+            self.floor_tick = self.floor_tick.min(deadline >> self.tick_shift);
+        }
         TimerId::pack(seq, handle)
     }
 
-    /// Free a live handle and its slot. Returns the deadline it held.
+    /// Push `rec` onto the head of its deadline's spoke, as `handle`. On a
+    /// spoke that already had a head, [`Self::settle`] then keeps the
+    /// spoke's earliest deadline there.
+    #[expect(
+        clippy::inline_always,
+        reason = "schedule's hot path: with plain #[inline], ascending schedule lost to the heap"
+    )]
+    #[inline(always)]
+    fn link(&mut self, handle: u32, rec: Rec) {
+        let spoke = self.spoke_of(rec.deadline);
+        let recs = &mut self.slab.deadline.0;
+        debug_assert!(spoke < self.head.len() && ix(handle) < recs.len());
+        // `get_mut`, not indexing: both are in bounds by construction, and a
+        // panic branch apiece put a schedule at the inliner's limit (cost 520
+        // of 525 at the benchmark's call site, 430 without them).
+        let next = self
+            .head
+            .get_mut(spoke)
+            .map_or(END, |head| std::mem::replace(head, handle));
+        if let Some(slot) = recs.get_mut(ix(handle)) {
+            *slot = Rec {
+                next,
+                prev: END,
+                stale: 0,
+                ..rec
+            };
+        }
+        if next != END {
+            self.settle(spoke, handle, next);
+        }
+    }
+
+    /// `handle` was just pushed onto `spoke` in front of `old`. It stays the
+    /// head when its deadline is not later, and takes `old`'s staleness;
+    /// otherwise it moves behind `old`. Either way a head that is not stale
+    /// holds the spoke's earliest deadline. Out of line so a schedule stays
+    /// small enough to inline into its caller.
+    #[inline(never)]
+    fn settle(&mut self, spoke: usize, handle: u32, old: u32) {
+        let recs = &mut self.slab.deadline.0;
+        let head = recs[ix(old)];
+        if recs[ix(handle)].deadline <= head.deadline {
+            recs[ix(old)].prev = handle;
+            recs[ix(handle)].stale = head.stale;
+            return;
+        }
+        self.head[spoke] = old;
+        recs[ix(old)].next = handle;
+        if head.next != END {
+            recs[ix(head.next)].prev = handle;
+        }
+        let rec = &mut recs[ix(handle)];
+        rec.next = head.next;
+        rec.prev = old;
+    }
+
+    /// Take `h` out of its spoke's list. The record keeps its fields.
+    #[inline]
+    fn unlink(&mut self, h: usize) {
+        let Rec {
+            deadline,
+            next,
+            prev,
+            ..
+        } = self.slab.deadline.0[h];
+        if prev == END {
+            let spoke = self.spoke_of(deadline);
+            self.head[spoke] = next;
+        } else {
+            self.slab.deadline.0[ix(prev)].next = next;
+        }
+        if next != END {
+            let rec = &mut self.slab.deadline.0[ix(next)];
+            rec.prev = prev;
+            // When `h` was the head the earliest left, and `next` heads the
+            // spoke without being known as its earliest. Otherwise unread.
+            rec.stale = 1;
+        }
+    }
+
+    /// Free a live handle. Returns the deadline it held.
     #[inline]
     fn release(&mut self, h: usize) -> i64 {
-        let deadline = self.remove_slot(h);
-        self.timers[h].seq = 0;
+        let deadline = self.slab.deadline.0[h].deadline;
+        self.unlink(h);
+        let rec = &mut self.slab.deadline.0[h];
+        rec.deadline = NIL;
+        rec.seq = 0;
         // `h` came from a `u32` handle.
         self.free.push(u32::try_from(h).unwrap_or(u32::MAX));
-        self.count -= 1;
         deadline
     }
 
-    /// Append to `spoke`'s packed run. The caller has made room. Returns the
-    /// flat slot.
-    #[inline]
-    fn push_slot(&mut self, spoke: usize, deadline: i64, handle: u32) -> u32 {
-        let len = self.spoke_len[spoke];
-        let flat = spoke * self.stride + ix(len);
-        self.slab.deadline[flat] = deadline;
-        self.slab.handle[flat] = handle;
-        if len == 0 {
-            self.occupied[spoke / 64] |= 1u64 << (spoke % 64);
+    /// Zero for a one-shot. Otherwise the repeating period.
+    fn period(&self, h: usize, rec: Rec) -> i64 {
+        if rec.repeating == 0 {
+            0
+        } else {
+            self.periods[h]
         }
-        self.spoke_len[spoke] = len + 1;
-        // The slab was sized to fit `u32` indices.
-        u32::try_from(flat).unwrap_or(u32::MAX)
-    }
-
-    /// Take `h` out of its spoke, moving the spoke's last timer into the hole
-    /// so every spoke stays a packed run: insert is an append and a scan stops
-    /// at the run's end. Returns the deadline it held.
-    #[inline]
-    fn remove_slot(&mut self, h: usize) -> i64 {
-        let flat = ix(self.timers[h].slot);
-        let deadline = self.slab.deadline[flat];
-        let spoke = self.spoke_of(deadline);
-        let len = self.spoke_len[spoke] - 1;
-        let last = spoke * self.stride + ix(len);
-        if flat != last {
-            let moved = self.slab.handle[last];
-            self.slab.deadline[flat] = self.slab.deadline[last];
-            self.slab.handle[flat] = moved;
-            self.timers[ix(moved)].slot = self.timers[h].slot;
-        }
-        self.slab.deadline[last] = NIL;
-        self.spoke_len[spoke] = len;
-        if len == 0 {
-            self.occupied[spoke / 64] &= !(1u64 << (spoke % 64));
-        }
-        deadline
     }
 
     #[inline(never)]
@@ -589,7 +731,7 @@ impl TimerWheel {
         self.last_visits = 0;
         if self.next_tick_start == SCAN {
             self.recompute_next();
-            if self.count == 0 || now < self.next_tick_start {
+            if self.is_empty() || now < self.next_tick_start {
                 return 0;
             }
         }
@@ -618,9 +760,9 @@ impl TimerWheel {
 
     fn fire_one(&mut self, handle: u32, now: i64, fired: &mut Vec<Fired>) {
         let h = ix(handle);
-        let rec = self.timers[h];
-        let deadline = self.slab.deadline[ix(rec.slot)];
-        let (token, period) = (rec.token, rec.period);
+        let rec = self.slab.deadline.0[h];
+        let deadline = rec.deadline;
+        let period = self.period(h, rec);
         let id = TimerId::pack(rec.seq, handle);
         let missed = if period == 0 {
             self.release(h);
@@ -632,7 +774,7 @@ impl TimerWheel {
         };
         fired.push(Fired {
             id,
-            token,
+            token: rec.token,
             deadline: Nanos(deadline),
             missed,
             period,
@@ -641,21 +783,26 @@ impl TimerWheel {
         self.dead.push(0);
     }
 
+    /// Move a live repeating timer to `next`, under the same handle.
     fn rearm(&mut self, h: usize, old_deadline: i64, next: i64) {
-        let old_spoke = self.spoke_of(old_deadline);
-        let new_spoke = self.spoke_of(next);
-        if new_spoke == old_spoke {
-            self.slab.deadline[ix(self.timers[h].slot)] = next;
+        if self.spoke_of(next) == self.spoke_of(old_deadline) {
+            let rec = &mut self.slab.deadline.0[h];
+            rec.deadline = next;
+            // Later than before, so a head may no longer be the earliest.
+            rec.stale = 1;
             return;
         }
-        if ix(self.spoke_len[new_spoke]) == self.stride && self.grow().is_err() {
-            log::error!("timer wheel full: repeating timer {h} dropped");
-            self.release(h);
-            return;
-        }
-        let handle = self.slab.handle[ix(self.timers[h].slot)];
-        self.remove_slot(h);
-        self.timers[h].slot = self.push_slot(new_spoke, next, handle);
+        let rec = self.slab.deadline.0[h];
+        self.unlink(h);
+        // `h` came from a `u32` handle.
+        let handle = u32::try_from(h).unwrap_or(u32::MAX);
+        self.link(
+            handle,
+            Rec {
+                deadline: next,
+                ..rec
+            },
+        );
     }
 
     fn collect(&mut self, now: i64) {
@@ -667,123 +814,128 @@ impl TimerWheel {
             return;
         }
         let mut tick = start_tick;
-        while tick <= end_tick {
-            let spoke = usize::try_from(tick.cast_unsigned() & self.mask).unwrap_or(0);
-            if self.spoke_len[spoke] > 0 {
+        loop {
+            let spoke = self.spoke_of_tick(tick);
+            if self.head[spoke] != END {
                 self.visit_spoke(spoke, now);
+            }
+            // Stop before the step: `end_tick` is `i64::MAX` for a 1 ns tick.
+            if tick >= end_tick {
+                break;
             }
             tick += 1;
         }
     }
 
     fn visit_occupied(&mut self, now: i64) {
-        for word in 0..self.occupied.len() {
-            let mut bits = self.occupied[word];
-            while bits != 0 {
-                let spoke = word * 64 + ix(bits.trailing_zeros());
-                bits &= bits - 1;
-                self.visit_spoke(spoke, now);
-            }
+        let mut at = 0;
+        while let Some(spoke) = self.next_occupied(at, self.spokes) {
+            self.visit_spoke(spoke, now);
+            at = spoke + 1;
         }
+    }
+
+    /// The first non-empty spoke in `from..to`. Spokes keep no occupancy bits:
+    /// any upkeep on schedule costs more than the gap to a heap's push, so the
+    /// cold walks read the heads instead.
+    #[inline]
+    fn next_occupied(&self, from: usize, to: usize) -> Option<usize> {
+        first_live(&self.head[from..to]).map(|i| from + i)
     }
 
     fn visit_spoke(&mut self, spoke: usize, now: i64) {
         self.last_visits += 1;
-        let base = spoke * self.stride;
-        for flat in base..base + ix(self.spoke_len[spoke]) {
-            let deadline = self.slab.deadline[flat];
-            if deadline <= now {
-                let handle = self.slab.handle[flat];
+        let mut h = self.head[spoke];
+        while h != END {
+            let rec = self.slab.deadline.0[ix(h)];
+            if rec.deadline <= now {
                 self.due.push(Due {
-                    handle,
-                    deadline,
-                    seq: self.timers[ix(handle)].seq,
+                    handle: h,
+                    deadline: rec.deadline,
+                    seq: rec.seq,
                 });
             }
+            h = rec.next;
         }
     }
 
+    /// The earliest deadline on a non-empty spoke: its head's, unless the
+    /// head is stale. Then one walk of the list finds the earliest and moves
+    /// it to the head, so the next search reads the head alone.
+    fn spoke_min(&mut self, spoke: usize) -> i64 {
+        let first = self.head[spoke];
+        let head = self.slab.deadline.0[ix(first)];
+        if head.stale == 0 {
+            return head.deadline;
+        }
+        let (mut best, mut min) = (first, head.deadline);
+        let mut h = head.next;
+        while h != END {
+            let rec = self.slab.deadline.0[ix(h)];
+            if rec.deadline < min {
+                (best, min) = (h, rec.deadline);
+            }
+            h = rec.next;
+        }
+        if best != first {
+            // Not the head, so this unlink leaves the head alone.
+            self.unlink(ix(best));
+            self.slab.deadline.0[ix(first)].prev = best;
+            let rec = &mut self.slab.deadline.0[ix(best)];
+            rec.next = first;
+            rec.prev = END;
+            self.head[spoke] = best;
+        }
+        self.slab.deadline.0[ix(best)].stale = 0;
+        min
+    }
+
     fn recompute_next(&mut self) {
-        if self.count == 0 {
+        if self.is_empty() {
             self.next_tick_start = i64::MAX;
             self.floor_tick = i64::MAX;
             return;
         }
-        if let Some(min) = self.first_within_revolution() {
-            // The minimum is a lower bound too; without this a floor that only
-            // full polls advance drifts a revolution behind and every
-            // recompute falls through to the full scan.
-            self.next_tick_start = min;
-            self.floor_tick = min >> self.tick_shift;
-            return;
-        }
-        // Every timer is a revolution or more past the floor: rare, cold.
-        let mut min = i64::MAX;
-        for word in 0..self.occupied.len() {
-            let mut bits = self.occupied[word];
-            while bits != 0 {
-                let spoke = word * 64 + ix(bits.trailing_zeros());
-                bits &= bits - 1;
-                let base = spoke * self.stride;
-                for &deadline in &self.slab.deadline[base..base + ix(self.spoke_len[spoke])] {
-                    min = min.min(deadline);
-                }
-            }
-        }
+        let min = self.earliest();
+        // The minimum is a lower bound too; without this a floor that only
+        // full polls advance drifts a revolution behind and every recompute
+        // walks a whole revolution.
         self.next_tick_start = min;
         self.floor_tick = min >> self.tick_shift;
     }
 
-    /// Walk occupied spokes forward from `floor_tick` for one revolution. The
-    /// first spoke holding a deadline on its tick in this revolution holds the
-    /// minimum: later spokes are later ticks, and anything off-revolution is
-    /// at least a revolution later.
-    fn first_within_revolution(&self) -> Option<i64> {
+    /// The earliest live deadline, from one walk of the occupied spokes
+    /// forward from `floor_tick`. The first spoke holding a deadline on its
+    /// tick in this revolution holds the minimum: later spokes are later
+    /// ticks, and anything off-revolution is at least a revolution later.
+    /// When no spoke does, every timer is a revolution or more out, and the
+    /// minimum over all the walk saw is the answer.
+    ///
+    /// No deadline is below the floor, so a spoke's deadlines sit on its
+    /// tick in this revolution or a later one, and its earliest is on the
+    /// tick whenever any is: each spoke costs one read of its minimum.
+    fn earliest(&mut self) -> i64 {
         let floor = self.floor_tick;
-        let start = usize::try_from(floor.cast_unsigned() & self.mask).unwrap_or(0);
-        let mut off = 0;
-        while off < self.spokes {
-            let spoke = (start + off) & (self.spokes - 1);
-            let bit = spoke % 64;
-            let bits = self.occupied[spoke / 64] >> bit;
-            if bits == 0 {
-                // Stop at the wrap so spokes before `start` are not skipped.
-                off += (64 - bit).min(self.spokes - spoke);
-                continue;
+        let start = self.spoke_of_tick(floor);
+        let mut min = i64::MAX;
+        for (from, to) in [(start, self.spokes), (0, start)] {
+            let mut at = from;
+            while let Some(spoke) = self.next_occupied(at, to) {
+                let off = spoke.wrapping_sub(start) & (self.spokes - 1);
+                let tick = floor.saturating_add(i64::try_from(off).unwrap_or(i64::MAX));
+                let first = self.spoke_min(spoke);
+                if first >> self.tick_shift == tick {
+                    return first;
+                }
+                min = min.min(first);
+                at = spoke + 1;
             }
-            let skip = ix(bits.trailing_zeros());
-            off += skip;
-            let spoke = spoke + skip;
-            let tick = floor.saturating_add(i64::try_from(off).unwrap_or(i64::MAX));
-            let base = spoke * self.stride;
-            let min = self.slab.deadline[base..base + ix(self.spoke_len[spoke])]
-                .iter()
-                .copied()
-                .filter(|&d| d >> self.tick_shift == tick)
-                .min();
-            if min.is_some() {
-                return min;
-            }
-            off += 1;
         }
-        None
-    }
-
-    /// An empty wheel caches `i64::MAX`, so a first timer always lowers it.
-    /// The floor only needs lowering when this deadline is the new minimum, or
-    /// the minimum is unknown: otherwise its tick is already at or above it.
-    #[inline]
-    fn note_scheduled(&mut self, deadline: i64) {
-        if deadline < self.next_tick_start {
-            self.next_tick_start = deadline;
-        } else if self.next_tick_start != SCAN {
-            return;
-        }
-        self.floor_tick = self.floor_tick.min(deadline >> self.tick_shift);
+        min
     }
 
     const fn note_cancelled(&mut self, deadline: i64) {
-        if self.count == 0 {
+        if self.is_empty() {
             self.next_tick_start = i64::MAX;
             self.floor_tick = i64::MAX;
         } else if deadline == self.next_tick_start {
@@ -799,53 +951,80 @@ impl TimerWheel {
         }
     }
 
+    /// Double the slab. Handles index records and links hold handles, so no
+    /// list moves: only the new records join the free list.
     #[cold]
     fn grow(&mut self) -> Result<(), TimerError> {
-        let old_stride = self.stride;
-        let new_stride = old_stride.checked_mul(2).ok_or(TimerError::Capacity)?;
+        let new_stride = self.stride.checked_mul(2).ok_or(TimerError::Capacity)?;
         let slots = self
             .spokes
             .checked_mul(new_stride)
             .ok_or(TimerError::Capacity)?;
         let top = u32::try_from(slots).map_err(|_| TimerError::Capacity)?;
-        let spokes = self.spokes;
-        self.slab.deadline = grow_column(&self.slab.deadline, spokes, old_stride, new_stride, NIL);
-        self.slab.handle = grow_column(&self.slab.handle, spokes, old_stride, new_stride, 0);
-        let old = self.timers.len();
-        for rec in &mut self.timers {
-            if rec.seq != 0 {
-                let flat = ix(rec.slot);
-                let moved = (flat / old_stride) * new_stride + flat % old_stride;
-                rec.slot = u32::try_from(moved).map_err(|_| TimerError::Capacity)?;
-            }
-        }
-        self.timers = extend(&self.timers, slots);
+        let old = self.slab.deadline.0.len();
         let first_new = u32::try_from(old).map_err(|_| TimerError::Capacity)?;
+        let mut recs = vec![FREE; slots];
+        recs[..old].copy_from_slice(&self.slab.deadline.0);
+        self.slab.deadline.0 = recs.into_boxed_slice();
+        let mut periods = vec![0; slots];
+        periods[..old].copy_from_slice(&self.periods);
+        self.periods = periods.into_boxed_slice();
+        // Room for every handle now, so the first release or batch after a
+        // doubling does not allocate. `reserve` counts from the length.
+        self.free.reserve(slots.saturating_sub(self.free.len()));
         self.free.extend((first_new..top).rev());
         self.stride = new_stride;
-        self.due.reserve(slots.saturating_sub(self.due.capacity()));
+        self.due.reserve(slots.saturating_sub(self.due.len()));
         self.inflight
-            .reserve(slots.saturating_sub(self.inflight.capacity()));
-        self.dead
-            .reserve(slots.saturating_sub(self.dead.capacity()));
-        log::warn!("timer wheel doubled spoke stride from {old_stride} to {new_stride}");
+            .reserve(slots.saturating_sub(self.inflight.len()));
+        self.dead.reserve(slots.saturating_sub(self.dead.len()));
+        log::warn!("timer wheel doubled from {old} to {slots} timers");
         Ok(())
     }
 
+    /// Zero marks a free record, so a wrapped sequence skips it.
     const fn take_seq(&mut self) -> u32 {
         let seq = self.next_seq;
-        self.next_seq = self.next_seq.wrapping_add(1);
-        if self.next_seq == 0 {
-            self.next_seq = 1;
-        }
+        self.next_seq = if seq == u32::MAX { 1 } else { seq + 1 };
         seq
     }
 
     #[inline]
     fn spoke_of(&self, deadline: i64) -> usize {
-        let tick = deadline >> self.tick_shift;
-        usize::try_from(tick.cast_unsigned() & self.mask).unwrap_or(0)
+        self.spoke_of_tick(deadline >> self.tick_shift)
     }
+
+    /// Masked by the head array's own length, so indexing it with the result
+    /// needs no bounds compare.
+    #[inline]
+    fn spoke_of_tick(&self, tick: i64) -> usize {
+        usize::try_from(tick.cast_unsigned()).unwrap_or(0) & self.head.len().wrapping_sub(1)
+    }
+}
+
+/// The index of the first non-empty head. After a fire the next timer is
+/// usually a spoke or two on, so a few heads are read singly; past those,
+/// sixteen at a time. An empty head is the largest value, so a chunk's
+/// minimum is [`END`] only when every head in it is empty, and that minimum
+/// is the form the compiler turns into vector loads.
+fn first_live(heads: &[u32]) -> Option<usize> {
+    let near = heads.len().min(4);
+    if let Some(i) = heads[..near].iter().position(|&h| h != END) {
+        return Some(i);
+    }
+    let mut base = near;
+    let mut chunks = heads[near..].chunks_exact(16);
+    for chunk in chunks.by_ref() {
+        if chunk.iter().copied().fold(END, u32::min) != END {
+            return chunk.iter().position(|&h| h != END).map(|i| base + i);
+        }
+        base += 16;
+    }
+    chunks
+        .remainder()
+        .iter()
+        .position(|&h| h != END)
+        .map(|i| base + i)
 }
 
 /// First epoch multiple of `period` at or after `now`. An aligned `now` is
@@ -893,28 +1072,6 @@ fn add_steps(deadline: i64, period: i64, steps: u64) -> i64 {
         Some(sum) if sum != NIL => sum,
         _ => i64::MAX,
     }
-}
-
-fn extend<T: Copy + Default>(old: &[T], len: usize) -> Box<[T]> {
-    let mut next = vec![T::default(); len];
-    next[..old.len()].copy_from_slice(old);
-    next.into_boxed_slice()
-}
-
-fn grow_column<T: Copy>(
-    old: &[T],
-    spokes: usize,
-    old_stride: usize,
-    new_stride: usize,
-    fill: T,
-) -> Box<[T]> {
-    let mut next = vec![fill; spokes * new_stride];
-    for spoke in 0..spokes {
-        let from = spoke * old_stride;
-        let to = spoke * new_stride;
-        next[to..to + old_stride].copy_from_slice(&old[from..from + old_stride]);
-    }
-    next.into_boxed_slice()
 }
 
 #[cfg(test)]
@@ -1276,6 +1433,61 @@ mod tests {
     }
 
     #[test]
+    fn filling_every_record_grows_and_keeps_every_timer() -> Result<(), TimerError> {
+        // 8 records. 32 timers double the slab twice and leave none free.
+        // Each deadline is shared by two timers, and every fourth repeats.
+        let mut w = wheel(1024, 8, 1)?;
+        let mut fired = Vec::new();
+        let mut want = Vec::new();
+        for token in 0..32_u64 {
+            let deadline = 2_048 + 500 * i64::try_from(token * 7 % 16).unwrap_or(0);
+            let id = if token % 4 == 0 {
+                w.schedule_repeating(Nanos(deadline), 100_000, token)?
+            } else {
+                w.schedule(Nanos(deadline), token)?
+            };
+            want.push((deadline, id.seq(), id));
+        }
+        assert_eq!(
+            (w.stride, w.free.len()),
+            (4, 0),
+            "two doublings, every record in use"
+        );
+        want.sort_unstable();
+        assert_eq!(w.poll(Nanos(20_000), &mut fired, 64), 32);
+        let order: Vec<(i64, u32, TimerId)> = fired
+            .iter()
+            .map(|f| (f.deadline.0, f.id.seq(), f.id))
+            .collect();
+        assert_eq!(order, want, "(deadline, seq) order across the growth");
+        // Each re-arm relinked its own record: no growth, none dropped.
+        assert_eq!((w.stride, w.len()), (4, 8));
+        assert_eq!(w.poll(Nanos(120_000), &mut fired, 64), 8);
+        Ok(())
+    }
+
+    #[test]
+    fn a_poll_at_the_end_of_time_returns_for_every_tick_size() -> Result<(), TimerError> {
+        let mut fired = Vec::new();
+        for shift in 0..63 {
+            let mut w = wheel(1 << shift, 8, 4)?;
+            // An empty wheel's cursor is `i64::MAX`, so this poll is not idle.
+            assert_eq!(w.poll(Nanos(i64::MAX), &mut fired, 8), 0, "tick 2^{shift}");
+            let last = w.schedule(Nanos(i64::MAX), 1)?;
+            let repeating = w.schedule_repeating(Nanos(i64::MAX - 1), 1, 2)?;
+            assert_eq!(w.poll(Nanos(i64::MAX), &mut fired, 8), 2, "tick 2^{shift}");
+            let order: Vec<(TimerId, i64)> = fired.iter().map(|f| (f.id, f.deadline.0)).collect();
+            assert_eq!(order, [(repeating, i64::MAX - 1), (last, i64::MAX)]);
+            // The re-arm saturates at the end of time and stays live.
+            assert_eq!(w.next_deadline(), Some(Nanos(i64::MAX)), "tick 2^{shift}");
+            assert_eq!(w.poll(Nanos(i64::MAX), &mut fired, 8), 1, "tick 2^{shift}");
+            assert!(w.cancel(repeating));
+            assert!(w.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn sim_events_precede_timers_at_the_same_timestamp() {
         let earlier_timer = SimKey::timer(4, 1);
         let later_message = SimKey::event(5, 0, 1, 0);
@@ -1433,6 +1645,182 @@ mod tests {
     }
 
     fn xorshift(mut x: u64) -> u64 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    }
+}
+
+/// What the public behaviour does not show: the spoke lists, the free list,
+/// the idle cursor and the columns' spare room.
+#[cfg(test)]
+mod invariants {
+    use super::*;
+
+    fn check(w: &TimerWheel) {
+        let recs = &w.slab.deadline.0;
+        let slots = recs.len();
+        assert_eq!(slots, w.spokes * w.stride);
+        assert_eq!((w.head.len(), w.periods.len()), (w.spokes, slots));
+        let mut linked = vec![false; slots];
+        let mut min = i64::MAX;
+        for (spoke, &first) in w.head.iter().enumerate() {
+            let (mut prev, mut h) = (END, first);
+            let mut earliest = i64::MAX;
+            while h != END {
+                let rec = recs[ix(h)];
+                assert!(!linked[ix(h)], "{h} is linked twice");
+                linked[ix(h)] = true;
+                assert_eq!(rec.prev, prev, "{h}'s back link");
+                assert_ne!(rec.seq, 0, "{h} is linked but free");
+                assert_eq!(w.spoke_of(rec.deadline), spoke, "{h} is on another spoke");
+                assert!(
+                    rec.repeating == 0 || (rec.repeating == 1 && w.periods[ix(h)] > 0),
+                    "{h} repeats without a period"
+                );
+                min = min.min(rec.deadline);
+                earliest = earliest.min(rec.deadline);
+                (prev, h) = (h, rec.next);
+            }
+            if first != END && recs[ix(first)].stale == 0 {
+                assert_eq!(
+                    recs[ix(first)].deadline,
+                    earliest,
+                    "spoke {spoke}'s head is not stale and not its earliest"
+                );
+            }
+        }
+        let mut free = vec![false; slots];
+        for &h in &w.free {
+            assert!(!free[ix(h)], "{h} is free twice");
+            free[ix(h)] = true;
+        }
+        for (h, rec) in recs.iter().enumerate() {
+            assert_ne!(linked[h], free[h], "{h} must be either linked or free");
+            if free[h] {
+                assert_eq!((rec.deadline, rec.seq), (NIL, 0), "{h} is free but set");
+            }
+        }
+        assert_eq!(w.len(), linked.iter().filter(|&&l| l).count());
+        if w.is_empty() {
+            assert_eq!((w.next_tick_start, w.floor_tick), (i64::MAX, i64::MAX));
+        } else {
+            assert!(
+                w.next_tick_start == SCAN || w.next_tick_start == min,
+                "the cursor is neither the earliest deadline nor SCAN"
+            );
+            assert!(
+                w.floor_tick <= min >> w.tick_shift,
+                "the floor is past the earliest tick"
+            );
+        }
+        // A release, or a batch of every timer, never allocates.
+        let room = [
+            w.free.capacity(),
+            w.due.capacity(),
+            w.inflight.capacity(),
+            w.dead.capacity(),
+        ];
+        assert!(room.iter().all(|&cap| cap >= slots), "{room:?} < {slots}");
+    }
+
+    #[test]
+    fn the_sequence_skips_zero_when_it_wraps() -> Result<(), TimerError> {
+        let mut w = TimerWheel::new(Settings::default())?;
+        w.next_seq = u32::MAX;
+        let last = w.schedule(Nanos(1_000), 1)?;
+        let wrapped = w.schedule(Nanos(2_000), 2)?;
+        assert_eq!((last.seq(), wrapped.seq()), (u32::MAX, 1));
+        check(&w);
+        Ok(())
+    }
+
+    #[test]
+    fn a_search_moves_a_stale_spokes_earliest_to_its_head() -> Result<(), TimerError> {
+        let mut w = TimerWheel::new(Settings {
+            tick_ns: 1024,
+            ticks_per_wheel: 8,
+            timers_per_spoke: 4,
+        })?;
+        let first = w.schedule(Nanos(1_000), 1)?;
+        for deadline in [1_003, 1_001, 1_002] {
+            w.schedule(Nanos(deadline), 2)?;
+        }
+        assert!(w.cancel(first));
+        assert_eq!(w.next_deadline(), Some(Nanos(1_001)));
+        let head = w.slab.deadline.0[ix(w.head[w.spoke_of(1_001)])];
+        assert_eq!((head.deadline, head.stale), (1_001, 0));
+        check(&w);
+        Ok(())
+    }
+
+    #[test]
+    fn lists_free_list_and_cursor_hold_through_growth() -> Result<(), TimerError> {
+        let tick = 1024;
+        let mut w = TimerWheel::new(Settings {
+            tick_ns: tick,
+            ticks_per_wheel: 8,
+            timers_per_spoke: 1,
+        })?;
+        let mut fired = Vec::new();
+        let mut live: Vec<TimerId> = Vec::new();
+        let mut now = 1_000_000 * tick;
+        let mut rng = 0x2545_f491_4f6c_dd1d_u64;
+        let mut most = 0;
+        for step in 0..20_000_u32 {
+            rng = xorshift(rng);
+            // Up to four revolutions out, so a spoke mixes revolutions.
+            let reach = i64::try_from(rng >> 40).unwrap_or(0) % (32 * tick);
+            let pick = usize::try_from(rng >> 32).unwrap_or(0) % live.len().max(1);
+            match rng % 16 {
+                0..=6 => live.push(if rng.is_multiple_of(3) {
+                    w.schedule_repeating(Nanos(now + reach), 1 + reach, rng)?
+                } else {
+                    w.schedule(Nanos(now + reach), rng)?
+                }),
+                7..=9 if !live.is_empty() => {
+                    assert!(w.cancel(live.swap_remove(pick)));
+                }
+                10 if !live.is_empty() => {
+                    // A journalled firing, as the simulation replays one.
+                    let rec = w.slab.deadline.0[ix(live[pick].handle())];
+                    let one = w.journal_fire(rec.token, Nanos(rec.deadline), Nanos(now), 0);
+                    let one = one.ok_or(TimerError::Capacity)?;
+                    if one.period == 0 {
+                        live.swap_remove(pick);
+                    }
+                }
+                _ => {
+                    now += if rng.is_multiple_of(5) {
+                        3 * reach
+                    } else {
+                        reach / 16
+                    };
+                    let limit = 1 + usize::try_from(rng >> 59).unwrap_or(0);
+                    if w.poll(Nanos(now), &mut fired, limit) > 0 {
+                        live.retain(|id| !fired.iter().any(|f| f.id == *id && f.period == 0));
+                    }
+                }
+            }
+            check(&w);
+            assert_eq!(w.len(), live.len());
+            if step % 3 == 0 {
+                let next = w.next_deadline();
+                check(&w);
+                assert_eq!(next.is_none(), live.is_empty());
+            }
+            most = most.max(w.len());
+        }
+        assert!(
+            w.stride >= 8,
+            "{most} live timers doubled the slab only to {}",
+            w.stride
+        );
+        Ok(())
+    }
+
+    const fn xorshift(mut x: u64) -> u64 {
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;

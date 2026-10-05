@@ -54,7 +54,17 @@ up: images deploy
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    kubectl --context {{context}} apply -k . --server-side --field-manager=lab | { grep -v unchanged || true; }
+    # ClickHouse's password: CLICKHOUSE_PASSWORD from .env, which reaches the
+    # pods only as the Secret `clickhouse`, and kubectl only on stdin. A
+    # GitOps tool that applies the kustomization must supply that Secret.
+    : "${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}"
+    k=(kubectl --context {{context}})
+    "${k[@]}" create namespace lab >/dev/null 2>&1 || true
+    printf %s "$CLICKHOUSE_PASSWORD" \
+        | "${k[@]}" -n lab create secret generic clickhouse --from-file=password=/dev/stdin \
+            --dry-run=client -o yaml \
+        | "${k[@]}" apply -f - >/dev/null
+    "${k[@]}" apply -k . --server-side --field-manager=lab | { grep -v unchanged || true; }
 
 # Changing a pod's annotation makes the kubelet sync that pod now, which
 # refreshes its ConfigMap volume. It restarts nothing. Under Flux nothing
@@ -104,7 +114,7 @@ urls:
         read -r host _ <<<"$LAB_VM_IPS"
         clickhouse=30123 grafana=30300 jupyter=30888
     fi
-    echo "ClickHouse UI  http://$host:$clickhouse/play   (user lab / password lab)"
+    echo "ClickHouse UI  http://$host:$clickhouse/play   (user lab / password: CLICKHOUSE_PASSWORD in .env)"
     echo "Grafana        http://$host:$grafana"
     echo "JupyterLab     http://$host:$jupyter/lab/tree/verify.ipynb"
     echo "Feeds          $({{kube}} get deploy -l app=md -o jsonpath='{.items[*].metadata.labels.exchange}')"
@@ -151,8 +161,8 @@ build:
         -v lab-cargo-registry:/usr/local/cargo/registry -v lab-cargo-target:/target \
         -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS={{build_jobs}} \
         -e CMAKE_BUILD_PARALLEL_LEVEL={{build_jobs}} lab/builder:local \
-        sh -c 'RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/target-runtime cargo build --release --manifest-path /src/Cargo.toml -p ergon-runtime-server --bin ingester && cargo build --release -p md -p aeron-driver -p engine --bins && mkdir -p target/linux/schema \
-            && cp /target-runtime/release/ingester /target/release/md /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
+        sh -c 'cargo build --release -p md -p aeron-driver -p engine -p ingester --bins && mkdir -p target/linux/schema \
+            && cp /target/release/ingester /target/release/md /target/release/aeron-driver /target/release/engine /target/release/exch-sim target/linux/ \
             && cp schema/*.xml target/linux/schema/'
     docker build -q -t lab/app:local -f docker/app.Dockerfile target/linux
 
@@ -198,7 +208,10 @@ test: _test-clickhouse _test-aeron
     bash scripts/test-cluster-lifecycle.sh
     bash scripts/test-azure.sh
     bash scripts/test-test-service-memory.sh
-    cargo test --workspace -- --test-threads={{test_threads}}
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo test --workspace --all-features -- --test-threads={{test_threads}}
 
 _test-clickhouse:
     #!/usr/bin/env bash
@@ -235,13 +248,17 @@ test-stop:
     pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
 
 # Media driver + archive in one JVM. The tests use /tmp/persist-test-aeron;
-# 1 MiB segments so they see purges. Cap the JVM on the host too; an old
-# uncapped test driver is restarted once to pick up the heap limit.
+# 1 MiB segments so they see purges. Parallel tests each record streams of
+# their own (two sessions for one with the `tracing` bridge), more at once
+# than the archive's default 20 recordings and replays. Cap the JVM on the
+# host too; a test driver started without these settings is restarted once
+# to pick them up.
 _test-aeron: _aeron-jar
     #!/usr/bin/env bash
     set -euo pipefail
+    driver='Xmx128m.*aeron.dir=/tmp/persist-test-aeron.*max.concurrent.recordings=64'
     # A driver whose directory is gone (macOS cleans /tmp) is no driver.
-    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f 'Xmx128m.*aeron.dir=/tmp/persist-test-aeron' >/dev/null; then
+    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f "$driver" >/dev/null; then
         pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
         touch target/aeron-test.started
         sleep 1 # `-nt` compares whole seconds
@@ -250,12 +267,13 @@ _test-aeron: _aeron-jar
             --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \
             -Daeron.dir=/tmp/persist-test-aeron -Daeron.dir.delete.on.start=true \
             -Daeron.archive.dir=target/aeron-test-archive -Daeron.archive.segment.file.length=1m \
+            -Daeron.archive.max.concurrent.recordings=64 -Daeron.archive.max.concurrent.replays=64 \
             -Daeron.archive.control.channel='aeron:udp?endpoint=localhost:18010' \
             -Daeron.archive.replication.channel='aeron:udp?endpoint=localhost:0' \
             io.aeron.archive.ArchivingMediaDriver > target/aeron-test.log 2>&1 &
         for ((attempt=0; attempt<600; attempt++)); do
             [[ /tmp/persist-test-aeron/cnc.dat -nt target/aeron-test.started ]] && exit 0
-            pgrep -f 'Xmx128m.*aeron.dir=/tmp/persist-test-aeron' >/dev/null || break
+            pgrep -f "$driver" >/dev/null || break
             sleep 0.2
         done
         tail -n 40 target/aeron-test.log >&2
@@ -273,7 +291,7 @@ _aeron-jar:
 
 # Time recording on the app thread: SBE, tracing on and off, and a control.
 latency: _test-clickhouse _test-aeron
-    for arm in control control-x100 sbe installed uninstalled event value value-nested event-off no-table counter gauge histogram counter-event gauge-event histogram-event clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
+    for arm in control control-x100 sbe event value value-nested event-off no-table counter gauge histogram clock-now clock-cached system-time poll-idle poll-due trace-off trace-unsampled trace-sampled span-off span-on; do \
         cargo run -q --release --manifest-path ../../Cargo.toml -p ergon-runtime-server --example record_latency -- $arm; done
 
 # Clippy and rustfmt for the sample

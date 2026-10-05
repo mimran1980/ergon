@@ -32,10 +32,13 @@ pub struct Sync {
 }
 
 impl ClickHouse {
-    /// Connection settings; no request until the first query.
+    /// Connection settings; no request until the first query. Connections
+    /// are kept between inserts ([`ergon_runtime::clickhouse::ClickHouse::pooled`]):
+    /// every insert is deduplicated, so the one retry on a connection the
+    /// server closed adds no rows.
     #[must_use]
     pub fn new(url: &str, user: &str, password: &str, database: &str) -> Self {
-        Self(ergon_runtime::clickhouse::ClickHouse::new(
+        Self(ergon_runtime::clickhouse::ClickHouse::pooled(
             url, user, password, database,
         ))
     }

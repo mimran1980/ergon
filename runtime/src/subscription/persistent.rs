@@ -12,20 +12,23 @@
 //! treated as the same recording. Check the session id if that matters.
 //!
 //! The archive lookup is a state machine that [`PersistentSubscription::poll`]
-//! advances one step at a time: connect to the service's archive, list its
-//! recordings, subscribe. Neither the connect nor the listing waits: the
-//! archive may be in another region. Resolving the service's name does
-//! (`getaddrinfo`, about a millisecond in the cluster), once per lookup.
-//! The archive is addressed by IP. The driver caches a channel hostname per
-//! endpoint, so a name would keep reaching the old node after a move.
+//! advances one step at a time: connect to the publisher's archive, list its
+//! recordings, subscribe. None of them waits on another node (only the last
+//! waits on this one's driver, see below): the archive may be in another
+//! region. The archive is addressed by the service's name, which the media
+//! driver resolves off its conductor, so a name that does not resolve fails
+//! the connect instead of stalling anything. After a move, the driver
+//! re-resolves the name once the old address has sent no status message for
+//! 5 s (`aeron_send_channel_endpoint_check_for_re_resolution`), and the next
+//! lookup reaches the new node.
 //!
 //! ponytail: Aeron's own `PersistentSubscriptionBuilder::build` waits for the
 //! driver to register four counters (one round trip each). Handing it
 //! counters added asynchronously would remove that, once their ownership
 //! across the C context is clear.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use rusteron_archive::{
@@ -37,26 +40,26 @@ use rusteron_archive::{
 use super::{Delivery, Metadata, Origin};
 use crate::Error;
 use crate::bus::Bus;
-use crate::streams::Streams;
+use crate::directory::FeedAddr;
 
 /// A replay's stream id is the live one plus this: unique on the node, as
-/// live stream ids are unique in the registry.
+/// live stream ids are unique in the application's directory.
 const REPLAY_STREAM_OFFSET: i32 = 1_000_000;
 
-/// A persistent subscription to one stream of a registry service.
+/// A persistent subscription to one feed, through its publisher's archive.
 pub struct PersistentSubscription {
     aeron: Aeron,
-    /// `md-binance stream 2011`, for the log.
+    /// `md-binance/md stream 2011`, for the log.
     name: String,
-    /// The service's name, which resolves to the node it runs on, and the
-    /// archive's control port there.
+    /// A name that resolves to the publisher's node, and the archive's
+    /// control port there.
     host: String,
     archive_port: u16,
     /// Where the archive answers and replays to: this node.
     local: String,
     live: String,
     stream_id: i32,
-    /// The service's control port: its recordings' channels carry it.
+    /// The publisher's control port: its recordings' channels carry it.
     port: u16,
     state: State,
     /// Replay the next recording from its start: it is a new session.
@@ -67,12 +70,17 @@ pub struct PersistentSubscription {
 
 enum State {
     Waiting(Instant),
+    /// Polled until Aeron finishes it: connected, or timed out at the
+    /// context's message timeout, when Aeron closes the request publication
+    /// and response subscription. Dropping an unfinished connect closes
+    /// neither (rusteron frees nothing for it), so one given up on our own
+    /// clock leaked both on every retry; on the lab, hundreds of them loaded
+    /// a node's media driver until its archive answered no one.
     Connecting {
         connect: AeronArchiveAsyncConnect,
-        /// The archive's control channel, by IP.
+        /// The archive's control channel.
         channel: String,
         _ctx: AeronArchiveContext,
-        until: Instant,
     },
     Listing(Box<Listing>),
     Running {
@@ -84,31 +92,29 @@ enum State {
 }
 
 impl Bus {
-    /// Subscribe to `service`'s `kind` stream through the archive that
+    /// Subscribe to the feed `name` at `addr` through the archive that
     /// records it, from this node. The first subscription joins the live
     /// stream; each after a restart of the publisher replays the new session
     /// from its start. [`Bus::subscribe_live`] is the one with no archive.
     ///
     /// # Errors
     ///
-    /// `service` or `kind` is not in the registry.
-    pub fn subscribe(
-        &self,
-        streams: &Streams,
-        service: &str,
-        kind: &str,
-    ) -> Result<PersistentSubscription, Error> {
+    /// `addr` names no archive.
+    pub fn subscribe(&self, name: &str, addr: &FeedAddr) -> Result<PersistentSubscription, Error> {
+        let archive = addr
+            .archive
+            .as_ref()
+            .ok_or_else(|| Error::Config(format!("{name}: its address names no archive")))?;
         let host_ip = self.host_ip();
-        let stream_id = streams.stream(service, kind)?;
         Ok(PersistentSubscription {
             aeron: self.aeron().clone(),
-            name: format!("{service} stream {stream_id}"),
-            host: streams.host(service),
-            archive_port: streams.archive_port,
+            name: format!("{name} stream {}", addr.stream_id),
+            host: archive.host.clone(),
+            archive_port: archive.port,
             local: format!("aeron:udp?endpoint={host_ip}:0"),
-            live: streams.subscription(service, kind, host_ip)?,
-            stream_id,
-            port: streams.port(service)?,
+            live: addr.live.clone(),
+            stream_id: addr.stream_id,
+            port: archive.publisher_port,
             state: State::Waiting(Instant::now()),
             from_start: false,
             fresh: false,
@@ -127,8 +133,11 @@ impl PersistentSubscription {
     /// the first of a new subscription (a new publisher session, when not
     /// the first), and whether it is [`Origin::Live`] or an
     /// [`Origin::Replay`] from the recording while catching up, possibly
-    /// minutes old. Returns how many were taken: the work count for an idle
-    /// strategy.
+    /// minutes old. Each poll first runs the client's conductor and polls
+    /// the archive client: Aeron's persistent subscription does both, the
+    /// first for a client with no conductor thread, which a [`Bus`]'s never
+    /// has. Returns the work count for an idle strategy: the messages taken,
+    /// and the conductor's and the archive client's work.
     #[inline]
     pub fn poll(&mut self, mut handler: impl FnMut(&[u8], Delivery), limit: usize) -> usize {
         self.poll_inner::<false>(|message, delivery, _| handler(message, delivery), limit)
@@ -233,17 +242,14 @@ impl PersistentSubscription {
     fn advance(&mut self) {
         let now = Instant::now();
         let next = match &mut self.state {
-            State::Waiting(at) if now >= *at => {
-                resolve(&self.host, self.archive_port).and_then(|channel| self.connect(&channel))
-            }
+            State::Waiting(at) if now >= *at => self.connect(&format!(
+                "aeron:udp?endpoint={}:{}",
+                self.host, self.archive_port
+            )),
             State::Connecting {
-                connect,
-                channel,
-                until,
-                ..
+                connect, channel, ..
             } => match connect.poll() {
                 Ok(Some(archive)) => Listing::start(archive, channel, self.stream_id, self.port),
-                Ok(None) if now >= *until => Err("connecting to its archive: timed out".into()),
                 Ok(None) => return,
                 Err(e) => Err(format!("connecting to its archive: {e}")),
             },
@@ -271,13 +277,14 @@ impl PersistentSubscription {
     /// Start connecting to the archive at `channel`.
     fn connect(&self, channel: &str) -> Result<State, String> {
         let ctx = archive_context(&self.aeron, channel, &self.local)?;
+        ctx.set_message_timeout_ns(Self::STEP.as_nanos().try_into().unwrap_or(u64::MAX))
+            .map_err(|e| e.to_string())?;
         let connect = AeronArchiveAsyncConnect::new_with_aeron(&ctx, &self.aeron)
             .map_err(|e| format!("connecting to its archive: {e}"))?;
         Ok(State::Connecting {
             connect,
             channel: channel.to_owned(),
             _ctx: ctx,
-            until: Instant::now() + Self::STEP,
         })
     }
 
@@ -329,7 +336,7 @@ struct Listing {
     poller: AeronArchiveRecordingDescriptorPoller,
     _consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>>,
     channel: String,
-    newest: Arc<AtomicI64>,
+    newest: Rc<Cell<i64>>,
     until: Instant,
 }
 
@@ -340,12 +347,12 @@ impl Listing {
         stream_id: i32,
         port: u16,
     ) -> Result<State, String> {
-        let newest = Arc::new(AtomicI64::new(-1));
-        let (found, port) = (Arc::clone(&newest), format!(":{port}"));
+        let newest = Rc::new(Cell::new(-1));
+        let (found, port) = (Rc::clone(&newest), format!(":{port}"));
         let consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>> =
             Handler::new(Box::new(move |d: AeronArchiveRecordingDescriptor| {
                 if d.stop_position() < 0 && d.original_channel().contains(&port) {
-                    found.fetch_max(d.recording_id(), Ordering::Relaxed);
+                    found.set(found.get().max(d.recording_id()));
                 }
             }));
         let inner = archive.get_inner_ref();
@@ -378,23 +385,11 @@ impl Listing {
                 Ok(None)
             };
         }
-        match self.newest.load(Ordering::Relaxed) {
+        match self.newest.get() {
             -1 => Err("no recording of its current session yet".into()),
             recording => Ok(Some(recording)),
         }
     }
-}
-
-/// The control channel of the archive at `host:port`, by the IP `host`
-/// resolves to now.
-fn resolve(host: &str, port: u16) -> Result<String, String> {
-    use std::net::ToSocketAddrs;
-    let ip = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("resolving {host}: {e}"))?
-        .find(std::net::SocketAddr::is_ipv4)
-        .ok_or_else(|| format!("{host} has no IPv4 address"))?;
-    Ok(format!("aeron:udp?endpoint={ip}"))
 }
 
 /// A client context for the archive at `archive`, answering to `local`.

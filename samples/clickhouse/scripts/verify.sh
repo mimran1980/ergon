@@ -5,6 +5,7 @@
 #  2. Every deployed exchange's feed handler (md) is writing trades and quotes.
 #     Every region's engine publishes EMAs and its aggregated book, its orders
 #     are filled, and a kept tick-to-trade trace joins its exchange's trace.
+#     The trace rules publish under 1% of the traces.
 #     Each running publisher's node region matches config/streams.yaml.
 #  3. Every Grafana panel's query runs through Grafana without error.
 #  4. Metrics, histograms, traces and Aeron's counters arrive, with host and pod.
@@ -23,13 +24,20 @@ if [[ ${LAB_CONTEXT:-kind-clickhouse-lab} == kind-* ]]; then
     CH=http://localhost:8123 GRAFANA=http://localhost:3000
 else
     # The k3s VMs have no kind port mapping: the NodePorts on the first VM.
+    # Its firewall admits only the operator's address, so on a VM itself
+    # (`just azure on verify`) they answer on the node's own address.
     read -r vm _ <<<"$LAB_VM_IPS"
+    curl -sf --max-time 3 "http://$vm:30123/ping" >/dev/null || vm=localhost
     CH=http://$vm:30123 GRAFANA=http://$vm:30300
 fi
 KUBE=(kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" -n lab)
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok:   $*"; }
-sql() { curl -sf -u lab:lab "$CH/" --data-binary "$1"; }
+# ClickHouse's password, from its Secret; curl reads it on stdin, so it is on
+# no command line.
+CH_PASSWORD=$("${KUBE[@]}" get secret clickhouse -o jsonpath='{.data.password}' | base64 --decode) \
+    || fail "no Secret clickhouse in the cluster (just deploy makes it from .env)"
+sql() { curl -sf -K- "$CH/" --data-binary "$1" <<<"user = \"lab:$CH_PASSWORD\""; }
 
 # 1. ClickHouse + UI
 [[ $(sql "SELECT 1") == 1 ]] || fail "ClickHouse not answering on $CH"
@@ -90,21 +98,49 @@ for engine in $engines; do
     (( n > 0 )) || fail "$engine: no aggregated book in the last minute"
 done
 ok "engines publishing EMAs and aggregated books: $(paste -sd' ' - <<<"$engines")"
+
+# 2c. Every row names its publisher: a recording's Source message comes before
+# its first frame, so not even the rows of a process that just started lack it.
+for table in engine.ema engine.agg_book orders.new_order orders.execution_report; do
+    n=$(sql "SELECT count() FROM $table WHERE app = '' AND inserted_at > now() - INTERVAL 10 MINUTE")
+    (( n == 0 )) || fail "$table: $n rows in the last 10 minutes name no app"
+done
+ok "every engine and exchange row in the last 10 minutes names its app"
 orders=$(sql "SELECT count() FROM orders.new_order WHERE ts > now() - INTERVAL 1 HOUR AND ts < now() - INTERVAL 30 SECOND")
 (( orders > 0 )) || fail "no orders in the last hour (the strategy trades a 5m EMA cross at most every 30 s)"
 # An order sent while its exchange was down is lost (plain subscriptions,
-# no catch-up): judge those sent since both were last started.
+# no catch-up): judge those sent since both were last started. After an
+# engine restart its exchange finds the new recording only once Aeron times
+# the old image out (10 s), and it ignores orders older than 10 s by then:
+# so judge those sent 15 s after the later start.
 unfilled=0
 for engine in $engines; do
     since=$("${KUBE[@]}" get pod -l "app in (engine,exch-sim),region=${engine#engine-}" -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.running.startedAt}{"\n"}{end}' | sort | tail -1)
     [[ -n $since ]] || continue
-    n=$(sql "SELECT count() FROM orders.new_order WHERE app = '$engine' AND ts > parseDateTime64BestEffort('$since') AND ts < now() - INTERVAL 30 SECOND AND order_id NOT IN (SELECT order_id FROM orders.execution_report WHERE status = 'Filled')")
+    n=$(sql "SELECT count() FROM orders.new_order WHERE app = '$engine' AND ts > parseDateTime64BestEffort('$since') + INTERVAL 15 SECOND AND ts < now() - INTERVAL 30 SECOND AND order_id NOT IN (SELECT order_id FROM orders.execution_report WHERE status = 'Filled')")
     unfilled=$((unfilled + n))
 done
 [[ $unfilled == 0 ]] || fail "$unfilled orders sent while their engine and exchange were both up have no fill"
 joined=$(sql "SELECT count() FROM (SELECT TraceId FROM tracing.otel_traces WHERE ParentSpanId = '' AND SpanName IN ('tick_to_trade', 'order_ack') AND SpanAttributes['why'] = 'kept' AND Timestamp > now() - INTERVAL 1 HOUR GROUP BY TraceId HAVING uniqExact(SpanName) = 2)")
 (( joined > 0 )) || fail "no order's tick_to_trade trace shares its id with the exchange's order_ack"
 ok "$orders orders in the last hour, every one sent to a running exchange filled; $joined traced from tick to exchange ack under one id"
+# A trace rule publishes a sample, not the stream: a `slower_than` under the
+# normal total made every trace "slow" (165M rows in hours, a Grafana panel
+# timing out, a region's ingester minutes behind). Up to 2 minutes ago: a
+# region's rows can arrive 90 s late.
+window="BETWEEN now() - INTERVAL 12 MINUTE AND now() - INTERVAL 2 MINUTE"
+rates=$(sql "SELECT t.app, t.trace, t.recorded, p.published
+    FROM (SELECT app, labels['trace'] AS trace, sum(count) AS recorded FROM metrics.metrics_histogram
+          WHERE name = 'trace_ns' AND labels['stage'] = 'total' AND labels['trace'] IN ('tick_to_trade', 'book_update') AND ts $window
+          GROUP BY app, trace) AS t
+    LEFT JOIN (SELECT app, SpanName AS trace, count() AS published FROM tracing.otel_traces
+          WHERE ParentSpanId = '' AND SpanName IN ('tick_to_trade', 'book_update') AND Timestamp $window
+          GROUP BY app, trace) AS p USING (app, trace)
+    FORMAT TSV")
+[[ -n $rates ]] || fail "no tick_to_trade or book_update trace recorded between 12 and 2 minutes ago"
+flood=$(awk -F'\t' '$4 * 100 > $3 {print $1 " " $2 " " $4 " of " $3}' <<<"$rates" | paste -sd, -)
+[[ -z $flood ]] || fail "more than 1% of traces published (tables.yaml's sample and slower_than): $flood"
+ok "tick_to_trade and book_update publish under 1% of their traces ($(awk -F'\t' '{r += $3; p += $4} END {print p " of " r}' <<<"$rates"))"
 
 # 3. Grafana panels
 uids=$(curl -sf "$GRAFANA/api/search?type=dash-db" | jq -r '.[].uid')
@@ -113,6 +149,8 @@ checked=0
 tables=$(sql "SELECT database || '.' || name FROM system.tables WHERE database IN ('md', 'engine', 'orders', 'tracing', 'metrics') ORDER BY 1")
 # A table's name without its database: md.trade -> trade.
 disabled() { grep -Eq "^  ${1#*.}: .*enabled: false" config/tables.yaml; }
+# `input` fills only while an application journals its inputs (`JOURNAL=on`).
+journaling=$("${KUBE[@]}" get deploy -o jsonpath='{range .items[*].spec.template.spec.containers[*].env[*]}{.name}={.value}{"\n"}{end}' | grep -cx 'JOURNAL=on' || true)
 for uid in $uids; do
     dash=$(curl -sf "$GRAFANA/api/dashboards/uid/$uid" | jq '.dashboard')
     adhoc=$(echo "$dash" | jq -r '.templating.list[]? | select(.name=="sql") | .query // empty')
@@ -144,18 +182,22 @@ for uid in $uids; do
             [[ -z $err ]] || fail "Grafana panel '$title' [$table] ($uid): $err"
             rows=$(echo "$result" | jq '[.results.A.frames[]?.data.values[0]? // [] | length] | add // 0')
             # A disabled table may legitimately have nothing recent, a
-            # healthy driver no errors or losses, a venue no status change
-            # since its feed subscribed (Bybit sends one then), and a lab whose
+            # healthy driver no errors or losses, a healthy ClickHouse no
+            # failed query in the last hour, a venue no status change since
+            # its feed subscribed (Bybit sends one then), and a lab whose
             # tables all exist no schema change within the query log's day.
             [[ $rows -gt 0 ]] || disabled "$table" || { [[ $title == *book_snapshot* ]] && disabled book_snapshot; } \
                 || [[ $title == "Distinct errors" || $title == "Data loss" ]] \
+                || [[ $title == "Failed ClickHouse queries (last hour)" ]] \
                 || [[ $title == "Schema changes (CREATE / ALTER)" ]] \
                 || [[ $table == metrics.aeron_errors || $table == metrics.aeron_loss ]] \
                 || [[ $table == md.instrument_status ]] \
+                || { [[ $table == md.input ]] && ((journaling == 0)); } \
                 || fail "Grafana panel '$title' [$table] ($uid) returned no rows"
             checked=$((checked + 1))
         done
-    done < <(echo "$dash" | jq -c '.panels[] | {title, rawSql: .targets[0].rawSql, format: .targets[0].format}')
+    # A row is a section heading with no query of its own.
+    done < <(echo "$dash" | jq -c '.panels[] | select(.type != "row") | {title, rawSql: .targets[0].rawSql, format: .targets[0].format}')
 done
 # A deliberately broken query must be reported, or the loop above proves nothing.
 bad=$(curl -s -H 'Content-Type: application/json' "$GRAFANA/api/ds/query" -d '{"queries":[{"refId":"A","datasource":{"type":"grafana-clickhouse-datasource","uid":"clickhouse"},"editorType":"sql","rawSql":"SELECT no_such_column FROM md.trade","format":1}],"from":"now-5m","to":"now"}')
@@ -207,59 +249,70 @@ restarts=$("${KUBE[@]}" get pod -l 'app in (aeron,ingester,md,engine,exch-sim)' 
 [[ $restarts != *=[1-9]* ]] || fail "restarted: $restarts"
 ok "Aeron, the ingesters, the feed handlers, the engines and the exchanges never restarted"
 
-# 7. Move a feed handler to another node of its region
+# 7. Move a feed handler to another node of its region, then restart it in
+# place. A region of one node (the Azure layout) has nowhere to move it to:
+# then it is only restarted.
 mover=md-binance other=HYPERLIQUID engine=engine-an1
 if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     old_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{.items[0].metadata.name}')
     old_node=$("${KUBE[@]}" get pod "$old_pod" -o jsonpath='{.spec.nodeName}')
+    region=$(kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" get node "$old_node" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/region}')
+    neighbours=$(kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" get node -l "topology.kubernetes.io/region=$region" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -cvx "$old_node" || true)
     metric() { sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = '$1' AND labels['venue'] = '$2'"; }
+    new_pod=$old_pod new_node=$old_node
     resyncs=$(metric feed_resyncs BINANCE)
-    started=$(sql "SELECT now64(9)")
-    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
-    trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
-    "${KUBE[@]}" delete pod "$old_pod" --wait=false >/dev/null
-    for _ in $(seq 90); do
-        new_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$old_pod\$" || true)
-        [[ -n $new_pod ]] && break
-        sleep 1
-    done
-    [[ -n $new_pod ]] || fail "$mover did not come back within 90 s"
-    new_node=$("${KUBE[@]}" get pod "$new_pod" -o jsonpath='{.spec.nodeName}')
-    [[ $new_node != "$old_node" ]] || fail "$mover came back on $old_node, the cordoned node"
-    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
-    trap - EXIT
-    moved=$(date +%s)
-    # Its engine joins the new node's publication, and resyncs its books.
-    for _ in $(seq 60); do
-        (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break
-        sleep 1
-    done
-    (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) || fail "$engine did not resync BINANCE within 60 s of the move"
-    for _ in $(seq 30); do
-        age=$(sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = 'BINANCE' AND ts > now() - INTERVAL 5 SECOND")
-        [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) && break
-        sleep 1
-    done
-    [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) || fail "$engine: BINANCE's book still stale after the move (${age:-no} ns)"
-    recovered=$(( $(date +%s) - moved ))
-    worst=$(sql "SELECT max(value) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = '$other' AND ts > '$started'")
-    (( ${worst%%.*} < 5000000000 )) || fail "$engine: $other's book went ${worst} ns without an update during the move"
-    # Recorded by the new node's archive, and nothing twice.
-    for _ in $(seq 60); do
-        hosts=$(sql "SELECT count() FROM md.trade WHERE venue = 'BINANCE' AND host = '$new_node' AND ts_event > '$started'")
-        (( hosts > 0 )) && break
-        sleep 1
-    done
-    (( hosts > 0 )) || fail "no BINANCE trades recorded from $new_node after the move"
-    dupes=$(sql "SELECT count() - uniqExact(symbol, trade_id) FROM md.trade WHERE venue = 'BINANCE' AND ts_event > '$started' - INTERVAL 1 MINUTE")
-    [[ $dupes == 0 ]] || fail "$dupes BINANCE trades recorded twice across the move"
-    ok "$mover moved $old_node -> $new_node: $engine resynced it, its book fresh $recovered s after, $other never stale (worst $((${worst%%.*} / 1000000)) ms), trades from the new node, none twice"
+    if ((neighbours > 0)); then
+        started=$(sql "SELECT now64(9)")
+        kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
+        trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
+        "${KUBE[@]}" delete pod "$old_pod" --wait=false >/dev/null
+        for _ in $(seq 90); do
+            new_pod=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$old_pod\$" || true)
+            [[ -n $new_pod ]] && break
+            sleep 1
+        done
+        [[ -n $new_pod ]] || fail "$mover did not come back within 90 s"
+        new_node=$("${KUBE[@]}" get pod "$new_pod" -o jsonpath='{.spec.nodeName}')
+        [[ $new_node != "$old_node" ]] || fail "$mover came back on $old_node, the cordoned node"
+        kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
+        trap - EXIT
+        moved=$(date +%s)
+        # Its engine joins the new node's publication, and resyncs its books.
+        for _ in $(seq 60); do
+            (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break
+            sleep 1
+        done
+        (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) || fail "$engine did not resync BINANCE within 60 s of the move"
+        for _ in $(seq 30); do
+            age=$(sql "SELECT argMax(value, ts) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = 'BINANCE' AND ts > now() - INTERVAL 5 SECOND")
+            [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) && break
+            sleep 1
+        done
+        [[ -n $age ]] && (( ${age%%.*} < 2000000000 )) || fail "$engine: BINANCE's book still stale after the move (${age:-no} ns)"
+        recovered=$(( $(date +%s) - moved ))
+        worst=$(sql "SELECT max(value) FROM metrics.metrics WHERE app = '$engine' AND name = 'book_age_ns' AND labels['venue'] = '$other' AND ts > '$started'")
+        (( ${worst%%.*} < 5000000000 )) || fail "$engine: $other's book went ${worst} ns without an update during the move"
+        # Recorded by the new node's archive, and nothing twice.
+        for _ in $(seq 60); do
+            hosts=$(sql "SELECT count() FROM md.trade WHERE venue = 'BINANCE' AND host = '$new_node' AND ts_event > '$started'")
+            (( hosts > 0 )) && break
+            sleep 1
+        done
+        (( hosts > 0 )) || fail "no BINANCE trades recorded from $new_node after the move"
+        dupes=$(sql "SELECT count() - uniqExact(symbol, trade_id) FROM md.trade WHERE venue = 'BINANCE' AND ts_event > '$started' - INTERVAL 1 MINUTE")
+        [[ $dupes == 0 ]] || fail "$dupes BINANCE trades recorded twice across the move"
+        ok "$mover moved $old_node -> $new_node: $engine resynced it, its book fresh $recovered s after, $other never stale (worst $((${worst%%.*} / 1000000)) ms), trades from the new node, none twice"
+    else
+        echo "note: $region has one node, so $mover is restarted in place, not moved"
+    fi
 
     # Restarted in place: the same node's driver, so only a closed
     # publication makes the new pod a new session its engine can see.
     resyncs=$(metric feed_resyncs BINANCE)
-    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
-    trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
+    if [[ $new_node != "$old_node" ]]; then
+        kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" cordon "$old_node" >/dev/null
+        trap 'kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null' EXIT
+    fi
     "${KUBE[@]}" delete pod "$new_pod" --wait=false >/dev/null
     for _ in $(seq 90); do
         again=$("${KUBE[@]}" get pod -l app=md,exchange=binance -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' | grep -v "^$new_pod\$" || true)
@@ -268,8 +321,10 @@ if "${KUBE[@]}" get deploy $mover engine-an1 >/dev/null 2>&1; then
     done
     [[ -n $again ]] || fail "$mover did not come back within 90 s of its restart"
     [[ $("${KUBE[@]}" get pod "$again" -o jsonpath='{.spec.nodeName}') == "$new_node" ]] || fail "$mover's restart left $new_node"
-    kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
-    trap - EXIT
+    if [[ $new_node != "$old_node" ]]; then
+        kubectl --context "${LAB_CONTEXT:-kind-clickhouse-lab}" uncordon "$old_node" >/dev/null
+        trap - EXIT
+    fi
     for _ in $(seq 60); do
         (( $(metric feed_resyncs BINANCE | cut -d. -f1) > ${resyncs%%.*} )) && break
         sleep 1

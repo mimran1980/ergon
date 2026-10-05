@@ -1,19 +1,23 @@
 //! Per-message cost of an application loop over one IPC feed.
 //!
 //! `runtime` is the same body as an [`Agent`] on [`Runtime::cycle`]: the
-//! clock read once per message, the wall offset cached, lock-free
-//! single-thread histograms, an exclusive order publication, and the
-//! once-a-second work on a timer. The gate fails when
-//! the runtime is slower than the hand-rolled loop at p50 or p99.
+//! clock read once per message, the wall offset cached, an exclusive order
+//! publication, the once-a-second work on a timer, and the Aeron client's
+//! conductor in the duty cycle, which runs it in a cycle that found no work.
+//! Both arms record into the same single-thread histogram cells. The gate
+//! fails when the runtime is slower than the hand-rolled loop at p50 or p99.
+//! The feed is a live subscription: a persistent feed's poll would also run
+//! the conductor (Aeron's does, for a client with no conductor thread), in
+//! either arm, so neither measures it.
 //!
-//! `runtime-invoker` is `runtime` with the Aeron client conductor driven from
-//! the duty cycle instead of its own thread, gated against `runtime`.
-//!
-//! `hand-rolled` is today's engine loop (`engine/src/main.rs`): poll the feed,
-//! read the clock, check the once-a-second work, `Persist::poll`, idle. Its
-//! message body is the engine's market-data path: two remote-time
-//! conversions through the wall clock, two latency histograms, a counter, and
-//! every 16th message an order on a second IPC publication.
+//! `hand-rolled` is the hand-written loop the runtime replaced, the engine's
+//! before it ran on `Runtime`: poll the feed, read the clock, check the
+//! once-a-second work, `Persist::poll`, idle. Its message body is the
+//! engine's market-data path: two remote-time conversions through the wall
+//! clock, two latency histograms, a counter, and every 16th message an order
+//! on a second IPC publication. Its client's conductor runs between samples,
+//! outside the timed loop, so the loop the runtime is gated against does less
+//! than the runtime's.
 //!
 //! Each sample publishes `BATCH` frames outside the clock, then times the loop
 //! until it has dispatched all of them, and reports nanoseconds per message
@@ -21,22 +25,25 @@
 //!
 //! Needs an Aeron media driver at `AERON_TEST_DIR` (default
 //! `/tmp/persist-test-aeron`); `just bench-runtime` starts it.
+//!
+//! `-- --profile=hand-rolled|runtime [--samples=N]` runs that
+//! arm alone for N batches, with no gate: for a profiler where a VM has no
+//! hardware counters, such as callgrind with `--toggle-collect` on the arm's
+//! loop (`hand_rolled`, `runtime_loop`). An argument, not the environment,
+//! so a gated run can never be turned into an ungated one by accident.
 
 use std::hint::black_box;
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ergon_runtime::Settings;
 use ergon_runtime::bus::Bus;
 use ergon_runtime::clock::{Clock, Nanos};
 use ergon_runtime::idle::Idle;
-use ergon_runtime::metrics::{Counter, Histogram, LocalHistogram};
+use ergon_runtime::metrics::{Counter, Histogram};
 use ergon_runtime::persist::Persist;
 use ergon_runtime::publication::Publication;
 use ergon_runtime::rt::{Agent, Config, Ctx, Expiry, FeedId, Out, Runtime};
-use ergon_runtime::streams::Streams;
 use ergon_runtime::subscription::{Delivery, Subscription};
 
 const SCHEMA: &str = include_str!("../schema/events.xml");
@@ -63,10 +70,9 @@ fn stream(n: i32) -> i32 {
 
 const IPC: &str = "aeron:ipc?term-length=16m";
 
-/// What every arm starts with: the bus, persist, a feed to publish into and
+/// What every arm starts with on its bus: persist, a feed to publish into and
 /// an order stream someone takes.
 struct Rig {
-    bus: Bus,
     persist: Persist,
     feed: Publication,
     orders_sink: Subscription,
@@ -75,7 +81,8 @@ struct Rig {
 }
 
 impl Rig {
-    fn new(arm: i32, invoker: bool) -> BenchResult<Self> {
+    /// Arm `arm`'s bus, which the arm owns, and its rig on it.
+    fn new(arm: i32) -> BenchResult<(Bus, Self)> {
         let config =
             std::env::temp_dir().join(format!("dispatch-bench-{}.yaml", std::process::id()));
         std::fs::write(&config, "tables: {}\n")?;
@@ -85,7 +92,6 @@ impl Rig {
             stream_id: stream(arm * 4),
             subscriber_timeout: Duration::ZERO,
             app: "dispatch-bench".into(),
-            aeron_invoker: invoker,
             ..Settings::new(&config)
         };
         let bus = Bus::connect(&settings)?;
@@ -93,13 +99,20 @@ impl Rig {
         let feed = bus.publication(IPC, stream(arm * 4 + 1))?;
         let orders_sink = bus.subscription(IPC, stream(arm * 4 + 2));
         let persist_sink = bus.subscription(IPC, stream(arm * 4));
-        Ok(Self {
-            bus,
+        let mut rig = Self {
             persist,
             feed,
             orders_sink,
             persist_sink,
-        })
+        };
+        // Before any loop polls persist: a metrics interval that ends first
+        // would be dropped unconnected, and the arms not do the same work.
+        wait(|| {
+            let _ = bus.poll();
+            rig.drain_orders();
+            rig.persist.is_connected()
+        })?;
+        Ok((bus, rig))
     }
 
     /// `BATCH` frames carrying the publisher's receive and event times.
@@ -180,17 +193,15 @@ impl Core {
     }
 }
 
-/// Today's engine loop, run until `target` messages have been dispatched.
-fn hand_rolled(
-    rig: &Rig,
-    feed: &mut Subscription,
-    core: &mut Core,
-    stop: &AtomicBool,
-    target: u64,
-) {
-    let idle = Idle::Noop;
+/// The hand-written loop the runtime replaced (the engine's before it ran on
+/// `Runtime`), run until `target` messages have been dispatched.
+/// Never inlined, as `runtime_loop`: a profiler can count either loop alone.
+/// `stop` stands for its SIGTERM flag: read every pass, never set.
+#[inline(never)]
+fn hand_rolled(rig: &Rig, feed: &mut Subscription, core: &mut Core, stop: bool, target: u64) {
+    let mut idle = Idle::Noop;
     while core.count < target {
-        if stop.load(Ordering::Relaxed) {
+        if black_box(stop) {
             return;
         }
         let work = feed.poll(|m, d| core.on_md(m, d), LIMIT);
@@ -232,21 +243,23 @@ fn wait(mut step: impl FnMut() -> bool) -> BenchResult<()> {
 }
 
 struct HandArm {
+    /// Its conductor runs between samples, outside the timed loop.
+    bus: Bus,
     rig: Rig,
     feed: Subscription,
     core: Core,
-    stop: Arc<AtomicBool>,
+    stop: bool,
     target: u64,
 }
 
 impl HandArm {
     fn new() -> BenchResult<Self> {
-        let rig = Rig::new(0, false)?;
+        let (bus, rig) = Rig::new(0)?;
         let metrics = rig.persist.metrics();
-        let feed = rig.bus.subscription(IPC, stream(1));
+        let feed = bus.subscription(IPC, stream(1));
         let core = Core {
             clock: Clock::new(),
-            orders: rig.bus.publication(IPC, stream(2))?,
+            orders: bus.publication(IPC, stream(2))?,
             md_latency: metrics.histogram("md_to_engine_ns", &[]),
             venue_latency: metrics.histogram("venue_to_engine_ns", &[]),
             tick_to_order: metrics.histogram("tick_to_order_ns", &[]),
@@ -255,17 +268,24 @@ impl HandArm {
             count: 0,
         };
         let mut arm = Self {
+            bus,
             rig,
             feed,
             core,
-            stop: Arc::new(AtomicBool::new(false)),
+            stop: false,
             target: 0,
         };
-        let (feed, rig) = (&mut arm.feed, &mut arm.rig);
+        let (bus, feed, rig) = (&arm.bus, &mut arm.feed, &mut arm.rig);
+        // Until its own subscription has the feed's image too: the timed
+        // loop runs no conductor that would add it.
         wait(|| {
+            let _ = bus.poll();
             feed.poll(|_, _| {}, 1);
             rig.drain_orders();
-            rig.feed.is_connected() && rig.orders_sink.is_connected() && rig.persist.is_connected()
+            feed.is_connected()
+                && rig.feed.is_connected()
+                && rig.orders_sink.is_connected()
+                && rig.persist.is_connected()
         })?;
         Ok(arm)
     }
@@ -279,10 +299,11 @@ impl HandArm {
             &self.rig,
             &mut self.feed,
             &mut self.core,
-            &self.stop,
+            self.stop,
             self.target,
         );
         let elapsed = start.elapsed().as_secs_f64() * 1e9;
+        let _ = self.bus.poll();
         self.rig.drain_orders();
         elapsed / BATCH_F64
     }
@@ -291,9 +312,9 @@ impl HandArm {
 /// The same body as an [`Agent`].
 struct BenchAgent {
     orders: Out,
-    md_latency: LocalHistogram,
-    venue_latency: LocalHistogram,
-    tick_to_order: LocalHistogram,
+    md_latency: Histogram,
+    venue_latency: Histogram,
+    tick_to_order: Histogram,
     seen: Counter,
     count: u64,
 }
@@ -347,26 +368,23 @@ struct RuntimeArm {
 }
 
 impl RuntimeArm {
-    fn new(arm: i32, invoker: bool) -> BenchResult<Self> {
-        let rig = Rig::new(arm, invoker)?;
+    fn new(arm: i32) -> BenchResult<Self> {
+        let (bus, rig) = Rig::new(arm)?;
         let metrics = rig.persist.metrics();
         let mut rt = Runtime::new(Config {
             persist: Some(rig.persist.clone()),
             region: "bench".into(),
             idle: Idle::Noop,
             limit: LIMIT,
-            ..Config::new(
-                rig.bus.clone(),
-                Streams::parse("services: {}\nkinds: {}\n")?,
-            )
+            ..Config::new(bus)
         })?;
         rt.ctx().subscribe_channel(IPC, stream(arm * 4 + 1));
         let orders = rt.ctx().publish_channel(IPC, stream(arm * 4 + 2))?;
         let mut agent = BenchAgent {
             orders,
-            md_latency: metrics.local_histogram("md_to_engine_ns", &[]),
-            venue_latency: metrics.local_histogram("venue_to_engine_ns", &[]),
-            tick_to_order: metrics.local_histogram("tick_to_order_ns", &[]),
+            md_latency: metrics.histogram("md_to_engine_ns", &[]),
+            venue_latency: metrics.histogram("venue_to_engine_ns", &[]),
+            tick_to_order: metrics.histogram("tick_to_order_ns", &[]),
             seen: metrics.counter("seen", &[]),
             count: 0,
         };
@@ -392,12 +410,8 @@ impl RuntimeArm {
     fn sample(&mut self) -> f64 {
         self.rig.publish_batch(&self.clock);
         self.target += BATCH as u64;
-        let idle = Idle::Noop;
         let start = Instant::now();
-        while self.agent.count < self.target {
-            let work = self.rt.cycle(&mut self.agent);
-            idle.idle(work);
-        }
+        runtime_loop(&mut self.rt, &mut self.agent, self.target);
         let elapsed = start.elapsed().as_secs_f64() * 1e9;
         self.rig.drain_orders();
         elapsed / BATCH_F64
@@ -415,21 +429,51 @@ fn gate(name: &str, new: (f64, f64), old: (f64, f64)) -> bool {
     pass
 }
 
+/// The runtime's loop, run until `target` messages have been dispatched.
+#[inline(never)]
+fn runtime_loop(rt: &mut Runtime, agent: &mut BenchAgent, target: u64) {
+    let mut idle = Idle::Noop;
+    while agent.count < target {
+        let work = rt.cycle(agent);
+        idle.idle(work);
+    }
+}
+
+/// One arm alone for `samples` batches, ungated.
+fn profile(arm: &str, samples: usize) -> BenchResult<()> {
+    match arm {
+        "hand-rolled" => {
+            let mut hand = HandArm::new()?;
+            for _ in 0..samples {
+                hand.sample();
+            }
+        }
+        "runtime" => {
+            let mut runtime = RuntimeArm::new(1)?;
+            for _ in 0..samples {
+                runtime.sample();
+            }
+        }
+        _ => return Err(format!("no arm {arm}: hand-rolled or runtime").into()),
+    }
+    println!("PROFILE dispatch {arm} messages={}", samples * BATCH);
+    Ok(())
+}
+
 /// Every arm built first, then sampled in a rotating order so none pays the
 /// first-arm position penalty or a different machine state.
 fn run() -> BenchResult<bool> {
     let mut hand = HandArm::new()?;
-    let mut runtime = RuntimeArm::new(1, false)?;
-    let mut invoker = RuntimeArm::new(2, true)?;
-    let mut samples: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::with_capacity(SAMPLES));
+    let mut runtime = RuntimeArm::new(1)?;
+    let mut samples: [Vec<f64>; 2] = std::array::from_fn(|_| Vec::with_capacity(SAMPLES));
     for sample in 0..WARMUP + SAMPLES {
-        let mut taken = [0.0; 3];
-        for k in 0..3 {
-            let arm = (sample + k) % 3;
-            taken[arm] = match arm {
-                0 => hand.sample(),
-                1 => runtime.sample(),
-                _ => invoker.sample(),
+        let mut taken = [0.0; 2];
+        for k in 0..2 {
+            let arm = (sample + k) % 2;
+            taken[arm] = if arm == 0 {
+                hand.sample()
+            } else {
+                runtime.sample()
             };
         }
         if sample >= WARMUP {
@@ -438,28 +482,35 @@ fn run() -> BenchResult<bool> {
             }
         }
     }
-    for (arm, bus) in [
-        ("hand-rolled", &hand.rig.bus),
-        ("runtime", &runtime.rig.bus),
-        ("runtime-invoker", &invoker.rig.bus),
+    for (arm, persist) in [
+        ("hand-rolled", &hand.rig.persist),
+        ("runtime", &runtime.rig.persist),
     ] {
-        if bus.dropped() > 0 {
+        // Persist's records and the bus's feeds.
+        if persist.dropped() > 0 {
             return Err(format!(
                 "{arm} dropped {:?}: the arms did not do the same work",
-                bus.drops()
+                persist.drops()
             )
             .into());
         }
     }
-    let [h, r, i] = &mut samples;
+    let [h, r] = &mut samples;
     let h = report("hand-rolled", h);
     let r = report("runtime", r);
-    let i = report("runtime-invoker", i);
-    Ok(gate("runtime/hand", r, h) & gate("invoker/conductor-thread", i, r))
+    Ok(gate("runtime/hand", r, h))
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let option =
+        |name: &str| std::env::args().find_map(|a| a.strip_prefix(name).map(str::to_owned));
+    let result = option("--profile=").map_or_else(run, |arm| {
+        let samples = option("--samples=")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(SAMPLES);
+        profile(&arm, samples).map(|()| true)
+    });
+    match result {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(err) => {

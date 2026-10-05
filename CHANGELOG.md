@@ -3,18 +3,110 @@
 ## [Unreleased]
 
 ### Added
+- Add idle strategies with parameters:
+  - `IDLE=sleep:<period>`;
+  - `IDLE=backoff[:<spins>,<yields>,<min park>,<max park>]`, Agrona's
+    `BackoffIdleStrategy`, which spins, yields, then parks for doubling
+    periods and starts over on any work;
+  - `TIMER_SLACK=<period>`, which sets the loop thread's Linux timer slack
+    so short parks wake on time.
+
+  The lab's engines and dummy exchanges now back off instead of sleeping
+  1 ms.
 - Generate an opt-in cross-schema AnySchemaMessage dispatcher with typed errors
   and borrowed frames for persistence, including unknown schemas and templates.
 
 ### Changed
+- Keep the lab's ClickHouse password in the Kubernetes Secret `clickhouse`,
+  which `just deploy` makes from `CLICKHOUSE_PASSWORD` in `.env`. ClickHouse,
+  the ingesters, Grafana and Jupyter read it from there, and `just verify`
+  reads it with `kubectl`. No manifest holds a password any more.
 - Scalar body encode benchmarks write successive preallocated destinations with
   symmetric input opacity, instead of measuring repeated black-box stack spills.
 - **`optional_enum_nullify` is gated at 1.00 in both profiles.** Both arms
   keep four independent totals of the same three decoded fields, so the row
   measures decode throughput. The 1.01 allowance was for a single running
   total, which measured loop latency.
+- Run each `ergon-runtime` client on one thread. `Bus` has one owner and runs
+  Aeron's conductor from the loop, never on a thread of its own, so
+  `Settings.aeron_invoker` and `AERON_INVOKER` are gone. `Persist`,
+  `Metrics` and its handles, and `Tracer` are not `Send`.
+- Record persist's rows only through the loop's `Persist`, on an exclusive
+  publication of its own. `Settings.exclusive`, `Persist::install`,
+  `Persist::bus` and the free `persist::record*`, `metrics` and `tracer`
+  functions are gone.
+- Record `tracing` events that name a `table`, and spans, from any thread
+  through `Persist::layer`. The bridge publishes on a concurrent IPC
+  publication of its own, and the ingester applies `enabled`, `apps` and
+  `until` to those rows and to `otel_traces` for each app.
+- Record metrics only through `Metrics` handles. `tracing` events with a
+  `counter`, `gauge` or `histogram` field are no longer recorded, and
+  `LocalHistogram` is merged into `Histogram`.
+- Stop the runtime on SIGTERM through a pipe that housekeeping reads every
+  10 ms (`rt::sigterm`). `Invoker::finish` runs once and closes the outputs
+  and persist's publication.
+- Resolve feed names through the application's `directory::Directory`
+  (`rt::Config::directory`, `Ctx::set_directory`). The `streams.yaml`
+  registry moved from `ergon-runtime` to the lab's `lab` crate, and the
+  `ingester` binary from `ergon-runtime-server` to
+  `samples/clickhouse/ingester`.
+- Remove unused runtime API: `rt::Mode::Backtest` (`Mode::Replay` runs
+  backtests), `Runtime::invoker` (use `Invoker::new`), `App::start`,
+  `App::metrics` and `App.region`, `Ctx::is_sim` and `Ctx::sim_feeds`,
+  `Bus::publish`, `clock::SimClock`, `TraceId::of`, `Journal::decode`,
+  `frames::Record::end`, the `metrics::bucket*` functions and
+  `Writer::wants`. `Mode`'s variants box their configurations.
+- The runtime timer benchmark's gate and Criterion time the same function.
+  A gate sample is the mean of 64 runs, and the heap baseline is always
+  inlined. Ungated probes also report the simulation's step, with up to 1,024
+  timers parked on one spoke, and the next-deadline search after the earliest
+  timer is cancelled.
+- Lay the runtime timer wheel out as one 32-byte record per timer, each spoke
+  a linked list through the records with its earliest deadline at the head,
+  so a schedule pops a free handle, writes one record and links it into its
+  spoke, and the next-deadline search reads one record per occupied spoke,
+  walking a spoke's list only once its earliest timer has left. The wheel now
+  beats the heap baseline in every gated scenario in both LTO profiles; the
+  per-spoke slab lost on ascending schedules. In the ungated simulation
+  probes (the step, and the search after cancelling the earliest), the heap
+  is still faster.
+  `Settings::timers_per_spoke` sizes the slab as an average: a crowded tick
+  no longer doubles every spoke, the slab doubles only when every record is
+  in use, and a re-arm never needs room, so a repeating timer is never
+  dropped. A default wheel takes 2.28 MB, up from 2.15 MB. The first release
+  and the first full batch after a doubling do not allocate.
+- The runtime claim benchmark writes each arm through its whole log before
+  timing. A first touch of a sparse log page is then never timed, where
+  before only one arm paid it.
 
 ### Fixed
+- Let every archive connect a persistent feed starts run to Aeron's own
+  timeout. The lookup gave up first, on its own clock, and dropping an
+  unfinished connect closes nothing, so every retry against a slow archive
+  left a publication and a subscription open. On the lab, hundreds of them
+  overloaded a node's media driver until its archive answered no one. The
+  ingester now retries its archive connect instead of exiting, so its node
+  starts recording as soon as the archive answers.
+- Keep the ingester's `ClickHouse` connections between inserts
+  (`ClickHouse::pooled`). They had been closed after every request, so each
+  cross-region insert paid an extra round trip. A request whose kept
+  connection the server closed is sent once more, which is safe because every
+  insert is deduplicated. A backtest's queries still use a connection each.
+- Raise the lab's `book_update` and `tick_to_trade` `slower_than` to 5 s,
+  from 100 ms and 50 ms. Both traces start at the venue's own timestamp, so
+  the venue's lag and a cross-region feed put a normal total at 65 ms to 1 s,
+  and nearly every trace was published as slow. `just verify` now fails when
+  more than 1% of either is published.
+- Stamp `record_value` rows with the persist clock, so a replay or a backtest
+  records simulated time rather than the wall clock.
+- Re-read `tables.yaml` in `Persist::poll` only when its length or
+  modification time changed, and re-apply the switches without copying them,
+  so a steady loop allocates nothing once a second.
+- Print `ergon_runtime::Error::Config` as `config: …`, not `tables.yaml: …`:
+  it also reports `streams.yaml`, timer and simulation errors, and a
+  `tables.yaml` error now names the file.
+- End a runtime timer wheel's poll at `i64::MAX` with a 1 ns tick. The tick
+  counter overflowed: a release build polled forever, a debug build panicked.
 - Collect the complete pending archive batch before inserting after a restart,
   so partial replay delivery cannot consume its deduplication token.
 - Let fixed-text decoder helpers yield to schema field names at every depth.
@@ -22,11 +114,10 @@
 - Pause and resume every kind cluster node, including workers.
 - Restore the Full Car generated-source budget to 450,000 bytes by sharing
   wire-dimension validation, including when optional string adapters are enabled.
-- Preserve complete histogram samples during concurrent recording and polling,
-  and publish overdue counters and gauges during continuous histogram traffic.
+- Preserve complete histogram samples between recording and polling, and
+  publish overdue counters and gauges during continuous histogram traffic.
 - Flush a standalone persistence writer's final elapsed histogram window and
   check archive replay positions before flushing historical windows.
-- A tracing counter whose `value` is present but not a nonnegative integer is ignored, instead of counting as one.
 - **The cluster crate enabled ergo-sbe's default `fancy` feature on both
   the runtime dependency and the build dependency.** That pulls miette's
   graphical renderer into the cluster build and changes no codec API.

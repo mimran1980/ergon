@@ -29,6 +29,8 @@ deployments. Criteria for lifting that disclaimer:
 | [`sbe/`](sbe/) | `ergo-sbe` | SBE schema parser and Rust codec generator |
 | [`sbe/benchmarks/`](sbe/benchmarks/) | `ergo-sbe-benchmarks` | Unpublished parity benchmarks |
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
+| [`runtime/`](runtime/) | `ergon-runtime` | Client runtime for apps on the bus: one busy-spin thread each, low latency, no locks, atomics or channels |
+| [`runtime-server/`](runtime-server/) | `ergon-runtime-server` | Ingester from the Aeron Archive into ClickHouse: throughput first, threads allowed |
 | [`samples/`](samples/) | seven teaching crates, plus the ClickHouse lab | Unpublished integration playgrounds |
 
 The workspace requires Rust 1.88 or newer. The sample crates are intentionally

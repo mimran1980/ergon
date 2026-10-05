@@ -6,28 +6,28 @@
 //! * `control`   an empty loop: the floor this machine can measure
 //! * `control-x100` the amplified loop's floor, for the x100 arms
 //! * `sbe`       `Persist::record` of one SBE message
-//! * `installed` the same through `ergon_runtime::persist::record`, the installed handle
-//! * `uninstalled` `ergon_runtime::persist::record` with no handle installed: a no-op
-//! * `event`     `tracing::info!(table = "signal", …)`, table enabled
+//! * `event`     `tracing::info!(table = "signal", …)` through the bridge, table enabled
 //! * `value`     `Persist::record_value` of a struct with the event's three fields
 //! * `value-nested` `record_value` of a struct with a nested struct and five levels
-//! * `event-off` the same event for a disabled table
-//! * `no-table`  a `trace!` without a `table` field: persist's filter leaves it disabled
+//! * `event-off` the same event for a disabled table: the bridge switches
+//!   nothing, so it costs what `event` does, and the ingester leaves it out
+//! * `no-table`  a `trace!` without a `table` field: the bridge's filter leaves it disabled
 //! * `counter`, `gauge`, `histogram`  one update of a metric handle
-//! * `counter-event`, `gauge-event`, `histogram-event` the same metric update
-//!   through a tracing event, including label collection and registry lookup
 //!
 //! Metric and clock samples time 100 operations (`x100` in the output).
-//! Metric handles and tracing events use the same values in each batch.
 //! * `clock-now` `Clock::now`; `clock-cached` `Clock::cached`; `system-time` `SystemTime::now`
 //! * `poll-idle` `Persist::poll` between the 5 s interval. A histogram makes
 //!   poll due every 1 ms. `poll-due` uses a 1 ms metrics interval, so every
 //!   deadline also includes counters. Both arms measure a mixed duty cycle:
-//!   most polls are idle, while due polls publish at most one message.
+//!   most polls are idle, while due polls publish at most one metrics
+//!   message, and up to 8 dictionary messages while the 5 s heartbeat round
+//!   is under way.
 //! * `trace-off`, `trace-unsampled`, `trace-sampled`  a 4-stage checkpoint trace
 //!   (start, 4 marks, an attribute, finish) with `otel_traces` off, on but not
 //!   sampled, and every one published
-//! * `span-on`, `span-off`  a `tracing` span entered and closed
+//! * `span-on`, `span-off`  a `tracing` span entered and closed, through the
+//!   bridge, with `otel_traces` on and off: the bridge publishes both, and the
+//!   ingester keeps only the first
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -37,6 +37,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use ergon_runtime::bus::Bus;
 use ergon_runtime::clock::{Clock, Nanos};
 use ergon_runtime::persist::Persist;
 use ergon_runtime_server::{ClickHouse, Ingester};
@@ -109,15 +110,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         ..ergon_runtime::Settings::new(&config)
     };
-    let bus = ergon_runtime::bus::Bus::connect(&settings)?;
+    // The application's client: its conductor runs in this loop, outside
+    // every timed operation.
+    let bus = Bus::connect(&settings)?;
     let persist = Persist::connect(v1::SCHEMA, &bus, settings)?;
     while !persist.is_connected() {
+        let _ = bus.poll();
         std::thread::sleep(Duration::from_millis(10));
     }
-    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
-    if arm == "installed" {
-        persist.install();
-    }
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()?))?;
     let metrics = persist.metrics();
     let counter = metrics.counter("latency_counter", &[("arm", "counter")]);
     let gauge = metrics.gauge("latency_gauge", &[]);
@@ -131,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while (arm.starts_with("trace-") || arm.starts_with("span-"))
         && tracer.is_on() == arm.ends_with("-off")
     {
+        let _ = bus.poll();
         std::thread::sleep(Duration::from_millis(10));
     }
 
@@ -151,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // string comparisons and a dynamic call are not part of operation timing.
     macro_rules! sample {
         ($reps:literal, |$i:ident| $operation:block) => {
-            measure::<$reps>(&clock, &persist, |$i| {
+            measure::<$reps>(&clock, &bus, &persist, |$i| {
                 $operation;
                 Ok(())
             })
@@ -167,9 +169,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
         "sbe" => sample!(1, |_i| {
             persist.record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
-        }),
-        "installed" | "uninstalled" => sample!(1, |_i| {
-            ergon_runtime::persist::record(v1::TEMPLATE_ID, v1::LEN, v1::encode)?;
         }),
         "event" => sample!(1, |_i| {
             tracing::info!(table = "signal", instrument = "BTCUSDT", edge = 0.25, n = 3);
@@ -194,18 +193,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
         "histogram" => sample!(100, |i| {
             black_box(&histogram).record(black_box(850 + (i as u64 & 63) * 64));
-        }),
-        "counter-event" => sample!(100, |_i| {
-            tracing::info!(counter = "latency_counter", arm = "counter");
-        }),
-        "gauge-event" => sample!(100, |i| {
-            tracing::info!(gauge = "latency_gauge", value = black_box(i as f64));
-        }),
-        "histogram-event" => sample!(100, |i| {
-            tracing::info!(
-                histogram = "latency_histogram",
-                value = black_box(850 + (i as u64 & 63) * 64)
-            );
         }),
         "clock-now" => sample!(100, |_i| {
             black_box(black_box(&clock).now());
@@ -247,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             String::new()
         },
-        persist.bus().dropped(),
+        persist.dropped(),
         at(0.5),
         at(0.99),
         at(0.999),
@@ -260,8 +247,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// One sample every 5 µs (at most 200k/s). Amplified arms do REPS operations
 /// per sample. Keep the ingester running, skip 3 s warm-up, measure for 5 s.
+/// `bus`'s conductor runs between samples, untimed.
 fn measure<const REPS: usize>(
     clock: &Clock,
+    bus: &Bus,
     persist: &Persist,
     mut operation: impl FnMut(usize) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(Vec<Duration>, u64), Box<dyn std::error::Error>> {
@@ -272,7 +261,7 @@ fn measure<const REPS: usize>(
         clock.now();
         let measuring = started.elapsed() > Duration::from_secs(3);
         if measuring && drops_at_measurement.is_none() {
-            drops_at_measurement = Some(persist.bus().dropped());
+            drops_at_measurement = Some(persist.dropped());
         }
         let t = Instant::now();
         for i in 0..REPS {
@@ -282,12 +271,12 @@ fn measure<const REPS: usize>(
         if measuring {
             samples.push(took);
         }
+        let _ = bus.poll();
         while t.elapsed() < Duration::from_micros(5) {}
     }
     let dropped = persist
-        .bus()
         .dropped()
-        .saturating_sub(drops_at_measurement.unwrap_or_else(|| persist.bus().dropped()));
+        .saturating_sub(drops_at_measurement.unwrap_or_else(|| persist.dropped()));
     Ok((samples, dropped))
 }
 

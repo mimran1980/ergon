@@ -26,6 +26,32 @@
 set -euo pipefail
 
 export PYTHONWARNINGS=ignore::SyntaxWarning
+
+# az 2.90 on Python 3.14 sometimes dies importing `requests` on two threads at
+# once (`_DeadlockError`) before it sends anything; the same call then succeeds.
+# Only that failure is retried: any other is the real answer.
+az_bin=$(type -P az) || { echo "az is not on PATH" >&2; exit 1; }
+az() {
+    local err rc attempt
+    err=$(mktemp)
+    for attempt in 1 2 3 4 5; do
+        # By path, not `command az`: macOS's bash 3.2 execs a command run
+        # through `command` in place of a background subshell, so `up`'s
+        # nodes (`node ... &`) ended at their first failing az, silently.
+        if "$az_bin" "$@" 2>"$err"; then rc=0; else rc=$?; fi
+        if ((rc == 0)); then
+            cat "$err" >&2
+            rm -f "$err"
+            return 0
+        fi
+        grep -q _DeadlockError "$err" || break
+        echo "az: import deadlock (attempt $attempt), retrying: az $1 $2" >&2
+    done
+    cat "$err" >&2
+    rm -f "$err"
+    return "$rc"
+}
+
 group=${LAB_AZ_GROUP:-ergon-lab}
 read -ra pairs <<<"${LAB_AZ_REGIONS:-japaneast:an1 southeastasia:as1 uksouth:ew2 eastus:us1}"
 size=${LAB_AZ_SIZE:-Standard_D4s_v5}

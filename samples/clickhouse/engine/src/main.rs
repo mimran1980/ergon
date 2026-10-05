@@ -1,14 +1,15 @@
-//! One region's trading engine: [`engine::agent::Engine`] on the live runtime.
+//! One region's trading engine: [`engine::agent::Engine`] on the live runtime,
+//! with the lab's registry as its directory and followed for new feeds.
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use engine::agent::Engine;
-use ergon_runtime::rt::Runtime;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut rt = Runtime::from_env(schema::TRADING_SCHEMA)?;
-    let engine = Engine::new(rt.ctx())?;
+    let (streams, watch) = lab::Watch::start(lab::streams_path())?;
+    let mut rt = lab::runtime(schema::TRADING_SCHEMA, &streams)?;
+    let engine = Engine::new(rt.ctx(), streams)?.watching(watch);
     rt.run(engine)?;
     Ok(())
 }

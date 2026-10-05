@@ -1,0 +1,48 @@
+# Every lab application (md, engine, exch-sim, backtest) is an
+# ergon-runtime client: its code runs on the runtime's one busy-spin thread,
+# so it shares no state across threads, starts none and resolves no names.
+# These are runtime/clippy.toml's entries; ergon-runtime's client_ban_lint
+# test fails when this copy lacks one.
+disallowed-types = [
+    { path = "std::sync::Arc", reason = "one owner: the runtime holds it; pass &mut or an index" },
+    { path = "std::sync::Weak", reason = "one owner: the runtime holds it; pass &mut or an index" },
+    { path = "std::sync::Mutex", reason = "one thread: own the value, or Cell/RefCell" },
+    { path = "std::sync::RwLock", reason = "one thread: own the value, or Cell/RefCell" },
+    { path = "std::sync::Condvar", reason = "one thread: nothing to wait for" },
+    { path = "std::sync::Barrier", reason = "one thread: nothing to wait for" },
+    { path = "std::sync::Once", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::OnceLock", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::LazyLock", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::mpsc::Sender", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::SyncSender", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::Receiver", reason = "one thread: no channels" },
+    { path = "std::sync::atomic::AtomicBool", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU8", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU16", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU32", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU64", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicUsize", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI8", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI16", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI32", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI64", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicIsize", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicPtr", reason = "one thread: a plain field or Cell" },
+    { path = "std::thread::JoinHandle", reason = "one thread: start none" },
+]
+disallowed-methods = [
+    { path = "std::thread::spawn", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::scope", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::Builder::spawn", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::Builder::spawn_unchecked", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::sync::mpsc::channel", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::sync_channel", reason = "one thread: no channels" },
+    # A name blocks the caller for as long as the resolver takes. Each of
+    # these resolves an address given as a name.
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "the media driver resolves names; the client never does" },
+    { path = "std::net::TcpStream::connect", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::TcpListener::bind", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::bind", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::connect", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::send_to", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+]

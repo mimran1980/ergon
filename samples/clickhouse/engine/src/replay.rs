@@ -9,7 +9,7 @@ use ergon_runtime::Error;
 use ergon_runtime::clock::Nanos;
 use ergon_runtime::frames::FrameLog;
 use ergon_runtime::rt::sim::{Sim, SimConfig};
-use ergon_runtime::streams::Streams;
+use lab::Streams;
 use schema::market::sbe_rt::EncodeError;
 use schema::market::{
     BookAction, BookDeltasDeltasEntry, BookDeltasEncoder, BookDeltasFixedFields,
@@ -20,8 +20,12 @@ use schema::market::{
 use crate::agent::Engine;
 
 /// The registry a replay runs against: two venues in two regions, and this
-/// region's engine and exchange.
+/// region's engine and exchange. Its names never resolve (`.invalid`), so a
+/// live test's subscriptions fail at once: a `.local` name takes the
+/// resolver seconds on macOS, and the media driver resolves on its only
+/// thread.
 pub const STREAMS: &str = "\
+domain: invalid
 services:
   md-alpha: { port: 41001, region: r1, streams: { md: 101, tob: 102 } }
   md-beta: { port: 41002, region: r2, streams: { md: 103, tob: 104 } }
@@ -213,10 +217,10 @@ fn deltas(venue: &[u8], ts: i64, seq: u64, old: (i64, i64), new: (i64, i64)) -> 
 pub fn run(inbound: Vec<u8>) -> Result<Vec<u8>, Error> {
     let config = SimConfig {
         region: REGION.into(),
-        ..SimConfig::new(Streams::parse(STREAMS)?)
+        ..SimConfig::new()
     };
     let mut sim = Sim::new(config, vec![inbound])?;
-    let mut engine = Engine::new(sim.ctx())?;
+    let mut engine = Engine::new(sim.ctx(), Streams::parse(STREAMS)?)?;
     sim.run(&mut engine)?;
     Ok(sim.ctx().captured().to_bytes())
 }

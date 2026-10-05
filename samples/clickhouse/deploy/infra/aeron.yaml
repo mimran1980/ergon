@@ -67,7 +67,10 @@ spec:
             # the whole machine, not this container. C1 only keeps the code
             # cache and compiler threads small; the archive's work is file
             # I/O, not hot Java. 16 MiB segments, so the purge behind the
-            # ingester shows within minutes.
+            # ingester shows within minutes. Every app records its own
+            # persist session (md's bridge one more), so a node holds about a
+            # dozen recordings, which its ingester and the engines' catch-up
+            # replay at once: more than Aeron's default 20 concurrent replays.
             - name: JAVA_TOOL_OPTIONS
               value: >-
                 -Xms16m -Xmx64m -XX:MaxDirectMemorySize=48m -XX:+UseSerialGC
@@ -78,6 +81,8 @@ spec:
                 -Daeron.archive.segment.file.length=16m
                 -Daeron.archive.control.channel=aeron:udp?endpoint=0.0.0.0:8010
                 -Daeron.archive.replication.channel=aeron:udp?endpoint=localhost:0
+                -Daeron.archive.max.concurrent.recordings=64
+                -Daeron.archive.max.concurrent.replays=64
           # Those flags alone reserve about 176 MiB before thread stacks and
           # native memory: at 192 Mi, several replays of a backlog at once
           # had the archive OOM-killed, and the ingester lost it mid-replay.

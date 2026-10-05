@@ -684,7 +684,6 @@ dependencies = [
 name = "ergon-runtime-server"
 version = "0.1.30"
 dependencies = [
- "env_logger",
  "ergo-sbe",
  "ergon-runtime",
  "hdrhistogram",
@@ -692,9 +691,7 @@ dependencies = [
  "log",
  "mimalloc",
  "rusteron-archive",
- "schema",
  "serde",
- "signal-hook",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1667,9 +1664,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-archive"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9596dd1a2a7ee3528f1dd390a16d9ee75613ef3db4ee36d9e02ccd64557b2f8c"
+checksum = "3aa11f2a468714c425f6d302b7c402e9c2a94628606d01b8b8dcacb7e1fdd2f2"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1684,9 +1681,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-client"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "794ea2bddec98fef2dcb539d87daca49cf764924a2315ceddfeb67529a46c964"
+checksum = "b2512747e7a381d368362513952f5d266da1e15d19e9312cfacdafaeb08b6906"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1700,9 +1697,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "670a2b1d0646ce80d7f87026cd69343d14f79276a339e433553b5e8b11a0abbd"
+checksum = "71b18aa744e9c99d57b62a9be1267c77ac569c3502a90ccd6c1f8a9230b72a7e"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -1714,9 +1711,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ebeebf6f4dd5e65d537b1fdc336361db32488232ad951443efa4a16f875f98a"
+checksum = "05de9b6c21ccef3637247d94eb87df8aa7bd8470c9648a86cfae2e177cc8fe59"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1786,14 +1783,6 @@ version = "0.1.0"
 [[package]]
 name = "sbe_tool_optional_enum_nullify"
 version = "0.1.0"
-
-[[package]]
-name = "schema"
-version = "0.1.0"
-dependencies = [
- "ergo-sbe",
- "rust_decimal",
-]
 
 [[package]]
 name = "scopeguard"

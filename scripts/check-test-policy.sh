@@ -91,8 +91,11 @@ while IFS= read -r file; do
             workflow_files+=("$file")
             ;;
     esac
+    # A bench with its own `main` (a gate that exits non-zero) has no marker:
+    # everything under `benches/` is owned all the same.
     if [[ "$file" == *.rs ]] &&
-        (cd "$root" && rg -q '#\[(tokio::)?test\]|proptest!|criterion_(group|main)!|fuzz_target!|```rust' "$file"); then
+        { [[ "$file" == benches/* || "$file" == */benches/* ]] ||
+            (cd "$root" && rg -q '#\[(tokio::)?test\]|proptest!|criterion_(group|main)!|fuzz_target!|```rust' "$file"); }; then
         printf '%s\n' "$file" >>"$test_sources"
     fi
 done <"$tracked"

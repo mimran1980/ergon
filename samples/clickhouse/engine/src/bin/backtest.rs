@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use ergon_runtime::clock::Nanos;
 use ergon_runtime::rt::ArchiveConfig;
 use ergon_runtime::rt::sim::SimConfig;
-use ergon_runtime::streams::Streams;
+use lab::Streams;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -49,17 +49,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let streams = match options.get("--streams") {
         Some(path) => Streams::load(path)?,
         None if source == "file" => Streams::parse(engine::replay::STREAMS)?,
-        None => Streams::load(
-            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
-        )?,
+        None => Streams::load(lab::streams_path())?,
     };
-    let mut config = SimConfig::new(streams);
+    let mut config = SimConfig::new();
+    // An archive replay finds a feed's recordings by its stream id.
+    config.directory = Box::new(streams.clone());
     config.region = options.get("--region").map_or_else(
         || {
             if source == "file" {
                 engine::replay::REGION.into()
             } else {
-                std::env::var("REGION").unwrap_or_else(|_| "an1".into())
+                std::env::var("REGION").unwrap_or_else(|_| ergon_runtime::UNKNOWN_REGION.into())
             }
         },
         |region| (*region).into(),
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .transpose()?;
     for (name, delay) in routes {
         let nanos = if delay == "measured" {
-            measured(&config, &name)?
+            measured(&streams, &config, &name)?
         } else {
             delay.parse::<i64>()?
         };
@@ -116,7 +116,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     config
         .loopback
         .insert(format!("exch-sim-{}/exec", config.region), latency);
-    let mut bus = None;
     if source == "archive" || options.contains_key("--record") {
         let mut settings = ergon_runtime::Settings::from_env();
         if settings.app.is_empty() {
@@ -126,17 +125,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             settings.run = (*run).into();
         }
         settings.sim_start = config.from;
-        settings.exclusive = true;
-        settings.aeron_invoker = true;
-        let connected = ergon_runtime::bus::Bus::connect(&settings)?;
+        // The simulation owns it and runs its conductor.
+        let bus = ergon_runtime::bus::Bus::connect(&settings)?;
         if options.contains_key("--record") {
             config.persist = Some(ergon_runtime::persist::Persist::connect(
                 schema::TRADING_SCHEMA,
-                &connected,
+                &bus,
                 settings,
             )?);
         }
-        bus = Some(connected);
+        config.bus = Some(bus);
     }
     let logs = match source {
         "file" => file_logs,
@@ -145,16 +143,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Vec::new()
         }
         "archive" => {
-            config.archive = Some((
-                bus.ok_or("missing Archive client")?,
-                ArchiveConfig {
-                    control: std::env::var("ARCHIVE_CONTROL")
-                        .unwrap_or_else(|_| "aeron:ipc".into()),
-                    response: std::env::var("ARCHIVE_RESPONSE")
-                        .unwrap_or_else(|_| "aeron:ipc".into()),
-                    replay_stream: 1001,
-                },
-            ));
+            config.archive = Some(ArchiveConfig {
+                control: std::env::var("ARCHIVE_CONTROL").unwrap_or_else(|_| "aeron:ipc".into()),
+                response: std::env::var("ARCHIVE_RESPONSE").unwrap_or_else(|_| "aeron:ipc".into()),
+                replay_stream: 1001,
+            });
             Vec::new()
         }
         "clickhouse" => {
@@ -165,11 +158,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let output = if source == "journal" {
         let mut sim = ergon_runtime::rt::sim::Sim::new(config, logs)?;
-        let mut engine = engine::agent::Engine::new(sim.ctx())?;
+        let mut engine = engine::agent::Engine::new(sim.ctx(), streams)?;
         sim.run(&mut engine)?;
         sim.ctx().captured().to_bytes()
     } else {
-        engine::backtest::execute(config, logs)?
+        engine::backtest::execute(config, streams, logs)?
     };
     if let Some(path) = options.get("--output") {
         std::fs::write(path, &output)?;
@@ -193,31 +186,49 @@ fn clickhouse(_config: &mut SimConfig) -> Result<(), Box<dyn std::error::Error>>
     Err("ClickHouse source needs --features clickhouse".into())
 }
 
+/// The ingester's database (`CLICKHOUSE_DATABASE`, its default `md`), where
+/// `frame` and `input` land, as the ingester's user (`lab` by default).
 #[cfg(feature = "clickhouse")]
 fn client() -> ergon_runtime::clickhouse::ClickHouse {
+    client_in(&std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "md".into()))
+}
+
+#[cfg(feature = "clickhouse")]
+fn client_in(database: &str) -> ergon_runtime::clickhouse::ClickHouse {
     ergon_runtime::clickhouse::ClickHouse::new(
         &std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".into()),
-        &std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()),
-        &std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
-        &std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "ergon".into()),
+        &std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "lab".into()),
+        &std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_else(|_| "lab".into()),
+        database,
     )
 }
 
 #[cfg(feature = "clickhouse")]
-fn measured(config: &SimConfig, name: &str) -> Result<i64, Box<dyn std::error::Error>> {
+fn measured(
+    streams: &Streams,
+    config: &SimConfig,
+    name: &str,
+) -> Result<i64, Box<dyn std::error::Error>> {
     let (service, _) = name.split_once('/').ok_or("route needs SERVICE/KIND")?;
-    let region = &config
-        .streams
+    let region = &streams
         .services
         .get(service)
         .ok_or("unknown route service")?
         .region;
     let venue = service.trim_start_matches("md-").to_uppercase();
-    Ok(client().route_delay(&venue, region, &config.region)?.0)
+    // Metrics have a database of their own (`tables.yaml`: `metrics`).
+    let metrics = client_in(
+        &std::env::var("CLICKHOUSE_METRICS_DATABASE").unwrap_or_else(|_| "metrics".into()),
+    );
+    Ok(lab::route_delay(&metrics, &venue, region, &config.region)?.0)
 }
 
 #[cfg(not(feature = "clickhouse"))]
-fn measured(_config: &SimConfig, _name: &str) -> Result<i64, Box<dyn std::error::Error>> {
+fn measured(
+    _streams: &Streams,
+    _config: &SimConfig,
+    _name: &str,
+) -> Result<i64, Box<dyn std::error::Error>> {
     Err("measured route needs --features clickhouse".into())
 }
 

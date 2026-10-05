@@ -12,7 +12,8 @@ RUN wget -q -O /aeron-all.jar \
 # node. Verify checks each recording's last segment, so it is quick, and
 # asks before it truncates a fragment it cannot verify: `yes` truncates it,
 # keeping the rest of the recording. It exits non-zero when it found one:
-# the archive starts either way.
-ENTRYPOINT ["sh", "-c", "yes y | java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp /aeron-all.jar \
+# the archive starts either way. On a node's first start there is no
+# archive yet, and nothing to verify.
+ENTRYPOINT ["sh", "-c", "[ ! -d /archive/recordings ] || yes y | java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp /aeron-all.jar \
              io.aeron.archive.ArchiveTool /archive/recordings verify; \
              exec java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp /aeron-all.jar io.aeron.archive.Archive"]

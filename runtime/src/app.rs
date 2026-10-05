@@ -1,25 +1,25 @@
 //! What a busy-loop application starts with: logging, the bus, the persist
-//! handle, the feed registry, its idle strategy, and SIGTERM.
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+//! handle, its idle strategy, and SIGTERM.
+//!
+//! Each is the loop's to own: [`App`]'s fields go into the runtime's
+//! [`Config`](crate::rt::Config), which takes its region from the bus, drives
+//! the bus's conductor, reads the SIGTERM pipe, and at shutdown closes what
+//! the application publishes.
 
 use crate::Settings;
 use crate::bus::Bus;
 use crate::idle::Idle;
-use crate::metrics::Metrics;
 use crate::persist::Persist;
-use crate::streams::Streams;
+use crate::rt::{Stop, sigterm};
 
-/// Why [`App::start`] could not bring a process up.
+/// Why [`App::start_with`] could not bring a process up.
 #[derive(Debug)]
 pub enum Error {
-    /// The node check, the bus or persist connection, or the stream
-    /// registry failed.
+    /// The bus or persist connection failed.
     Runtime(crate::Error),
     /// `SIGTERM` could not be registered.
     Signal(std::io::Error),
-    /// `IDLE` is not `spin`, `noop`, `yield`, or `sleep`.
+    /// `IDLE` or `TIMER_SLACK` does not parse ([`Idle::parse`]).
     Idle(String),
 }
 
@@ -49,85 +49,41 @@ impl From<crate::Error> for Error {
     }
 }
 
-/// A running application's handles.
+/// A starting application's handles.
 pub struct App {
     /// The Aeron client and this application's identity on it.
     pub bus: Bus,
     /// Rows, metrics, and traces recorded for the ingester.
     pub persist: Persist,
-    /// The feed registry this process loaded.
-    pub streams: Streams,
-    /// Where `streams` came from, to follow its changes.
-    pub streams_path: String,
-    /// `REGION`: which `md-*` feeds, and whose engine and exchange.
-    pub region: String,
     /// What the loop does when an iteration found no work.
     pub idle: Idle,
-    /// Set on SIGTERM: close the feeds and exit.
-    pub stop: Arc<AtomicBool>,
+    /// SIGTERM's pipe: the loop that reads it stops.
+    pub stop: Stop,
 }
 
 impl App {
-    /// Logging, the bus and the persist handle for `schema`, the feed
-    /// registry, the idle strategy, and `SIGTERM`.
+    /// Logging, the bus and the persist handle for `schema`, the idle
+    /// strategy (`IDLE`, else `idle`), and `SIGTERM`.
+    ///
+    /// Persist records on an exclusive publication of its own, and is
+    /// neither `Send` nor `Sync`: the loop runs on the calling thread.
     ///
     /// # Errors
     ///
-    /// The node check, the bus or persist connection, the stream file,
-    /// `IDLE`, or registering `SIGTERM` failed.
-    pub fn start(schema: &str) -> Result<Self, Error> {
-        Self::start_with(schema, Idle::Yield, false)
-    }
-
-    /// [`App::start`] with `idle` as the `IDLE` default, and the Aeron
-    /// conductor in the application's loop unless `AERON_INVOKER` says
-    /// otherwise.
-    ///
-    /// # Errors
-    ///
-    /// As [`App::start`].
-    pub fn start_with(schema: &str, idle: Idle, invoker: bool) -> Result<Self, Error> {
+    /// The bus or persist connection, `IDLE`, or registering `SIGTERM`
+    /// failed.
+    pub fn start_with(schema: &str, idle: Idle) -> Result<Self, Error> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-        crate::streams::check_node_network()?;
-        let mut settings = Settings::from_env();
-        if std::env::var_os("AERON_INVOKER").is_none() {
-            settings.aeron_invoker = invoker;
-        }
+        let settings = Settings::from_env();
         let bus = Bus::connect(&settings)?;
         let persist = Persist::connect(schema, &bus, settings)?;
-        let stop = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))
-            .map_err(Error::Signal)?;
-        let streams_path =
-            std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into());
         Ok(Self {
             bus,
             persist,
-            streams: Streams::load(&streams_path)?,
-            streams_path,
-            region: std::env::var("REGION").unwrap_or_else(|_| "an1".into()),
-            // Lab default: yield. For the best latency, spin (or noop) on an
-            // isolated core.
+            // The caller's default (spin for `Invoker::from_env`) unless
+            // `IDLE` names another.
             idle: Idle::from_env("IDLE", idle).map_err(Error::Idle)?,
-            stop,
+            stop: sigterm().map_err(Error::Signal)?,
         })
-    }
-
-    /// This application's metrics; see [`Persist::metrics`].
-    #[must_use]
-    pub fn metrics(&self) -> Metrics {
-        self.persist.metrics()
-    }
-
-    /// SIGTERM arrived: the feeds are closed, so subscribers turn to this
-    /// service's next pod at once.
-    #[must_use]
-    pub fn stopping(&self) -> bool {
-        if self.stop.load(Ordering::Relaxed) {
-            log::info!("SIGTERM: closing the feeds");
-            self.bus.shutdown();
-            return true;
-        }
-        false
     }
 }

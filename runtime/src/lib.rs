@@ -1,15 +1,18 @@
 //! What a lab application runs on, one module per concern:
 //!
 //! * [`app`]: bring a process up: logging, the [`Bus`](bus::Bus), the
-//!   [`Persist`](persist::Persist) handle, the feed registry, the idle
-//!   strategy, and SIGTERM.
-//! * [`bus`]: the Aeron client, the application's identity on it, its drop
-//!   counters, and shutdown.
+//!   [`Persist`](persist::Persist) handle, the region, the idle strategy,
+//!   and SIGTERM.
+//! * [`bus`]: the Aeron client, driven from the loop, the application's
+//!   identity on it, and its feeds' drop counters.
 //! * [`publication`] and [`subscription`]: feeds published and taken,
 //!   including a persistent subscription that catches up from the archive.
-//! * [`streams`]: the feed registry (`streams.yaml`).
-//! * [`persist`]: rows recorded for the ingester, which writes `ClickHouse`;
-//!   [`event`] for rows from `tracing` events.
+//! * [`directory`]: how an application's feed names map to Aeron; the
+//!   application supplies the mapping.
+//! * [`persist`]: rows recorded for the ingester, which writes `ClickHouse`,
+//!   from the loop; [`event`] for rows of tables with no SBE message.
+//! * [`bridge`]: `tracing` events and spans into the same stream, from any
+//!   thread, on a publication of their own.
 //! * [`mod@metrics`], [`trace`], [`clock`], [`timer`] and [`idle`]: the hot-path tools.
 //! * [`source`]: who recorded a row.
 //! * [`rt`]: the runtime that owns the loop: an [`rt::Agent`] on one thread,
@@ -18,25 +21,27 @@
 #[cfg(feature = "mimalloc")]
 pub mod alloc_stats;
 pub mod app;
+pub mod bridge;
 pub mod bus;
 #[cfg(feature = "clickhouse")]
 pub mod clickhouse;
 #[cfg(feature = "clickhouse")]
 pub mod clickhouse_source;
 pub mod clock;
+pub mod directory;
 pub mod event;
 pub mod frames;
 pub mod idle;
 pub mod journal;
 pub mod metrics;
+#[cfg(test)]
+#[macro_use]
+mod not_send;
 mod os;
-mod owned;
 pub mod persist;
 pub mod publication;
 pub mod rt;
 pub mod source;
-mod spans;
-pub mod streams;
 pub mod subscription;
 pub mod timer;
 pub mod trace;
@@ -52,12 +57,30 @@ use std::time::Duration;
 /// reproduce.
 pub type DetMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
 
+// The client's handles stay on the loop's thread: this fails to compile when
+// one of them becomes `Send`.
+#[cfg(test)]
+assert_not_send!(
+    persist::Persist,
+    trace::Tracer,
+    metrics::Metrics,
+    metrics::Counter,
+    metrics::Gauge,
+    metrics::Histogram,
+    bus::Bus,
+    rt::Ctx,
+    rt::Invoker,
+    rt::Runtime,
+    publication::Publication,
+);
+
 /// Everything that can go wrong outside the recording hot path.
 #[derive(Debug)]
 pub enum Error {
     /// The SBE schema cannot be read.
     Schema(String),
-    /// `tables.yaml` is missing or invalid.
+    /// A configuration is missing or invalid: `tables.yaml`, a timer, a
+    /// simulation's inputs, or the application's directory.
     Config(String),
     /// The media driver is unreachable or refused a request.
     Aeron(String),
@@ -69,7 +92,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Schema(m) => write!(f, "schema: {m}"),
-            Self::Config(m) => write!(f, "tables.yaml: {m}"),
+            Self::Config(m) => write!(f, "config: {m}"),
             Self::Aeron(m) => write!(f, "aeron: {m}"),
             Self::Encode(err) => write!(f, "encode: {err}"),
         }
@@ -91,11 +114,15 @@ impl From<event::EncodeError> for Error {
     }
 }
 
+/// The region of an application whose deployment names none.
+pub const UNKNOWN_REGION: &str = "unknown";
+
 /// Where to publish and what to read.
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// `tables.yaml`, re-read every second by
-    /// [`Persist::poll`](persist::Persist::poll).
+    /// `tables.yaml`, checked every second by
+    /// [`Persist::poll`](persist::Persist::poll), and read again when it
+    /// changed.
     pub config_path: PathBuf,
     /// This application's name: its entry under a table's `apps` switches
     /// that table for it alone. With [`Settings::host`] and [`Settings::pod`],
@@ -113,18 +140,13 @@ pub struct Settings {
     /// ones it subscribes to are taken from it. `HOST_IP` (from the downward
     /// API in Kubernetes).
     pub host_ip: String,
+    /// Where this application runs, as the deployment names it: `REGION`,
+    /// [`UNKNOWN_REGION`] when unset. Agents read it as [`rt::Ctx::region`].
+    pub region: String,
     /// The media driver's directory; `None` uses `AERON_DIR` or Aeron's default.
     pub aeron_dir: Option<String>,
-    /// Run the Aeron client conductor in the application's loop
-    /// ([`bus::Bus::do_work`]) rather than on its own thread, which would
-    /// contend for a pinned core. `AERON_INVOKER`; the runtime's default.
-    pub aeron_invoker: bool,
-    /// Record on an exclusive publication (no CAS on the term tail) owned by
-    /// the thread that connects: an application whose records come from one
-    /// thread. Records from other threads (a library's `tracing` spans) are
-    /// handed to it and published by its [`Persist::poll`](persist::Persist::poll).
-    pub exclusive: bool,
-    /// Defaults to [`persist::CHANNEL`].
+    /// Defaults to [`persist::CHANNEL`], on which persist records on an
+    /// exclusive publication of its own.
     pub channel: String,
     /// Defaults to [`persist::STREAM_ID`].
     pub stream_id: i32,
@@ -149,9 +171,8 @@ impl Settings {
             host: String::new(),
             pod: String::new(),
             host_ip: "127.0.0.1".into(),
+            region: UNKNOWN_REGION.into(),
             aeron_dir: None,
-            aeron_invoker: false,
-            exclusive: false,
             channel: persist::CHANNEL.to_string(),
             stream_id: persist::STREAM_ID,
             subscriber_timeout: Duration::from_secs(10),
@@ -181,9 +202,12 @@ impl Settings {
                 .or_else(|_| std::env::var("HOSTNAME"))
                 .unwrap_or_default(),
             host_ip: std::env::var("HOST_IP").unwrap_or_else(|_| "127.0.0.1".into()),
+            region: std::env::var("REGION")
+                .ok()
+                .filter(|r| !r.is_empty())
+                .unwrap_or_else(|| UNKNOWN_REGION.into()),
             metrics_interval: duration("PERSIST_METRICS_INTERVAL", Duration::from_secs(5)),
             subscriber_timeout: duration("PERSIST_SUBSCRIBER_TIMEOUT", Duration::from_secs(10)),
-            aeron_invoker: std::env::var("AERON_INVOKER").is_ok_and(|v| v == "1" || v == "true"),
             ..Self::new(
                 std::env::var("PERSIST_CONFIG").unwrap_or_else(|_| "config/tables.yaml".into()),
             )

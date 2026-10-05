@@ -3,8 +3,9 @@
 # it with no restart.
 #
 # A table named after a message in schema/ (market.xml, trading.xml) takes
-# its columns from that message. Any other table is recorded from `tracing` events that name
-# it (`tracing::info!(table = "spread", ...)`); its columns are their fields.
+# its columns from that message. Any other table is an event table: its rows come from
+# `record_row`/`record_value`, or from `tracing` events that name it
+# (`tracing::info!(table = "signal", ...)`), and its columns are their fields.
 #
 # kind: static   Created if missing, then never altered. If the table and the
 #                data disagree, the ingester logs an ERROR with the ALTER to
@@ -59,9 +60,14 @@ tables:
     kind: static
     database: tracing
     traces:
-      book_update: { sample: 1000, slower_than: 100ms }
+      # Both start at the venue's own timestamp, so every total holds the
+      # venue's lag, and an engine's a cross-region feed: on the lab, 65 ms
+      # to 1 s at p50 and up to 4 s at p99. Under that, every trace is
+      # "slow" (50 ms published 165M rows in hours). At 5 s a slow trace is
+      # a stall; the engine's own stages are in `trace_ns{trace, stage}`.
+      book_update: { sample: 1000, slower_than: 5s }
       # Every tick that led to an order is kept whatever these say.
-      tick_to_trade: { sample: 10000, slower_than: 50ms }
+      tick_to_trade: { sample: 10000, slower_than: 5s }
       order_ack: { sample: 1 }
   metrics:           { kind: static, database: metrics }
   metrics_histogram: { kind: static, database: metrics }

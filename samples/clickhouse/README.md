@@ -18,8 +18,10 @@ node (one of four, three regions)
 
 | Crate | Role |
 |---|---|
-| `ergon-runtime` | What the application links (`../../runtime`), one module per concern: `app` (start a process), `bus` (the Aeron client, its identity, drop counters, shutdown), `publication` and `subscription` (UDP feeds, with a persistent one that catches up from the archive), `persist` (`record()` and a `tracing` layer for rows, counters, gauges, and histograms), `metrics`, `trace`, `clock`, `idle`, `streams`. |
-| `ergon-runtime-server` | The ingester (`../../runtime-server`, binary `ingester`). Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
+| `ergon-runtime` | What the application links (`../../runtime`), one module per concern: `app` (start a process), `bus` (the Aeron client, run from the application's loop, its identity, the feeds' drop counters), `publication` and `subscription` (UDP feeds, with a persistent one that catches up from the archive), `persist` (`record()`, `record_row` and `record_value` for rows, and the `tracing` bridge for events and spans from any thread), `metrics`, `trace`, `clock`, `idle`, `directory` (feed names to addresses, which the application supplies), `rt` (agents on one loop: live, replay, backtest). |
+| `ergon-runtime-server` | The ingester library (`../../runtime-server`). Replays the archive into ClickHouse, checkpoints, purges. It routes frames from schema XML, not from generated codecs. |
+| `lab` | The lab's feed registry (`config/streams.yaml`) as the runtime's directory, its node checks, and the backtest's measured route delays. |
+| `ingester` | The ingester binary: every archived feed in the registry, followed for new ones, through `ergon-runtime-server`. |
 | `schema` | `market.xml`, `trading.xml`, the codecs generated from them, and `AnySchemaMessage` for a buffer that may be either. |
 | `md` | One exchange's public market data, via NautilusTrader. No API keys. |
 | `engine` | One region's engine, and `exch-sim`, its dummy exchange. |
@@ -47,12 +49,14 @@ just mac start
 just mac destroy   # delete the cluster and the data
 ```
 
-Needs Docker, kind, kubectl, just, and jq. Ports listen on every interface.
+Needs Docker, kind, kubectl, just, and jq, and `CLICKHOUSE_PASSWORD` in
+`.env` (gitignored; `lab` will do): `just deploy` puts it in the Secret
+`clickhouse`, which the pods read. Ports listen on every interface.
 Grafana is anonymous admin and Jupyter has no token, so use a network you trust.
 
 | | |
 |---|---|
-| ClickHouse | <http://localhost:8123/play> user `lab`, password `lab` |
+| ClickHouse | <http://localhost:8123/play> user `lab`, password `CLICKHOUSE_PASSWORD` from `.env` |
 | Grafana | <http://localhost:3000> |
 | Notebook | <http://localhost:8888/lab/tree/verify.ipynb> |
 | What is recorded | `config/tables.yaml`. `just config` publishes it and pods see it within seconds. `just watch-config` publishes on every save. |
@@ -91,8 +95,8 @@ container mounts its checkout), so `just azure on <recipe>` runs them there.
 The UIs are on the NodePorts of any node: `:30123/play`, `:30300`, `:30888`.
 
 `.env` (gitignored) holds `LAB_CONTEXT=lab-vms`,
-`KUBECONFIG=~/.kube/lab-vms.yaml`, `LAB_AZ_REGIONS` and the `LAB_VM_*` lines
-`up` prints. **Run `just azure down` when a session ends**: deallocated VMs
+`KUBECONFIG=~/.kube/lab-vms.yaml`, `LAB_AZ_REGIONS`, `CLICKHOUSE_PASSWORD` and
+the `LAB_VM_*` lines `up` prints. **Run `just azure down` when a session ends**: deallocated VMs
 still pay for disks and addresses, and only a deleted group costs nothing.
 `down` also removes the `NetworkWatcherRG` Azure creates on its own.
 
@@ -114,6 +118,14 @@ about $0.19–0.26 an hour, four about $1. Cross-region transfer is
 $0.02–0.08/GB, and engines subscribe to every feed, so market data crosses
 regions continuously. Round trips from Tokyo measured 54 ms (Hong Kong),
 159 ms (Virginia) and 254 ms (Stockholm).
+
+One ClickHouse, wherever Kubernetes places it, takes every region's inserts,
+so a far region's rows land seconds later. With it in Stockholm (2026-10-03),
+the ingest lag (`inserted_at - ts_init`) of trades was p99 about 2 s for
+Stockholm's feeds, 5.5 s for Hong Kong's and 9 s for Tokyo's; inserting each
+tick's tables concurrently did not change that. The verification notebook
+asserts p99 under 5 s, which this layout does not meet; a ClickHouse per
+region would.
 
 Changing the running lab, from `samples/clickhouse` on the Mac:
 
@@ -180,6 +192,14 @@ without data. On SIGTERM the publisher closes its publications immediately;
 the driver client timeout is 10 seconds, so a killed publisher does not keep
 the old session alive on heartbeats.
 
+Every application runs its Aeron client's conductor in its own loop, never
+on a thread of the client's, so a client nothing drives for those 10 seconds
+is closed: `md` builds its runtime in the Nautilus actor's `on_start`, once
+Nautilus has connected its venue clients. SIGTERM's handler writes a byte to
+a pipe that the runtime reads every 10 ms; the runtime then stops the loop
+and closes what the application publishes, its feeds and persist's stream,
+at once.
+
 `md` streams are reliable (trades, book changes, snapshots, bars, mark and
 index prices, funding). `tob` (quotes) is best effort: no NAKs, and a slow
 subscriber is dropped. Every publication uses `fc=max` and `ssc=true`, so a
@@ -197,29 +217,47 @@ catches the live stream. If it falls behind, it drops back to the recording.
 A restart or a move is a new recording; `PersistentSubscription` finds it by name and
 replays from the first message. Finding it (the archive connect, the
 recording list) is a state machine that each `poll` advances one step, so the
-engine loop never waits on another region and nothing runs on another
-thread. The engine drops that venue's books and rebuilds them from the new
-session's snapshot. `tob` is a plain best-effort subscription.
+engine loop never waits on another region. The media driver resolves the
+publisher's name off its own conductor, and resolves it again when the old
+address goes quiet after a move. The engine drops that venue's books and
+rebuilds them from the new session's snapshot.
+`tob` is a plain best-effort subscription.
 
 `exch-sim` starts at the beginning of its engine's `orders` recording and
 ignores orders older than 10 seconds. The engine gives up after 30 seconds
 and applies each fill once.
 
-`IDLE` is `spin`, `noop`, `yield`, or `sleep`. The lab sleeps. `just spin` is
-the isolated-core setting.
+`IDLE` is one of:
+
+- `spin`, `noop` or `yield`;
+- `sleep[:<period>]`, 1 ms by default;
+- `backoff[:<spins>,<yields>,<min park>,<max park>]`, Agrona's
+  `BackoffIdleStrategy` with its defaults `10,5,1us,1ms`.
+
+The lab backs off: no parking while messages flow, and an idle loop parks
+for at most 1 ms. `TIMER_SLACK` (Linux) lowers the 50 µs the kernel may add
+to each park. `just spin` is the isolated-core setting.
 
 `tables.yaml` and `streams.yaml` are one ConfigMap, under a fixed name so a
-change restarts nothing. Applications re-read them every second from their
-own loop (`Persist::poll`, `Watch::changed`). The kubelet
+change restarts nothing. Applications re-read them every second:
+`tables.yaml` from their own loop (`Persist::poll`), `streams.yaml` from a
+once-a-second timer (`lab::Watch`): one `stat`, and a read only when the file
+changed. The kubelet
 updates the mounted files at its next pod sync, about a minute later.
 `just config` cuts that to seconds by annotating the pods. A GitOps tool such
-as Flux can apply the same kustomization; it waits for the kubelet's sync.
+as Flux can apply the same kustomization; it waits for the kubelet's sync,
+and must supply the Secret `clickhouse` (key `password`) itself, which `just
+deploy` makes from `CLICKHOUSE_PASSWORD` in `.env`.
 A new service is recorded and subscribed with no restart. Changing a running
-service's port or stream id needs a restart of that service.
+service's port or stream id needs a restart of that service and of every
+subscriber of it (engines in every region; `exch-sim` for its engine's
+orders): a feed already open keeps its address. The ingesters follow the
+change on their own.
 
 ## Engine
 
-One thread, one loop. It keeps each instrument's L2 book as `Decimal9`
+One loop on one thread, which handles every message and timer and drives
+the Aeron client's conductor. It keeps each instrument's L2 book as `Decimal9`
 mantissas, and per asset an aggregated book (linear `size × multiplier`,
 inverse `size × multiplier / price`), time-decayed EMAs of the mid, and a
 strategy: the mid crossing its 5 minute EMA, at most one order per 30 seconds,
@@ -251,10 +289,16 @@ host setting automatically.
 | `clickhouse` | 550–700 MiB | 1.25 GiB |
 | `aeron` driver | 51–57 MiB | 256 MiB |
 | `aeron` archive | 62–72 MiB | 192 MiB |
-| `md-<exchange>` | 20–80 MiB | 256 MiB |
+| `md-<exchange>` | 180–205 MiB | 256 MiB |
 | `grafana` | ~130 MiB | 192 MiB |
 | `jupyter` | ~75 MiB | 512 MiB |
-| `ingester`, `engine`, `exch-sim` | 1–4 MiB | 256, 64, 64 MiB |
+| `ingester`, `engine`, `exch-sim` | engine heap ~17 MiB | 256, 128, 128 MiB |
+
+A process is charged the pages of its own publications' log buffers as it
+first writes them (the driver's directory is tmpfs): its persist stream's
+48 MiB (three 16 MiB terms) and 3 MiB per feed, on top of its heap. An
+engine reaches about 70 MiB once it has written its whole persist log; at
+64 MiB it was killed for memory within minutes of a busy start.
 
 `deploy/infra/clickhouse.xml` gives each mark, index-mark, primary-index and
 query-condition cache 16 MiB, and bounds the optional query-result cache to
@@ -308,27 +352,36 @@ persist.record(TradeEncoder::TEMPLATE_ID, len, |buf| {
 })?;
 ```
 
-Keep an instance with `let persist = Persist::connect(schema, &bus, settings)?`, where `bus = Bus::connect(&settings)?` is the application's Aeron client (feeds, `shutdown` and `drops` are on the bus), and
-call `persist.record(...)`. Optional `persist.install()` enables the free functions.
-With nothing installed, the free `record` does nothing. `connect` waits up to 10 seconds for a
+Keep an instance with `let persist = Persist::connect(schema, &bus, settings)?`, where `bus = Bus::connect(&settings)?` is the application's Aeron client (feeds are opened on the bus, which the runtime owns and whose conductor its loop runs; `persist.drops()` counts its own records' drops plus the feeds', which `bus.drops()` counts), and
+call `persist.record(...)` from the loop; a runtime agent has it as `ctx.persist()`.
+There is no process-wide handle. `connect` waits up to 10 seconds for a
 subscriber (`subscriber_timeout`).
 
-**Tracing event.** For a row with no schema. Slower than `record`, so the
-sample does it once a second, not on every quote. The quote path sets a gauge
-with the handle below, not with this macro.
+**A row with no schema.** `record_row(table, fields)` records fields known
+only at run time. Slower than `record`, so the sample records `spread` once a
+second with the book, not on every quote. The quote path sets a gauge with the
+handle below.
 
 ```rust
-tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
 gauge.set(bps);
-tracing::info!(table = "spread", instrument = %id, bps);
+persist.record_row("spread", [("instrument", Value::Str(&id)), ("bps", Value::F64(bps))]);
 ```
 
 Columns come from the fields. Integers are `Int64`/`UInt64`, floats `Float64`,
 bools `Bool`, strings `String`, all `Nullable`. A missing field is NULL.
-Every row has `ts DateTime64(9)`. Give a log layer its own filter. A global
-level filter hides these events from persist too.
+Every row has `ts DateTime64(9)`.
 
-`record_row(table, fields)` is the same table for fields known only at runtime.
+**Tracing event.** The same row from any thread, through the `tracing`
+bridge. `Persist::layer` makes it once, on the loop thread at start-up, on a
+concurrent publication of its own. It switches nothing: the ingester applies
+`enabled`, `apps` and `until` to its rows per app, at each row's time. Give a
+log layer its own filter. A global level filter hides these events from the
+bridge too.
+
+```rust
+tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()?))?;
+tracing::info!(table = "signal", instrument = %id, edge = 0.25);
+```
 
 **Any Rust value.** `record_value(table, &value)` records a `Serialize` value.
 The first value of a type fixes the shape. A later value that does not fit
@@ -350,11 +403,13 @@ A list nested in a struct is named with underscores (`stats.bids` becomes
 whose arrays must be the same length. A fixed-size array serializes as a tuple.
 Raw bytes are not recorded. Deeper than 8 lists or 32 structs is refused.
 
-A new event shape is published before its first row. Every 5 seconds a repeat
-of the source message, each shape, and each trace definition is queued, and
-each following `record` sends one of them. The ingester saves shapes next to
-its checkpoint. A row with no shape waits 30 seconds, and nothing is
-checkpointed past it.
+A new event shape is published before its first row. Every 5 seconds
+`Persist::poll` sends the source message, each shape, and each trace
+definition again, up to 8 of them a call; one too long for a claim is passed
+over. The bridge sends each thread's again before that thread's next row or
+span after 5 seconds. The ingester
+saves shapes next to its checkpoint. A row with no shape waits 30 seconds,
+and nothing is checkpointed past it.
 
 Put another application's schema in `schema/`, list its tables, and run
 `just md`. Keep one version of each schema. The newest decodes older records.
@@ -404,10 +459,11 @@ the source id. A `Source` message names it.
 
 ## Metrics
 
-One writer per counter or histogram handle (`Send`, not `Sync`). Counters use
-a relaxed load and store. Histograms lock their own cell so a poll on another
-thread takes count, sum, min, and max together. The same series on another
-thread is another cell, added at `poll`. A gauge is shared. The last write wins.
+Handles live on the loop's thread (`Rc`'d cells, neither `Send` nor `Sync`),
+and nothing locks. A counter or histogram handle is a cell of its own: a
+counter adds with a load and a store, a histogram updates count, sum, min, and
+max with loads and stores. The same series asked for again is another cell,
+added at `poll`. A gauge is shared. The last write wins.
 
 ```rust
 let sent = metrics.counter("orders_sent", &[("venue", "binance")]);
@@ -418,42 +474,29 @@ loop {
     sent.inc();
     depth.set(12.0);
     t2t.record(850);
-    persist.poll(now); // two compares until a millisecond, the 5 s boundary or a config re-read is due
+    persist.poll(now); // three compares until a millisecond, the 5 s boundary or a config re-read is due
 }
 ```
 
-The same registry accepts `tracing` events when `Persist::layer` is installed.
-Use that off the hot path. A counter with no `value` adds 1. An explicit value must be a nonnegative integer;
-invalid values are ignored. Other fields are
-labels. `poll` still publishes them. These events allocate the label strings
-and take the registry lock; the handles above do not. A handle and a tracing
-event for the same counter or histogram are two cells, added at `poll`.
-
-```rust
-tracing::info!(counter = "orders_sent", venue = "binance");
-tracing::info!(gauge = "book_depth", side = "bid", value = 12.0);
-tracing::info!(histogram = "tick_to_trade_ns", value = 850u64);
-```
-
-The layer owns a clone of the `Persist` instance. No `Persist::install` or
-static metric/tracer is needed. A scoped subscriber works too:
+Metrics are handles only: `tracing` events with a `counter`, `gauge` or
+`histogram` field are not recorded. Make handles from the instance the loop
+owns; no static metric or tracer exists. A scoped subscriber with the bridge
+works too, for spans:
 
 ```rust
 use tracing_subscriber::layer::SubscriberExt;
 let persist = Persist::connect(schema, &bus, settings)?;
-let metrics = persist.metrics();
-let subscriber = tracing_subscriber::registry().with(persist.layer());
+let sent = persist.metrics().counter("orders_sent", &[("venue", "binance")]);
+let subscriber = tracing_subscriber::registry().with(persist.layer()?);
 tracing::subscriber::with_default(subscriber, || {
-    tracing::info_span!("send_order", venue = "binance").in_scope(|| {
-        tracing::info!(counter = "orders_sent", venue = "binance");
-        tracing::info!(histogram = "send_ns", value = 850u64);
-    });
+    tracing::info_span!("send_order", venue = "binance").in_scope(|| sent.inc());
 });
 persist.poll(clock.now()); // keep polling in the application loop
 ```
 
-`info_span!` and `#[tracing::instrument]` produce span traces while `otel_traces`
-is enabled. Metric events update immediately but publish only when `poll` runs.
+`info_span!` and `#[tracing::instrument]` produce span traces through the
+bridge; the ingester keeps them while `otel_traces` is on for the app.
+Handles update immediately but publish only when `poll` runs.
 `Persist::poll` also re-reads `tables.yaml` once a second; nothing else does,
 so an application that never polls never sees an edit.
 Use `persist.tracer(...)` for instance-owned checkpoint traces on the hot path.
@@ -502,7 +545,7 @@ A checkpoint trace stamps stages on the stack. `finish` always updates
 on and the trace is sampled, slower than the threshold, or kept.
 
 ```rust
-let t2t = ergon_runtime::persist::tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
+let t2t = ctx.tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
 let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(ORDERS, order_id));
 t.mark(clock.now());
 t.attr(0, levels);
@@ -515,8 +558,13 @@ otel_traces:
   enabled: false
   apps: { binance: { until: 2026-09-27T18:00:00Z } }
   traces:
-    tick_to_trade: { sample: 1000, slower_than: 50us }
+    tick_to_trade: { sample: 1000, slower_than: 5s }
 ```
+
+`slower_than` judges the whole trace, from `start`. A trace started at the
+venue's timestamp, as above, also counts the venue's lag and the network.
+Set the threshold above their usual total, or nearly every trace publishes
+as slow. The lab's is 5 s; a trace started at the receive can use 50 µs.
 
 The ingester writes `otel_traces` as one span for the whole and one per stage.
 The same trace id in two processes is one waterfall. At most 16 stages and 8
@@ -524,10 +572,10 @@ numeric attributes. A stage that ends before it began is 0 in the histogram
 and counted in `trace_clamped`.
 
 `tracing` spans (`info_span!`, `#[instrument]`) are the same kind of trace
-through `Persist::layer`, recorded only while `otel_traces` is on. A span
-costs the `tracing` registry and an allocation. Leave both spans and the
-metric events above off the book loop. The checkpoint tracer is the path
-that stays on the stack.
+through the bridge (`Persist::layer`), from any thread; the ingester keeps
+them only while `otel_traces` is on for the app. A span costs the `tracing`
+registry, an allocation and a claim. Leave spans off the book loop. The
+checkpoint tracer is the path that stays on the stack.
 
 ## Clock
 
@@ -537,9 +585,10 @@ let now = clock.now();     // one read per loop
 let t = clock.cached();    // last read
 ```
 
-`Nanos` is signed nanoseconds from one anchor per process. On Linux a read is
-`minstant` (the time-stamp counter when it is available). Elsewhere it is
-`Instant`.
+`Nanos` is signed UNIX-epoch nanoseconds: the wall clock paired with the
+monotonic clock when the `Clock` is made, plus the monotonic time since. On
+Linux a read is `minstant` (the time-stamp counter when it is available).
+Elsewhere it is `Instant`.
 
 ## Aeron counters
 
@@ -635,7 +684,6 @@ individual-operation tail latency. Nothing was dropped in that historical run.
 |---|---|---|---|
 | empty loop | 41 ns | 42 ns | 125 ns |
 | `record()`, SBE | 83 ns | 292 ns | 1.2 µs |
-| `record()`, installed / not installed | 83 ns / 41 ns | 292 ns / 42 ns | 2.4 µs / 125 ns |
 | `tracing` event, on / off | 125 ns / 42 ns | 792 ns / 291 ns | 7.6 µs / 2.0 µs |
 | `record_value`, flat / nested | 166 ns / 375 ns | 458 ns / 1.5 µs | 5.1 µs / 13 µs |
 | counter, gauge, histogram | 1.3 / 1.3 / 1.7 ns | 2–5 ns | 4–8 ns |
@@ -645,18 +693,19 @@ individual-operation tail latency. Nothing was dropped in that historical run.
 | `tracing` span, off / on | 83 ns / 250 ns | 209 ns / 667 ns | 1.8 µs / 5.9 µs |
 
 The histogram figure of 1.7 ns includes the old per-value bucket update.
-`Histogram::record` now locks its cell and updates count, sum, min, and max.
-The histogram and checkpoint-trace rows have not been remeasured with that
-lock. With a histogram registered, `poll` is due every 1 ms. The idle poll
-figure was measured before that. Due counter/gauge and histogram cycles run in
-deadline order so neither can starve the other.
+`Histogram::record` now updates count, sum, min, and max in its own cell, with
+loads and stores and no lock. The histogram and checkpoint-trace rows have not
+been remeasured since. With a histogram registered, `poll` is due every 1 ms.
+The idle poll figure was measured before that. Due counter/gauge and histogram
+cycles run in deadline order so neither can starve the other.
 
 The current harness selects the operation before timing and makes handle,
 value, input and output observations opaque to the optimizer. It reports both
 raw batch quantiles and amortized batch costs. `control-x100` measures the
-amplified loop floor. Metric handles and `counter-event`, `gauge-event` and
-`histogram-event` use identical 100-update batches and input sequences. Each
-tracing update includes registry lookup and labels.
+amplified loop floor. The arms for the installed handle and for `tracing`
+metric events are gone with them. `event`, `event-off`, `span-on` and
+`span-off` go through the `tracing` bridge, which switches nothing: an off arm
+costs what its on arm does, and the ingester leaves its rows out.
 `poll-idle` and `poll-due` both include mostly idle polls at the 5 µs cadence;
 `poll-due` uses a 1 ms metrics interval and includes counter deadlines too.
 Drops during measurement are reported separately from total drops, which
@@ -693,9 +742,8 @@ interest and public trades. Venue-specific decimals stay text.
 - `just verify` counts restarts. After pausing and resuming the lab its last check fails.
 - Two publications on one stream must use the same channel parameters.
 - Metrics of a process that exits before the next `poll` are lost. A counter's `delta` survives a restart. Its `value` starts again at 0.
-- Histogram polling takes count, sum, min, and max together under the cell mutex. A concurrent recorder waits while its cell is drained.
 - A crash can drop the histogram window still open in the ingester, at most 5 s.
-- A heartbeat round sends one dictionary message per `record` until it is done. A quiet process finishes it only as fast as it records.
+- A heartbeat round, every 5 s, sends up to 8 dictionary messages per `Persist::poll` call until it is done.
 - A persistent subscription can replay only the segments the ingester has not yet purged.
 - The kind VM clock can lag the venues by 100–400 ms. `venue_to_local_ns` then reads 0.
 - Options are not recorded. Nautilus needs a live instrument picked by expiry.

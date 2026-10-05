@@ -199,34 +199,15 @@ impl Input {
         })
     }
 }
-impl Journal {
-    /// Load Input SBE rows without changing their dispatch order.
-    ///
-    /// # Errors
-    /// Any malformed Input row rejects the journal.
-    pub fn decode<'a>(rows: impl IntoIterator<Item = &'a [u8]>) -> Result<Self, Error> {
-        Ok(Self {
-            inputs: rows
-                .into_iter()
-                .map(Input::decode)
-                .collect::<Result<_, _>>()?,
-        })
-    }
-}
-
 /// Historical journal and frame lookup through `ClickHouse`.
 #[cfg(feature = "clickhouse")]
 pub mod clickhouse {
-    use super::{Error, Input, InputEvent, Journal};
-    use crate::clickhouse::ClickHouse;
+    use super::{Error, Input, InputEvent, Journal, codec};
+    use crate::clickhouse::{ClickHouse, literal, quote, read_string};
+    use std::collections::BTreeMap;
+    use std::collections::btree_map::Entry;
     use std::io::Read;
 
-    fn identifier(s: &str) -> String {
-        format!("`{}`", s.replace('`', "\\`"))
-    }
-    fn literal(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('\'', "\\'")
-    }
     fn bad(e: impl std::fmt::Display) -> Error {
         Error::Config(format!("ClickHouse journal: {e}"))
     }
@@ -238,27 +219,26 @@ pub mod clickhouse {
     pub fn load(client: &ClickHouse, table: &str, run: &str) -> Result<Journal, Error> {
         let sql = format!(
             "SELECT ts, feed, recording_id, position, session_id, stream_id, token, deadline, missed, kind, first, origin, sequence, wall_offset, next_id FROM {}.{} WHERE run = '{}' ORDER BY sequence FORMAT RowBinary",
-            identifier(&client.database),
-            identifier(table),
+            quote(&client.database),
+            quote(table),
             literal(run)
         );
         let mut reader = client.reader(&sql).map_err(bad)?;
         let mut inputs = Vec::new();
-        loop {
-            let mut bytes = vec![0; Input::LENGTH];
-            // The persisted fixed fields use the same little-endian layout as SBE.
-            bytes[..8].copy_from_slice(&[87, 0, 1, 0, 252, 255, 1, 0]);
-            if reader.read(&mut bytes[8..9]).map_err(bad)? == 0 {
-                break;
-            }
-            reader.read_exact(&mut bytes[9..]).map_err(bad)?;
-            let input = Input::decode(&bytes)?;
-            if inputs.last().is_some_and(|previous: &Input| {
-                previous.sequence.checked_add(1) != Some(input.sequence)
-            }) {
-                return Err(bad("dispatch sequence is missing, duplicated or regressed"));
-            }
-            inputs.push(input);
+        // The persisted fixed fields use the same little-endian layout as
+        // SBE: each row is an Input message's body, after its header.
+        let header = codec::MessageHeader::new(
+            u16::try_from(codec::InputSchema::BLOCK_LENGTH).map_err(bad)?,
+            codec::InputSchema::TEMPLATE_ID,
+            codec::InputSchema::SCHEMA_ID,
+            codec::InputSchema::SCHEMA_VERSION,
+        );
+        let mut bytes = [0; Input::LENGTH];
+        bytes[..codec::InputSchema::HEADER_LENGTH].copy_from_slice(&header.0);
+        let body = codec::InputSchema::HEADER_LENGTH;
+        while reader.read(&mut bytes[body..=body]).map_err(bad)? != 0 {
+            reader.read_exact(&mut bytes[body + 1..]).map_err(bad)?;
+            inputs.push(Input::decode(&bytes)?);
         }
         complete(inputs)
     }
@@ -285,143 +265,292 @@ pub mod clickhouse {
         Ok(Journal { inputs })
     }
 
-    /// Resolve a message reference to a unique raw frame.
-    ///
-    /// # Errors
-    /// Missing or ambiguous frame, failed query, or malformed `RowBinary`.
-    pub fn resolve(
-        client: &ClickHouse,
-        frame_table: &str,
-        input: &Input,
-        feed_name: &str,
-    ) -> Result<Vec<u8>, Error> {
+    /// The publication a journalled message came from: a recording the
+    /// archive kept, or, for a subscription straight off the network, the
+    /// publication's session.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum Publication {
+        Recording(i64),
+        Session(i32),
+    }
+
+    /// Where `input`'s frame is: its publication, stream and position.
+    const fn locator(input: &Input) -> Option<(Publication, i32, i64)> {
         let InputEvent::Message {
             recording,
             position,
             session,
             stream,
-            delivery,
             ..
         } = input.event
         else {
-            return Err(bad("a timer has no frame"));
+            return None;
         };
-        let (service, kind) = feed_name
-            .split_once('/')
-            .ok_or_else(|| bad("feed locator needs service/kind"))?;
         let publication = if recording >= 0 {
-            let session_clause = if delivery.origin == crate::subscription::Origin::Live {
-                format!(" AND session_id = {session}")
-            } else {
-                String::new()
-            };
-            format!(
-                "recording_id = {recording} AND position = {position} AND stream_id = {stream}{session_clause}"
-            )
+            Publication::Recording(recording)
         } else {
-            format!("session_id = {session} AND stream_id = {stream} AND position = {position}")
+            Publication::Session(session)
         };
-        let locator = format!(
-            "service = '{}' AND kind = '{}' AND {publication}",
-            literal(service),
-            literal(kind)
-        );
-        let sql = format!(
-            "SELECT message FROM {}.{} WHERE {locator} LIMIT 2 FORMAT RowBinary",
-            identifier(&client.database),
-            identifier(frame_table)
-        );
-        let mut reader = client.reader(&sql).map_err(bad)?;
-        let mut length = 0u64;
-        for shift in (0..70).step_by(7) {
-            let mut byte = [0];
-            reader.read_exact(&mut byte).map_err(bad)?;
-            if shift == 63 && byte[0] > 1 {
-                return Err(bad("frame length overflow"));
-            }
-            length |= u64::from(byte[0] & 127) << shift;
-            if byte[0] & 128 == 0 {
-                let length = usize::try_from(length).map_err(bad)?;
-                if length > 16 * 1024 * 1024 {
-                    return Err(bad("frame exceeds 16 MiB"));
-                }
-                let mut bytes = vec![0; length];
-                reader.read_exact(&mut bytes).map_err(bad)?;
-                let mut extra = [0];
-                if reader.read(&mut extra).map_err(bad)? != 0 {
-                    return Err(bad("frame locator is ambiguous"));
-                }
-                return Ok(bytes);
-            }
+        Some((publication, stream, position))
+    }
+
+    /// The raw frames a stretch of a journal names, by feed and locator.
+    #[derive(Debug, Default)]
+    pub struct Frames {
+        frames: BTreeMap<(String, Publication, i32, i64), Vec<u8>>,
+    }
+
+    impl Frames {
+        /// The frame message `input` on `feed_name` (`service/kind`) was, taken
+        /// out: each is delivered once.
+        pub fn take(&mut self, feed_name: &str, input: &Input) -> Option<Vec<u8>> {
+            let (publication, stream, position) = locator(input)?;
+            self.frames
+                .remove(&(feed_name.to_owned(), publication, stream, position))
         }
-        Err(bad("frame length overflow"))
+    }
+
+    /// The frames the messages of `inputs` name, with one query per feed and
+    /// publication rather than one per message.
+    ///
+    /// Each query takes the publication's range of positions: a replay in
+    /// another region would otherwise wait a round trip for every message.
+    /// `feed_names` names each feed (`service/kind`) by its id; a message on
+    /// a feed not named yet is left out. `around` runs before and after each
+    /// query: a caller that must keep a client alive while it waits (a
+    /// simulation's Aeron conductor) runs it there.
+    ///
+    /// # Errors
+    /// A failed query, malformed `RowBinary`, or two different frames at one
+    /// locator.
+    pub fn fetch(
+        client: &ClickHouse,
+        frame_table: &str,
+        inputs: &[Input],
+        feed_names: &[String],
+        mut around: impl FnMut(),
+    ) -> Result<Frames, Error> {
+        let mut ranges: BTreeMap<(&str, Publication, i32), (i64, i64)> = BTreeMap::new();
+        for input in inputs {
+            let InputEvent::Message { feed, .. } = input.event else {
+                continue;
+            };
+            let (Some(name), Some((publication, stream, position))) =
+                (feed_names.get(feed.0 as usize), locator(input))
+            else {
+                continue;
+            };
+            let range = ranges
+                .entry((name.as_str(), publication, stream))
+                .or_insert((position, position));
+            range.0 = range.0.min(position);
+            range.1 = range.1.max(position);
+        }
+        let mut frames = Frames::default();
+        for ((name, publication, stream), (low, high)) in ranges {
+            let (service, kind) = name
+                .split_once('/')
+                .ok_or_else(|| bad("feed locator needs service/kind"))?;
+            let which = match publication {
+                Publication::Recording(recording) => format!("recording_id = {recording}"),
+                Publication::Session(session) => format!("session_id = {session}"),
+            };
+            let sql = format!(
+                "SELECT position, message FROM {}.{} WHERE service = '{}' AND kind = '{}' AND {which} AND stream_id = {stream} AND position BETWEEN {low} AND {high} FORMAT RowBinary",
+                quote(&client.database),
+                quote(frame_table),
+                literal(service),
+                literal(kind)
+            );
+            around();
+            let mut reader = std::io::BufReader::new(client.reader(&sql).map_err(bad)?);
+            while let Some((position, message)) = read_frame(&mut reader)? {
+                match frames
+                    .frames
+                    .entry((name.to_owned(), publication, stream, position))
+                {
+                    Entry::Vacant(slot) => {
+                        slot.insert(message);
+                    }
+                    Entry::Occupied(slot) if *slot.get() == message => {}
+                    Entry::Occupied(_) => return Err(bad("frame locator is ambiguous")),
+                }
+            }
+            around();
+        }
+        Ok(frames)
+    }
+
+    /// One `position, message` row, or `None` at the end.
+    fn read_frame(reader: &mut impl Read) -> Result<Option<(i64, Vec<u8>)>, Error> {
+        let mut position = [0; 8];
+        if reader.read(&mut position[..1]).map_err(bad)? == 0 {
+            return Ok(None);
+        }
+        reader.read_exact(&mut position[1..]).map_err(bad)?;
+        let message = read_string(reader).map_err(bad)?;
+        Ok(Some((i64::from_le_bytes(position), message)))
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
         use crate::clock::Nanos;
-        #[test]
-        fn frame_lookup_qualifies_archive_ids_with_feed_and_live_session()
-        -> Result<(), Box<dyn std::error::Error>> {
+        /// The fixture's thread: the queries it was sent.
+        #[expect(
+            clippy::disallowed_types,
+            reason = "fake ClickHouse peer: the blocking client under test waits on it"
+        )]
+        type Served = std::thread::JoinHandle<Result<Vec<String>, std::io::Error>>;
+
+        /// A `ClickHouse` that answers each of `answers` once, by a fragment
+        /// of its query; it hands back the queries it was sent.
+        fn serve(
+            answers: Vec<(&'static str, Vec<u8>)>,
+        ) -> Result<(ClickHouse, Served), std::io::Error> {
+            use std::io::{BufRead, BufReader, Write};
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "fake ClickHouse peer: a literal loopback address, nothing to resolve"
+            )]
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let client = ClickHouse::new(
+                &format!("http://{}", listener.local_addr()?),
+                "",
+                "",
+                "test",
+            );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "fake ClickHouse peer: the blocking client under test waits on it"
+            )]
+            let server = std::thread::spawn(move || {
+                let mut queries = Vec::new();
+                for _ in 0..answers.len() {
+                    let (mut socket, _) = listener.accept()?;
+                    let mut reader = BufReader::new(socket.try_clone()?);
+                    let mut length = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line)?;
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse().map_err(std::io::Error::other)?;
+                        }
+                    }
+                    let mut body = vec![0; length];
+                    reader.read_exact(&mut body)?;
+                    let query = String::from_utf8_lossy(&body).into_owned();
+                    let rows = answers
+                        .iter()
+                        .find(|(fragment, _)| query.contains(fragment))
+                        .map_or_else(Vec::new, |(_, rows)| rows.clone());
+                    write!(
+                        socket,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        rows.len()
+                    )?;
+                    socket.write_all(&rows)?;
+                    queries.push(query);
+                }
+                Ok(queries)
+            });
+            Ok((client, server))
+        }
+
+        /// One `position, message` row in `RowBinary`.
+        fn row(position: i64, message: &[u8]) -> Vec<u8> {
+            let mut row = position.to_le_bytes().to_vec();
+            row.push(u8::try_from(message.len()).unwrap_or(u8::MAX));
+            row.extend_from_slice(message);
+            row
+        }
+
+        fn message(feed: u32, recording: i64, session: i32, stream: i32, position: i64) -> Input {
             use crate::rt::FeedId;
             use crate::subscription::{Delivery, Origin};
-            use std::io::{BufRead, BufReader, Write};
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-            let address = listener.local_addr()?;
-            let server = std::thread::spawn(move || -> Result<(), std::io::Error> {
-                let (mut socket, _) = listener.accept()?;
-                let mut reader = BufReader::new(socket.try_clone()?);
-                let mut length = 0;
-                loop {
-                    let mut line = String::new();
-                    reader.read_line(&mut line)?;
-                    if line == "\r\n" {
-                        break;
-                    }
-                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                        length = value.trim().parse().map_err(std::io::Error::other)?;
-                    }
-                }
-                let mut body = vec![0; length];
-                reader.read_exact(&mut body)?;
-                let query = String::from_utf8_lossy(&body);
-                for expected in [
-                    "service = 'md-test'",
-                    "kind = 'md'",
-                    "recording_id = 42",
-                    "session_id = 9",
-                    "stream_id = 2011",
-                ] {
-                    if !query.contains(expected) {
-                        return Err(std::io::Error::other(format!(
-                            "missing {expected} in {query}"
-                        )));
-                    }
-                }
-                socket.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n\x01a",
-                )
-            });
-            let client = ClickHouse::new(&format!("http://{address}"), "", "", "test");
-            let input = Input {
+            Input {
                 sequence: 2,
                 wall_offset: 0,
                 next_id: 10,
                 ts: Nanos(100),
                 event: InputEvent::Message {
-                    feed: FeedId(0),
-                    recording: 42,
-                    position: 128,
-                    session: 9,
-                    stream: 2011,
+                    feed: FeedId(feed),
+                    recording,
+                    position,
+                    session,
+                    stream,
                     delivery: Delivery {
                         first: false,
                         origin: Origin::Live,
                     },
                 },
-            };
-            assert_eq!(resolve(&client, "frame", &input, "md-test/md")?, b"a");
+            }
+        }
+
+        #[test]
+        fn frames_are_fetched_per_publication_not_per_message()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let names = ["md-test/md".to_owned(), "md-test/tob".to_owned()];
+            let inputs = [
+                message(0, 42, 9, 2011, 128),
+                message(1, -1, 9, 2012, 64),
+                message(0, 42, 9, 2011, 256),
+                // A feed not subscribed yet: left for a later fetch.
+                message(5, 7, 9, 2013, 32),
+            ];
+            let archived = [row(128, b"a"), row(192, b"unasked"), row(256, b"b")].concat();
+            let (client, server) = serve(vec![
+                ("recording_id = 42", archived),
+                ("session_id = 9", row(64, b"t")),
+            ])?;
+            let mut runs = 0;
+            let mut frames = fetch(&client, "frame", &inputs, &names, || runs += 1)?;
+            let queries = server.join().map_err(|_| "HTTP fixture thread failed")??;
+            assert_eq!(
+                queries.len(),
+                2,
+                "one query per feed and publication: {queries:?}"
+            );
+            assert_eq!(runs, 4, "before and after each query, not around the fetch");
+            assert!(queries.iter().any(|q| q.contains("service = 'md-test' AND kind = 'md' AND recording_id = 42 AND stream_id = 2011 AND position BETWEEN 128 AND 256")), "{queries:?}");
+            assert!(queries.iter().any(|q| q.contains("kind = 'tob' AND session_id = 9 AND stream_id = 2012 AND position BETWEEN 64 AND 64")), "{queries:?}");
+            assert_eq!(
+                frames.take("md-test/md", &inputs[0]).as_deref(),
+                Some(&b"a"[..])
+            );
+            assert_eq!(
+                frames.take("md-test/md", &inputs[2]).as_deref(),
+                Some(&b"b"[..])
+            );
+            assert_eq!(
+                frames.take("md-test/tob", &inputs[1]).as_deref(),
+                Some(&b"t"[..])
+            );
+            assert!(
+                frames.take("md-test/md", &inputs[0]).is_none(),
+                "delivered once"
+            );
+            assert!(
+                frames.take("md-test/md", &inputs[3]).is_none(),
+                "not fetched"
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn two_frames_at_one_locator_are_an_error() -> Result<(), Box<dyn std::error::Error>> {
+            let names = ["md-test/md".to_owned()];
+            let inputs = [message(0, 42, 9, 2011, 128)];
+            let (client, server) = serve(vec![(
+                "recording_id = 42",
+                [row(128, b"a"), row(128, b"z")].concat(),
+            )])?;
+            assert!(fetch(&client, "frame", &inputs, &names, || {}).is_err());
             server.join().map_err(|_| "HTTP fixture thread failed")??;
             Ok(())
         }
@@ -510,7 +639,10 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            Journal::decode(rows.iter().map(Vec::as_slice))?.inputs,
+            rows.iter()
+                .map(Vec::as_slice)
+                .map(Input::decode)
+                .collect::<Result<Vec<_>, _>>()?,
             inputs
         );
         assert!(Input::decode(&rows[0][..10]).is_err());

@@ -56,6 +56,10 @@ fn the_fixture_replays_to_the_golden_output() -> Result<(), Box<dyn Error>> {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
     #[test]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "proptest's prop_oneof! builds its union on std::sync::Arc: the test's input strategy, not engine code"
+    )]
     fn the_same_input_gives_the_same_output(
         seed in 1u64..u64::MAX,
         seconds in 60u32..400,

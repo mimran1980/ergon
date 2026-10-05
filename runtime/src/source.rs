@@ -1,9 +1,12 @@
 //! Who recorded a row.
 //!
-//! Every frame an application publishes carries its source id in the Aeron
-//! frame's reserved value, which costs no bytes and survives the archive's
-//! record and replay. A `Source` message names the id once, and the ingester
-//! writes the names into every row as the `host`, `pod` and `app` columns.
+//! Every persist frame an application publishes carries its source id in the
+//! Aeron frame's reserved value, which costs no bytes and survives the
+//! archive's record and replay. A feed's frames carry their publish time
+//! there instead, and its recording names the source through the `Source`
+//! message sent ahead of its first frame. A `Source` message names the id
+//! once, and the ingester writes the names into every row as the `host`,
+//! `pod` and `app` columns.
 
 use crate::event::codec;
 
@@ -13,7 +16,7 @@ pub const SOURCE_TEMPLATE_ID: u16 = codec::SourceEncoder::TEMPLATE_ID;
 /// An application's identity: one per [`Bus`](crate::bus::Bus).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
-    /// Stamped into every frame's reserved value.
+    /// Stamped into every persist frame's reserved value.
     pub id: u64,
     /// UNIX ns when the application connected.
     pub started: u64,

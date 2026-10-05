@@ -9,9 +9,8 @@ use rusteron_archive::{
     Aeron, AeronAsyncAddSubscription, AeronSubscription, Handlers, IntoCString,
 };
 
-use crate::Error;
 use crate::bus::Bus;
-use crate::streams::Streams;
+use crate::directory::FeedAddr;
 
 mod persistent;
 
@@ -94,28 +93,17 @@ enum State {
 }
 
 impl Bus {
-    /// Subscribe to `service`'s `kind` stream straight off the network,
-    /// added as [`Subscription::poll`] is called. Best effort: a message published while this was not
-    /// connected is gone; see [`Bus::subscribe`] for one that is not.
-    ///
-    /// # Errors
-    ///
-    /// `service` or `kind` is not in the registry.
-    pub fn subscribe_live(
-        &self,
-        streams: &Streams,
-        service: &str,
-        kind: &str,
-    ) -> Result<Subscription, Error> {
-        Ok(self.subscription(
-            &streams.subscription(service, kind, self.host_ip())?,
-            streams.stream(service, kind)?,
-        ))
+    /// Subscribe to a feed at `addr` straight off the network, added as
+    /// [`Subscription::poll`] is called. Best effort: a message published
+    /// while this was not connected is gone; see [`Bus::subscribe`] for one
+    /// that is not.
+    #[must_use]
+    pub fn subscribe_live(&self, addr: &FeedAddr) -> Subscription {
+        self.subscription(&addr.live, addr.stream_id)
     }
 
-    /// Subscribe to `channel` (see
-    /// [`crate::streams::Streams::subscription`]) and `stream_id` on this
-    /// application's media driver, added as [`Subscription::poll`] is called.
+    /// Subscribe to `channel` and `stream_id` on this application's media
+    /// driver, added as [`Subscription::poll`] is called.
     #[must_use]
     pub fn subscription(&self, channel: &str, stream_id: i32) -> Subscription {
         Subscription {

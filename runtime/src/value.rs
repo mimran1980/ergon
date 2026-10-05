@@ -22,20 +22,19 @@
 //! shape does not cover grows the shape, in visit order, and the new shape
 //! is sent again.
 
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::hash::BuildHasherDefault;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::rc::Rc;
 
 use serde::Serialize;
 use serde::ser::{self, SerializeMap, SerializeSeq, SerializeStruct, SerializeTuple};
 
-use crate::event::{AddressHasher, FieldDef, HEADER, Kind, NONE, Shape, Value, fnv64, now_ns};
+use crate::event::{AddressHasher, FieldDef, HEADER, Kind, NONE, Shape, ShapeEntry, Value, fnv64};
 use crate::persist::Persist;
 
-/// Why a value could not be measured, learned or written.
+/// Why a value could not be learned or written.
 #[derive(Debug)]
 pub enum Problem {
     /// The shape does not cover the value: learn it.
@@ -798,48 +797,17 @@ struct Scratch {
     groups: Vec<(usize, u32, usize)>,
 }
 
-/// A row being measured or written. Indexed writes land inside bytes already
-/// counted by [`Bytes::resize`] or [`Bytes::extend_from_slice`].
-trait Bytes {
-    fn written(&self) -> usize;
-    fn resize(&mut self, len: usize);
-    fn extend_from_slice(&mut self, bytes: &[u8]);
-    fn or_byte(&mut self, index: usize, mask: u8);
-    fn set_byte(&mut self, index: usize, value: u8);
-    fn copy_at(&mut self, index: usize, bytes: &[u8]);
-}
-
-impl Bytes for Vec<u8> {
-    fn written(&self) -> usize {
-        self.len()
-    }
-    fn resize(&mut self, len: usize) {
-        Self::resize(self, len, 0);
-    }
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        Self::extend_from_slice(self, bytes);
-    }
-    fn or_byte(&mut self, index: usize, mask: u8) {
-        self[index] |= mask;
-    }
-    fn set_byte(&mut self, index: usize, value: u8) {
-        self[index] = value;
-    }
-    fn copy_at(&mut self, index: usize, bytes: &[u8]) {
-        self[index..index + bytes.len()].copy_from_slice(bytes);
-    }
-}
-
 /// Writes a value's row against a shape, in one pass. The fields must come
-/// in the shape's order; any it skips are absent.
-struct Walker<'s, 'b, B: Bytes> {
+/// in the shape's order; any it skips are absent. An indexed write lands in
+/// bytes a block or a group's count already appended to `row`.
+struct Walker<'s, 'b> {
     shape: &'s Shape,
-    row: &'b mut B,
+    row: &'b mut Vec<u8>,
     frames: &'b mut Vec<Frame>,
     groups: &'b mut Vec<(usize, u32, usize)>,
 }
 
-impl<B: Bytes> Walker<'_, '_, B> {
+impl Walker<'_, '_> {
     /// The field `name` of `kind`, next in the current row or entry, after
     /// marking the fields skipped to reach it absent. Returns its position
     /// and index.
@@ -858,7 +826,7 @@ impl<B: Bytes> Walker<'_, '_, B> {
         let frame = self.frames.last_mut().ok_or(Problem::Misfit)?;
         frame.cursor = p + 1;
         let at = frame.base + level.presence + p / 8;
-        self.row.or_byte(at, 1 << (p % 8));
+        self.row[at] |= 1 << (p % 8);
         Ok((p, f))
     }
 
@@ -877,8 +845,8 @@ impl<B: Bytes> Walker<'_, '_, B> {
 
     /// Start a row or entry of `level` at the end of the row.
     fn begin_level(&mut self, level: usize) {
-        let base = self.row.written();
-        self.row.resize(base + self.shape.levels[level].block);
+        let base = self.row.len();
+        self.row.resize(base + self.shape.levels[level].block, 0);
         self.frames.push(Frame {
             level,
             cursor: 0,
@@ -897,7 +865,7 @@ impl<B: Bytes> Walker<'_, '_, B> {
     }
 }
 
-impl<B: Bytes> Sink for Walker<'_, '_, B> {
+impl Sink for Walker<'_, '_> {
     fn leaf(&mut self, name: &str, value: Value<'_>) -> Result<(), Problem> {
         let (p, _) = self.take(name, value.kind())?;
         // A fixed value's place in its block (`Str` has none: it is appended).
@@ -914,7 +882,7 @@ impl<B: Bytes> Sink for Walker<'_, '_, B> {
             }
             Value::Bool(v) => {
                 let at = at().ok_or(Problem::Misfit)?;
-                self.row.set_byte(at, u8::from(v));
+                self.row[at] = u8::from(v);
                 return Ok(());
             }
             Value::I64(v) => (at(), v.to_le_bytes()),
@@ -922,14 +890,13 @@ impl<B: Bytes> Sink for Walker<'_, '_, B> {
             Value::F64(v) => (at(), v.to_le_bytes()),
         };
         let at = at.ok_or(Problem::Misfit)?;
-        self.row.copy_at(at, &bytes);
+        self.row[at..at + bytes.len()].copy_from_slice(&bytes);
         Ok(())
     }
 
     fn begin_group(&mut self, name: &str) -> Result<(), Problem> {
         let (_, f) = self.take(name, Kind::Group)?;
-        self.groups
-            .push((self.row.written(), 0, self.shape.entries[f]));
+        self.groups.push((self.row.len(), 0, self.shape.entries[f]));
         self.row.extend_from_slice(&[0; 4]);
         Ok(())
     }
@@ -948,46 +915,13 @@ impl<B: Bytes> Sink for Walker<'_, '_, B> {
 
     fn end_group(&mut self) -> Result<(), Problem> {
         let (at, count, _) = self.groups.pop().ok_or(Problem::Misfit)?;
-        self.row.copy_at(at, &count.to_le_bytes());
+        self.row[at..at + 4].copy_from_slice(&count.to_le_bytes());
         Ok(())
     }
 }
 
-/// Write or measure `value`'s row. [`Problem::Misfit`] when the shape does
-/// not cover it. `ts` is not part of the length.
-fn fill<T: ?Sized + Serialize, B: Bytes>(
-    shape: &Shape,
-    value: &T,
-    ts: u64,
-    row: &mut B,
-    path: &mut Path,
-    frames: &mut Vec<Frame>,
-    groups: &mut Vec<(usize, u32, usize)>,
-) -> Result<(), Problem> {
-    path.reset();
-    frames.clear();
-    groups.clear();
-    row.resize(HEADER);
-    let mut header = [0u8; HEADER];
-    shape.write_header(&mut header);
-    row.copy_at(0, &header);
-    let mut walker = Walker {
-        shape,
-        row,
-        frames,
-        groups,
-    };
-    walker.begin_level(0);
-    walker.row.copy_at(HEADER, &shape.id.to_le_bytes());
-    walker.row.copy_at(HEADER + 4, &ts.to_le_bytes());
-    value.serialize(&mut Visit {
-        sink: &mut walker,
-        path,
-    })?;
-    walker.end_level()
-}
-
 /// Write `value`'s row into `scratch.row`, recorded at `ts`.
+/// [`Problem::Misfit`] when the shape does not cover it.
 fn walk<T: ?Sized + Serialize>(
     shape: &Shape,
     value: &T,
@@ -1000,32 +934,48 @@ fn walk<T: ?Sized + Serialize>(
         frames,
         groups,
     } = scratch;
+    path.reset();
+    frames.clear();
+    groups.clear();
     row.clear();
-    fill(shape, value, ts, row, path, frames, groups)
+    row.resize(HEADER, 0);
+    shape.write_header(row);
+    let mut walker = Walker {
+        shape,
+        row,
+        frames,
+        groups,
+    };
+    walker.begin_level(0);
+    walker.row[HEADER..HEADER + 4].copy_from_slice(&shape.id.to_le_bytes());
+    walker.row[HEADER + 4..HEADER + 12].copy_from_slice(&ts.to_le_bytes());
+    value.serialize(&mut Visit {
+        sink: &mut walker,
+        path,
+    })?;
+    walker.end_level()
 }
 
 // ------------------------------------------------------------- recording
 
-/// What recording one type into one table needs, cached per thread.
+/// What recording one type into one table needs, cached per call site.
 struct Site {
     table: String,
-    switch: Arc<AtomicBool>,
-    shape: Option<Arc<Shape>>,
+    switch: Rc<Cell<bool>>,
+    shape: Option<Rc<ShapeEntry>>,
     /// Why its values cannot be recorded, logged once, and when: it is not
     /// learned again for a second, so a type that cannot be recorded costs
     /// no more than a dropped record.
     broken: Option<(String, std::time::Instant)>,
 }
 
+/// `record_value`'s call sites, and the scratch they write rows into: one
+/// set per [`Persist`].
 #[derive(Default)]
-struct Sites {
-    /// Keyed by the `Persist`'s id, the type's name and the table's hash.
-    sites: HashMap<(usize, usize, u64), Site, BuildHasherDefault<AddressHasher>>,
+pub struct Sites {
+    /// Keyed by the type's name and the table's hash.
+    sites: HashMap<(usize, u64), Site, BuildHasherDefault<AddressHasher>>,
     scratch: Scratch,
-}
-
-thread_local! {
-    static SITES: RefCell<Sites> = RefCell::default();
 }
 
 impl Persist {
@@ -1034,36 +984,55 @@ impl Persist {
     /// Nothing is visited when the table is off.
     pub fn record_value<T: ?Sized + Serialize>(&self, table: &str, value: &T) {
         let key = (
-            usize::try_from(self.inner.id).unwrap_or(usize::MAX),
             std::any::type_name::<T>().as_ptr() as usize,
             fnv64(table.as_bytes()),
         );
-        let _ = SITES.with(|cell| {
-            let mut sites = cell.try_borrow_mut()?;
-            let Sites { sites, scratch } = &mut *sites;
-            let site = sites.entry(key).or_insert_with(|| Site {
-                table: String::new(),
-                switch: Arc::new(AtomicBool::new(false)),
-                shape: None,
-                broken: None,
-            });
-            if site.table != table {
-                table.clone_into(&mut site.table);
-                site.switch = self.event_switch(table);
-                site.shape = None;
-                site.broken = None;
-            }
-            if site.switch.load(Ordering::Relaxed) {
-                self.record_at(site, value, scratch);
-            }
-            Ok::<_, std::cell::BorrowMutError>(())
+        // Reached from inside a publish: not recorded.
+        let Ok(mut cache) = self.inner.values.try_borrow_mut() else {
+            return;
+        };
+        let Sites { sites, scratch } = &mut *cache;
+        let site = sites.entry(key).or_insert_with(|| Site {
+            table: String::new(),
+            switch: Rc::default(),
+            shape: None,
+            broken: None,
         });
+        if site.table != table {
+            table.clone_into(&mut site.table);
+            site.switch = self.event_switch(table);
+            site.shape = None;
+            site.broken = None;
+        }
+        if !site.switch.get() {
+            return;
+        }
+        let Some(entry) = self.write_value(site, value, scratch) else {
+            return;
+        };
+        // The row's buffer is lent out, so no borrow is held across the publish.
+        let row = std::mem::take(&mut scratch.row);
+        drop(cache);
+        // `send_shape` and `publish` count their own drops.
+        if self.send_shape(&entry) {
+            let _ = self.publish(&row);
+        }
+        if let Ok(mut cache) = self.inner.values.try_borrow_mut() {
+            cache.scratch.row = row;
+        }
     }
 
-    fn record_at<T: ?Sized + Serialize>(&self, site: &mut Site, value: &T, scratch: &mut Scratch) {
-        let ts = now_ns();
-        let written = site.shape.as_ref().map_or(Err(Problem::Misfit), |shape| {
-            walk(shape, value, ts, scratch)
+    /// Write `value`'s row into `scratch.row`, learning `site`'s shape when
+    /// it does not cover the value. `None` when the row is dropped (counted).
+    fn write_value<T: ?Sized + Serialize>(
+        &self,
+        site: &mut Site,
+        value: &T,
+        scratch: &mut Scratch,
+    ) -> Option<Rc<ShapeEntry>> {
+        let ts = self.now().0.cast_unsigned();
+        let written = site.shape.as_ref().map_or(Err(Problem::Misfit), |entry| {
+            walk(&entry.shape, value, ts, scratch)
         });
         match written {
             Ok(()) => {}
@@ -1074,32 +1043,25 @@ impl Persist {
                     .is_some_and(|(_, at)| at.elapsed() < std::time::Duration::from_secs(1));
                 if cooling || !self.learn_shape(site, value, scratch) {
                     self.drop_one();
-                    return;
+                    return None;
                 }
-                let Some(shape) = site.shape.clone() else {
+                let Some(entry) = site.shape.clone() else {
                     self.drop_one();
-                    return;
+                    return None;
                 };
-                if let Err(problem) = walk(&shape, value, ts, scratch) {
+                if let Err(problem) = walk(&entry.shape, value, ts, scratch) {
                     Self::broken(site, &problem);
                     self.drop_one();
-                    return;
+                    return None;
                 }
             }
             Err(problem) => {
                 Self::broken(site, &problem);
                 self.drop_one();
-                return;
+                return None;
             }
         }
-        // `send_shape` and `publish` count their own drops.
-        if site
-            .shape
-            .as_deref()
-            .is_some_and(|shape| self.send_shape(shape))
-        {
-            let _ = self.publish(&scratch.row);
-        }
+        site.shape.clone()
     }
 
     /// Learn `value` into `site`'s shape. `false`, logged, when it cannot be recorded.
@@ -1110,7 +1072,8 @@ impl Persist {
         value: &T,
         scratch: &mut Scratch,
     ) -> bool {
-        let learned = learn(value, site.shape.as_deref(), &mut scratch.path).and_then(|fields| {
+        let old = site.shape.as_ref().map(|entry| &entry.shape);
+        let learned = learn(value, old, &mut scratch.path).and_then(|fields| {
             self.shape(
                 &site.table,
                 fields.iter().map(|f| (f.name.as_str(), f.kind, f.parent)),

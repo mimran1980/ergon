@@ -16,7 +16,7 @@ name = "backtest"
 path = "src/bin/backtest.rs"
 
 [features]
-clickhouse = ["ergon-runtime/clickhouse"]
+clickhouse = ["ergon-runtime/clickhouse", "lab/clickhouse"]
 
 [dependencies]
 arrayvec = "0.7"
@@ -25,10 +25,13 @@ log.workspace = true
 mimalloc.workspace = true
 schema.workspace = true
 ergon-runtime.workspace = true
+lab.workspace = true
 
 [dev-dependencies]
+# The live-journal test replays raw frames through a ClickHouse source.
+ergon-runtime = { workspace = true, features = ["clickhouse"] }
 proptest = "1.11"
-rusteron-media-driver = { version = "=0.2.7", features = ["static"] }
+rusteron-media-driver = { version = "0.2", features = ["static"] }
 
 [lints]
 workspace = true

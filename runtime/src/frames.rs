@@ -1,6 +1,6 @@
 //! A frame log: named streams of `(ts, frame)` records, in order.
 //!
-//! The simulation driver reads one as an input ([`crate::sim::Sim::add_log`]),
+//! The simulation driver reads one as an input ([`crate::rt::sim::Sim::new`]),
 //! and writes one as its captured output, so a recorded run is replayed with
 //! no Aeron and no `ClickHouse`, and two runs compare byte for byte.
 //!
@@ -290,14 +290,6 @@ impl<'a> Records<'a> {
     #[must_use]
     pub const fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.at)
-    }
-}
-
-impl Record<'_> {
-    /// Where the next record starts.
-    #[must_use]
-    pub const fn end(&self) -> usize {
-        self.offset + RECORD + self.frame.len()
     }
 }
 

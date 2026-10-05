@@ -7,26 +7,20 @@ use crate::Error;
 /// The source of inputs and time for the same application.
 pub enum Mode {
     /// Live Aeron feeds, hardware time, and exclusive publications.
-    Live(Config),
-    /// Recorded inputs and simulated time; optional wall-clock pacing or journal.
+    Live(Box<Config>),
+    /// Recorded inputs and simulated time, for a replay or a backtest;
+    /// optional wall-clock pacing, journal, run persistence and loopback.
     Replay {
         /// Window, sources, pace and optional journal.
-        config: SimConfig,
+        config: Box<SimConfig>,
         /// File sources, encoded with [`crate::frames::FrameLog`].
-        logs: Vec<Vec<u8>>,
-    },
-    /// Historical inputs, simulated time and optional venue loopback.
-    Backtest {
-        /// Sources, run persistence and loopback latencies.
-        config: SimConfig,
-        /// File sources, when running without infrastructure.
         logs: Vec<Vec<u8>>,
     },
 }
 
 impl From<Config> for Mode {
     fn from(config: Config) -> Self {
-        Self::Live(config)
+        Self::Live(Box::new(config))
     }
 }
 
@@ -49,29 +43,23 @@ impl Runtime {
     /// Invalid configuration or an unavailable input source.
     pub fn new(mode: impl Into<Mode>) -> Result<Self, Error> {
         let driver = match mode.into() {
-            Mode::Live(config) => Driver::Live(Box::new(Invoker::new(config)?)),
-            Mode::Replay { config, logs } | Mode::Backtest { config, logs } => {
-                Driver::Sim(Box::new(Sim::new(config, logs)?))
-            }
+            Mode::Live(config) => Driver::Live(Box::new(Invoker::new(*config)?)),
+            Mode::Replay { config, logs } => Driver::Sim(Box::new(Sim::new(*config, logs)?)),
         };
         Ok(Self { driver })
     }
 
-    /// Live duty-cycle invoker for an embedding framework such as a feed actor.
-    ///
-    /// # Errors
-    /// Invalid configuration or an unavailable Aeron client.
-    pub fn invoker(config: Config) -> Result<Invoker, Error> {
-        Invoker::new(config)
-    }
-
-    /// Build the live driver from the application environment.
+    /// Build the live driver from the application environment, with the
+    /// application's `directory` of feed names.
     ///
     /// # Errors
     /// The application's bus, schemas, settings or signal handler failed.
-    pub fn from_env(schema: &str) -> Result<Self, crate::app::Error> {
+    pub fn from_env(
+        schema: &str,
+        directory: Box<dyn crate::directory::Directory>,
+    ) -> Result<Self, crate::app::Error> {
         Ok(Self {
-            driver: Driver::Live(Box::new(Invoker::from_env(schema)?)),
+            driver: Driver::Live(Box::new(Invoker::from_env(schema, directory)?)),
         })
     }
 

@@ -1,7 +1,7 @@
 {
  "uid": "developer",
  "title": "Developer",
- "description": "Where the code spends its time: engine stages, record() cost, traces, and what lands in each table.",
+ "description": "Where the code spends its time: engine stages, trade send() cost, traces, and what lands in each table.",
  "tags": [
   "lab"
  ],
@@ -146,7 +146,7 @@
   {
    "id": 6,
    "type": "table",
-   "title": "record() per trade (µs)",
+   "title": "send() per trade (µs)",
    "datasource": {
     "type": "grafana-clickhouse-datasource",
     "uid": "clickhouse"
@@ -175,7 +175,7 @@
     "overrides": []
    },
    "options": {},
-   "description": "ergon_runtime::persist::record of one trade on the feed handler's thread: the cost of recording on the hot path. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact. Cross-node values use both nodes' wall clocks."
+   "description": "md's Ctx::send of one trade on its md feed (claim on the exclusive publication, SBE encode in place, commit), on the feed handler's thread: the cost of publishing on the hot path, between two reads of the runtime clock on that thread. Count-weighted averages of each 5 s window's estimated percentiles (not percentiles of all samples combined); min and max are exact."
   },
   {
    "id": 7,

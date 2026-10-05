@@ -19,11 +19,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::Error;
+pub use ergon_runtime::Error;
+use ergon_runtime::directory::{ArchiveAddr, Directory, FeedAddr, PubAddr};
 
 /// A publishing service: one pod, at one node's address at a time.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -207,15 +208,6 @@ impl Streams {
         ))
     }
 
-    /// `service`'s control port.
-    ///
-    /// # Errors
-    ///
-    /// The registry has no such service.
-    pub fn port(&self, service: &str) -> Result<u16, Error> {
-        Ok(self.service(service)?.port)
-    }
-
     /// Every archived stream: `(service, kind, stream id)`.
     pub fn archived(&self) -> impl Iterator<Item = (&str, &str, i32)> {
         self.services.iter().flat_map(move |(name, s)| {
@@ -227,53 +219,84 @@ impl Streams {
     }
 }
 
-/// Follows `streams.yaml`.
+/// The lab's directory: names in the registry, at this node's address. A
+/// kind the archive records is reached through its publisher's archive.
+impl Directory for Streams {
+    fn feed(&self, service: &str, kind: &str, host_ip: &str) -> Result<FeedAddr, Error> {
+        let archived = self.kinds.get(kind).is_some_and(|k| k.archive);
+        Ok(FeedAddr {
+            stream_id: self.stream(service, kind)?,
+            live: self.subscription(service, kind, host_ip)?,
+            archive: if archived {
+                Some(ArchiveAddr {
+                    host: self.host(service),
+                    port: self.archive_port,
+                    publisher_port: self.service(service)?.port,
+                })
+            } else {
+                None
+            },
+        })
+    }
+
+    fn publication(&self, service: &str, kind: &str, host_ip: &str) -> Result<PubAddr, Error> {
+        Ok(PubAddr {
+            channel: self.publication(service, host_ip)?,
+            stream_id: self.stream(service, kind)?,
+        })
+    }
+}
+
+/// Follows `streams.yaml` from the application's own loop, with no thread
+/// of its own.
 ///
-/// [`Watch::changed`] reads it at most once per [`Watch::EVERY`] and hands
-/// over each new version, parsed and checked. A version that does not parse
-/// is logged once and skipped, keeping the last good one. In Kubernetes the
-/// file is a `ConfigMap`, which the kubelet swaps in place when it changes.
+/// [`Watch::changed`] stats the file and reads it only when its length or
+/// modification time moved. A version that does not parse is logged once and
+/// skipped, keeping the last good one. In Kubernetes the file is a
+/// `ConfigMap`, which the kubelet swaps in place when it changes.
+///
+/// ponytail: a rewrite of the same length inside the file system's
+/// timestamp granularity waits for the next change; APFS and ext4 stamp
+/// nanoseconds, and a `ConfigMap` swap is a new file.
 pub struct Watch {
     path: PathBuf,
-    /// The text last read, good or bad.
-    last: String,
-    next: Instant,
+    /// The file's length and modification time when it was last read.
+    stamp: Option<(u64, SystemTime)>,
+    text: String,
 }
 
 impl Watch {
-    /// How often the file is read.
-    pub const EVERY: Duration = Duration::from_secs(1);
-
-    /// Watch `path`; its version now is the caller's.
-    #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    /// The registry at `path` now, and a watch for each later version: the
+    /// first read is the caller's, so no change falls between the two.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read or [`Streams::parse`] refuses it.
+    pub fn start(path: impl Into<PathBuf>) -> Result<(Streams, Self), Error> {
         let path = path.into();
-        Self {
-            last: std::fs::read_to_string(&path).unwrap_or_default(),
-            path,
-            next: Instant::now() + Self::EVERY,
-        }
+        let stamp = stamp(&path);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
+        let streams = Streams::parse(&text)?;
+        Ok((streams, Self { path, stamp, text }))
     }
 
-    /// The new version, if the file changed and parses. Until the next
-    /// read is due, one clock read.
+    /// The new version, if the file changed since the last call and parses.
+    /// One `stat` while it has not: call it from a timer, about once a
+    /// second, never per message.
     pub fn changed(&mut self) -> Option<Streams> {
-        let now = Instant::now();
-        if now < self.next {
+        let stamp = stamp(&self.path);
+        // Missing for a moment while the kubelet swaps the ConfigMap.
+        if stamp.is_none() || stamp == self.stamp {
             return None;
         }
-        self.next = now + Self::EVERY;
-        self.read()
-    }
-
-    fn read(&mut self) -> Option<Streams> {
-        // Missing for a moment while the kubelet swaps the ConfigMap.
         let text = std::fs::read_to_string(&self.path).ok()?;
-        if text == self.last {
+        self.stamp = stamp;
+        if text == self.text {
             return None;
         }
         let parsed = Streams::parse(&text);
-        self.last = text;
+        self.text = text;
         match parsed {
             Ok(streams) => {
                 log::info!("{}: changed", self.path.display());
@@ -285,6 +308,11 @@ impl Watch {
             }
         }
     }
+}
+
+fn stamp(path: &Path) -> Option<(u64, SystemTime)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
 }
 
 /// Check that this publisher can be found by its name.
@@ -321,8 +349,7 @@ fn node_network(pod_ip: Option<&str>, host_ip: Option<&str>) -> Result<(), Error
 /// From the node at `host_ip`. Best effort adds
 /// `reliable=false|tether=false|group=false`: no NAKs, and a slow
 /// subscriber neither holds the publisher back nor is held itself.
-#[must_use]
-pub fn subscription_channel(host: &str, port: u16, host_ip: &str, reliable: bool) -> String {
+fn subscription_channel(host: &str, port: u16, host_ip: &str, reliable: bool) -> String {
     let best_effort = if reliable {
         ""
     } else {
@@ -381,7 +408,7 @@ kinds:
     fn the_lab_registry_is_valid() -> TestResult {
         let s = Streams::load(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../samples/clickhouse/config/streams.yaml"
+            "/../config/streams.yaml"
         ))?;
         for region in ["an1", "as1", "ew2"] {
             for service in [format!("engine-{region}"), format!("exch-sim-{region}")] {
@@ -398,19 +425,19 @@ kinds:
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("streams.yaml");
         std::fs::write(&path, REGISTRY)?;
-        let mut watch = Watch::new(&path);
-        assert!(watch.changed().is_none(), "not due yet");
-        assert!(watch.read().is_none(), "unchanged");
+        let (first, mut watch) = Watch::start(path.clone())?;
+        assert_eq!(first.stream("md-binance", "md")?, 2011, "the version now");
+        assert!(watch.changed().is_none(), "unchanged");
         std::fs::write(&path, "services: [not a map\n")?;
-        assert!(watch.read().is_none(), "a bad version is skipped");
-        let next = REGISTRY.replace(
+        assert!(watch.changed().is_none(), "a bad version is skipped");
+        let added = REGISTRY.replace(
             "  engine-an1:",
             "  md-okx: { port: 40504, region: as1, streams: { md: 2041 } }\n  engine-an1:",
         );
-        std::fs::write(&path, &next)?;
-        let changed = watch.read().ok_or("the new version")?;
+        std::fs::write(&path, &added)?;
+        let changed = watch.changed().ok_or("the new version")?;
         assert_eq!(changed.stream("md-okx", "md")?, 2041);
-        assert!(watch.read().is_none(), "handed over once");
+        assert!(watch.changed().is_none(), "handed over once");
         std::fs::remove_dir_all(&dir)?;
         Ok(())
     }

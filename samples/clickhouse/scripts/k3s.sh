@@ -48,10 +48,11 @@ provision() {
             INSTALL_K3S_EXEC='agent --node-ip ${node_ips[i]} --node-label topology.kubernetes.io/region=${regions[i]}' sh -"
     done
     tools "${ips[0]}"
-    if [[ ! -e $kubeconfig ]]; then
-        (umask 077; on_vm "${ips[0]}" "sudo cat /etc/rancher/k3s/k3s.yaml" \
-            | sed -e "s/127.0.0.1/${ips[0]}/" -e 's/: default$/: lab-vms/' > "$kubeconfig")
-    fi
+    # Every provision is a cluster with its own certificates, often at a new
+    # address: the kubeconfig is written afresh, never kept from a deleted one.
+    (umask 077; on_vm "${ips[0]}" "sudo cat /etc/rancher/k3s/k3s.yaml" \
+        | sed -e "s/127.0.0.1/${ips[0]}/" -e 's/: default$/: lab-vms/' > "$kubeconfig.new")
+    mv "$kubeconfig.new" "$kubeconfig"
     echo "VMs up. kubeconfig: $kubeconfig (context lab-vms). Next: just azure sync"
 }
 

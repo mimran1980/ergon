@@ -36,15 +36,16 @@ homepage = "https://github.com/mimran1980/ergon"
 authors = ["Mohammed Imran"]
 
 [workspace.dependencies]
-# The only inheritor is the cluster crate. Cargo 1.95 rejects overriding
-# default-features on that inherited dependency, so fancy is disabled here.
+# Inherited by the cluster crate, ergon-runtime and ergon-runtime-server, each
+# for both edges. Cargo 1.95 rejects overriding default-features on an
+# inherited dependency, so fancy is disabled here.
 ergo-sbe = { version = "0.1.30", path = "sbe", default-features = false }
-# One rusteron line. `rusteron-code-gen` is an exact build-dependency, and
-# Cargo will not keep 0.2.4 beside archive's 0.2.7, so the client and the
-# media driver move with the archive pin. 0.2.10 is a separate measurement.
-rusteron-client = "=0.2.7"
-rusteron-media-driver = "=0.2.7"
-rusteron-archive = { version = "=0.2.7", features = ["static", "multi-threaded"] }
+# The newest rusteron 0.2. Each crate needs `rusteron-code-gen` at exactly its
+# own version, so all three resolve to one, and `cargo update` moves them
+# together.
+rusteron-client = "0.2"
+rusteron-media-driver = "0.2"
+rusteron-archive = { version = "0.2", features = ["static", "multi-threaded"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

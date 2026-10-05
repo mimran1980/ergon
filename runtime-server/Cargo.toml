@@ -6,23 +6,16 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[[bin]]
-name = "ingester"
-path = "src/main.rs"
-
 [dependencies]
 hdrhistogram = "7"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
-env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 ergo-sbe = { workspace = true }
 log = "0.4"
-mimalloc = "0.1.52"
 ergon-runtime = { path = "../runtime", features = ["clickhouse"] }
 rusteron-archive = { workspace = true }
-signal-hook = "0.3"
 
 [dev-dependencies]
-schema = { path = "../samples/clickhouse/schema" }
+mimalloc = "0.1.52"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }

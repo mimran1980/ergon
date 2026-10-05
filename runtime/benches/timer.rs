@@ -9,10 +9,20 @@
 //!
 //! Each scenario prints `PERCENTILES` and a `GATE` line, and the process exits
 //! non-zero when the wheel's p50 is slower in any of them. Criterion then
-//! writes `estimates.json`. `--gate-only` skips Criterion.
+//! writes `estimates.json`. `--gate-only` skips Criterion. The probes after the
+//! gate, the simulation's step and a cancelled minimum, print `PERCENTILES`
+//! and a `PROBE` line and never gate.
+//!
+//! The gate and Criterion time the same machine code, [`run`], one instance
+//! per scenario and arm. A gate sample is one arm's mean over `RUNS` runs,
+//! each timed alone after an untimed run, its reset untimed: the clock's
+//! tick (41.67 ns on Apple silicon) is noise around that mean, not a step in
+//! it. The arms alternate which goes first. The heap's operations are always
+//! inlined: called out of line a push costs about 1.7 times as much, so
+//! whichever harness the inliner favoured decided the comparison.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::hint::black_box;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -23,8 +33,11 @@ use ergon_runtime::timer::{Fired, Settings, TimerId, TimerWheel};
 
 const N: usize = 1_000;
 const N_I64: i64 = 1_000;
-const SAMPLES: usize = 1_024;
-const WARMUP: usize = 32;
+const SAMPLES: usize = 256;
+const WARMUP: usize = 8;
+/// Scenario runs per gate sample.
+const RUNS: u64 = 64;
+const RUNS_F64: f64 = 64.0;
 const IDLE_REPS: usize = 20_000;
 const FIRE_REPS: usize = 1_000;
 const BASE: i64 = 1_700_000_000_000_000_000;
@@ -36,6 +49,13 @@ const PAST_ALL: i64 = BASE + 2 * TICK * N_I64;
 /// A churn timer is due `2N` ticks after it is scheduled and cancelled after
 /// `N`, as an order timeout cancelled by its fill.
 const HORIZON: i64 = 2 * TICK * N_I64;
+/// Steps per probe run.
+const STEP_REPS: usize = 64;
+const MS: i64 = 1_000_000;
+/// A year: a parked timer never fires while the probes run.
+const PARK: i64 = 365 * 24 * 3_600 * 1_000 * MS;
+/// Gap between the cancel probe's order timeouts.
+const TIMEOUT_GAP: i64 = 50_000;
 
 #[derive(Clone, Copy, Default)]
 struct HeapRec {
@@ -74,7 +94,11 @@ impl LazyHeap {
         }
     }
 
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "the baseline at its best in every harness: see the module docs"
+    )]
+    #[inline(always)]
     fn schedule(&mut self, deadline: i64, token: u64, period: i64) -> u64 {
         let Some(handle) = self.free.pop() else {
             eprintln!("lazy heap out of handles");
@@ -87,7 +111,11 @@ impl LazyHeap {
         (u64::from(seq) << 32) | u64::from(handle)
     }
 
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "the baseline at its best in every harness: see the module docs"
+    )]
+    #[inline(always)]
     fn cancel(&mut self, id: u64) -> bool {
         let handle = u32::try_from(id & 0xffff_ffff).unwrap_or(u32::MAX);
         let seq = u32::try_from(id >> 32).unwrap_or(0);
@@ -103,7 +131,11 @@ impl LazyHeap {
 
     /// Pop what is due at `now` in `(deadline, seq)` order, tombstones
     /// included, and report up to `limit` live expiries.
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "the baseline at its best in every harness: see the module docs"
+    )]
+    #[inline(always)]
     fn poll(&mut self, now: i64, fired: &mut Vec<HeapFired>, limit: usize) -> usize {
         match self.heap.peek() {
             Some(Reverse((deadline, _, _))) if *deadline <= now => {}
@@ -143,6 +175,22 @@ impl LazyHeap {
             });
         }
         fired.len()
+    }
+
+    /// Pop the tombstones off the head, then peek: the earliest live deadline.
+    #[expect(
+        clippy::inline_always,
+        reason = "the baseline at its best in every harness: see the module docs"
+    )]
+    #[inline(always)]
+    fn next_deadline(&mut self) -> Option<i64> {
+        while let Some(&Reverse((deadline, seq, handle))) = self.heap.peek() {
+            if self.recs[handle as usize].seq == seq {
+                return Some(deadline);
+            }
+            self.heap.pop();
+        }
+        None
     }
 
     fn reset(&mut self) {
@@ -491,23 +539,181 @@ impl Scenario for Churn {
     }
 }
 
-#[inline(never)]
-fn time_ns(body: impl FnOnce() -> usize) -> u128 {
-    let start = Instant::now();
-    black_box(body());
-    start.elapsed().as_nanos()
+/// Probe: the simulation's step, the next deadline and then a poll at it, so
+/// every step fires. The runtime's aligned 1 ms to 1 s periods keep it
+/// moving while `C` timers sit parked on one spoke a year out, a spoke the
+/// search for the next deadline crosses about once in four steps.
+struct SimStep<const C: usize> {
+    wheel: TimerWheel,
+    fired: Vec<Fired>,
+    heap: LazyHeap,
+    heap_fired: Vec<HeapFired>,
 }
 
-fn percentile(sorted: &[u128], numer: usize, denom: usize) -> u128 {
+impl<const C: usize> SimStep<C> {
+    fn new() -> Self {
+        let mut s = Self {
+            wheel: wheel(),
+            fired: Vec::with_capacity(8),
+            heap: LazyHeap::new(C + 4),
+            heap_fired: Vec::with_capacity(8),
+        };
+        for (token, period) in [MS, 10 * MS, 100 * MS, 1_000 * MS].into_iter().enumerate() {
+            if s.wheel
+                .schedule_aligned(Nanos(BASE), period, token as u64)
+                .is_err()
+            {
+                eprintln!("schedule_aligned failed");
+                std::process::exit(2);
+            }
+            // `BASE` is a whole second, so every period is already aligned.
+            s.heap.schedule(BASE, token as u64, period);
+        }
+        for i in 0..C {
+            let deadline = BASE + PARK + i64::try_from(i).unwrap_or(0);
+            schedule(&mut s.wheel, deadline, i as u64);
+            s.heap.schedule(deadline, i as u64, 0);
+        }
+        s
+    }
+}
+
+impl<const C: usize> Scenario for SimStep<C> {
+    const NAME: &'static str = match C {
+        0 => "sim_step",
+        64 => "sim_step_park64",
+        256 => "sim_step_park256",
+        _ => "sim_step_park1024",
+    };
+    const OPS: usize = STEP_REPS;
+
+    fn wheel(&mut self) -> usize {
+        let mut n = 0;
+        for _ in 0..STEP_REPS {
+            let Some(at) = self.wheel.next_deadline() else {
+                break;
+            };
+            n += self.wheel.poll(black_box(at), &mut self.fired, 8);
+        }
+        n
+    }
+
+    fn heap(&mut self) -> usize {
+        let mut n = 0;
+        for _ in 0..STEP_REPS {
+            let Some(at) = self.heap.next_deadline() else {
+                break;
+            };
+            n += self.heap.poll(black_box(at), &mut self.heap_fired, 8);
+        }
+        n
+    }
+}
+
+/// Probe: 64 order timeouts 50 µs apart. Each step cancels the earliest, as
+/// its fill does, schedules one after the last and asks for the next
+/// deadline, as the simulation does before every event.
+struct CancelMin {
+    wheel: TimerWheel,
+    ids: VecDeque<TimerId>,
+    last_wheel: i64,
+    heap: LazyHeap,
+    heap_ids: VecDeque<u64>,
+    last_heap: i64,
+}
+
+impl CancelMin {
+    const LIVE: usize = 64;
+
+    fn new() -> Self {
+        let mut s = Self {
+            wheel: wheel(),
+            ids: VecDeque::with_capacity(Self::LIVE),
+            last_wheel: BASE,
+            heap: LazyHeap::new(Self::LIVE),
+            heap_ids: VecDeque::with_capacity(Self::LIVE),
+            last_heap: BASE,
+        };
+        for _ in 0..Self::LIVE {
+            s.last_wheel += TIMEOUT_GAP;
+            s.ids.push_back(schedule(&mut s.wheel, s.last_wheel, 0));
+            s.last_heap += TIMEOUT_GAP;
+            s.heap_ids.push_back(s.heap.schedule(s.last_heap, 0, 0));
+        }
+        s
+    }
+}
+
+impl Scenario for CancelMin {
+    const NAME: &'static str = "cancel_min";
+    const OPS: usize = STEP_REPS;
+
+    /// The sum of the next deadlines, which both arms must agree on.
+    fn wheel(&mut self) -> usize {
+        let mut sum = 0_usize;
+        for _ in 0..STEP_REPS {
+            if let Some(id) = self.ids.pop_front() {
+                self.wheel.cancel(black_box(id));
+            }
+            self.last_wheel += TIMEOUT_GAP;
+            let id = schedule(&mut self.wheel, black_box(self.last_wheel), 0);
+            self.ids.push_back(id);
+            let next = self.wheel.next_deadline().map_or(0, |at| at.0);
+            sum = sum.wrapping_add(usize::try_from(next).unwrap_or(0));
+        }
+        sum
+    }
+
+    fn heap(&mut self) -> usize {
+        let mut sum = 0_usize;
+        for _ in 0..STEP_REPS {
+            if let Some(id) = self.heap_ids.pop_front() {
+                self.heap.cancel(black_box(id));
+            }
+            self.last_heap += TIMEOUT_GAP;
+            let id = self.heap.schedule(black_box(self.last_heap), 0, 0);
+            self.heap_ids.push_back(id);
+            let next = self.heap.next_deadline().unwrap_or(0);
+            sum = sum.wrapping_add(usize::try_from(next).unwrap_or(0));
+        }
+        sum
+    }
+}
+
+/// `runs` runs of one arm, the wheel's when `WHEEL`, after an untimed run:
+/// each timed alone, its reset not. The gate and Criterion both call it.
+#[inline(never)]
+fn run<S: Scenario, const WHEEL: bool>(s: &mut S, runs: u64) -> Duration {
+    let once = |s: &mut S| if WHEEL { s.wheel() } else { s.heap() };
+    let reset = |s: &mut S| {
+        if WHEEL {
+            s.reset_wheel();
+        } else {
+            s.reset_heap();
+        }
+    };
+    black_box(once(s));
+    reset(s);
+    let mut total = Duration::ZERO;
+    for _ in 0..runs {
+        let start = Instant::now();
+        black_box(once(s));
+        total += start.elapsed();
+        reset(s);
+    }
+    total
+}
+
+fn percentile(sorted: &[f64], numer: usize, denom: usize) -> f64 {
     let last = sorted.len() - 1;
     sorted[(last * numer).div_ceil(denom).min(last)]
 }
 
-fn report(op: &str, arm: &str, samples: &mut [u128]) -> u128 {
-    samples.sort_unstable();
+fn report(op: &str, arm: &str, samples: &mut [f64]) -> f64 {
+    samples.sort_unstable_by(f64::total_cmp);
     let p50 = percentile(samples, 1, 2);
     println!(
-        "PERCENTILES {op} {arm} n={} min={} p50={p50} p99={} p99.99={} max={}",
+        "PERCENTILES {op} {arm} ns/run n={} min={:.1} p50={p50:.1} p99={:.1} p99.99={:.1} max={:.1}",
         samples.len(),
         samples[0],
         percentile(samples, 99, 100),
@@ -518,57 +724,78 @@ fn report(op: &str, arm: &str, samples: &mut [u128]) -> u128 {
 }
 
 fn gate<S: Scenario>(mut s: S) -> bool {
-    let mut wheel = vec![0_u128; SAMPLES];
-    let mut heap = vec![0_u128; SAMPLES];
-    for _ in 0..WARMUP {
-        black_box(s.wheel());
-        s.reset_wheel();
-        black_box(s.heap());
-        s.reset_heap();
-    }
-    for sample in 0..SAMPLES {
-        wheel[sample] = time_ns(|| s.wheel());
-        s.reset_wheel();
-        heap[sample] = time_ns(|| s.heap());
-        s.reset_heap();
+    let mut wheel = Vec::with_capacity(SAMPLES);
+    let mut heap = Vec::with_capacity(SAMPLES);
+    let per_run = |total: Duration| total.as_secs_f64() * 1e9 / RUNS_F64;
+    for sample in 0..WARMUP + SAMPLES {
+        let (w, h) = if sample % 2 == 0 {
+            let w = run::<S, true>(&mut s, RUNS);
+            (w, run::<S, false>(&mut s, RUNS))
+        } else {
+            let h = run::<S, false>(&mut s, RUNS);
+            (run::<S, true>(&mut s, RUNS), h)
+        };
+        if sample >= WARMUP {
+            wheel.push(per_run(w));
+            heap.push(per_run(h));
+        }
     }
     let wheel_p50 = report(S::NAME, "wheel", &mut wheel);
     let heap_p50 = report(S::NAME, "heap", &mut heap);
     let pass = wheel_p50 <= heap_p50;
     let status = if pass { "pass" } else { "fail" };
     println!(
-        "GATE {} wheel_p50={wheel_p50} heap_p50={heap_p50} {status}",
+        "GATE {} wheel_p50={wheel_p50:.1} heap_p50={heap_p50:.1} {status}",
         S::NAME
     );
     pass
+}
+
+/// The gate's samples and report, without the verdict. The first run of each
+/// arm must return the same count, so both did the same work.
+fn probe<S: Scenario>(mut s: S) {
+    let (first_wheel, first_heap) = (s.wheel(), s.heap());
+    s.reset_wheel();
+    s.reset_heap();
+    if first_wheel != first_heap {
+        eprintln!(
+            "PROBE {} wheel returned {first_wheel}, heap {first_heap}",
+            S::NAME
+        );
+        std::process::exit(2);
+    }
+    let mut wheel = Vec::with_capacity(SAMPLES);
+    let mut heap = Vec::with_capacity(SAMPLES);
+    let per_run = |total: Duration| total.as_secs_f64() * 1e9 / RUNS_F64;
+    for sample in 0..WARMUP + SAMPLES {
+        let (w, h) = if sample % 2 == 0 {
+            let w = run::<S, true>(&mut s, RUNS);
+            (w, run::<S, false>(&mut s, RUNS))
+        } else {
+            let h = run::<S, false>(&mut s, RUNS);
+            (run::<S, true>(&mut s, RUNS), h)
+        };
+        if sample >= WARMUP {
+            wheel.push(per_run(w));
+            heap.push(per_run(h));
+        }
+    }
+    let wheel_p50 = report(S::NAME, "wheel", &mut wheel);
+    let heap_p50 = report(S::NAME, "heap", &mut heap);
+    println!(
+        "PROBE {} wheel_p50={wheel_p50:.1} heap_p50={heap_p50:.1} ungated",
+        S::NAME
+    );
 }
 
 fn measure<S: Scenario>(c: &mut Criterion, mut s: S) {
     let mut group = c.benchmark_group(S::NAME);
     group.throughput(Throughput::Elements(S::OPS as u64));
     group.bench_function("wheel", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let start = Instant::now();
-                black_box(s.wheel());
-                total += start.elapsed();
-                s.reset_wheel();
-            }
-            total
-        });
+        b.iter_custom(|iters| run::<S, true>(&mut s, iters));
     });
     group.bench_function("heap", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let start = Instant::now();
-                black_box(s.heap());
-                total += start.elapsed();
-                s.reset_heap();
-            }
-            total
-        });
+        b.iter_custom(|iters| run::<S, false>(&mut s, iters));
     });
     group.finish();
 }
@@ -634,6 +861,11 @@ fn main() -> ExitCode {
     ]
     .iter()
     .all(|pass| *pass);
+    probe(SimStep::<0>::new());
+    probe(SimStep::<64>::new());
+    probe(SimStep::<256>::new());
+    probe(SimStep::<1024>::new());
+    probe(CancelMin::new());
     if !std::env::args().any(|arg| arg == "--gate-only") {
         let mut c = Criterion::default()
             .sample_size(20)

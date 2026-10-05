@@ -18,8 +18,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT app FROM metrics.metrics ORDER BY app",
-        "definition": "SELECT DISTINCT app FROM metrics.metrics ORDER BY app",
+        "query": "SELECT DISTINCT app FROM metrics.metrics WHERE app != '' ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM metrics.metrics WHERE app != '' ORDER BY app",
         "refresh": 2,
         "multi": true,
         "includeAll": true,
@@ -149,7 +149,7 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "record() min, p50, p99, p99.99, max (µs) (weighted window estimates)",
+      "title": "Trade send() min, p50, p99, p99.99, max (µs) (weighted window estimates)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -190,7 +190,7 @@
     {
       "id": 5,
       "type": "barchart",
-      "title": "record() estimated latency distribution (last interval)",
+      "title": "Trade send() estimated latency distribution (last interval)",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"

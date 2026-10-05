@@ -4,10 +4,10 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use engine::exchange::Exchange;
-use ergon_runtime::rt::Runtime;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut rt = Runtime::from_env(schema::TRADING_SCHEMA)?;
+    let streams = lab::Streams::load(lab::streams_path())?;
+    let mut rt = lab::runtime(schema::TRADING_SCHEMA, &streams)?;
     let exchange = Exchange::new(rt.ctx())?;
     rt.run(exchange)?;
     Ok(())

@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["aeron-bench", "aeron-driver", "engine", "md", "schema"]
+members = [
+    "aeron-bench",
+    "aeron-driver",
+    "engine",
+    "ingester",
+    "lab",
+    "md",
+    "schema",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,11 +19,14 @@ publish = false
 
 [workspace.dependencies]
 ergo-sbe = { path = "../../sbe", default-features = false }
-ergon-runtime = { path = "../../runtime" }
+# Allocator and loop-thread metrics (`alloc_sample_ns`, `loop_*`): the lab
+# runs on mimalloc, and the sample only runs in a cycle with no work.
+ergon-runtime = { path = "../../runtime", features = ["mimalloc"] }
 schema = { path = "schema" }
+lab = { path = "lab" }
 log = "0.4"
 mimalloc = "0.1.52"
-rusteron-archive = { version = "0.2.7", features = ["static", "multi-threaded"] }
+rusteron-archive = { version = "0.2", features = ["static", "multi-threaded"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

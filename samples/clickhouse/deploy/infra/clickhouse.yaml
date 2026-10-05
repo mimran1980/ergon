@@ -1,4 +1,6 @@
-# ClickHouse. Query UI: http://<host>:8123/play (user lab, password lab).
+# ClickHouse. Query UI: http://<host>:8123/play (user lab, password
+# CLICKHOUSE_PASSWORD from .env, which `just deploy` puts in the Secret
+# `clickhouse`).
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -15,7 +17,8 @@ spec:
           image: clickhouse/clickhouse-server:25.8
           env:
             - { name: CLICKHOUSE_USER, value: lab }
-            - { name: CLICKHOUSE_PASSWORD, value: lab }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: clickhouse, key: password } }
             - { name: CLICKHOUSE_DB, value: market }
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
           ports: [{ containerPort: 8123 }]

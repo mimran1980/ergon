@@ -44,10 +44,11 @@ spec:
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
             - { name: PERSIST_SUBSCRIBER_TIMEOUT, value: 60s }
-            # Its loop's idle strategy: spin, noop, yield or sleep. The lab
-            # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
-            # machine; spin on an isolated core for real tick-to-trade.
-            - { name: IDLE, value: sleep }
+            # Its loop's idle strategy (runtime/src/idle.rs). The lab backs
+            # off: it spins and yields while messages flow, then parks up to
+            # 1 ms, so four nodes share a machine; spin on an isolated core for
+            # real tick-to-trade.
+            - { name: IDLE, value: backoff }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP
@@ -56,7 +57,9 @@ spec:
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
-          resources: { requests: { memory: 16Mi }, limits: { memory: 64Mi } }
+          # Its heap, and the pages of its own publications' log buffers
+          # (persist 48 MiB, each feed 3 MiB), charged as it first writes them.
+          resources: { requests: { memory: 16Mi }, limits: { memory: 128Mi } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: config, mountPath: /lab/config, readOnly: true }
@@ -119,10 +122,11 @@ spec:
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
             - { name: PERSIST_SUBSCRIBER_TIMEOUT, value: 60s }
-            # Its loop's idle strategy: spin, noop, yield or sleep. The lab
-            # sleeps (up to 1 ms late, almost no CPU) so four nodes share one
-            # machine; spin on an isolated core for real tick-to-trade.
-            - { name: IDLE, value: sleep }
+            # Its loop's idle strategy (runtime/src/idle.rs). The lab backs
+            # off: it spins and yields while messages flow, then parks up to
+            # 1 ms, so four nodes share a machine; spin on an isolated core for
+            # real tick-to-trade.
+            - { name: IDLE, value: backoff }
             - name: HOST_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
             - name: POD_IP
@@ -131,7 +135,9 @@ spec:
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
-          resources: { requests: { memory: 16Mi }, limits: { memory: 64Mi } }
+          # Its heap, and the pages of its own publications' log buffers
+          # (persist 48 MiB, each feed 3 MiB), charged as it first writes them.
+          resources: { requests: { memory: 16Mi }, limits: { memory: 128Mi } }
           volumeMounts:
             - { name: aeron, mountPath: /aeron }
             - { name: config, mountPath: /lab/config, readOnly: true }

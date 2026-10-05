@@ -5,15 +5,15 @@
 //! `ClickHouse` is slow, the archive holds the data.
 //!
 //! An SBE message is a table (`table.rs`). Any other name in `tables.yaml` is
-//! a `tracing` event (`events.rs`). [`Writer`] inserts one `RowBinary` batch per
-//! table per tick.
+//! an event table (`events.rs`), fed by `record_row`, `record_value` and the
+//! `tracing` bridge. [`Writer`] inserts one `RowBinary` batch per table per
+//! tick.
 //!
-//! A frame is routed by the schema id and template id in its header. That is
-//! the same pair `schema::AnySchemaMessage` matches when an application has
-//! the generated market and trading codecs. This ingester does not call that
-//! enum. It reads every `.xml` under `PERSIST_SCHEMAS` and builds the table
-//! from the schema text, so a schema that was not compiled into the `schema`
-//! crate still persists.
+//! A frame is routed by the schema id and template id in its header, the
+//! pair an application's generated `AnySchemaMessage` matches. This ingester
+//! does not call that enum. It reads every `.xml` under `PERSIST_SCHEMAS` and
+//! builds the table from the schema text, so a schema the application never
+//! compiled still persists.
 //!
 //! `tables.yaml` is re-read while running:
 //!
@@ -25,8 +25,16 @@
 //!
 //! `static` is created once and never altered. A mismatched column is skipped
 //! and the log prints the `ALTER`. `dynamic` adds a column when a new field
-//! arrives. `enabled` is the application's switch. Listed tables are created
-//! even when off, so a query against an empty one still works.
+//! arrives. `enabled` (and `apps`, `until`) is the application's switch. For
+//! event tables and `otel_traces` this ingester applies it too, per app at
+//! each row's time, since the `tracing` bridge switches nothing; a table it
+//! does not list is off, as for the application, and a row it leaves out is
+//! consumed, not an error. (An event row naming an SBE message's table or
+//! persistence's own is an error.) It applies the configuration it has when
+//! it inserts: switching a table, or an app's entry, off also drops that
+//! table's rows still waiting in the archive, however long ago they were
+//! recorded (an `until` keeps those recorded before it). Listed tables are
+//! created even when off, so a query against an empty one still works.
 //!
 //! A failed insert compares the table again, then retries the rows.
 
@@ -40,14 +48,14 @@ mod traces;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ergon_runtime::event;
 use ergon_runtime::metrics::{
     HISTOGRAM_TEMPLATE_ID, METRIC_DEF_TEMPLATE_ID, METRICS_TEMPLATE_ID, MetricDef,
 };
-use ergon_runtime::persist::{Config, FeedConfig, TableConfig};
+use ergon_runtime::persist::{Config, FeedConfig, OTEL_TRACES, Switch, TableConfig};
 use ergon_runtime::source::{SOURCE_TEMPLATE_ID, Source as Origin};
 use ergon_runtime::trace::{TRACE_DEF_TEMPLATE_ID, TRACE_TEMPLATE_ID, TraceDef};
 
@@ -122,11 +130,23 @@ pub struct Settings {
     /// How often the media driver's counters, errors and losses are sampled
     /// into `aeron_counters`, `aeron_errors` and `aeron_loss`; zero never.
     pub aeron_stats_interval: Duration,
-    /// The feed registry: every archived feed published on this node is
-    /// recorded through a spy. `None` records the persist stream only.
-    pub streams: Option<ergon_runtime::streams::Streams>,
-    /// This node's IP, which feeds published here bind.
-    pub host_ip: String,
+    /// Feeds published on this node that the archive records through a spy,
+    /// beside the persist stream. [`Ingester::record_feeds`] adds more.
+    pub feeds: Vec<RecordedFeed>,
+}
+
+/// A feed published on this node, recorded by its archive through a spy on
+/// the publication: what the application's directory says of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedFeed {
+    /// The publishing service (`md-binance`).
+    pub service: String,
+    /// The feed's kind (`md`).
+    pub kind: String,
+    /// Its stream id.
+    pub stream_id: i32,
+    /// The spy channel the archive records it on.
+    pub spy: String,
 }
 
 impl Settings {
@@ -147,38 +167,18 @@ impl Settings {
             max_queued_bytes: 64 << 20,
             recheck: Duration::from_secs(30),
             aeron_stats_interval: Duration::from_secs(5),
-            streams: None,
-            host_ip: "127.0.0.1".into(),
+            feeds: Vec::new(),
         }
     }
 
     /// [`Settings::new`] from `CLICKHOUSE_URL` (`http://localhost:8123`),
     /// `CLICKHOUSE_USER` (`lab`), `CLICKHOUSE_PASSWORD` (`lab`),
     /// `CLICKHOUSE_DATABASE` (`md`; a table's `database:` in `tables.yaml`
-    /// overrides it), `PERSIST_CONFIG`
-    /// (`config/tables.yaml`), `PERSIST_CHECKPOINT` (`persist.checkpoint`),
-    /// `PERSIST_STREAMS` (`config/streams.yaml`, if it exists) and `HOST_IP`
-    /// (`127.0.0.1`).
-    ///
-    /// # Errors
-    ///
-    /// `PERSIST_STREAMS` names a file that could not be read.
-    pub fn from_env() -> Result<Self, Error> {
-        let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
-        let streams_path = var("PERSIST_STREAMS", "config/streams.yaml");
-        let streams = if Path::new(&streams_path).exists() {
-            Some(ergon_runtime::streams::Streams::load(&streams_path)?)
-        } else {
-            None
-        };
-        Ok(Self {
-            streams,
-            host_ip: var("HOST_IP", "127.0.0.1"),
-            ..Self::from_env_without_feeds()
-        })
-    }
-
-    fn from_env_without_feeds() -> Self {
+    /// overrides it), `PERSIST_CONFIG` (`config/tables.yaml`) and
+    /// `PERSIST_CHECKPOINT` (`persist.checkpoint`). No feeds: the
+    /// application names them.
+    #[must_use]
+    pub fn from_env() -> Self {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         Self::new(
             ClickHouse::new(
@@ -292,6 +292,28 @@ impl Source {
             }
         }
     }
+}
+
+/// Does `config` keep a row or span that `app` recorded at `at` (UNIX ns;
+/// now when unknown)? An application switches what its loop records, at the
+/// time it records; the `tracing` bridge switches nothing. So every event
+/// row and span is switched here too, at its own time: an `until` that has
+/// passed since keeps what was recorded before it, while a switch turned off
+/// drops every row still to be inserted, whenever it was recorded.
+fn kept(config: Option<&TableConfig>, app: &str, at: Option<u64>) -> bool {
+    let at = at
+        .and_then(|ns| jiff::Timestamp::from_nanosecond(i128::from(ns)).ok())
+        .unwrap_or_else(jiff::Timestamp::now);
+    config.is_some_and(|c| c.is_on(app, at))
+}
+
+/// The wall clock now, in UNIX ns: one read, nothing paired with it.
+fn unix_now_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }
 
 /// `tables.yaml`'s entry for a table persistence owns: static, always on.
@@ -606,23 +628,19 @@ impl Writer {
     /// `source` is the id of the `Source` that recorded it, or 0 for none: a
     /// persist frame's reserved value, or for a feed (whose frames carry
     /// their publish time there) the source its recording's `Source`
-    /// message named. `false` when its table is not in
-    /// `tables.yaml`: the message is skipped, and counted in the next
-    /// tick's errors.
+    /// message named. `false` when it has no table to go to: an SBE message
+    /// whose table is not in `tables.yaml`, or an event row naming
+    /// persistence's own table or an SBE message's. It is skipped, and
+    /// counted in the next tick's errors. An event row or trace that
+    /// `tables.yaml`, as it is now, switches off for its app, and an event
+    /// row of any other table it does not list, is consumed (`true`) and not
+    /// written, even one recorded while the table was on.
     ///
     /// A generated cross-schema enum can supply this slice with
     /// `writer.push(message.as_bytes(), source)`. This writer uses the loaded
     /// XML, so it also accepts schema ids outside that enum's configured set.
     pub fn push(&mut self, message: &[u8], source: u64) -> bool {
         self.push_message(message, source)
-    }
-
-    /// `tables.yaml` lists table `name`, so its messages are inserted.
-    #[must_use]
-    pub fn wants(&self, name: &str) -> bool {
-        self.tables
-            .iter()
-            .any(|s| s.config.is_some() && matches!(&s.source, Source::Sbe(t) if t.name == name))
     }
 
     /// Raw-frame recording opted in for `service/kind`; exact entries override `*`.
@@ -686,16 +704,42 @@ impl Writer {
                     .push((Instant::now(), source, self.feed, message.to_vec()));
                 return true;
             };
-            self.tables.iter_mut().find_map(|s| match &mut s.source {
-                Source::Events(t) if t.name == shape.table && s.config.is_some() => {
-                    if t.learn(shape) {
-                        s.include = None; // new columns: compare with ClickHouse again
-                        s.retry_at = Instant::now();
-                    }
-                    Some(s)
+            // The row's time follows its shape id.
+            let at = message
+                .get(12..20)
+                .and_then(|b| Some(u64::from_le_bytes(b.try_into().ok()?)));
+            let app = self.origins.get(&source).map_or("", |o| o.app.as_str());
+            let Some(state) = self.tables.iter_mut().find(|s| {
+                s.config.is_some()
+                    && matches!(&s.source, Source::Events(t) if t.name == shape.table)
+            }) else {
+                // Persistence's own tables and SBE messages' take no event
+                // rows. Any other table `tables.yaml` does not list is off,
+                // as it is for the application, but the `tracing` bridge
+                // publishes every table: consumed.
+                if RESERVED_TABLES.contains(&shape.table.as_str())
+                    || self
+                        .tables
+                        .iter()
+                        .any(|s| matches!(&s.source, Source::Sbe(t) if t.name == shape.table))
+                {
+                    self.skipped += 1;
+                    return false;
                 }
-                _ => None,
-            })
+                return true;
+            };
+            // Switched off for its app at its time: consumed, and the table
+            // learns nothing from it.
+            if !kept(state.config.as_ref(), app, at) {
+                return true;
+            }
+            if let Source::Events(t) = &mut state.source
+                && t.learn(shape)
+            {
+                state.include = None; // new columns: compare with ClickHouse again
+                state.retry_at = Instant::now();
+            }
+            Some(state)
         } else {
             let (template, schema) = (id(2), id(4));
             self.tables.iter_mut().find(|s| {
@@ -725,7 +769,19 @@ impl Writer {
                     .push("a malformed Trace message, skipped".into());
                 true
             }
-            Some(false) => self.queue(&Source::Traces, message, source),
+            Some(false) => {
+                let app = self.origins.get(&source).map_or("", |o| o.app.as_str());
+                let config = self
+                    .tables
+                    .iter()
+                    .find(|s| matches!(s.source, Source::Traces))
+                    .and_then(|s| s.config.as_ref());
+                // Switched off for its app when it started: consumed.
+                if !kept(config, app, traces::start(message)) {
+                    return true;
+                }
+                self.queue(&Source::Traces, message, source)
+            }
             Some(true) => {
                 self.queued_bytes += message.len();
                 self.pending
@@ -1015,8 +1071,7 @@ impl Writer {
     /// checks replay positions before closing windows and uses its own tick.
     pub fn tick(&mut self) -> Report {
         let mut report = Report::default();
-        let now = ergon_runtime::clock::Clock::new().wall().epoch_ns();
-        self.flush_elapsed_histograms(u64::try_from(now).unwrap_or(0), true);
+        self.flush_elapsed_histograms(unix_now_ns(), true);
         self.run(&mut report);
         self.log(&report);
         report
@@ -1081,13 +1136,20 @@ impl Writer {
             .filter_map(|name| Some(((*name).to_owned(), config.get(*name)?.database.clone()?)))
             .collect();
         for state in &mut self.tables {
-            let new = if matches!(
-                state.source,
-                Source::Metrics | Source::Histograms | Source::Traces
-            ) {
+            let new = if matches!(state.source, Source::Metrics | Source::Histograms) {
                 // Persistence's own: always there; only its database is set here.
                 Some(TableConfig {
                     database: self.own_databases.get(state.source.name()).cloned(),
+                    ..fixed_config()
+                })
+            } else if matches!(state.source, Source::Traces) {
+                // Always there too, and switched per app as an application
+                // switches its tracers: off when not listed.
+                let listed = config.get(OTEL_TRACES);
+                Some(TableConfig {
+                    database: self.own_databases.get(OTEL_TRACES).cloned(),
+                    enabled: listed.map_or(Switch::Off, |c| c.enabled),
+                    apps: listed.map(|c| c.apps.clone()).unwrap_or_default(),
                     ..fixed_config()
                 })
             } else {
@@ -1102,8 +1164,9 @@ impl Writer {
             }
             state.config = new;
         }
-        // Tables that are not SBE messages are fed by `tracing` events;
-        // persistence's own tables are listed only to switch them.
+        // Tables that are not SBE messages are fed by event rows
+        // (`record_row`, `record_value`, the `tracing` bridge); persistence's
+        // own tables are listed only to place or switch them.
         for (name, table_config) in config
             .into_iter()
             .filter(|(name, _)| !RESERVED_TABLES.contains(&name.as_str()))

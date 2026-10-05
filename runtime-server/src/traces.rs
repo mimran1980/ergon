@@ -66,6 +66,13 @@ pub fn unknown_def(message: &[u8], defs: &HashMap<u64, TraceDef>) -> Option<bool
     Some(!defs.contains_key(&t.def()))
 }
 
+/// When a `Trace` message's trace or span started, UNIX ns.
+pub fn start(message: &[u8]) -> Option<u64> {
+    codec::TraceDecoder::decode(message, 0)
+        .ok()
+        .map(|t| t.start())
+}
+
 fn span_id(parts: &[u64]) -> u64 {
     let bytes: Vec<u8> = parts.iter().flat_map(|p| p.to_le_bytes()).collect();
     ergon_runtime::event::fnv64(&bytes).max(1)

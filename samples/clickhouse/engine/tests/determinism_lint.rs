@@ -1,5 +1,6 @@
-//! The engine's `clippy.toml` must reject a hardware clock read and a
-//! hash-ordered map, and accept the same crate without them: a gate that
+//! The engine's `clippy.toml` must reject a hardware clock read, a
+//! hash-ordered map, and state shared across threads or a thread started
+//! (the client ban), and accept the same crate without them: a gate that
 //! cannot fail is no gate.
 
 use std::error::Error;
@@ -10,7 +11,8 @@ const CLIPPY_TOML: &str = include_str!("../clippy.toml");
 
 /// `cargo clippy -D warnings` on a scratch crate whose `lib.rs` is `body`,
 /// under the engine's `clippy.toml`. Ambient `RUSTFLAGS` are cleared: a
-/// caller that caps lints would otherwise make every case pass.
+/// caller that caps lints would otherwise make every case pass. Colour is
+/// off, as CI forces it on and the diagnostics are searched as text.
 fn clippy(dir: &Path, body: &str) -> Result<(bool, String), Box<dyn Error>> {
     std::fs::create_dir_all(dir.join("src"))?;
     std::fs::write(
@@ -20,7 +22,8 @@ fn clippy(dir: &Path, body: &str) -> Result<(bool, String), Box<dyn Error>> {
     std::fs::write(dir.join("clippy.toml"), CLIPPY_TOML)?;
     std::fs::write(dir.join("src/lib.rs"), body)?;
     let out = Command::new(env!("CARGO"))
-        .args(["clippy", "--quiet", "--", "-D", "warnings"])
+        .args(["clippy", "--quiet", "--color", "never", "--"])
+        .args(["-D", "warnings"])
         .current_dir(dir)
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
@@ -34,7 +37,7 @@ fn clippy(dir: &Path, body: &str) -> Result<(bool, String), Box<dyn Error>> {
 }
 
 #[test]
-fn clock_reads_and_hash_maps_are_rejected_and_the_rest_is_not() -> Result<(), Box<dyn Error>> {
+fn clock_reads_hash_maps_and_threads_alone_are_rejected() -> Result<(), Box<dyn Error>> {
     let root = std::env::temp_dir().join(format!("engine-lint-{}", std::process::id()));
     let (ok, _) = clippy(
         &root.join("clean"),
@@ -56,6 +59,16 @@ fn clock_reads_and_hash_maps_are_rejected_and_the_rest_is_not() -> Result<(), Bo
             "hash_map",
             "pub fn f(m: &std::collections::HashMap<u8, u8>) -> usize { m.len() }\n",
             "HashMap",
+        ),
+        (
+            "arc",
+            "pub fn f(x: &std::sync::Arc<u8>) -> u8 { **x }\n",
+            "std::sync::Arc",
+        ),
+        (
+            "spawn",
+            "pub fn f() { let _ = std::thread::spawn(|| ()); }\n",
+            "std::thread::spawn",
         ),
     ] {
         let (ok, stderr) = clippy(&root.join(name), body)?;

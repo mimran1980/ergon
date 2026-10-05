@@ -13,7 +13,6 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 ergo-sbe = { workspace = true }
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 log = "0.4"
-minstant = "0.1"
 rusteron-archive = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
@@ -27,6 +26,7 @@ mimalloc = { version = "0.1.52", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+minstant = "0.1"
 
 [features]
 clickhouse = ["dep:ureq"]

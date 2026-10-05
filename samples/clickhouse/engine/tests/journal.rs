@@ -4,8 +4,8 @@ use ergon_runtime::frames;
 use ergon_runtime::journal::{Input, InputEvent, Journal};
 use ergon_runtime::rt::sim::{Sim, SimConfig};
 use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId};
-use ergon_runtime::streams::Streams;
 use ergon_runtime::subscription::Delivery;
+use lab::Streams;
 use schema::trading::AnyMessage;
 
 const SEED: u64 = 10_000;
@@ -89,12 +89,12 @@ fn journal_replays_engine_outputs_with_recorded_ids_and_receive_times()
         .records
         .map(|r| (r.frame.to_vec(), r.offset as i64))
         .collect();
-    let mut config = SimConfig::new(Streams::parse(replay::STREAMS)?);
+    let mut config = SimConfig::new();
     config.region = replay::REGION.into();
     config.route_delays.insert("md-alpha/md".into(), 2_000_000);
     config.route_delays.insert("md-beta/md".into(), 3_000_000);
     let mut original = Sim::new(config, vec![data.clone()])?;
-    let engine = Engine::new(original.ctx())?;
+    let engine = Engine::new(original.ctx(), Streams::parse(replay::STREAMS)?)?;
     let mut recorded = Recorded {
         engine,
         refs,
@@ -122,11 +122,11 @@ fn journal_replays_engine_outputs_with_recorded_ids_and_receive_times()
             .any(|input| matches!(input.event, InputEvent::Timer { .. })),
         "fixture must exercise actual timer dispatches"
     );
-    let mut config = SimConfig::new(Streams::parse(replay::STREAMS)?);
+    let mut config = SimConfig::new();
     config.region = replay::REGION.into();
     config.journal = Some(recorded.journal);
     let mut exact = Sim::new(config, vec![data])?;
-    let mut engine = Engine::new(exact.ctx())?;
+    let mut engine = Engine::new(exact.ctx(), Streams::parse(replay::STREAMS)?)?;
     exact.run(&mut engine)?;
     assert_eq!(exact.ctx().captured().to_bytes(), expected);
     Ok(())

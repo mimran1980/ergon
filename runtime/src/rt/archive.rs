@@ -7,6 +7,9 @@
 //! it had reached when the feed was opened if it is still recording. Each
 //! head holds one frame, copied into a reused buffer.
 //!
+//! The simulation's [`Bus`] has no conductor thread: connecting to the
+//! archive and waiting for a replay drive its conductor as they wait.
+//!
 //! ponytail: replays from each recording's start and skips frames before
 //! `from`; seek by stamp (or the `frames` table) if long recordings make
 //! that slow.
@@ -21,7 +24,7 @@ use rusteron_archive::{
 use crate::Error;
 use crate::bus::Bus;
 use crate::clock::Nanos;
-use crate::streams::Streams;
+use crate::directory::Directory;
 use crate::subscription::replay_image_session;
 
 use super::FeedId;
@@ -66,6 +69,8 @@ struct Head {
 /// The heads, by recording, and what each feeds.
 pub(super) struct ArchiveSource {
     aeron: Aeron,
+    /// This node, as the directory is asked from it.
+    host_ip: String,
     archive: AeronArchive,
     replay_stream: i32,
     pub(super) names: Vec<String>,
@@ -84,12 +89,24 @@ impl ArchiveSource {
             .map_err(fail)?;
         ctx.set_control_response_channel(&config.response.as_str().into_c_string())
             .map_err(fail)?;
-        let archive = AeronArchiveAsyncConnect::new_with_aeron(&ctx, &aeron)
-            .map_err(fail)?
-            .poll_blocking(Duration::from_secs(10))
-            .map_err(|e| Error::Aeron(format!("connecting to the archive: {e}")))?;
+        // Aeron's timeout, not ours: when it expires, Aeron closes what the
+        // connect opened, and dropping an unfinished one closes nothing.
+        ctx.set_message_timeout_ns(10_000_000_000).map_err(fail)?;
+        let connect = AeronArchiveAsyncConnect::new_with_aeron(&ctx, &aeron).map_err(fail)?;
+        // Not `poll_blocking`, which never runs the conductor the connect
+        // waits on.
+        let archive = loop {
+            if let Some(archive) = connect
+                .poll()
+                .map_err(|e| Error::Aeron(format!("connecting to the archive: {e}")))?
+            {
+                break archive;
+            }
+            crate::bus::pause(&aeron);
+        };
         Ok(Self {
             aeron,
+            host_ip: bus.host_ip().to_owned(),
             archive,
             replay_stream: config.replay_stream,
             names: Vec::new(),
@@ -104,7 +121,7 @@ impl ArchiveSource {
     pub(super) fn bind(
         &mut self,
         subscribed: &[String],
-        streams: &Streams,
+        directory: &dyn Directory,
         now: Nanos,
         started: bool,
     ) -> Result<(), Error> {
@@ -116,8 +133,14 @@ impl ArchiveSource {
             let Some((service, kind)) = name.split_once('/') else {
                 continue;
             };
-            let Ok(stream_id) = streams.stream(service, kind) else {
-                continue;
+            // A raw channel (`subscribe_channel`), or a name the directory
+            // does not know, has no recording to find by stream id.
+            let stream_id = match directory.feed(service, kind, &self.host_ip) {
+                Ok(addr) => addr.stream_id,
+                Err(e) => {
+                    log::warn!("archive replay: nothing to replay for {name}: {e}");
+                    continue;
+                }
             };
             let before = self.heads.len();
             self.open(name, stream_id)?;
@@ -236,11 +259,16 @@ impl ArchiveSource {
                 )
                 .map_err(fail)?;
             }
-            if !head.has && Instant::now() > deadline {
-                return Err(Error::Aeron(format!(
-                    "recording {}: no frame for {STALL:?} at position {} of {}",
-                    head.recording, head.position, head.end
-                )));
+            if !head.has {
+                if Instant::now() > deadline {
+                    return Err(Error::Aeron(format!(
+                        "recording {}: no frame for {STALL:?} at position {} of {}",
+                        head.recording, head.position, head.end
+                    )));
+                }
+                // The subscription's add and the replay's image arrive
+                // through the conductor.
+                let _ = crate::bus::poll(&self.aeron);
             }
         }
         Ok(head.has)

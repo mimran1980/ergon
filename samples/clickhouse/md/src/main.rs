@@ -1,12 +1,23 @@
 //! One exchange's public market data. `EXCHANGE` picks the venue. No API keys.
 //!
-//! Quotes and trades are SBE `record` calls. `ticker`, `spread`, and
-//! `book_view` go out once a second with the book, not on every quote.
-//! Counters, gauges, and histograms are updated on the callback and published
-//! from the metrics thread. `book_update` is a checkpoint trace.
+//! Quotes and trades go out on the md feeds, SBE. `ticker`, `spread`, and
+//! `book_view` are event rows once a second with the book, not on every
+//! quote. Counters, gauges, and histograms are updated on the callback and
+//! published by the runtime's housekeeping. `book_update` is a checkpoint
+//! trace.
 //!
-//! `kind` in `tables.yaml` chooses static or dynamic. The handle is installed
-//! once in `main`. With none installed, the free functions do nothing.
+//! `kind` in `tables.yaml` chooses static or dynamic. Every row goes through
+//! the runtime's persist, on the actor's thread. `tracing` spans, from any
+//! thread, go through the bridge.
+//!
+//! The actor builds the runtime, its Aeron client, persist and the bridge in
+//! `on_start`, not in `main`: Nautilus connects its venue clients first, and
+//! an Aeron client whose conductor nothing runs is closed after its 10 s
+//! liveness timeout. From then on the actor's callbacks and a 1 ms timer run
+//! the runtime's duty cycle: a venue callback's takes the event time, and the
+//! timer's runs the Aeron conductor and due housekeeping, so no callback pays
+//! for them unless a millisecond has passed. On SIGTERM it closes the feeds
+//! and persist's publication at once and exits.
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -18,12 +29,11 @@ use arrayvec::{ArrayString, ArrayVec};
 
 use ergon_runtime::Settings;
 use ergon_runtime::bus::Bus;
-use ergon_runtime::clock::{Clock, Nanos};
+use ergon_runtime::clock::Nanos;
 use ergon_runtime::event::Value;
-use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram};
+use ergon_runtime::metrics::{Counter, Gauge, Histogram};
 use ergon_runtime::persist::Persist;
-use ergon_runtime::rt::{Agent, Config, Ctx, Expiry, FeedId, Invoker, Out, Runtime};
-use ergon_runtime::streams::Streams;
+use ergon_runtime::rt::{self, Agent, Config, Ctx, Expiry, FeedId, Invoker, Out};
 use ergon_runtime::subscription::Delivery;
 use ergon_runtime::trace::Tracer;
 use nautilus_binance::config::{BinanceDataClientConfig, BinanceSpotMarketDataMode};
@@ -262,18 +272,35 @@ struct Recorder {
     venue_upper: String,
     /// One `book_deltas` row's changes, reused.
     deltas: Vec<BookDeltasDeltasEntry>,
+    /// What `on_start` builds the runtime from: this service's name, and the
+    /// registry, its directory.
+    start: Option<(String, lab::Streams)>,
+    /// The runtime and what hangs off it, from `on_start` on.
+    live: Option<Live>,
+}
+
+/// What the actor builds in `on_start`.
+#[derive(Debug)]
+struct Live {
     t: Telemetry,
     feeds: Feeds,
-    /// Persist's housekeeping, SIGTERM, and the feeds' `Source` heartbeat:
-    /// the runtime in embedded mode, driven from this actor's callbacks.
+    /// Persist's housekeeping, the Aeron conductor, SIGTERM, and the feeds'
+    /// `Source` heartbeat: the runtime in embedded mode, driven from this
+    /// actor's callbacks.
     rt: Invoker,
     housekeeping: Housekeeping,
 }
 
 /// md takes no feeds and keeps no timers of its own: its runtime only does
-/// housekeeping.
-#[derive(Debug)]
-struct Housekeeping;
+/// housekeeping and runs the Aeron conductor.
+#[derive(Debug, Default)]
+struct Housekeeping {
+    /// This cycle runs for a venue callback, which has work to do. As in any
+    /// cycle that found work, the conductor waits for the millisecond
+    /// timer's cycle, or a millisecond, and due housekeeping for that cycle,
+    /// or half a millisecond.
+    venue: bool,
+}
 
 impl Agent for Housekeeping {
     fn start(&mut self, _ctx: &mut Ctx) -> Result<(), ergon_runtime::Error> {
@@ -283,23 +310,67 @@ impl Agent for Housekeeping {
     fn on_message(&mut self, _ctx: &mut Ctx, _feed: FeedId, _msg: &[u8], _d: Delivery) {}
 
     fn on_timer(&mut self, _ctx: &mut Ctx, _timer: Expiry) {}
+
+    fn poll(&mut self, _ctx: &mut Ctx) -> usize {
+        usize::from(self.venue)
+    }
 }
 
 impl Recorder {
-    /// One duty cycle of the runtime, on this actor's thread: due
-    /// housekeeping, or nothing. On SIGTERM (a restart, or a move to another
-    /// node) close every publication at once, so subscribers turn to the
-    /// next pod of this feed within seconds rather than after this client's
-    /// timeout.
-    fn invoke(&mut self) {
-        self.rt.cycle(&mut self.housekeeping);
-        if self.rt.is_stopping() {
-            if let Err(error) = self.rt.finish(&mut self.housekeeping) {
+    /// One duty cycle of the runtime, on this actor's thread, for a venue
+    /// callback (`venue`) or the millisecond timer: the event time, then on
+    /// the timer's cycle (or once a callback's has waited a millisecond) due
+    /// housekeeping and the Aeron conductor. On SIGTERM (a restart, or a move
+    /// to another node) close every publication at once, so subscribers turn
+    /// to the next pod of this feed within seconds rather than after this
+    /// client's timeout.
+    fn invoke(&mut self, venue: bool) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        live.housekeeping.venue = venue;
+        live.rt.cycle(&mut live.housekeeping);
+        if live.rt.is_stopping() {
+            if let Err(error) = live.rt.finish(&mut live.housekeeping) {
                 log::error!("runtime shutdown failed: {error}");
                 std::process::exit(1);
             }
             std::process::exit(0);
         }
+    }
+
+    /// The runtime, on this actor's thread: the bus, persist and the
+    /// `tracing` bridge, the feeds and the telemetry. The actor makes every
+    /// record, on persist's exclusive publication; a `tracing` span from an
+    /// adapter's worker thread goes through the bridge, on a publication of
+    /// its own. Log lines go through Nautilus' logger.
+    fn runtime(&mut self) -> Result<Live, Box<dyn std::error::Error>> {
+        let (service, streams) = self.start.take().ok_or("the runtime starts once")?;
+        let settings = Settings::from_env();
+        let bus = Bus::connect(&settings)?;
+        let persist = Persist::connect(schema::MARKET_SCHEMA, &bus, settings)?;
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(persist.layer()?),
+        )?;
+        // No thread of its own: the actor drives it (`Recorder::invoke`),
+        // from every callback and a millisecond timer. It polls persist,
+        // applies `tables.yaml`, refreshes the wall-clock offset, runs the
+        // Aeron conductor, and stops on SIGTERM.
+        let mut rt = Invoker::new(Config {
+            persist: Some(persist),
+            stop: rt::sigterm()?,
+            directory: Box::new(streams),
+            ..Config::new(bus)
+        })?;
+        let feeds = Feeds::open(&mut rt, &service)?;
+        rt.start(&mut Housekeeping::default())?;
+        let t = Telemetry::new(&self.instruments, rt.ctx_ref());
+        Ok(Live {
+            t,
+            feeds,
+            rt,
+            housekeeping: Housekeeping::default(),
+        })
     }
 }
 
@@ -351,16 +422,15 @@ impl Feeds {
 /// and a store on this thread.
 #[derive(Debug)]
 struct Telemetry {
-    clock: Clock,
     trades: Counter,
     quotes: Counter,
     books: Counter,
     deltas: Counter,
     /// The venue's timestamp to our handler, ns.
-    trade_latency: LocalHistogram,
-    quote_latency: LocalHistogram,
-    /// How long `ergon_runtime::persist::record` of a trade takes, ns.
-    record_ns: LocalHistogram,
+    trade_latency: Histogram,
+    quote_latency: Histogram,
+    /// How long sending a trade takes, ns.
+    record_ns: Histogram,
     spread_bps: HashMap<InstrumentId, Gauge>,
     /// Each book change, from the venue's timestamp: `wire`, `convert`,
     /// `record`.
@@ -368,19 +438,18 @@ struct Telemetry {
 }
 
 impl Telemetry {
-    fn new(instruments: &[InstrumentId]) -> Self {
-        let m = ergon_runtime::persist::metrics();
+    fn new(instruments: &[InstrumentId], ctx: &Ctx) -> Self {
+        let m = ctx.metrics();
         let kind = |k| m.counter("messages", &[("kind", k)]);
-        let latency = |k| m.local_histogram("venue_to_local_ns", &[("kind", k)]);
+        let latency = |k| m.histogram("venue_to_local_ns", &[("kind", k)]);
         Self {
-            clock: Clock::new(),
             trades: kind("trade"),
             quotes: kind("quote"),
             books: kind("book"),
             deltas: kind("book_deltas"),
             trade_latency: latency("trade"),
             quote_latency: latency("quote"),
-            record_ns: m.local_histogram("record_ns", &[("table", "trade")]),
+            record_ns: m.histogram("record_ns", &[("table", "trade")]),
             spread_bps: instruments
                 .iter()
                 .map(|&id| {
@@ -388,11 +457,7 @@ impl Telemetry {
                     (id, gauge)
                 })
                 .collect(),
-            book_update: ergon_runtime::persist::tracer(
-                "book_update",
-                &["wire", "convert", "record"],
-                &["deltas"],
-            ),
+            book_update: ctx.tracer("book_update", &["wire", "convert", "record"], &["deltas"]),
         }
     }
 
@@ -407,6 +472,15 @@ nautilus_actor!(Recorder);
 
 impl DataActor for Recorder {
     fn on_start(&mut self) -> anyhow::Result<()> {
+        if self.live.is_none() {
+            match self.runtime() {
+                Ok(live) => self.live = Some(live),
+                Err(error) => {
+                    log::error!("the runtime did not start: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
         // The runtime's duty cycle every millisecond, quiet venue or not.
         self.clock().set_timer(
             "ergon-runtime",
@@ -417,7 +491,8 @@ impl DataActor for Recorder {
             None,
             None,
         )?;
-        // A `tracing` span: recorded while `otel_traces` is on for this app.
+        // A `tracing` span, through the bridge: kept while `otel_traces` is
+        // on for this app.
         let _span = tracing::info_span!("subscribe", venue = self.venue.name).entered();
         let second = NonZeroUsize::try_from(1000)?;
         let depth = NonZeroUsize::new(self.venue.depth);
@@ -465,62 +540,41 @@ impl DataActor for Recorder {
     /// within seconds rather than after the node's shutdown or this
     /// client's timeout.
     fn on_stop(&mut self) -> anyhow::Result<()> {
-        self.rt.finish(&mut self.housekeeping)?;
+        if let Some(live) = &mut self.live {
+            live.rt.finish(&mut live.housekeeping)?;
+        }
         Ok(())
     }
 
     fn on_time_event(&mut self, _event: &TimeEvent) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(false);
         Ok(())
     }
 
     fn on_instrument(&mut self, i: &InstrumentAny) -> anyhow::Result<()> {
-        self.invoke();
-        // Decimals as text, so a tick size like 0.00001 is kept exactly.
-        tracing::info!(
-            table = "instrument",
-            instrument = %i.id(),
-            venue = %i.id().venue,
-            raw_symbol = %i.raw_symbol(),
-            class = ?i.instrument_class(),
-            base_currency = i.base_currency().map(|c| c.code.to_string()),
-            quote_currency = %i.quote_currency().code,
-            settlement_currency = %i.settlement_currency().code,
-            inverse = i.is_inverse(),
-            price_increment = %i.price_increment(),
-            size_increment = %i.size_increment(),
-            multiplier = %i.multiplier(),
-            min_quantity = i.min_quantity().map(|q| q.to_string()),
-            max_quantity = i.max_quantity().map(|q| q.to_string()),
-            maker_fee = %i.maker_fee(),
-            taker_fee = %i.taker_fee(),
-        );
+        self.invoke(true);
+        if let Some(persist) = self.persist("instrument") {
+            instrument_row(i, |row| persist.record_row("instrument", row));
+        }
         self.spec(i)
     }
 
     fn on_instrument_status(&mut self, s: &InstrumentStatus) -> anyhow::Result<()> {
-        self.invoke();
-        tracing::info!(
-            table = "instrument_status",
-            instrument = %s.instrument_id,
-            venue = %s.instrument_id.venue,
-            ts_event = s.ts_event.as_u64(),
-            action = ?s.action,
-            reason = s.reason.map(|r| r.as_str()),
-            trading_event = s.trading_event.map(|e| e.as_str()),
-            is_trading = s.is_trading,
-            is_quoting = s.is_quoting,
-            is_short_sell_restricted = s.is_short_sell_restricted,
-        );
+        self.invoke(true);
+        if let Some(persist) = self.persist("instrument_status") {
+            instrument_status_row(s, |row| persist.record_row("instrument_status", row));
+        }
         Ok(())
     }
 
     fn on_trade(&mut self, t: &TradeTick) -> anyhow::Result<()> {
-        self.invoke();
-        self.t.trades.inc();
-        let latency = Telemetry::since_venue(t.ts_event.as_u64(), self.rt.ctx_ref().wall_now());
-        self.t.trade_latency.record(latency);
-        let started = self.t.clock.cached();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
+        live.t.trades.inc();
+        let latency = Telemetry::since_venue(t.ts_event.as_u64(), live.rt.ctx_ref().wall_now());
+        live.t.trade_latency.record(latency);
         let ticker = self.tickers.entry(t.instrument_id).or_default();
         ticker.last = Some(t.price.as_f64());
         ticker.trades += 1;
@@ -529,8 +583,9 @@ impl DataActor for Recorder {
         let trade_id = t.trade_id.as_str().as_bytes();
         let len =
             TradeEncoder::compute_length_with_header(symbol.len(), venue.len(), trade_id.len());
-        self.rt.ctx_ref().send(
-            self.feeds.md,
+        let started = live.rt.ctx_ref().read();
+        live.rt.ctx_ref().send(
+            live.feeds.md,
             TradeEncoder::TEMPLATE_ID,
             len,
             |buf| -> anyhow::Result<_> {
@@ -552,20 +607,23 @@ impl DataActor for Recorder {
                     .encoded_length_with_header())
             },
         )?;
-        let took = self.t.clock.now().since(started);
-        self.t.record_ns.record(took.max(0) as u64);
+        let took = live.rt.ctx_ref().read().since(started);
+        live.t.record_ns.record(took.max(0) as u64);
         Ok(())
     }
 
     fn on_quote(&mut self, q: &QuoteTick) -> anyhow::Result<()> {
-        self.invoke();
-        self.t.quotes.inc();
-        let latency = Telemetry::since_venue(q.ts_event.as_u64(), self.rt.ctx_ref().wall_now());
-        self.t.quote_latency.record(latency);
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
+        live.t.quotes.inc();
+        let latency = Telemetry::since_venue(q.ts_event.as_u64(), live.rt.ctx_ref().wall_now());
+        live.t.quote_latency.record(latency);
         let (symbol, venue) = names(&q.instrument_id);
         let len = QuoteEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.rt.ctx_ref().send(
-            self.feeds.tob,
+        live.rt.ctx_ref().send(
+            live.feeds.tob,
             QuoteEncoder::TEMPLATE_ID,
             len,
             |buf| -> anyhow::Result<_> {
@@ -583,21 +641,26 @@ impl DataActor for Recorder {
                     .encoded_length_with_header())
             },
         )?;
-        // The hot path keeps a gauge. The `spread` table is a tracing event
-        // on the once-a-second book, below.
+        // The hot path keeps a gauge. The `spread` table is an event row on
+        // the once-a-second book, below.
         let (bid, ask) = (q.bid_price.as_f64(), q.ask_price.as_f64());
-        if let Some(gauge) = self.t.spread_bps.get(&q.instrument_id) {
+        if let Some(gauge) = live.t.spread_bps.get(&q.instrument_id) {
             gauge.set((ask - bid) / (ask + bid) * 2e4);
         }
         Ok(())
     }
 
     fn on_book(&mut self, book: &OrderBook) -> anyhow::Result<()> {
-        self.invoke();
-        self.t.books.inc();
+        self.invoke(true);
         self.spread(book);
         self.ticker(book);
-        book_view(book);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
+        live.t.books.inc();
+        if let Some(persist) = live.rt.ctx_ref().persist() {
+            book_view(persist, book);
+        }
         // Published whether or not `book_snapshot` is persisted: a
         // subscriber that joins or falls behind resyncs its book from it.
         if let Some(instrument) = self.cache().instrument(&book.instrument_id) {
@@ -612,8 +675,8 @@ impl DataActor for Recorder {
             symbol.len(),
             venue.len(),
         );
-        self.rt.ctx_ref().send(
-            self.feeds.md,
+        live.rt.ctx_ref().send(
+            live.feeds.md,
             BookSnapshotEncoder::TEMPLATE_ID,
             len,
             |buf| -> anyhow::Result<_> {
@@ -643,22 +706,25 @@ impl DataActor for Recorder {
     }
 
     fn on_book_deltas(&mut self, d: &OrderBookDeltas) -> anyhow::Result<()> {
-        self.invoke();
-        self.t.deltas.inc();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
+        live.t.deltas.inc();
         // A checkpoint trace from the venue's timestamp: `wire` (the venue
         // and the network), `convert` (rows built), `record` (published).
-        let tracer = &self.t.book_update;
+        let tracer = &live.t.book_update;
         // From the venue's time, placed by its wall-clock age: the `wire`
         // stage is true whatever this process's clock has drifted.
-        let now = self.t.clock.now();
+        let now = live.rt.ctx_ref().read();
         let mut trace = tracer.start(
-            self.rt.ctx_ref().from_remote(d.ts_event.as_u64() as i64),
+            live.rt.ctx_ref().from_remote(d.ts_event.as_u64() as i64),
             tracer.next_id(),
         );
         trace.mark(now);
         trace.attr(0, d.deltas.len() as i64);
         let (symbol, venue) = names(&d.instrument_id);
-        for (i, chunk) in d.deltas.chunks(self.feeds.deltas_per_row).enumerate() {
+        for (i, chunk) in d.deltas.chunks(live.feeds.deltas_per_row).enumerate() {
             self.deltas.clear();
             for delta in chunk {
                 self.deltas.push(BookDeltasDeltasEntry {
@@ -678,7 +744,7 @@ impl DataActor for Recorder {
                 });
             }
             if i == 0 {
-                trace.mark(self.t.clock.now());
+                trace.mark(live.rt.ctx_ref().read());
             }
             let deltas = &self.deltas;
             let len = BookDeltasEncoder::compute_length_with_header(
@@ -686,8 +752,8 @@ impl DataActor for Recorder {
                 symbol.len(),
                 venue.len(),
             );
-            self.rt.ctx_ref().send(
-                self.feeds.md,
+            live.rt.ctx_ref().send(
+                live.feeds.md,
                 BookDeltasEncoder::TEMPLATE_ID,
                 len,
                 |buf| -> anyhow::Result<_> {
@@ -709,20 +775,23 @@ impl DataActor for Recorder {
                 },
             )?;
         }
-        trace.mark(self.t.clock.now());
+        trace.mark(live.rt.ctx_ref().read());
         trace.finish();
         Ok(())
     }
 
     fn on_bar(&mut self, b: &Bar) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
         let id = b.bar_type.instrument_id();
         let (symbol, venue) = names(&id);
         let spec = text::<96>(b.bar_type);
         let len = BarEncoder::compute_length_with_header(symbol.len(), venue.len(), spec.len());
-        self.rt
+        live.rt
             .ctx_ref()
-            .send(self.feeds.md, BarEncoder::TEMPLATE_ID, len, |buf| {
+            .send(live.feeds.md, BarEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(BarEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&BarFixedFields {
                         ts_event: b.ts_event.as_u64(),
@@ -741,13 +810,16 @@ impl DataActor for Recorder {
     }
 
     fn on_mark_price(&mut self, m: &MarkPriceUpdate) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
         self.tickers.entry(m.instrument_id).or_default().mark = Some(m.value.as_f64());
         let (symbol, venue) = names(&m.instrument_id);
         let len = MarkPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.rt
+        live.rt
             .ctx_ref()
-            .send(self.feeds.md, MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
+            .send(live.feeds.md, MarkPriceEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(MarkPriceEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&MarkPriceFixedFields {
                         ts_event: m.ts_event.as_u64(),
@@ -761,13 +833,16 @@ impl DataActor for Recorder {
     }
 
     fn on_index_price(&mut self, x: &IndexPriceUpdate) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
         self.tickers.entry(x.instrument_id).or_default().index = Some(x.value.as_f64());
         let (symbol, venue) = names(&x.instrument_id);
         let len = IndexPriceEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.rt
+        live.rt
             .ctx_ref()
-            .send(self.feeds.md, IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
+            .send(live.feeds.md, IndexPriceEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(IndexPriceEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&IndexPriceFixedFields {
                         ts_event: x.ts_event.as_u64(),
@@ -781,13 +856,16 @@ impl DataActor for Recorder {
     }
 
     fn on_funding_rate(&mut self, f: &FundingRateUpdate) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(true);
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
         self.tickers.entry(f.instrument_id).or_default().funding = f.rate.to_f64();
         let (symbol, venue) = names(&f.instrument_id);
         let len = FundingRateEncoder::compute_length_with_header(symbol.len(), venue.len());
-        self.rt
+        live.rt
             .ctx_ref()
-            .send(self.feeds.md, FundingRateEncoder::TEMPLATE_ID, len, |buf| {
+            .send(live.feeds.md, FundingRateEncoder::TEMPLATE_ID, len, |buf| {
                 Ok(FundingRateEncoder::wrap_and_apply_header(buf, 0)
                     .fixed(&FundingRateFixedFields {
                         ts_event: f.ts_event.as_u64(),
@@ -806,7 +884,7 @@ impl DataActor for Recorder {
     /// the venue sends it, into a table named after its type
     /// (`HyperliquidPublicTrade` -> `hyperliquid_public_trade`).
     fn on_data(&mut self, data: &CustomData) -> anyhow::Result<()> {
-        self.invoke();
+        self.invoke(true);
         let any = data.data.as_any();
         // The types this recorder subscribes to, written field by field with
         // no allocation: a public trade arrives with every Hyperliquid trade.
@@ -836,9 +914,9 @@ impl DataActor for Recorder {
         }
         // Any other custom type: rare, so a JSON round trip is fine here.
         let table = ergon_runtime::persist::snake_case(data.data.type_name());
-        if !ergon_runtime::persist::event_enabled(&table) {
+        let Some(persist) = self.persist(&table) else {
             return Ok(());
-        }
+        };
         // ponytail: a JSON round trip per row; these arrive a few a second.
         let serde_json::Value::Object(fields) = serde_json::from_str(&data.data.to_json()?)? else {
             return Ok(());
@@ -863,7 +941,7 @@ impl DataActor for Recorder {
             };
             (k != "type").then_some((k.as_str(), value))
         });
-        ergon_runtime::persist::record_row(
+        persist.record_row(
             &table,
             scalars
                 .chain(nested.iter().map(|(k, v)| (*k, Value::Str(v))))
@@ -878,16 +956,16 @@ impl Recorder {
     /// wrote, with the decimals and ids formatted on the stack.
     fn public_trade(&self, t: &HyperliquidPublicTrade) {
         const TABLE: &str = "hyperliquid_public_trade";
-        if !ergon_runtime::persist::event_enabled(TABLE) {
+        let Some(persist) = self.persist(TABLE) else {
             return;
-        }
+        };
         let (id, price, size) = (
             text::<64>(t.instrument_id),
             text::<48>(t.price),
             text::<48>(t.size),
         );
         let side = text::<16>(t.aggressor_side);
-        ergon_runtime::persist::record_row(
+        persist.record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -908,11 +986,11 @@ impl Recorder {
     /// `hyperliquid_open_interest`, as [`Self::public_trade`].
     fn open_interest(&self, oi: &HyperliquidOpenInterest) {
         const TABLE: &str = "hyperliquid_open_interest";
-        if !ergon_runtime::persist::event_enabled(TABLE) {
+        let Some(persist) = self.persist(TABLE) else {
             return;
-        }
+        };
         let (id, open_interest) = (text::<64>(oi.instrument_id), text::<48>(oi.open_interest));
-        ergon_runtime::persist::record_row(
+        persist.record_row(
             TABLE,
             [
                 ("instrument_id", Value::Str(&id)),
@@ -927,10 +1005,10 @@ impl Recorder {
     /// `deribit_volatility_index`, as [`Self::public_trade`].
     fn volatility_index(&self, v: &DeribitVolatilityIndex) {
         const TABLE: &str = "deribit_volatility_index";
-        if !ergon_runtime::persist::event_enabled(TABLE) {
+        let Some(persist) = self.persist(TABLE) else {
             return;
-        }
-        ergon_runtime::persist::record_row(
+        };
+        persist.record_row(
             TABLE,
             [
                 ("index_name", Value::Str(&v.index_name)),
@@ -968,8 +1046,11 @@ impl Recorder {
             quote.len(),
         );
         let ts = self.core.timestamp_ns().as_u64();
-        self.rt.ctx_ref().send(
-            self.feeds.md,
+        let Some(live) = &self.live else {
+            return Ok(());
+        };
+        live.rt.ctx_ref().send(
+            live.feeds.md,
             InstrumentSpecEncoder::TEMPLATE_ID,
             len,
             |buf| {
@@ -988,8 +1069,18 @@ impl Recorder {
         )
     }
 
-    /// One `spread` row a second. A `tracing` event builds a table from its
-    /// fields, and it does not belong on the quote callback.
+    /// The runtime's persist, when it records `table` now.
+    fn persist(&self, table: &str) -> Option<&Persist> {
+        self.live
+            .as_ref()?
+            .rt
+            .ctx_ref()
+            .persist()
+            .filter(|p| p.event_enabled(table))
+    }
+
+    /// One `spread` row a second: a row does not belong on the quote
+    /// callback.
     fn spread(&self, book: &OrderBook) {
         let (Some(bid), Some(ask)) = (book.best_bid_price(), book.best_ask_price()) else {
             return;
@@ -999,16 +1090,25 @@ impl Recorder {
         if mid == 0.0 {
             return;
         }
-        tracing::info!(table = "spread", instrument = %book.instrument_id, bps = (ask - bid) / mid * 2e4);
+        if let Some(persist) = self.persist("spread") {
+            spread_row(book.instrument_id, (ask - bid) / mid * 2e4, |row| {
+                persist.record_row("spread", row);
+            });
+        }
     }
 
     /// One `ticker` row: the instrument's last second. Its columns are
     /// whatever this venue has, so a venue with more data adds columns to the
     /// table the moment it is deployed.
     fn ticker(&mut self, book: &OrderBook) {
-        if !ergon_runtime::persist::event_enabled("ticker") {
+        let Some(persist) = self
+            .live
+            .as_ref()
+            .and_then(|live| live.rt.ctx_ref().persist())
+            .filter(|p| p.event_enabled("ticker"))
+        else {
             return;
-        }
+        };
         let id = book.instrument_id;
         let volatility = id
             .symbol
@@ -1016,23 +1116,125 @@ impl Recorder {
             .split('-')
             .next()
             .and_then(|base| self.volatility_of(base));
-        let t = self.tickers.entry(id).or_default();
-        tracing::info!(
-            table = "ticker",
-            instrument = %id,
-            venue = %id.venue,
-            bid = book.best_bid_price().map(|p| p.as_f64()),
-            ask = book.best_ask_price().map(|p| p.as_f64()),
-            last = t.last,
-            trades = std::mem::take(&mut t.trades),
-            volume = std::mem::take(&mut t.volume),
-            mark_price = t.mark,
-            index_price = t.index,
-            funding_rate = t.funding,
-            open_interest = t.open_interest,
-            volatility_index = volatility,
+        let quote = (
+            book.best_bid_price().map(|p| p.as_f64()),
+            book.best_ask_price().map(|p| p.as_f64()),
         );
+        let t = self.tickers.entry(id).or_default();
+        ticker_row(id, quote, t, volatility, |row| {
+            persist.record_row("ticker", row);
+        });
     }
+}
+
+/// What a row function hands its sink: the row's fields in its columns'
+/// order, absent values left out.
+///
+/// Each row keeps the fields, kinds and order of the `tracing` event it
+/// replaces, because shape ids hash them: `%` fields were Display text and
+/// `?` fields Debug text.
+type Fields<'r, 'a> = &'r mut dyn Iterator<Item = (&'a str, Value<'a>)>;
+
+/// `instrument`: an instrument's definition, its decimals as text so a tick
+/// size like 0.00001 is kept exactly.
+fn instrument_row(i: &InstrumentAny, row: impl FnOnce(Fields<'_, '_>)) {
+    let id = i.id();
+    let (instrument, venue) = (text::<64>(id), text::<16>(id.venue));
+    let raw_symbol = text::<64>(i.raw_symbol());
+    let class = text::<32>(format_args!("{:?}", i.instrument_class()));
+    let base = i.base_currency().map(|c| text::<16>(c.code));
+    let quote = text::<16>(i.quote_currency().code);
+    let settlement = text::<16>(i.settlement_currency().code);
+    let price_increment = text::<48>(i.price_increment());
+    let size_increment = text::<48>(i.size_increment());
+    let multiplier = text::<48>(i.multiplier());
+    let min_quantity = i.min_quantity().map(text::<48>);
+    let max_quantity = i.max_quantity().map(text::<48>);
+    let (maker_fee, taker_fee) = (text::<48>(i.maker_fee()), text::<48>(i.taker_fee()));
+    row(&mut [
+        Some(("instrument", Value::Str(&instrument))),
+        Some(("venue", Value::Str(&venue))),
+        Some(("raw_symbol", Value::Str(&raw_symbol))),
+        Some(("class", Value::Str(&class))),
+        base.as_deref().map(|b| ("base_currency", Value::Str(b))),
+        Some(("quote_currency", Value::Str(&quote))),
+        Some(("settlement_currency", Value::Str(&settlement))),
+        Some(("inverse", Value::Bool(i.is_inverse()))),
+        Some(("price_increment", Value::Str(&price_increment))),
+        Some(("size_increment", Value::Str(&size_increment))),
+        Some(("multiplier", Value::Str(&multiplier))),
+        min_quantity
+            .as_deref()
+            .map(|q| ("min_quantity", Value::Str(q))),
+        max_quantity
+            .as_deref()
+            .map(|q| ("max_quantity", Value::Str(q))),
+        Some(("maker_fee", Value::Str(&maker_fee))),
+        Some(("taker_fee", Value::Str(&taker_fee))),
+    ]
+    .into_iter()
+    .flatten());
+}
+
+/// `instrument_status`: a change in an instrument's trading state.
+fn instrument_status_row(s: &InstrumentStatus, row: impl FnOnce(Fields<'_, '_>)) {
+    let instrument = text::<64>(s.instrument_id);
+    let venue = text::<16>(s.instrument_id.venue);
+    let action = text::<32>(format_args!("{:?}", s.action));
+    row(&mut [
+        Some(("instrument", Value::Str(&instrument))),
+        Some(("venue", Value::Str(&venue))),
+        Some(("ts_event", Value::U64(s.ts_event.as_u64()))),
+        Some(("action", Value::Str(&action))),
+        s.reason.map(|r| ("reason", Value::Str(r.as_str()))),
+        s.trading_event
+            .map(|e| ("trading_event", Value::Str(e.as_str()))),
+        s.is_trading.map(|v| ("is_trading", Value::Bool(v))),
+        s.is_quoting.map(|v| ("is_quoting", Value::Bool(v))),
+        s.is_short_sell_restricted
+            .map(|v| ("is_short_sell_restricted", Value::Bool(v))),
+    ]
+    .into_iter()
+    .flatten());
+}
+
+/// `spread`: the best bid and ask's spread, in basis points of the mid.
+fn spread_row(id: InstrumentId, bps: f64, row: impl FnOnce(Fields<'_, '_>)) {
+    let instrument = text::<64>(id);
+    row(&mut [
+        ("instrument", Value::Str(&instrument)),
+        ("bps", Value::F64(bps)),
+    ]
+    .into_iter());
+}
+
+/// `ticker`: the instrument's last second, from the book's best bid and ask
+/// and `t`, whose trade count and volume start again from 0.
+fn ticker_row(
+    id: InstrumentId,
+    (bid, ask): (Option<f64>, Option<f64>),
+    t: &mut Ticker,
+    volatility: Option<f64>,
+    row: impl FnOnce(Fields<'_, '_>),
+) {
+    let (instrument, venue) = (text::<64>(id), text::<16>(id.venue));
+    let (trades, volume) = (std::mem::take(&mut t.trades), std::mem::take(&mut t.volume));
+    row(&mut [
+        Some(("instrument", Value::Str(&instrument))),
+        Some(("venue", Value::Str(&venue))),
+        bid.map(|v| ("bid", Value::F64(v))),
+        ask.map(|v| ("ask", Value::F64(v))),
+        t.last.map(|v| ("last", Value::F64(v))),
+        Some(("trades", Value::U64(trades))),
+        Some(("volume", Value::F64(volume))),
+        t.mark.map(|v| ("mark_price", Value::F64(v))),
+        t.index.map(|v| ("index_price", Value::F64(v))),
+        t.funding.map(|v| ("funding_rate", Value::F64(v))),
+        t.open_interest.map(|v| ("open_interest", Value::F64(v))),
+        volatility.map(|v| ("volatility_index", Value::F64(v))),
+    ]
+    .into_iter()
+    .flatten());
 }
 
 /// A nested Rust value recorded as it is, with no schema: `record_value`
@@ -1070,8 +1272,8 @@ enum Regime {
 }
 
 /// One `book_view` row: the book's top 5 levels a side, and what they say.
-fn book_view(book: &OrderBook) {
-    if !ergon_runtime::persist::event_enabled("book_view") {
+fn book_view(persist: &Persist, book: &OrderBook) {
+    if !persist.event_enabled("book_view") {
         return;
     }
     let top = |side: &mut dyn Iterator<Item = &BookLevel>| -> ArrayVec<Level, 5> {
@@ -1096,7 +1298,7 @@ fn book_view(book: &OrderBook) {
         .next()
         .map_or(0, |l| l.price.value.precision);
     let tick = 10f64.powi(-i32::from(precision));
-    ergon_runtime::persist::record_value(
+    persist.record_value(
         "book_view",
         &BookView {
             instrument: book.instrument_id.symbol.as_str(),
@@ -1247,46 +1449,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut node = builder.build()?;
 
-    // After `build()`, so persist's log lines go through Nautilus' logger.
-    // Installed for the process: every callback records through
-    // `ergon_runtime::persist::record` and friends, with no handle to pass
-    // around. Exclusive: the actor's thread records; a `tracing` span from
-    // an adapter's worker thread is handed to it.
-    let settings = Settings {
-        exclusive: true,
-        ..Settings::from_env()
-    };
-    let bus = Bus::connect(&settings)?;
-    let persist = Persist::connect(schema::MARKET_SCHEMA, &bus, settings)?;
-    persist.install();
-    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(persist.layer()))?;
+    // Checked before any venue connects; the actor's `on_start` builds the
+    // runtime from them.
     let service = std::env::var("SERVICE").unwrap_or_else(|_| format!("md-{}", venue.name));
-    ergon_runtime::streams::check_node_network()?;
-    let streams = Streams::load(
-        std::env::var("PERSIST_STREAMS").unwrap_or_else(|_| "config/streams.yaml".into()),
-    )?;
-    // No thread of its own: the actor drives it (`Recorder::invoke`), from
-    // every callback and a millisecond timer. It polls persist, applies
-    // `tables.yaml`, refreshes the wall-clock offset, and stops on SIGTERM.
-    let mut rt = Runtime::invoker(Config {
-        persist: Some(persist),
-        stop: ergon_runtime::rt::sigterm()?,
-        ..Config::new(bus, streams)
-    })?;
-    let feeds = Feeds::open(&mut rt, &service)?;
-    rt.start(&mut Housekeeping)?;
+    lab::check_node_network()?;
+    let streams = lab::Streams::load(lab::streams_path())?;
     node.add_actor(Recorder {
         core: DataActorCore::new(DataActorConfig::default()),
         venue,
-        t: Telemetry::new(&instruments),
         instruments,
         tickers: HashMap::new(),
         volatility: Vec::new(),
         venue_upper: venue.name.to_uppercase(),
         deltas: Vec::with_capacity(MAX_DELTAS_PER_ROW),
-        feeds,
-        rt,
-        housekeeping: Housekeeping,
+        start: Some((service, streams)),
+        live: None,
     })?;
     node.run().await?;
     Ok(())
@@ -1295,6 +1472,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ergon_runtime::event::Kind;
 
     #[test]
     fn d9_is_exact_or_an_error() -> anyhow::Result<()> {
@@ -1336,6 +1514,194 @@ mod tests {
         let long = text::<4>("BTC-USD-PERP.HYPERLIQUID");
         assert!(matches!(long, Text::Heap(_)));
         assert_eq!(&*long, "BTC-USD-PERP.HYPERLIQUID");
+    }
+
+    /// Each field a row function hands its sink: name, kind, and its text
+    /// (a value that is not text, debug-printed).
+    fn columns(fields: Fields<'_, '_>) -> Vec<(String, Kind, String)> {
+        fields
+            .map(|(name, value)| {
+                let text = match value {
+                    Value::Str(s) => s.to_owned(),
+                    other => format!("{other:?}"),
+                };
+                (name.to_owned(), value.kind(), text)
+            })
+            .collect()
+    }
+
+    /// The names and kinds of `columns`.
+    fn kinds(columns: &[(String, Kind, String)]) -> Vec<(&str, Kind)> {
+        columns.iter().map(|(n, k, _)| (n.as_str(), *k)).collect()
+    }
+
+    /// The text of field `name`.
+    fn text_of<'c>(columns: &'c [(String, Kind, String)], name: &str) -> Option<&'c str> {
+        columns
+            .iter()
+            .find(|(n, ..)| n == name)
+            .map(|(.., t)| t.as_str())
+    }
+
+    // The expected lists are the fields of the `tracing` events these rows
+    // replace, in their order: their shape ids hash them.
+
+    #[test]
+    fn an_instrument_row_keeps_the_events_columns() -> anyhow::Result<()> {
+        use nautilus_model::identifiers::Symbol;
+        use nautilus_model::instruments::CurrencyPair;
+        use nautilus_model::types::{Currency, Price, Quantity};
+
+        let pair = CurrencyPair::builder()
+            .instrument_id(InstrumentId::from("BTCUSDT.BINANCE"))
+            .raw_symbol(Symbol::from("BTCUSDT"))
+            .base_currency(Currency::from("BTC"))
+            .quote_currency(Currency::from("USDT"))
+            .price_precision(2)
+            .size_precision(6)
+            .price_increment(Price::from("0.01"))
+            .size_increment(Quantity::from("0.000001"))
+            .max_quantity(Quantity::from("9000"))
+            .min_quantity(Quantity::from("0.000001"))
+            .maker_fee(Decimal::new(1, 3))
+            .taker_fee(Decimal::new(1, 3))
+            .ts_event(nautilus_core::UnixNanos::default())
+            .ts_init(nautilus_core::UnixNanos::default())
+            .build()?;
+        let mut got = Vec::new();
+        instrument_row(&InstrumentAny::CurrencyPair(pair), |row| {
+            got = columns(row);
+        });
+        assert_eq!(
+            kinds(&got),
+            [
+                ("instrument", Kind::Str),
+                ("venue", Kind::Str),
+                ("raw_symbol", Kind::Str),
+                ("class", Kind::Str),
+                ("base_currency", Kind::Str),
+                ("quote_currency", Kind::Str),
+                ("settlement_currency", Kind::Str),
+                ("inverse", Kind::Bool),
+                ("price_increment", Kind::Str),
+                ("size_increment", Kind::Str),
+                ("multiplier", Kind::Str),
+                ("min_quantity", Kind::Str),
+                ("max_quantity", Kind::Str),
+                ("maker_fee", Kind::Str),
+                ("taker_fee", Kind::Str),
+            ]
+        );
+        assert_eq!(text_of(&got, "instrument"), Some("BTCUSDT.BINANCE"));
+        assert_eq!(text_of(&got, "class"), Some("Spot"), "Debug, as `?` was");
+        assert_eq!(text_of(&got, "price_increment"), Some("0.01"));
+        Ok(())
+    }
+
+    #[test]
+    fn an_instrument_status_row_keeps_the_events_columns() {
+        let status = InstrumentStatus::new(
+            InstrumentId::from("BTCUSDT.BINANCE"),
+            nautilus_model::enums::MarketStatusAction::Trading,
+            nautilus_core::UnixNanos::from(1),
+            nautilus_core::UnixNanos::from(2),
+            Some("open".into()),
+            Some("auction".into()),
+            Some(true),
+            Some(true),
+            Some(false),
+        );
+        let mut got = Vec::new();
+        instrument_status_row(&status, |row| got = columns(row));
+        assert_eq!(
+            kinds(&got),
+            [
+                ("instrument", Kind::Str),
+                ("venue", Kind::Str),
+                ("ts_event", Kind::U64),
+                ("action", Kind::Str),
+                ("reason", Kind::Str),
+                ("trading_event", Kind::Str),
+                ("is_trading", Kind::Bool),
+                ("is_quoting", Kind::Bool),
+                ("is_short_sell_restricted", Kind::Bool),
+            ]
+        );
+        assert_eq!(
+            text_of(&got, "action"),
+            Some("Trading"),
+            "Debug, as `?` was"
+        );
+        assert_eq!(text_of(&got, "venue"), Some("BINANCE"));
+    }
+
+    #[test]
+    fn spread_and_ticker_rows_keep_the_events_columns() {
+        let id = InstrumentId::from("BTC-PERPETUAL.DERIBIT");
+        let mut got = Vec::new();
+        spread_row(id, 1.5, |row| got = columns(row));
+        assert_eq!(kinds(&got), [("instrument", Kind::Str), ("bps", Kind::F64)]);
+
+        let mut ticker = Ticker {
+            last: Some(100.0),
+            trades: 3,
+            volume: 2.5,
+            mark: Some(100.5),
+            index: Some(100.25),
+            funding: Some(0.0001),
+            open_interest: Some(7.0),
+        };
+        ticker_row(
+            id,
+            (Some(99.0), Some(101.0)),
+            &mut ticker,
+            Some(55.0),
+            |row| {
+                got = columns(row);
+            },
+        );
+        assert_eq!(
+            kinds(&got),
+            [
+                ("instrument", Kind::Str),
+                ("venue", Kind::Str),
+                ("bid", Kind::F64),
+                ("ask", Kind::F64),
+                ("last", Kind::F64),
+                ("trades", Kind::U64),
+                ("volume", Kind::F64),
+                ("mark_price", Kind::F64),
+                ("index_price", Kind::F64),
+                ("funding_rate", Kind::F64),
+                ("open_interest", Kind::F64),
+                ("volatility_index", Kind::F64),
+            ]
+        );
+        assert_eq!(
+            (ticker.trades, ticker.volume.to_bits()),
+            (0, 0f64.to_bits()),
+            "the second's count and volume start again"
+        );
+        // A value the venue does not have is left out, not written as 0.
+        ticker_row(
+            id,
+            (None, Some(101.0)),
+            &mut Ticker::default(),
+            None,
+            |row| {
+                got = columns(row);
+            },
+        );
+        assert_eq!(
+            kinds(&got),
+            [
+                ("instrument", Kind::Str),
+                ("venue", Kind::Str),
+                ("ask", Kind::F64),
+                ("trades", Kind::U64),
+                ("volume", Kind::F64),
+            ]
+        );
     }
 
     #[test]

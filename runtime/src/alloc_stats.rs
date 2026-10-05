@@ -5,7 +5,8 @@
 //! reserved and committed bytes, and the calls that went to the OS. Those are
 //! what an HFT loop cares about: any `alloc_os_*` increment during trading is
 //! a latency-spike candidate. `MiMalloc::stats_json` allocates, so the C
-//! functions are called directly. This is the only module of the client
+//! functions are called directly. With `os` (thread pinning, memory
+//! locking), this is one of the two hand-written modules of the client
 //! allowed `unsafe`.
 //!
 //! For a one-off deep dive, `MIMALLOC_SHOW_STATS=1` prints mimalloc's own
@@ -166,6 +167,7 @@ struct Totals {
     loop_major: i64,
     loop_voluntary: i64,
     loop_involuntary: i64,
+    #[cfg(feature = "alloc-count")]
     loop_allocs: u64,
 }
 

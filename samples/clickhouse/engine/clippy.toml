@@ -1,15 +1,59 @@
 # Agent code takes time only from the runtime, so live, replay and backtest
 # run the same code to the same result. Only ergon-runtime's clock reads the
-# hardware.
+# hardware. And it is an ergon-runtime client: it runs on the runtime's one
+# busy-spin thread, so it shares no state across threads, starts none and
+# resolves no names (runtime/clippy.toml's entries, which ergon-runtime's
+# client_ban_lint test requires here).
 disallowed-methods = [
     { path = "std::time::Instant::now", reason = "use ctx.now() (event time) or ctx.read() (latency marks)" },
     { path = "std::time::SystemTime::now", reason = "use ctx.wall_ns()" },
     { path = "minstant::Instant::now", reason = "use ctx.read()" },
     { path = "jiff::Timestamp::now", reason = "use ctx.wall_ns()" },
+    # The client ban.
+    { path = "std::thread::spawn", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::scope", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::Builder::spawn", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::thread::Builder::spawn_unchecked", reason = "one thread: blocking work runs before the loop, in idle housekeeping, in the media driver, or in the server" },
+    { path = "std::sync::mpsc::channel", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::sync_channel", reason = "one thread: no channels" },
+    # A name blocks the caller for as long as the resolver takes. Each of
+    # these resolves an address given as a name.
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "the media driver resolves names; the client never does" },
+    { path = "std::net::TcpStream::connect", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::TcpListener::bind", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::bind", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::connect", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
+    { path = "std::net::UdpSocket::send_to", reason = "resolves an address given as a name: the media driver resolves names; the client never does" },
 ]
 # RandomState iterates in a different order every run. Use BTreeMap, or
 # ergon_runtime::DetMap for point lookups.
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "use ergon_runtime::DetMap or BTreeMap" },
     { path = "std::collections::HashSet", reason = "use BTreeSet" },
+    # The client ban.
+    { path = "std::sync::Arc", reason = "one owner: the runtime holds it; pass &mut or an index" },
+    { path = "std::sync::Weak", reason = "one owner: the runtime holds it; pass &mut or an index" },
+    { path = "std::sync::Mutex", reason = "one thread: own the value, or Cell/RefCell" },
+    { path = "std::sync::RwLock", reason = "one thread: own the value, or Cell/RefCell" },
+    { path = "std::sync::Condvar", reason = "one thread: nothing to wait for" },
+    { path = "std::sync::Barrier", reason = "one thread: nothing to wait for" },
+    { path = "std::sync::Once", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::OnceLock", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::LazyLock", reason = "no process-wide state: the runtime owns it" },
+    { path = "std::sync::mpsc::Sender", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::SyncSender", reason = "one thread: no channels" },
+    { path = "std::sync::mpsc::Receiver", reason = "one thread: no channels" },
+    { path = "std::sync::atomic::AtomicBool", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU8", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU16", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU32", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicU64", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicUsize", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI8", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI16", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI32", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicI64", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicIsize", reason = "one thread: a plain field or Cell" },
+    { path = "std::sync::atomic::AtomicPtr", reason = "one thread: a plain field or Cell" },
+    { path = "std::thread::JoinHandle", reason = "one thread: start none" },
 ]

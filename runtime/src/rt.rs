@@ -2,34 +2,48 @@
 //! [`Runtime`] drives it on one thread, Agrona-style.
 //!
 //! ```text
-//! duty cycle: poll every feed (up to `limit` each) -> fire due timers
-//!             -> Aeron conductor (invoker mode) -> idle(work)
+//! duty cycle: poll every feed (up to `limit` each) -> agent.poll -> fire due timers
+//!             -> Aeron conductor (when the cycle found no work, or 1 ms after its last run)
+//!             -> idle(work)
 //! ```
 //!
 //! [`Ctx`] is everything the agent reaches: the event time, the clock, timers,
 //! feeds and outputs, metrics and persist. No Aeron or `ClickHouse` type
-//! appears in it. Housekeeping (`Persist::poll`, the wall-clock offset, the
-//! `Source` heartbeat, `streams.yaml`, SIGTERM) runs on runtime-owned timers
-//! in the same wheel, never as a per-cycle check, and only in a cycle that
-//! found no work unless it has waited too long.
+//! appears in it. It owns the [`Bus`], whose client has no thread of its
+//! own: the duty cycle runs its conductor in a cycle that found no work, or
+//! once a millisecond has passed. A persistent feed runs it too, and polls
+//! its archive client, at each poll before it takes a message (Aeron's
+//! persistent subscription does both, the first when the client has no
+//! conductor thread): each persistent feed adds both to every cycle, ahead
+//! of the messages it and the feeds after it deliver.
+//! Housekeeping (`Persist::poll`, the wall-clock offset, the `Source`
+//! heartbeat, SIGTERM) runs on runtime-owned timers in the same wheel, never
+//! as a per-cycle check, and only in a cycle that found no work unless it
+//! has waited too long.
+//!
+//! SIGTERM is a byte on a pipe ([`sigterm`]): the handler writes it, and a
+//! housekeeping timer reads the pipe every 10 ms and stops the loop.
+//! [`Invoker::finish`] then stops the agent and closes what the application
+//! owns, its outputs and persist's publication, at once, so subscribers turn
+//! to the next publisher within seconds.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::Read;
+use std::os::unix::net::UnixStream;
 
 use rusteron_archive::AeronExclusivePublication;
 
 use crate::Error;
-use crate::bus::{Bus, DropKind};
+use crate::bus::{Bus, DropKind, Drops};
 use crate::clock::{Clock, Nanos};
+use crate::directory::{Directory, NoDirectory};
 use crate::frames::FrameLog;
 use crate::idle::Idle;
 use crate::journal::{Input, InputEvent};
 use crate::metrics::Metrics;
 use crate::persist::Persist;
-use crate::streams::{Streams, Watch};
 use crate::subscription::{Delivery, PersistentSubscription, Subscription};
 use crate::timer::{self, Fired, TimerError, TimerId, TimerWheel};
 use crate::trace::Tracer;
@@ -83,14 +97,9 @@ pub trait Agent {
 
     /// Work not driven by an event, once per duty cycle. Returns the work
     /// count for the idle strategy.
-    fn do_work(&mut self, _ctx: &mut Ctx) -> usize {
+    fn poll(&mut self, _ctx: &mut Ctx) -> usize {
         0
     }
-
-    /// `streams.yaml` changed (live only); [`Ctx::streams`] is the new
-    /// registry. Open feeds it added.
-    fn on_streams(&mut self, _ctx: &mut Ctx) {}
-
     /// Once, after the last event, before the feeds close.
     fn stop(&mut self, _ctx: &mut Ctx) {}
 }
@@ -115,13 +124,8 @@ impl<A: Agent, B: Agent> Agent for (A, B) {
         self.1.on_timer(ctx, timer);
     }
 
-    fn do_work(&mut self, ctx: &mut Ctx) -> usize {
-        self.0.do_work(ctx) + self.1.do_work(ctx)
-    }
-
-    fn on_streams(&mut self, ctx: &mut Ctx) {
-        self.0.on_streams(ctx);
-        self.1.on_streams(ctx);
+    fn poll(&mut self, ctx: &mut Ctx) -> usize {
+        self.0.poll(ctx) + self.1.poll(ctx)
     }
 
     fn stop(&mut self, ctx: &mut Ctx) {
@@ -135,7 +139,7 @@ const RUNTIME_TOKEN: u64 = 1 << 63;
 const HK_PERSIST: u64 = RUNTIME_TOKEN;
 const HK_WALL: u64 = RUNTIME_TOKEN | 1;
 const HK_SOURCE: u64 = RUNTIME_TOKEN | 2;
-const HK_STREAMS: u64 = RUNTIME_TOKEN | 3;
+const HK_SIGNAL: u64 = RUNTIME_TOKEN | 3;
 #[cfg(feature = "mimalloc")]
 const HK_ALLOC: u64 = RUNTIME_TOKEN | 4;
 
@@ -148,11 +152,10 @@ pub struct Config {
     pub bus: Bus,
     /// Rows, metrics and traces; `None` records nothing.
     pub persist: Option<Persist>,
-    /// The feed registry [`Ctx::subscribe`] and [`Ctx::publish`] resolve names in.
-    pub streams: Streams,
-    /// Followed for new feeds, if set.
-    pub streams_path: Option<String>,
-    /// `REGION`.
+    /// Names to addresses for [`Ctx::subscribe`] and [`Ctx::publish`], as
+    /// the application defines them.
+    pub directory: Box<dyn Directory>,
+    /// Where this application runs (`REGION`); `unknown` when unset.
     pub region: String,
     /// What a cycle that found no work does.
     pub idle: Idle,
@@ -160,34 +163,38 @@ pub struct Config {
     pub limit: usize,
     /// The timer wheel's shape.
     pub timers: timer::Settings,
-    /// Set (by SIGTERM) to stop the loop.
-    pub stop: Arc<AtomicBool>,
+    /// What stops the loop from outside: [`sigterm`], or [`Stop::none`].
+    pub stop: Stop,
     /// Pin the loop's thread to this CPU (Linux).
     pub cpu: Option<usize>,
     /// `mlockall(MCL_CURRENT | MCL_FUTURE)` at start, so the first live
     /// message takes no page fault (Linux).
     pub lock_memory: bool,
+    /// How late the kernel may wake the loop thread's sleeps and parks
+    /// (`TIMER_SLACK`); `None` keeps Linux's 50 µs. Linux only.
+    pub timer_slack: Option<std::time::Duration>,
     /// Record actual dispatches to Persist for exact replay (`JOURNAL=on`).
     pub journal: bool,
 }
 
 impl Config {
-    /// Defaults on `bus` and `streams`: no persist, `spin`, 64 messages a
-    /// feed per cycle, the default wheel, no pinning or locking.
+    /// Defaults on `bus`: its region, no directory (open feeds by channel),
+    /// no persist, `spin`, 64 messages a feed per cycle, the default wheel,
+    /// no SIGTERM, no pinning, locking or timer slack.
     #[must_use]
-    pub fn new(bus: Bus, streams: Streams) -> Self {
+    pub fn new(bus: Bus) -> Self {
         Self {
+            region: bus.region().to_owned(),
             bus,
             persist: None,
-            streams,
-            streams_path: None,
-            region: String::new(),
+            directory: Box::new(NoDirectory),
             idle: Idle::Spin,
             limit: 64,
             timers: timer::Settings::default(),
-            stop: Arc::new(AtomicBool::new(false)),
+            stop: Stop::none(),
             cpu: None,
             lock_memory: false,
+            timer_slack: None,
             journal: false,
         }
     }
@@ -227,6 +234,9 @@ enum Sink {
     Aeron {
         publication: AeronExclusivePublication,
         max_payload: usize,
+        /// Its `Source` message went out since it last had no subscriber,
+        /// so its recording names its publisher before its first frame.
+        sourced: Cell<bool>,
     },
     /// Simulation: appended to [`Ctx::captured`] under this stream. Never
     /// dropped, so a backtest's output does not depend on back pressure.
@@ -254,11 +264,12 @@ pub struct Ctx {
     wall_offset: i64,
     wheel: TimerWheel,
     fired: Vec<Fired>,
-    /// `None` in a simulation with no Aeron.
+    /// The application's Aeron client, which only this owns. `None` in a
+    /// simulation, which keeps its own.
     bus: Option<Bus>,
     persist: Option<Persist>,
     metrics: Metrics,
-    streams: Streams,
+    directory: Box<dyn Directory>,
     region: String,
     sinks: Vec<Sink>,
     /// Simulation: what the outputs sent, in order.
@@ -324,13 +335,6 @@ impl Ctx {
         Nanos(epoch_ns - self.wall_offset)
     }
 
-    /// Running on simulated time (replay or backtest).
-    #[inline]
-    #[must_use]
-    pub const fn is_sim(&self) -> bool {
-        self.sim
-    }
-
     /// A process-unique, run-deterministic id: a per-run sequence in
     /// simulation, the start time plus a counter live.
     #[inline]
@@ -345,10 +349,11 @@ impl Ctx {
         &self.region
     }
 
-    /// The feed registry.
-    #[must_use]
-    pub const fn streams(&self) -> &Streams {
-        &self.streams
+    /// Resolve later [`Ctx::subscribe`] and [`Ctx::publish`] calls through
+    /// `directory`: the application's registry changed while it runs. Feeds
+    /// already open keep their addresses.
+    pub fn set_directory(&mut self, directory: Box<dyn Directory>) {
+        self.directory = directory;
     }
 
     /// This application's metrics.
@@ -367,7 +372,7 @@ impl Ctx {
     #[must_use]
     pub fn tracer(&self, name: &str, stages: &[&str], attrs: &[&str]) -> Tracer {
         self.persist.as_ref().map_or_else(
-            || crate::persist::tracer(name, stages, attrs),
+            || Tracer::detached(name, stages, attrs),
             |p| p.tracer(name, stages, attrs),
         )
     }
@@ -394,12 +399,6 @@ impl Ctx {
         self.captured.borrow().clone()
     }
 
-    /// Simulation: the `service/kind` each feed was subscribed under.
-    #[must_use]
-    pub fn sim_feeds(&self) -> &[String] {
-        &self.sim_feeds
-    }
-
     /// Stop after this event: `stop`, then the feeds close.
     pub const fn stop(&mut self) {
         self.stopping = true;
@@ -410,13 +409,19 @@ impl Ctx {
     ///
     /// # Errors
     ///
-    /// `service` or `kind` is not in the registry.
+    /// The directory does not name it, or names no archive for it.
     pub fn subscribe(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
         if self.sim {
             return Ok(self.sim_feed(service, kind));
         }
-        let feed = Feed::Persistent(self.bus()?.subscribe(&self.streams, service, kind)?);
-        Ok(self.adopt(feed))
+        let feed = self.persistent(service, kind)?;
+        Ok(self.adopt(Feed::Persistent(feed)))
+    }
+
+    fn persistent(&self, service: &str, kind: &str) -> Result<PersistentSubscription, Error> {
+        let bus = self.bus()?;
+        let addr = self.directory.feed(service, kind, bus.host_ip())?;
+        bus.subscribe(&format!("{service}/{kind}"), &addr)
     }
 
     /// [`Ctx::subscribe`], but each new recording replays from its start: for
@@ -425,15 +430,12 @@ impl Ctx {
     ///
     /// # Errors
     ///
-    /// `service` or `kind` is not in the registry.
+    /// The directory does not name it, or names no archive for it.
     pub fn subscribe_from_start(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
         if self.sim {
             return Ok(self.sim_feed(service, kind));
         }
-        let feed = self
-            .bus()?
-            .subscribe(&self.streams, service, kind)?
-            .from_start();
+        let feed = self.persistent(service, kind)?.from_start();
         Ok(self.adopt(Feed::Persistent(feed)))
     }
 
@@ -442,12 +444,14 @@ impl Ctx {
     ///
     /// # Errors
     ///
-    /// `service` or `kind` is not in the registry.
+    /// The directory does not name it.
     pub fn subscribe_live(&mut self, service: &str, kind: &str) -> Result<FeedId, Error> {
         if self.sim {
             return Ok(self.sim_feed(service, kind));
         }
-        let feed = Feed::Live(self.bus()?.subscribe_live(&self.streams, service, kind)?);
+        let bus = self.bus()?;
+        let addr = self.directory.feed(service, kind, bus.host_ip())?;
+        let feed = Feed::Live(bus.subscribe_live(&addr));
         Ok(self.adopt(feed))
     }
 
@@ -475,14 +479,15 @@ impl Ctx {
     ///
     /// # Errors
     ///
-    /// The registry does not name it, or the driver did not add it.
+    /// The directory does not name it, or the driver did not add it.
     pub fn publish(&mut self, service: &str, kind: &str) -> Result<Out, Error> {
         if self.sim {
             return Ok(self.capture(service, kind));
         }
-        let channel = self.streams.publication(service, self.bus()?.host_ip())?;
-        let stream_id = self.streams.stream(service, kind)?;
-        self.publish_channel(&channel, stream_id)
+        let addr = self
+            .directory
+            .publication(service, kind, self.bus()?.host_ip())?;
+        self.publish_channel(&addr.channel, addr.stream_id)
     }
 
     fn capture(&mut self, service: &str, kind: &str) -> Out {
@@ -513,6 +518,7 @@ impl Ctx {
         self.sinks.push(Sink::Aeron {
             publication,
             max_payload,
+            sourced: Cell::new(false),
         });
         self.send_source(out);
         Ok(out)
@@ -522,7 +528,8 @@ impl Ctx {
     /// `encode` writes into the claimed frame, zero-copy. The frame's reserved
     /// value is [`Ctx::now`]: the event time it was published at, which a
     /// replay or backtest uses as the message's event time. A frame Aeron does
-    /// not take is counted in [`Bus::drops`] and returns `Ok(())`.
+    /// not take is counted in [`Ctx::drops`] and returns `Ok(())`; after
+    /// [`Invoker::finish`] closed the outputs, nothing is sent or counted.
     ///
     /// # Errors
     ///
@@ -535,11 +542,12 @@ impl Ctx {
         len: usize,
         encode: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<(), E> {
-        let (publication, max_payload) = match self.sinks.get(out.0 as usize) {
+        let (publication, max_payload, sourced) = match self.sinks.get(out.0 as usize) {
             Some(Sink::Aeron {
                 publication,
                 max_payload,
-            }) => (publication, *max_payload),
+                sourced,
+            }) => (publication, *max_payload, sourced),
             Some(Sink::Capture { stream, delay }) => {
                 return self.send_captured(*stream, *delay, template_id, len, encode);
             }
@@ -548,14 +556,17 @@ impl Ctx {
                 return Ok(());
             }
         };
+        if !sourced.get() {
+            self.send_source(out);
+        }
         if len > max_payload {
-            self.count(DropKind::TooLarge);
+            self.refused(publication, sourced, DropKind::TooLarge);
             return Ok(());
         }
         let claim = match crate::bus::claim_exclusive(publication, len, self.now.0) {
             Ok(claim) => claim,
             Err(kind) => {
-                self.count(kind);
+                self.refused(publication, sourced, kind);
                 return Ok(());
             }
         };
@@ -578,6 +589,48 @@ impl Ctx {
         if let Some(bus) = &self.bus {
             bus.count(kind);
         }
+    }
+
+    /// Count a frame an output did not send, unless [`Invoker::finish`]
+    /// closed it: then it is not a drop. With no subscriber, perhaps a new
+    /// recording follows: the output names its publisher again before the
+    /// next frame.
+    #[cold]
+    fn refused(
+        &self,
+        publication: &AeronExclusivePublication,
+        sourced: &Cell<bool>,
+        kind: DropKind,
+    ) {
+        if publication.is_closed() {
+            return;
+        }
+        if kind == DropKind::NotConnected {
+            sourced.set(false);
+        }
+        self.count(kind);
+    }
+
+    /// Frames the outputs dropped so far, by reason: [`Bus::drops`].
+    /// Persist's own records are [`Persist::drops`]. None in simulation,
+    /// which captures every output.
+    #[must_use]
+    pub fn drops(&self) -> Drops {
+        self.bus.as_ref().map_or_else(Drops::default, Bus::drops)
+    }
+
+    /// Close every publication the application owns: its outputs and
+    /// persist's. A send or a record after it is not published, and not
+    /// counted as a drop.
+    fn close(&self) {
+        if self.bus.is_none() {
+            return;
+        }
+        let outputs = self.sinks.iter().filter_map(|sink| match sink {
+            Sink::Aeron { publication, .. } => Some(publication.clone()),
+            Sink::Capture { .. } => None,
+        });
+        crate::bus::close(outputs.chain(self.persist.as_ref().map(Persist::publication)));
     }
 
     fn send_captured<E>(
@@ -607,6 +660,8 @@ impl Ctx {
             }
             Ok(written)
         })?;
+        // Released before the record: a simulated publish polls the bus.
+        drop(captured);
         if appended && let (Some(persist), Some(frame)) = (&self.persist, recorded) {
             let _: Result<(), std::convert::Infallible> =
                 persist.record(template_id, len, |slot| {
@@ -654,15 +709,21 @@ impl Ctx {
 
     #[cold]
     fn send_source(&self, out: Out) {
-        let (Some(Sink::Aeron { publication, .. }), Some(bus)) =
-            (self.sinks.get(out.0 as usize), &self.bus)
+        let (
+            Some(Sink::Aeron {
+                publication,
+                sourced,
+                ..
+            }),
+            Some(bus),
+        ) = (self.sinks.get(out.0 as usize), &self.bus)
         else {
             return;
         };
         let message = bus.source_message();
         if let Ok(claim) = crate::bus::claim_exclusive(publication, message.len(), self.now.0) {
             claim.data().copy_from_slice(message);
-            let _ = claim.commit();
+            sourced.set(claim.commit().is_ok());
         }
     }
 
@@ -775,16 +836,18 @@ pub struct Invoker {
     ctx: Ctx,
     idle: Idle,
     limit: usize,
-    stop: Arc<AtomicBool>,
-    watch: Option<Watch>,
-    /// The Aeron conductor runs in this loop.
-    conductor_inside: bool,
+    /// Read by housekeeping every 10 ms.
+    stop: Stop,
+    /// [`Invoker::finish`] ran: it runs once.
+    finished: bool,
     cpu: Option<usize>,
     lock_memory: bool,
+    timer_slack: Option<std::time::Duration>,
     #[cfg(feature = "mimalloc")]
     alloc: Option<crate::alloc_stats::AllocStats>,
-    /// When the conductor last ran: it waits for a cycle with no work, or a
-    /// millisecond, so it never delays a message already waiting.
+    /// When the loop last ran the conductor itself: in a cycle with no work,
+    /// or once a millisecond has passed. A persistent feed's poll runs it as
+    /// well, in every cycle.
     conductor_ran: Nanos,
     /// Housekeeping due in a cycle that had work: run at the next idle one,
     /// or once it has waited `MAX_DEFER`.
@@ -800,7 +863,8 @@ impl Invoker {
     ///
     /// # Errors
     ///
-    /// The timer settings are not powers of two.
+    /// The timer settings are not powers of two, or `journal` is set without
+    /// `persist`.
     pub fn new(config: Config) -> Result<Self, Error> {
         if config.journal && config.persist.is_none() {
             return Err(Error::Config("JOURNAL=on requires Persist".into()));
@@ -824,7 +888,7 @@ impl Invoker {
             bus: Some(config.bus),
             persist: config.persist,
             metrics,
-            streams: config.streams,
+            directory: config.directory,
             region: config.region,
             sinks: Vec::new(),
             captured: RefCell::new(FrameLog::new()),
@@ -842,16 +906,16 @@ impl Invoker {
             journal_error: None,
         };
         Ok(Self {
-            conductor_inside: ctx.bus.as_ref().is_some_and(Bus::is_invoker),
             conductor_ran: Nanos(0),
             feeds: Vec::new(),
             ctx,
             idle: config.idle,
             limit: config.limit,
             stop: config.stop,
-            watch: config.streams_path.map(Watch::new),
+            finished: false,
             cpu: config.cpu,
             lock_memory: config.lock_memory,
+            timer_slack: config.timer_slack,
             #[cfg(feature = "mimalloc")]
             alloc: None,
             deferred: 0,
@@ -859,25 +923,37 @@ impl Invoker {
         })
     }
 
-    /// From the environment, as [`crate::app::App::start`]: logging, the
-    /// node check, the bus and persist for `schema`, `streams.yaml`,
-    /// `IDLE` (default `spin`), and SIGTERM.
+    /// From the environment, as [`crate::app::App::start_with`]: logging, the
+    /// bus and persist for `schema`, `REGION`, `IDLE` (default `spin`),
+    /// `TIMER_SLACK`, `CPU`, `MLOCK`, `JOURNAL`, and
+    /// SIGTERM, with the application's `directory` of feed names. Persist's
+    /// publication is the calling thread's: run the loop on it.
     ///
     /// # Errors
     ///
-    /// As [`crate::app::App::start`].
-    pub fn from_env(schema: &str) -> Result<Self, crate::app::Error> {
-        let app = crate::app::App::start_with(schema, Idle::Spin, true)?;
+    /// As [`crate::app::App::start_with`].
+    pub fn from_env(
+        schema: &str,
+        directory: Box<dyn Directory>,
+    ) -> Result<Self, crate::app::Error> {
+        let app = crate::app::App::start_with(schema, Idle::Spin)?;
+        let timer_slack = std::env::var("TIMER_SLACK")
+            .ok()
+            .map(|v| {
+                crate::idle::duration(&v)
+                    .map_err(|e| crate::app::Error::Idle(format!("TIMER_SLACK={v}: {e}")))
+            })
+            .transpose()?;
         let config = Config {
             persist: Some(app.persist),
-            streams_path: Some(app.streams_path),
-            region: app.region,
+            directory,
             idle: app.idle,
             stop: app.stop,
             cpu: std::env::var("CPU").ok().and_then(|c| c.parse().ok()),
             lock_memory: std::env::var("MLOCK").is_ok_and(|v| v == "1" || v == "true"),
+            timer_slack,
             journal: std::env::var("JOURNAL").is_ok_and(|v| v == "on"),
-            ..Config::new(app.bus, app.streams)
+            ..Config::new(app.bus)
         };
         Ok(Self::new(config)?)
     }
@@ -913,6 +989,9 @@ impl Invoker {
         if self.lock_memory {
             crate::os::lock_memory();
         }
+        if let Some(slack) = self.timer_slack {
+            crate::os::set_timer_slack(slack);
+        }
         #[cfg(feature = "mimalloc")]
         {
             self.alloc = Some(crate::alloc_stats::AllocStats::new(&self.ctx.metrics));
@@ -931,8 +1010,9 @@ impl Invoker {
         self.ctx.schedule_runtime(MS, HK_PERSIST);
         self.ctx.schedule_runtime(SECOND, HK_WALL);
         self.ctx.schedule_runtime(5 * SECOND, HK_SOURCE);
-        if self.watch.is_some() {
-            self.ctx.schedule_runtime(SECOND, HK_STREAMS);
+        if self.stop.is_some() {
+            // A read system call: off the millisecond tick.
+            self.ctx.schedule_runtime(10 * MS, HK_SIGNAL);
         }
         Ok(())
     }
@@ -952,20 +1032,25 @@ impl Invoker {
         Ok(agent)
     }
 
-    /// Stop `agent` and close the feeds; [`Runtime::run`] does this.
+    /// Stop `agent` and close what the application publishes: its outputs
+    /// and persist's publication, at once, so subscribers turn to the next
+    /// publisher within seconds rather than after this client's timeout.
+    /// [`Runtime::run`] does this. It runs once: a later call, from
+    /// SIGTERM and a framework's stop both, does nothing.
     ///
     /// # Errors
     ///
     /// The input journal could not record the stop.
     pub fn finish<A: Agent>(&mut self, agent: &mut A) -> Result<(), Error> {
+        if std::mem::replace(&mut self.finished, true) {
+            return Ok(());
+        }
         if self.ctx.journal {
             self.ctx.journal_input(InputEvent::Stop);
         }
         agent.stop(&mut self.ctx);
         log::info!("stopping: closing the feeds");
-        if let Some(bus) = &self.ctx.bus {
-            bus.shutdown();
-        }
+        self.ctx.close();
         self.ctx.journal_error.take().map_or(Ok(()), Err)
     }
 
@@ -1009,7 +1094,7 @@ impl Invoker {
         if self.ctx.journal_error.is_some() {
             return work;
         }
-        work += agent.do_work(&mut self.ctx);
+        work += agent.poll(&mut self.ctx);
         if !self.ctx.opened.is_empty() {
             self.adopt();
         }
@@ -1017,13 +1102,13 @@ impl Invoker {
         if self.ctx.wheel.poll(self.ctx.now, &mut self.ctx.fired, 64) > 0 {
             work += self.fire(agent, work);
         }
-        if self.conductor_inside && (work == 0 || self.ctx.now.since(self.conductor_ran) > MS) {
+        if work == 0 || self.ctx.now.since(self.conductor_ran) > MS {
             self.conductor_ran = self.ctx.now;
-            work += self.ctx.bus.as_ref().map_or(0, Bus::do_work);
+            work += self.ctx.bus.as_ref().map_or(0, Bus::poll);
         }
         if self.deferred != 0 && (work == 0 || self.ctx.now.since(self.deferred_since) > MAX_DEFER)
         {
-            self.run_deferred(agent);
+            self.run_deferred();
         }
         work
     }
@@ -1063,7 +1148,7 @@ impl Invoker {
                 continue;
             }
             if f.token & RUNTIME_TOKEN != 0 {
-                self.housekeeping(agent, f.token, busy);
+                self.housekeeping(f.token, busy);
                 continue;
             }
             n += 1;
@@ -1094,7 +1179,7 @@ impl Invoker {
         self.ctx.journal_input(event);
     }
 
-    fn housekeeping<A: Agent>(&mut self, agent: &mut A, token: u64, busy: usize) {
+    fn housekeeping(&mut self, token: u64, busy: usize) {
         let bit = 1u8 << (token & 7);
         if busy > 0 {
             if self.deferred == 0 {
@@ -1103,29 +1188,29 @@ impl Invoker {
             self.deferred |= bit;
             return;
         }
-        self.run_one(agent, token);
+        self.run_one(token);
     }
 
     #[cold]
-    fn run_deferred<A: Agent>(&mut self, agent: &mut A) {
+    fn run_deferred(&mut self) {
         let deferred = std::mem::take(&mut self.deferred);
         for i in 0..8 {
             if deferred & (1 << i) != 0 {
-                self.run_one(agent, RUNTIME_TOKEN | i);
+                self.run_one(RUNTIME_TOKEN | i);
             }
         }
     }
 
-    fn run_one<A: Agent>(&mut self, agent: &mut A, token: u64) {
+    fn run_one(&mut self, token: u64) {
         match token {
             HK_PERSIST => {
-                if self.stop.load(Ordering::Relaxed) {
-                    log::info!("SIGTERM");
-                    self.ctx.stopping = true;
-                }
                 if let Some(p) = &self.ctx.persist {
                     p.poll(self.ctx.now);
                 }
+            }
+            HK_SIGNAL if self.stop.requested() => {
+                log::info!("SIGTERM");
+                self.ctx.stopping = true;
             }
             HK_WALL => self.ctx.wall_offset = self.ctx.clock.wall_offset(),
             #[cfg(feature = "mimalloc")]
@@ -1138,13 +1223,6 @@ impl Invoker {
                 for i in 0..self.ctx.sinks.len() {
                     self.ctx
                         .send_source(Out(u32::try_from(i).unwrap_or(u32::MAX)));
-                }
-            }
-            HK_STREAMS => {
-                if let Some(streams) = self.watch.as_mut().and_then(Watch::changed) {
-                    self.ctx.streams = streams;
-                    agent.on_streams(&mut self.ctx);
-                    self.adopt();
                 }
             }
             _ => {}
@@ -1161,13 +1239,45 @@ impl std::fmt::Debug for Invoker {
     }
 }
 
-/// A flag SIGTERM sets: [`Config::stop`] for a runtime built by hand.
+/// What stops the loop from outside: the read end of SIGTERM's pipe, or
+/// nothing.
+#[derive(Debug)]
+pub struct Stop(Option<UnixStream>);
+
+impl Stop {
+    /// Never stops the loop.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self(None)
+    }
+
+    const fn is_some(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// The handler wrote a byte since the last call. The read end is
+    /// nonblocking: a system call, never a wait.
+    fn requested(&self) -> bool {
+        let Some(mut pipe) = self.0.as_ref() else {
+            return false;
+        };
+        let mut bytes = [0; 16];
+        matches!(pipe.read(&mut bytes), Ok(n) if n > 0)
+    }
+}
+
+/// SIGTERM's pipe: [`Config::stop`] for a runtime built by hand.
+///
+/// The handler writes a byte to a socket pair's write end, and the runtime
+/// reads the other every 10 ms. Nothing of ours is shared with the handler,
+/// and other SIGTERM handlers (a framework's) still run.
 ///
 /// # Errors
 ///
-/// The handler could not be registered.
-pub fn sigterm() -> Result<Arc<AtomicBool>, std::io::Error> {
-    let stop = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
-    Ok(stop)
+/// The socket pair could not be made, or the handler registered.
+pub fn sigterm() -> Result<Stop, std::io::Error> {
+    let (read, write) = UnixStream::pair()?;
+    read.set_nonblocking(true)?;
+    signal_hook::low_level::pipe::register(signal_hook::consts::SIGTERM, write)?;
+    Ok(Stop(Some(read)))
 }

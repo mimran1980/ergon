@@ -11,7 +11,7 @@ publish.workspace = true
 hdrhistogram = "7"
 mimalloc.workspace = true
 rusteron-archive.workspace = true
-rusteron-media-driver = { version = "0.2.7", features = ["static"] }
+rusteron-media-driver = { version = "0.2", features = ["static"] }
 
 [lints]
 workspace = true

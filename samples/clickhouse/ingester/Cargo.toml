@@ -1,0 +1,27 @@
+[package]
+name = "ingester"
+description = "The lab's ingester: every archived feed in the registry, and the persist stream, from the node's Aeron Archive into ClickHouse."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ingester"
+path = "src/main.rs"
+
+[dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+ergon-runtime-server = { path = "../../../runtime-server" }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+lab.workspace = true
+log.workspace = true
+mimalloc.workspace = true
+signal-hook = "0.3"
+
+[dev-dependencies]
+schema.workspace = true
+
+[lints]
+workspace = true

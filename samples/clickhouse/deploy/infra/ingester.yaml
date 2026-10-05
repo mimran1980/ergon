@@ -29,6 +29,9 @@ spec:
             - { name: AERON_DIR, value: /aeron/driver }
             - { name: AERON_DRIVER_TIMEOUT, value: "30000" }
             - { name: CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: CLICKHOUSE_USER, value: lab }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: clickhouse, key: password } }
             - { name: PERSIST_CONFIG, value: /lab/config/tables.yaml }
             - { name: PERSIST_STREAMS, value: /lab/config/streams.yaml }
             - { name: PERSIST_SCHEMAS, value: /lab/schema }

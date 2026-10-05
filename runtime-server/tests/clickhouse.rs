@@ -298,6 +298,105 @@ fn every_schema_given_is_ingested_by_schema_and_template_id() -> TestResult {
     Ok(())
 }
 
+/// A `tracing` span of `def` as the bridge publishes it: started at `start`
+/// (UNIX ns), 100 ns long, no attributes.
+fn span(def: u64, start: u64) -> Result<Vec<u8>, Box<dyn Error>> {
+    use ergon_runtime::event::codec;
+
+    let len = codec::TraceEncodedLength::new()
+        .marks(1)?
+        .attrs_ragged(0, |_| Ok(()))?
+        .encoded_length_with_header();
+    let mut message = vec![0; len];
+    let written = codec::TraceEncoder::wrap_and_apply_header(&mut message, 0)
+        .fixed(&codec::TraceFixedFields {
+            def,
+            trace_hi: 1,
+            trace_lo: start,
+            span: start,
+            parent: 0,
+            start,
+            why: codec::TraceWhy::Span,
+        })
+        .marks(1, |g| {
+            g.add(|e| {
+                e.ns(100);
+                Ok(())
+            })
+        })?
+        .attrs(0, |_| Ok(()))?
+        .encoded_length_with_header();
+    assert_eq!(written, len);
+    Ok(message)
+}
+
+#[test]
+fn event_rows_and_spans_are_kept_per_app_at_their_own_time() -> TestResult {
+    use ergon_runtime::event::{FieldDef, Kind, Shape, Value};
+    use ergon_runtime::source::Source;
+    use ergon_runtime::trace::TraceDef;
+
+    // The `tracing` bridge switches nothing: these tables are switched here.
+    let lab = Lab::new(
+        "event_switches",
+        "tables:
+  signal: { kind: dynamic, enabled: false, apps: { md: true, old: { until: 2025-01-01T00:00:00Z } } }
+  otel_traces: { kind: static, enabled: false, apps: { md: true } }
+",
+    )?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    let [md, engine, old] = ["md", "engine", "old"].map(|app| Source::at("h", "p", app, 1, ""));
+    for source in [&md, &engine, &old] {
+        assert!(writer.push(&source.message()?, source.id));
+    }
+    let shape = Shape::new("signal", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(shape.message(), 0));
+    let row = |edge, ts| {
+        let mut row = vec![0; shape.row_len(0)];
+        shape.write_row(&mut row, ts, |_| Some(Value::F64(edge)));
+        row
+    };
+    // 2023 and 2027: either side of `old`'s `until`, which has passed since.
+    let (before, after) = (1_700_000_000_000_000_000, 1_800_000_000_000_000_000);
+    for (source, edge, ts) in [
+        (&md, 1.0, before),
+        (&engine, 2.0, before),
+        (&old, 3.0, before),
+        (&old, 4.0, after),
+    ] {
+        assert!(
+            writer.push(&row(edge, ts), source.id),
+            "a row switched off is consumed, not skipped"
+        );
+    }
+    // A table `tables.yaml` does not list is off, as for an application.
+    let unlisted = Shape::new("unlisted", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(unlisted.message(), 0));
+    let mut row = vec![0; unlisted.row_len(0)];
+    unlisted.write_row(&mut row, before, |_| Some(Value::F64(5.0)));
+    assert!(
+        writer.push(&row, md.id),
+        "a row of a table not listed is consumed, not skipped"
+    );
+    let def = TraceDef::new("connect", &[], &[]);
+    assert!(writer.push(&def.message()?, 0));
+    for source in [&md, &engine] {
+        assert!(writer.push(&span(def.def, before)?, source.id));
+    }
+    clean(&writer.tick())?;
+    assert_eq!(
+        lab.query("SELECT edge, app FROM DB.signal ORDER BY edge FORMAT TSV")?,
+        "1\tmd\n3\told",
+        "md's, and old's from before its time"
+    );
+    assert_eq!(lab.query("EXISTS TABLE DB.unlisted")?, "0");
+    assert_eq!(
+        lab.query("SELECT ServiceName FROM DB.otel_traces FORMAT TSV")?,
+        "md"
+    );
+    Ok(())
+}
+
 /// A `signal` row of `shape` with `edge` (field 0) set.
 fn signal_row(shape: &ergon_runtime::event::Shape, edge: f64) -> Vec<u8> {
     let mut row = vec![0; shape.row_len(0)];
@@ -737,157 +836,6 @@ fn unsupported_field_shapes_are_rejected_up_front() {
 }
 
 #[test]
-fn market_schema_tables() -> TestResult {
-    let tables = ergon_runtime_server::tables_from_schema(include_str!(
-        "../../samples/clickhouse/schema/market.xml"
-    ))?;
-    let names: Vec<&str> = tables.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "trade",
-            "quote",
-            "book_snapshot",
-            "mark_price",
-            "funding_rate",
-            "index_price",
-            "bar",
-            "book_deltas",
-            "instrument_spec"
-        ]
-    );
-    let column = |table: &str, column: &str| {
-        tables
-            .iter()
-            .find(|t| t.name == table)
-            .and_then(|t| t.shape().columns.into_iter().find(|c| c.name == column))
-            .map(|c| c.ch_type)
-    };
-    // Funding rates need more than nine decimals (Hyperliquid's have ten).
-    assert_eq!(
-        column("funding_rate", "rate").as_deref(),
-        Some("Decimal(18, 18)")
-    );
-    // An enum inside a group: an array of its names.
-    assert_eq!(
-        column("book_deltas", "deltas.action").as_deref(),
-        Some("Array(LowCardinality(String))")
-    );
-    let ch = ClickHouse::new("http://unused", "", "", "market");
-    let book = tables
-        .iter()
-        .find(|t| t.name == "book_snapshot")
-        .ok_or("book_snapshot")?;
-    assert_eq!(
-        ch.create_sql(&book.shape()),
-        "CREATE TABLE IF NOT EXISTS `market`.`book_snapshot` (\n    `ts_event` DateTime64(9, 'UTC'),\n    `ts_init` DateTime64(9, 'UTC'),\n    `sequence` UInt64,\n    `bids.price` Array(Decimal(18, 9)),\n    `bids.size` Array(Decimal(18, 9)),\n    `asks.price` Array(Decimal(18, 9)),\n    `asks.size` Array(Decimal(18, 9)),\n    `symbol` String,\n    `venue` String,\n    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)\n)\nENGINE = MergeTree\nPARTITION BY toDate(`ts_event`)\nORDER BY (`symbol`, `venue`, `ts_event`)\nSETTINGS non_replicated_deduplication_window = 1000"
-    );
-    Ok(())
-}
-
-#[test]
-fn trading_rows_round_trip_beside_market_rows() -> TestResult {
-    use schema::trading::{
-        AggBookEncoder, AggBookFixedFields, Decimal9, NewOrderEncoder, NewOrderFixedFields, Side,
-    };
-    let lab = Lab::new(
-        "trading",
-        "tables:\n  trade: { kind: static }\n  agg_book: { kind: dynamic }\n  new_order: { kind: static }\n",
-    )?;
-    let mut writer = Writer::new(
-        &[schema::MARKET_SCHEMA, schema::TRADING_SCHEMA],
-        lab.ch.clone(),
-        &lab.config,
-        Duration::ZERO,
-    )?;
-    let mut buf = [0u8; AggBookEncoder::compute_length_with_header(2, 1, 3)];
-    let len = AggBookEncoder::wrap_and_apply_header(&mut buf, 0)
-        .fixed(&AggBookFixedFields {
-            ts: 1_700_000_000_000_000_000,
-        })
-        .bids(2, |g| {
-            g.add_checked(|mut entry| {
-                entry
-                    .price_wire(Decimal9::new(100_000_000_000))
-                    .size_wire(Decimal9::new(1_500_000_000))
-                    .venue_str("BINANCE")?;
-                Ok(entry.complete())
-            })?;
-            g.add_checked(|mut entry| {
-                entry
-                    .price_wire(Decimal9::new(99_000_000_000))
-                    .size_wire(Decimal9::new(2_000_000_000))
-                    .venue_str("HYPERLIQUID")?;
-                Ok(entry.complete())
-            })?;
-            Ok(())
-        })?
-        .asks(1, |g| {
-            g.add_checked(|mut entry| {
-                entry
-                    .price_wire(Decimal9::new(101_000_000_000))
-                    .size_wire(Decimal9::new(250_000_000))
-                    .venue_str("BINANCE")?;
-                Ok(entry.complete())
-            })?;
-            Ok(())
-        })?
-        .asset(b"BTC")?
-        .encoded_length_with_header();
-    assert!(writer.push(
-        schema::AnySchemaMessage::decode(&buf[..len], 0)?.as_bytes(),
-        0
-    ));
-    let mut buf = [0u8; NewOrderEncoder::compute_length_with_header(3)];
-    let len = NewOrderEncoder::wrap_and_apply_header(&mut buf, 0)
-        .fixed(&NewOrderFixedFields {
-            ts: 1_700_000_000_000_001_000,
-            tick_ts: 1_700_000_000_000_000_000,
-            order_id: 7,
-            side: Side::Sell,
-            price: Decimal9::new(100_000_000_000),
-            qty: Decimal9::new(1_000_000),
-        })
-        .asset(b"BTC")?
-        .encoded_length_with_header();
-    assert!(writer.push(
-        schema::AnySchemaMessage::decode(&buf[..len], 0)?.as_bytes(),
-        0
-    ));
-    let mut trade = [0u8; schema::market::TradeEncoder::compute_length_with_header(3, 4, 1)];
-    let len = schema::market::TradeEncoder::wrap_and_apply_header(&mut trade, 0)
-        .fixed(&schema::market::TradeFixedFields {
-            ts_event: 1_700_000_000_000_000_000,
-            ts_init: 1_700_000_000_000_001_000,
-            price: schema::market::Decimal9::new(100_000_000_000),
-            size: schema::market::Decimal9::new(1_000_000_000),
-            aggressor: schema::market::Side::Buy,
-        })
-        .symbol(b"BTC")?
-        .venue(b"XNAS")?
-        .trade_id(b"1")?
-        .encoded_length_with_header();
-    assert!(writer.push(
-        schema::AnySchemaMessage::decode(&trade[..len], 0)?.as_bytes(),
-        0
-    ));
-    clean(&writer.tick())?;
-    assert_eq!(
-        lab.query("SELECT symbol, venue, price, size FROM DB.trade FORMAT TSV")?,
-        "BTC\tXNAS\t100\t1"
-    );
-    assert_eq!(
-        lab.query("SELECT bids.price, bids.size, bids.venue, asks.venue, asset FROM DB.agg_book FORMAT TSV")?,
-        "[100,99]\t[1.5,2]\t['BINANCE','HYPERLIQUID']\t['BINANCE']\tBTC"
-    );
-    assert_eq!(
-        lab.query("SELECT order_id, side, price, qty, tick_ts FROM DB.new_order FORMAT TSV")?,
-        "7\tSell\t100\t0.001\t2023-11-14 22:13:20.000000000"
-    );
-    Ok(())
-}
-
-#[test]
 fn persistences_own_tables_are_never_event_tables_or_sbe_messages() -> TestResult {
     use ergon_runtime::event::{FieldDef, Kind, Shape};
 
@@ -903,6 +851,13 @@ fn persistences_own_tables_are_never_event_tables_or_sbe_messages() -> TestResul
     assert!(
         !writer.push(&signal_row(&shape, 1.0), 0),
         "an event row naming `metrics` has no table to go to"
+    );
+    // Nor one naming an SBE message's table, listed or not.
+    let sbe = Shape::new("shapes", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(sbe.message(), 0));
+    assert!(
+        !writer.push(&signal_row(&sbe, 1.0), 0),
+        "an event row naming `shapes` has no table to go to"
     );
     let report = writer.tick();
     assert!(
@@ -1027,7 +982,7 @@ fn backtest_frame_preserves_source_run_and_streams_back_to_runtime() -> TestResu
         table: "frame".into(),
     };
     let mut input = ClickHouseSource::new(config, Nanos(100), Nanos(200));
-    input.bind(&["md-test/md".into()], Nanos(100))?;
+    input.bind(&["md-test/md".into()], Nanos(100), || {})?;
     assert_eq!(input.head(0), Some((Nanos(123), 42, 4096, &message[..])));
     input.advance(0)?;
     assert_eq!(input.head(0), None);

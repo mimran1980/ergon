@@ -36,11 +36,10 @@ impl Venue {
     ///
     /// # Errors
     /// A stream or publication cannot be opened.
-    pub fn new(ctx: &mut Ctx) -> Result<Self, Error> {
+    pub fn new(ctx: &mut Ctx, streams: &lab::Streams) -> Result<Self, Error> {
         let orders = ctx.subscribe(&format!("engine-{}", ctx.region()), "orders")?;
         let exec = ctx.publish(&format!("exch-sim-{}", ctx.region()), "exec")?;
-        let names: Vec<_> = ctx
-            .streams()
+        let names: Vec<_> = streams
             .services
             .keys()
             .filter(|s| s.starts_with("md-"))
@@ -243,16 +242,16 @@ impl Agent for Venue {
 mod tests {
     use super::*;
     use ergon_runtime::rt::sim::{Sim, SimConfig};
-    use ergon_runtime::streams::Streams;
+    use lab::Streams;
     use schema::trading::{AnyMessage, NewOrderEncoder, NewOrderFixedFields};
 
     #[test]
     fn ioc_reports_executed_quantity_and_cancels_the_residual()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut config = SimConfig::new(Streams::parse(crate::replay::STREAMS)?);
+        let mut config = SimConfig::new();
         config.region = crate::replay::REGION.into();
         let mut sim = Sim::new(config, Vec::new())?;
-        let mut venue = Venue::new(sim.ctx())?;
+        let mut venue = Venue::new(sim.ctx(), &Streams::parse(crate::replay::STREAMS)?)?;
         let mut book = MatchingBook::default();
         assert!(book.submit(
             Order {

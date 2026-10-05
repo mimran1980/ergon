@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-rusteron-media-driver = { version = "0.2.7", features = ["static"] }
+rusteron-media-driver = { version = "0.2", features = ["static"] }
 mimalloc.workspace = true
 
 [lints]

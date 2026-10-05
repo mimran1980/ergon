@@ -1,6 +1,7 @@
 //! Process set-up for a pinned busy-spin loop: thread affinity, locked
-//! memory, and a check that the clock is the time-stamp counter. Linux only;
-//! elsewhere each is a logged no-op.
+//! memory, the timer slack of a loop that sleeps or parks, and a check that
+//! the clock is the time-stamp counter. Linux only; elsewhere each is a logged
+//! no-op.
 #![allow(unsafe_code)]
 
 /// Pin the calling thread to `cpu`.
@@ -41,6 +42,28 @@ pub fn lock_memory() {
     }
     #[cfg(not(target_os = "linux"))]
     log::warn!("memory locking is Linux only");
+}
+
+/// Let the kernel wake the calling thread's sleeps and parks at most `slack`
+/// late, instead of Linux's default 50 µs: a short one then wakes on time, at
+/// the CPU of more wake-ups (see [`crate::idle`]).
+pub fn set_timer_slack(slack: std::time::Duration) {
+    #[cfg(target_os = "linux")]
+    {
+        // Zero would put the default back.
+        let ns = libc::c_ulong::try_from(slack.as_nanos())
+            .unwrap_or(libc::c_ulong::MAX)
+            .max(1);
+        // SAFETY: `PR_SET_TIMERSLACK` takes the slack in nanoseconds as its
+        // one argument and touches no Rust memory.
+        if unsafe { libc::prctl(libc::PR_SET_TIMERSLACK, ns, 0, 0, 0) } == 0 {
+            log::info!("timer slack {slack:?}");
+        } else {
+            log::error!("PR_SET_TIMERSLACK: {}", std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    log::warn!("timer slack {slack:?}: Linux only");
 }
 
 /// Log loudly when Linux's clock source is not the TSC: every latency number

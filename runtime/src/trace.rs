@@ -14,7 +14,7 @@
 //! let t2t = persist.tracer("tick_to_trade", &["wire", "decode", "decide", "send"], &["levels"]);
 //! const MD: u64 = TraceId::namespace("md");
 //!
-//! // Stamps stay on the stack; finish locks each stage's histogram cell.
+//! // Stamps stay on the stack; finish adds each stage to its histogram cell.
 //! let mut t = t2t.start(Nanos::from_epoch(ts_event), TraceId::new(MD, seq));
 //! t.mark(clock.now()); // wire: the venue's time to ours
 //! t.mark(clock.now()); // decode
@@ -26,10 +26,11 @@
 //! ```
 //!
 //! The same waterfall from code that is not on the hot path is a `tracing`
-//! span (`info_span!`, `#[instrument]`). [`crate::persist::Persist::layer`] records
-//! those while `otel_traces` is on. Spans use the tracing registry and allocate;
-//! checkpoint stamps stay on the stack. Finishing a checkpoint trace locks
-//! its histogram cells to preserve complete summaries during concurrent polls.
+//! span (`info_span!`, `#[instrument]`), from any thread, through the
+//! [`bridge`](crate::bridge) [`crate::persist::Persist::layer`] makes; the
+//! ingester keeps those while `otel_traces` is on for the app. Spans use the
+//! tracing registry and allocate; checkpoint stamps stay on the stack. A
+//! [`Tracer`] stays on the thread of the loop that made it.
 //!
 //! [`Trace::finish`] always records each stage, and the whole, into the
 //! histogram `trace_ns{trace, stage}`: every event is counted. It publishes
@@ -52,8 +53,7 @@
 //! order into one trace, with nothing passed between them.
 
 use std::cell::Cell;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
+use std::rc::Rc;
 
 use crate::clock::Nanos;
 use crate::event::codec;
@@ -101,12 +101,6 @@ impl TraceId {
             i += 1;
         }
         hash
-    }
-
-    /// `id` in `namespace`, hashing the name now.
-    #[must_use]
-    pub const fn of(namespace: &str, id: u64) -> Self {
-        Self::new(Self::namespace(namespace), id)
     }
 }
 
@@ -214,49 +208,48 @@ impl TraceDef {
 /// A trace definition's message, and whether the stream has it yet.
 pub(crate) struct DefMessage {
     pub(crate) message: Vec<u8>,
-    pub(crate) sent: AtomicBool,
+    pub(crate) sent: Cell<bool>,
 }
 
 /// What `tables.yaml` says about one trace for this app; written by the
-/// config watcher, read by [`Tracer`] with relaxed loads.
+/// config watcher in [`crate::persist::Persist::poll`], read by [`Tracer`].
 pub(crate) struct TraceSwitch {
-    pub(crate) on: AtomicBool,
+    pub(crate) on: Cell<bool>,
     /// Publish one in this many; 0 none.
-    pub(crate) sample: AtomicU64,
+    pub(crate) sample: Cell<u64>,
     /// Publish every one slower than this (ns); 0 none.
-    pub(crate) slower_than: AtomicI64,
+    pub(crate) slower_than: Cell<i64>,
 }
 
 impl TraceSwitch {
     /// On or off, and `config`'s sampling (every one when not listed).
     pub(crate) fn set(&self, on: bool, config: Option<&crate::persist::TraceConfig>) {
-        self.on.store(on, Relaxed);
-        self.sample.store(config.map_or(1, |c| c.sample), Relaxed);
-        self.slower_than.store(
-            config.and_then(|c| c.slower_than).map_or(0, |s| s.0),
-            Relaxed,
-        );
+        self.on.set(on);
+        self.sample.set(config.map_or(1, |c| c.sample));
+        self.slower_than
+            .set(config.and_then(|c| c.slower_than).map_or(0, |s| s.0));
     }
 }
 
 impl Default for TraceSwitch {
     fn default() -> Self {
         Self {
-            on: AtomicBool::new(false),
-            sample: AtomicU64::new(1),
-            slower_than: AtomicI64::new(0),
+            on: Cell::new(false),
+            sample: Cell::new(1),
+            slower_than: Cell::new(0),
         }
     }
 }
 
-/// One trace's handle: make it once, then [`Tracer::start`] per event.
-/// One writer at a time: `Send`, not `Sync`.
+/// One trace's handle: make it once, then [`Tracer::start`] per event. It
+/// shares its switch, definition and histogram cells with the runtime that
+/// made it, on its one thread: neither `Send` nor `Sync`.
 pub struct Tracer {
-    def: Arc<DefMessage>,
+    def: Rc<DefMessage>,
     def_id: u64,
     stages: usize,
     attrs: usize,
-    switch: Arc<TraceSwitch>,
+    switch: Rc<TraceSwitch>,
     /// Starts left until the next head-sampled one.
     left: Cell<u64>,
     /// `trace_ns{trace, stage}` per stage, then the whole.
@@ -272,8 +265,8 @@ pub struct Tracer {
 impl Tracer {
     pub(crate) fn new(
         def: &TraceDef,
-        message: Arc<DefMessage>,
-        switch: Arc<TraceSwitch>,
+        message: Rc<DefMessage>,
+        switch: Rc<TraceSwitch>,
         metrics: &Metrics,
         persist: Option<Persist>,
         id_hi: u64,
@@ -307,6 +300,22 @@ impl Tracer {
         }
     }
 
+    /// A tracer that publishes nothing: its stage histograms still count,
+    /// in a registry nothing publishes.
+    pub(crate) fn detached(name: &str, stages: &[&str], attrs: &[&str]) -> Self {
+        Self::new(
+            &TraceDef::new(name, stages, attrs),
+            Rc::new(DefMessage {
+                message: Vec::new(),
+                sent: Cell::new(true),
+            }),
+            Rc::default(),
+            &Metrics::detached(),
+            None,
+            0,
+        )
+    }
+
     /// Begin one trace at `at`: a countdown for sampling, no clock read.
     #[inline]
     pub fn start(&self, at: Nanos, id: TraceId) -> Trace<'_> {
@@ -316,7 +325,7 @@ impl Tracer {
             false
         } else {
             // One in `sample`, from this one; `sample: 0` is none.
-            let sample = self.switch.sample.load(Relaxed);
+            let sample = self.switch.sample.get();
             self.left.set(sample);
             sample != 0
         };
@@ -336,7 +345,7 @@ impl Tracer {
     /// their stage histograms count either way.
     #[must_use]
     pub fn is_on(&self) -> bool {
-        self.switch.on.load(Relaxed)
+        self.switch.on.get()
     }
 
     /// A trace id no other trace of this process has: for traces with no
@@ -361,11 +370,11 @@ impl Tracer {
         let Some(persist) = &self.persist else {
             return;
         };
-        if !self.def.sent.load(Relaxed) {
+        if !self.def.sent.get() {
             if !persist.publish(&self.def.message) {
                 return; // the trace would arrive without its def
             }
-            self.def.sent.store(true, Relaxed);
+            self.def.sent.set(true);
         }
         let marks = &t.marks[..usize::from(t.n)];
         let attrs = &t.attrs[..self.attrs];
@@ -492,15 +501,10 @@ impl Trace<'_> {
             prev = end;
         }
         t.record(t.stages, prev);
-        if !t.switch.on.load(Relaxed) {
+        if !t.switch.on.get() {
             return;
         }
-        if let Some(why) = why(
-            self.kept,
-            self.sampled,
-            t.switch.slower_than.load(Relaxed),
-            prev,
-        ) {
+        if let Some(why) = why(self.kept, self.sampled, t.switch.slower_than.get(), prev) {
             t.publish(&self, why);
         }
     }
@@ -526,21 +530,21 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-    fn tracer(switch: &Arc<TraceSwitch>) -> (Tracer, Metrics) {
+    fn tracer(switch: &Rc<TraceSwitch>) -> (Tracer, Metrics) {
         let metrics = Metrics::detached();
         let def = TraceDef::new("t2t", &["wire", "decode"], &["levels"]);
-        let message = Arc::new(DefMessage {
+        let message = Rc::new(DefMessage {
             message: Vec::new(),
-            sent: AtomicBool::new(true),
+            sent: Cell::new(true),
         });
-        let tracer = Tracer::new(&def, message, Arc::clone(switch), &metrics, None, 1);
+        let tracer = Tracer::new(&def, message, Rc::clone(switch), &metrics, None, 1);
         (tracer, metrics)
     }
 
     #[test]
     fn head_sampling_takes_exactly_one_in_n() {
-        let switch = Arc::new(TraceSwitch::default());
-        switch.sample.store(4, Relaxed);
+        let switch = Rc::new(TraceSwitch::default());
+        switch.sample.set(4);
         let (t, _) = tracer(&switch);
         let sampled: Vec<bool> = (0..12)
             .map(|_| t.start(Nanos(0), TraceId::default()).sampled)
@@ -552,14 +556,14 @@ mod tests {
                 true, false, false, false, true, false, false, false, true, false, false, false
             ]
         );
-        switch.sample.store(0, Relaxed);
+        switch.sample.set(0);
         let (t, _) = tracer(&switch);
         assert!(
             (0..100).all(|_| !t.start(Nanos(0), TraceId::default()).sampled),
             "sample: 0 is none, not even the first"
         );
         // A change takes effect when the countdown next runs out.
-        switch.sample.store(1, Relaxed);
+        switch.sample.set(1);
         assert!(t.start(Nanos(0), TraceId::default()).sampled);
         assert!(
             t.start(Nanos(0), TraceId::default()).sampled,
@@ -569,7 +573,7 @@ mod tests {
 
     #[test]
     fn stages_are_counted_whether_or_not_the_trace_is_kept() {
-        let switch = Arc::new(TraceSwitch::default()); // off: nothing published
+        let switch = Rc::new(TraceSwitch::default()); // off: nothing published
         let (t, _) = tracer(&switch);
         for _ in 0..3 {
             let mut tr = t.start(Nanos(100), TraceId::default());
@@ -604,8 +608,10 @@ mod tests {
     #[test]
     fn ids_are_namespaced_and_const() {
         const ORDERS: u64 = TraceId::namespace("order");
-        assert_eq!(TraceId::new(ORDERS, 42), TraceId::of("order", 42));
-        assert_ne!(TraceId::of("order", 42), TraceId::of("md", 42));
+        assert_ne!(
+            TraceId::new(ORDERS, 42),
+            TraceId::new(TraceId::namespace("md"), 42)
+        );
         assert_eq!(ORDERS, crate::event::fnv64(b"order"));
     }
 

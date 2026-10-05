@@ -72,6 +72,7 @@ preflight:
     @echo "=== clippy (same workspace set as CI) ==="
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo clippy -p ergon-runtime --features mimalloc --all-targets -- -D warnings
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
@@ -111,6 +112,7 @@ check-local: policy _test-ingester-services
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo clippy -p ergon-runtime --features mimalloc --all-targets -- -D warnings
     cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
@@ -304,6 +306,7 @@ test: policy _test-ingester-services
     @echo "=== 2/7 clippy (workspace + samples) ==="
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo clippy -p ergon-runtime --features mimalloc --all-targets -- -D warnings
     @echo "=== 3/7 unit + integration tests ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
@@ -324,6 +327,7 @@ test: policy _test-ingester-services
     cd samples/sbe-codegen-examples && cargo run --example flyweight >/dev/null && cargo run --example domain_objects >/dev/null
     cd samples/exchange-example && cargo test -- --test-threads=1
     cd samples/cluster-rfq && cargo build --examples
+    cd samples/clickhouse && just test
     @echo "=== 6/7 Aeron Cluster Java lifecycle + HA sample ==="
     just build-aeron-jars
     cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1

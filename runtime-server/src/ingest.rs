@@ -1,9 +1,10 @@
 //! Replay this node's recordings into `ClickHouse`, then purge behind the checkpoint.
 //!
-//! The archive records the IPC persist stream and, through a spy, every feed
-//! published on this node. Each Aeron session is its own recording and has
-//! its own checkpoint. A stopped recording is deleted once it is fully
-//! ingested. A live one has its inserted segments deleted.
+//! The archive records the IPC persist stream and, through a spy, each feed
+//! in [`Settings::feeds`](crate::Settings::feeds) ([`Ingester::record_feeds`]
+//! adds more). Each Aeron session is its own recording and has its own
+//! checkpoint. A stopped recording is deleted once it is fully ingested. A
+//! live one has its inserted segments deleted.
 //!
 //! A crash before the checkpoint is saved replays that batch. The insert token
 //! is the batch's recording positions, and `ClickHouse` drops the repeat. Each
@@ -30,7 +31,7 @@ use crate::aeron_stats::AeronStats;
 use ergon_runtime::clock::Nanos;
 use ergon_runtime::frames::FrameRow;
 
-use crate::{Error, Report, Settings, Writer};
+use crate::{Error, RecordedFeed, Report, Settings, Writer};
 
 /// The archive's local control channel: same host, no ports.
 const CONTROL: &std::ffi::CStr = c"aeron:ipc?term-length=64k";
@@ -107,10 +108,6 @@ pub struct Ingester {
     feeds: BTreeMap<i32, (String, String)>,
     /// A `Frame` row being built, reused.
     frame_row: Vec<u8>,
-    /// This node's IP: its feeds' spies bind it.
-    host_ip: String,
-    /// New versions of `streams.yaml`, once [`Ingester::follow`] is called.
-    watch: Option<ergon_runtime::streams::Watch>,
     checkpoint_path: PathBuf,
     /// Positions of an insert that may already be in `ClickHouse`. Written
     /// before the insert and removed when the checkpoint passes it, so a
@@ -134,6 +131,19 @@ fn aeron(e: impl std::fmt::Display) -> Error {
     Error::Aeron(e.to_string())
 }
 
+/// Poll `connect` until Aeron finishes it: connected, or failed at the
+/// context's message timeout, when Aeron closes the publication and
+/// subscription it opened. Dropping an unfinished connect closes neither,
+/// which `poll_blocking` does when its own timer runs out first.
+fn finish(connect: &AeronArchiveAsyncConnect) -> Result<AeronArchive, String> {
+    loop {
+        if let Some(archive) = connect.poll().map_err(|e| e.to_string())? {
+            return Ok(archive);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// One archive recording, copied out of the list callback.
 struct Recording {
     id: i64,
@@ -147,7 +157,8 @@ struct Recording {
 
 impl Ingester {
     /// Load each schema's XML and `tables.yaml`, connect to the archive, and
-    /// make sure it records the persist stream and every feed published here.
+    /// make sure it records the persist stream and each feed in
+    /// [`Settings::feeds`] ([`Ingester::record_feeds`] adds more).
     /// A frame is matched later by the schema id and template id in its
     /// header. This crate does not decode with generated codecs.
     ///
@@ -183,15 +194,21 @@ impl Ingester {
         archive_ctx
             .set_control_response_channel(CONTROL)
             .map_err(aeron)?;
-        let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &client)
-            .map_err(aeron)?
-            .poll_blocking(Duration::from_secs(10))
-            .map_err(|e| Error::Aeron(format!("connecting to the archive: {e}")))?;
+        // Until the archive answers, however long it takes to start: nothing
+        // on this node is recorded before. Exiting instead left it to
+        // Kubernetes' growing restart delay, minutes of every app's records
+        // dropped as "not connected".
+        let archive = loop {
+            let connect =
+                AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &client).map_err(aeron)?;
+            match finish(&connect) {
+                Ok(archive) => break archive,
+                Err(e) => log::warn!("connecting to the archive: {e}; retrying"),
+            }
+        };
         record(&archive, &settings.channel, settings.stream_id)?;
         let mut feeds = BTreeMap::new();
-        if let Some(streams) = &settings.streams {
-            record_feeds(&archive, streams, &settings.host_ip, &mut feeds)?;
-        }
+        record_feeds(&archive, &settings.feeds, &mut feeds)?;
         let checkpoints = load(&settings.checkpoint_path)?;
         let sources_path = settings.checkpoint_path.with_extension("sources");
         let sources = load(&sources_path)?;
@@ -223,8 +240,6 @@ impl Ingester {
             stream_id: settings.stream_id,
             feeds,
             frame_row: Vec::new(),
-            host_ip: settings.host_ip,
-            watch: None,
             checkpoint_path: settings.checkpoint_path,
             pending_path,
             pending,
@@ -237,10 +252,16 @@ impl Ingester {
         })
     }
 
-    /// Follow `streams.yaml` at `path` from now on: a service added to it has
-    /// its feeds recorded here from the next tick, with no restart.
-    pub fn follow(&mut self, path: impl Into<PathBuf>) {
-        self.watch = Some(ergon_runtime::streams::Watch::new(path));
+    /// Record `feeds` too, from now on: a feed added to the application's
+    /// directory is recorded here from the next tick, with no restart, and
+    /// so is one whose publisher moved to another port. A feed already
+    /// recorded on the same spy is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// The archive refused a recording.
+    pub fn record_feeds(&mut self, feeds: &[RecordedFeed]) -> Result<(), Error> {
+        record_feeds(&self.archive, feeds, &mut self.feeds)
     }
 
     /// Replay what was recorded since the last tick, insert it, then save the
@@ -253,13 +274,6 @@ impl Ingester {
     /// connect again.
     pub fn tick(&mut self) -> Result<Report, Error> {
         let mut report = Report::default();
-        if let Some(streams) = self
-            .watch
-            .as_mut()
-            .and_then(ergon_runtime::streams::Watch::changed)
-        {
-            record_feeds(&self.archive, &streams, &self.host_ip, &mut self.feeds)?;
-        }
         self.open_replays(&mut report)?;
         let mut caught_up = false;
         if self.pending.is_none() {
@@ -287,7 +301,7 @@ impl Ingester {
             // read the rest of a historical histogram window in the archive.
         }
         self.writer
-            .flush_elapsed_histograms(Self::unix_now_ns(), caught_up);
+            .flush_elapsed_histograms(crate::unix_now_ns(), caught_up);
         if let Some(pending) = &self.pending {
             self.writer.set_dedup_token(&dedup_token(pending));
         } else {
@@ -301,7 +315,7 @@ impl Ingester {
             && Instant::now() >= *next
         {
             *next = Instant::now() + *every;
-            let now = ergon_runtime::clock::Clock::new().now().epoch_ns();
+            let now = i64::try_from(crate::unix_now_ns()).unwrap_or(i64::MAX);
             let clients = self.writer.client_names();
             report
                 .errors
@@ -552,14 +566,6 @@ impl Ingester {
         Ok(caught_up)
     }
 
-    fn unix_now_ns() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-            })
-    }
-
     fn clear_pending(&mut self, report: &mut Report) {
         if self.pending.take().is_none() {
             return;
@@ -779,17 +785,18 @@ fn record(archive: &AeronArchive, channel: &str, stream_id: i32) -> Result<(), E
     }
 }
 
-/// Record every archived feed of `streams` published on this node, through
-/// a spy on its publication, and track its stream id.
+/// Record each of `feeds` through its spy, and track its stream id. The
+/// archive keeps one recording per spy and stream, so a feed recorded
+/// already is not recorded twice, and one whose spy changed (its publisher
+/// moved to another port) is recorded again.
 fn record_feeds(
     archive: &AeronArchive,
-    streams: &ergon_runtime::streams::Streams,
-    host_ip: &str,
-    feeds: &mut BTreeMap<i32, (String, String)>,
+    feeds: &[RecordedFeed],
+    tracked: &mut BTreeMap<i32, (String, String)>,
 ) -> Result<(), Error> {
-    for (service, kind, stream_id) in streams.archived() {
-        record(archive, &streams.spy(service, host_ip)?, stream_id)?;
-        feeds.insert(stream_id, (service.to_owned(), kind.to_owned()));
+    for feed in feeds {
+        record(archive, &feed.spy, feed.stream_id)?;
+        tracked.insert(feed.stream_id, (feed.service.clone(), feed.kind.clone()));
     }
     Ok(())
 }

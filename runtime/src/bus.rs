@@ -1,22 +1,42 @@
 //! The application's Aeron client and its identity on it.
 //!
-//! [`Bus::connect`] once per process. [`Bus::publish`], [`Bus::subscribe`]
-//! and [`Bus::subscribe_live`] open feeds from the registry on it, and
-//! [`Persist`](crate::persist::Persist) records through it. Every publication
-//! made from one bus shares:
+//! [`Bus::connect`] once per process. One owner holds it, the runtime's
+//! [`Ctx`](crate::rt::Ctx), or a simulation that records or replays through
+//! it ([`SimConfig::bus`](crate::rt::sim::SimConfig::bus)): it is neither
+//! `Clone` nor `Send`. The client has no thread of its own. Its conductor
+//! runs when the owner's loop calls [`Bus::poll`], as the runtime's duty
+//! cycle does, and at each poll of a
+//! [`PersistentSubscription`](crate::subscription::PersistentSubscription),
+//! whose Aeron counterpart runs it for a client with no conductor thread.
+//! Every wait on Aeron drives it while it waits (a publication being added, a
+//! subscriber to record persist's stream, a stalled record): a client
+//! nothing drives for the client liveness timeout (10 s) is closed by the
+//! driver.
 //!
-//! * the application's [`Source`]: its id stamped into every frame, and its
-//!   `Source` message, so each recording names who published it;
-//! * the drop counters ([`Bus::drops`], the `persist_dropped` metric);
-//! * [`Bus::shutdown`], which closes all of them at once.
+//! Feeds and persist's stream are publications made from the bus and owned
+//! by what writes them: the runtime's outputs ([`Ctx::publish`]),
+//! [`Persist`](crate::persist::Persist), or a
+//! [`Publication`](crate::publication::Publication). Each is exclusive, one
+//! writer and no CAS on the term tail, and shares the application's
+//! [`Source`]: its id in every persist frame, and its `Source` message ahead
+//! of each recording's first frame, so a recording names who published it.
+//! The feeds' drops are counted in one set, [`Bus::drops`]; persist counts its
+//! own. Owners close what they own: at shutdown the runtime closes its outputs
+//! and persist's publication at once.
+//!
+//! The [`bridge`](crate::bridge)'s concurrent publication shares only the
+//! identity: what it cannot publish is not counted, and the runtime leaves it
+//! open. It closes with its layer, or with the client.
+//!
+//! [`Ctx::publish`]: crate::rt::Ctx::publish
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use rusteron_archive::{
-    Aeron, AeronBufferClaim, AeronContext, AeronErrorType, AeronExclusivePublication,
-    AeronOfferError, AeronPublication, IntoCString,
+    Aeron, AeronBufferClaim, AeronCError, AeronContext, AeronErrorType, AeronExclusivePublication,
+    AeronOfferError, IntoCString,
 };
 
 use crate::source::Source;
@@ -27,39 +47,26 @@ use crate::{Error, Settings};
 /// rotation off the recording thread.
 const ADMIN_ACTION_RETRIES: u32 = 8;
 
-/// The application's Aeron client. Cheap to clone.
-#[derive(Clone)]
+/// The application's Aeron client, in invoker mode: its conductor runs in the
+/// owner's loop.
 pub struct Bus {
-    inner: Arc<Inner>,
-}
-
-struct Inner {
     aeron: Aeron,
     /// This node's IP: see [`Settings::host_ip`].
     host_ip: String,
-    /// The client conductor runs in the application's loop
-    /// ([`Bus::do_work`]), not on its own thread.
-    invoker: bool,
-    /// Stamped into every frame's reserved value.
+    /// See [`Settings::region`].
+    region: String,
+    /// Stamped into every persist frame's reserved value.
     source: Source,
     source_message: Vec<u8>,
-    /// Bumped every 5 s (by [`Persist`](crate::persist::Persist)'s config
-    /// watcher): each publication sends its `Source` message again.
-    heartbeat: AtomicU64,
-    /// [`Bus::shutdown`] has begun: nothing more is published.
-    closed: AtomicBool,
-    /// Every publication made, for [`Bus::shutdown`] to close.
-    publications: Mutex<Vec<AeronPublication>>,
-    /// Every exclusive publication made, likewise.
-    exclusive: Mutex<Vec<AeronExclusivePublication>>,
-    not_connected: AtomicU64,
-    back_pressure: AtomicU64,
-    too_large: AtomicU64,
-    other: AtomicU64,
+    /// The feeds' drops, shared with what publishes and reports them.
+    drops: DropCounts,
 }
 
-/// Why a record was not published. [`Drops::other`] is a mis-sized encode, a
-/// failed commit, a second thread, or a term rotation that would not finish.
+/// Why a record was not published.
+///
+/// [`Drops::other`] is a mis-sized encode, a failed commit, or another error
+/// Aeron reports (a full log, say). A term rotation that would not finish
+/// counts as back pressure.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Drops {
     /// No subscriber was recording the stream.
@@ -80,19 +87,59 @@ impl Drops {
     }
 }
 
-/// Which counter [`Bus::count`] increments.
+impl std::ops::Add for Drops {
+    type Output = Self;
+
+    /// Both counts, reason by reason.
+    fn add(self, other: Self) -> Self {
+        Self {
+            not_connected: self.not_connected + other.not_connected,
+            back_pressure: self.back_pressure + other.back_pressure,
+            too_large: self.too_large + other.too_large,
+            other: self.other + other.other,
+        }
+    }
+}
+
+/// Which counter [`DropCounts::count`] increments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DropKind {
     NotConnected,
     BackPressure,
     TooLarge,
     Other,
-    /// After [`Bus::shutdown`]: not a drop.
+    /// Its owner closed the publication: not a drop.
     Closed,
 }
 
+/// Drops by reason, one set shared by what counts them and what reports
+/// them: a clone counts into the same set.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DropCounts(Rc<Cell<Drops>>);
+
+impl DropCounts {
+    /// One more drop of `kind`; [`DropKind::Closed`] is none.
+    pub(crate) fn count(&self, kind: DropKind) {
+        let mut drops = self.0.get();
+        match kind {
+            DropKind::NotConnected => drops.not_connected += 1,
+            DropKind::BackPressure => drops.back_pressure += 1,
+            DropKind::TooLarge => drops.too_large += 1,
+            DropKind::Other => drops.other += 1,
+            DropKind::Closed => return,
+        }
+        self.0.set(drops);
+    }
+
+    /// The drops so far.
+    pub(crate) fn get(&self) -> Drops {
+        self.0.get()
+    }
+}
+
 impl Bus {
-    /// Connect to the media driver (`settings.aeron_dir`) as `settings.app`.
+    /// Connect to the media driver (`settings.aeron_dir`) as `settings.app`,
+    /// with the conductor in the caller's loop.
     ///
     /// # Errors
     ///
@@ -120,264 +167,85 @@ impl Bus {
         source.client = aeron.client_id();
         let source_message = source.message()?;
         Ok(Self {
-            inner: Arc::new(Inner {
-                aeron,
-                host_ip: settings.host_ip.clone(),
-                invoker: settings.aeron_invoker,
-                source,
-                source_message,
-                heartbeat: AtomicU64::new(0),
-                closed: AtomicBool::new(false),
-                publications: Mutex::new(Vec::new()),
-                exclusive: Mutex::new(Vec::new()),
-                not_connected: AtomicU64::new(0),
-                back_pressure: AtomicU64::new(0),
-                too_large: AtomicU64::new(0),
-                other: AtomicU64::new(0),
-            }),
+            aeron,
+            host_ip: settings.host_ip.clone(),
+            region: settings.region.clone(),
+            source,
+            source_message,
+            drops: DropCounts::default(),
         })
     }
 
-    /// Add a publication, closed by [`Bus::shutdown`].
-    pub(crate) fn add_publication(
-        &self,
-        channel: &str,
-        stream_id: i32,
-    ) -> Result<AeronPublication, Error> {
-        let adding = self
-            .inner
-            .aeron
-            .async_add_publication(&channel.into_c_string(), stream_id)
-            .map_err(|e| Error::Aeron(format!("{channel}: {e}")))?;
-        let publication = self.await_added(channel, || adding.poll())?;
-        self.inner
-            .publications
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(publication.clone());
-        Ok(publication)
-    }
-
     /// Add an exclusive publication (one writing thread, no CAS on the term
-    /// tail), closed by [`Bus::shutdown`].
+    /// tail), driving the conductor until it is added. Its owner closes it.
     pub(crate) fn add_exclusive_publication(
         &self,
         channel: &str,
         stream_id: i32,
     ) -> Result<AeronExclusivePublication, Error> {
         let adding = self
-            .inner
             .aeron
             .async_add_exclusive_publication(&channel.into_c_string(), stream_id)
             .map_err(|e| Error::Aeron(format!("{channel}: {e}")))?;
-        let publication = self.await_added(channel, || adding.poll())?;
-        self.inner
-            .exclusive
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(publication.clone());
-        Ok(publication)
+        await_added(&self.aeron, channel, || adding.poll())
     }
 
-    /// Wait up to 10 s for an asynchronous add, driving the conductor
-    /// meanwhile in invoker mode.
-    fn await_added<T>(
-        &self,
-        channel: &str,
-        mut poll: impl FnMut() -> Result<Option<T>, rusteron_archive::AeronCError>,
-    ) -> Result<T, Error> {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            match poll() {
-                Ok(Some(added)) => return Ok(added),
-                Ok(None) if Instant::now() < deadline => self.pause(),
-                Ok(None) => return Err(Error::Aeron(format!("{channel}: not added within 10 s"))),
-                Err(e) => return Err(Error::Aeron(format!("{channel}: {e}"))),
-            }
-        }
-    }
-
-    /// One wait step of a blocking call: the conductor's duty cycle in
-    /// invoker mode, else a millisecond's sleep.
+    /// One wait step of a blocking call; see [`pause`].
     pub(crate) fn pause(&self) {
-        if self.inner.invoker {
-            let _ = self.do_work();
-            std::thread::yield_now();
-        } else {
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        pause(&self.aeron);
     }
 
-    /// The client conductor's duty cycle, when it runs in the application's
-    /// loop ([`Settings::aeron_invoker`]); otherwise nothing. Returns the
-    /// work count.
+    /// The client conductor's duty cycle: the owner's loop calls it, between
+    /// messages. Returns the work count.
     #[inline]
     #[must_use = "the work count feeds the idle strategy"]
-    pub fn do_work(&self) -> usize {
-        if !self.inner.invoker {
-            return 0;
-        }
-        self.inner
-            .aeron
-            .main_do_work()
-            .map_or(0, |n| usize::try_from(n).unwrap_or(0))
+    pub fn poll(&self) -> usize {
+        poll(&self.aeron)
     }
 
-    /// The conductor runs in the application's loop.
-    #[must_use]
-    pub fn is_invoker(&self) -> bool {
-        self.inner.invoker
-    }
-
-    /// This node's IP: feeds opened from the registry bind it.
+    /// This node's IP: the address a directory gives a feed on this node.
     #[must_use]
     pub fn host_ip(&self) -> &str {
-        &self.inner.host_ip
+        &self.host_ip
     }
 
-    pub(crate) fn aeron(&self) -> &Aeron {
-        &self.inner.aeron
+    /// Where this application runs: see [`Settings::region`].
+    #[must_use]
+    pub fn region(&self) -> &str {
+        &self.region
     }
 
-    pub(crate) fn source(&self) -> &Source {
-        &self.inner.source
+    pub(crate) const fn aeron(&self) -> &Aeron {
+        &self.aeron
     }
 
-    /// The source id persist stamps into each frame's reserved value.
-    #[inline]
-    pub(crate) fn source_id(&self) -> i64 {
-        self.inner.source.id.cast_signed()
+    pub(crate) const fn source(&self) -> &Source {
+        &self.source
     }
 
     pub(crate) fn source_message(&self) -> &[u8] {
-        &self.inner.source_message
+        &self.source_message
     }
 
-    /// The current heartbeat: a publication that last sent its `Source`
-    /// message at another sends it again.
-    #[inline]
-    pub(crate) fn heartbeat(&self) -> u64 {
-        self.inner.heartbeat.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn beat(&self) {
-        self.inner.heartbeat.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Close every publication now, so the media driver drops them at once
-    /// and subscribers turn to the next publisher of each feed within
-    /// seconds, rather than after this client's liveness timeout. Call it on
-    /// SIGTERM, before exiting. Records made from now on are not published.
-    ///
-    /// It returns once the client has handed each close to the driver (at
-    /// most a second): a close is asynchronous, and one lost to an exit
-    /// leaves the publication open until the client times out. A new
-    /// process on the same node would then join that publication, in the
-    /// old session, and subscribers would never see it restart.
-    pub fn shutdown(&self) {
-        let inner = &self.inner;
-        if inner.closed.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        // Let records already claiming finish: each takes well under a
-        // microsecond.
-        std::thread::sleep(Duration::from_millis(50));
-        let publications = std::mem::take(
-            &mut *inner
-                .publications
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        let done = Arc::new(AtomicU64::new(0));
-        let handler = {
-            let done = Arc::clone(&done);
-            rusteron_archive::Handler::new(move || {
-                done.fetch_add(1, Ordering::Relaxed);
-            })
-        };
-        let exclusive = std::mem::take(
-            &mut *inner
-                .exclusive
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        let shared = publications
-            .into_iter()
-            .flat_map(|p| p.close_with_handler(Some(&handler)))
-            .count();
-        let exclusive = exclusive
-            .into_iter()
-            .flat_map(|p| p.close_with_handler(Some(&handler)))
-            .count();
-        let closing = u64::try_from(shared + exclusive).unwrap_or(u64::MAX);
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while done.load(Ordering::Relaxed) < closing && Instant::now() < deadline {
-            self.pause();
-        }
-        if done.load(Ordering::Relaxed) < closing {
-            log::warn!("shutdown: the driver took more than a second to close the publications");
-            // The client still holds it and may call it yet: never free it.
-            std::mem::forget(handler);
-        }
-    }
-
-    /// Claim `len` bytes of `publication`, stamped with this application's
-    /// source id.
-    #[inline]
-    pub(crate) fn try_claim(
-        &self,
-        publication: &AeronPublication,
-        len: usize,
-    ) -> Result<Claim, DropKind> {
-        self.try_claim_at(publication, len, self.source_id())
-    }
-
-    /// Claim `len` bytes of `publication`, stamped with `reserved`: a feed's
-    /// publish time, or persist's source id.
-    #[inline]
-    pub(crate) fn try_claim_at(
-        &self,
-        publication: &AeronPublication,
-        len: usize,
-        reserved: i64,
-    ) -> Result<Claim, DropKind> {
-        if self.inner.closed.load(Ordering::Relaxed) {
-            return Err(DropKind::Closed);
-        }
-        let claim = AeronBufferClaim::new_zeroed_on_stack();
-        retry_admin(|| publication.try_claim(len, &claim)).map_err(|err| classify(&err))?;
-        claim.frame_header_mut().reserved_value = reserved;
-        Ok(Claim { claim, done: false })
+    /// The feeds' drop counts, for what publishes or reports them.
+    pub(crate) const fn drop_counts(&self) -> &DropCounts {
+        &self.drops
     }
 
     pub(crate) fn count(&self, kind: DropKind) {
-        let inner = &self.inner;
-        let counter = match kind {
-            DropKind::NotConnected => &inner.not_connected,
-            DropKind::BackPressure => &inner.back_pressure,
-            DropKind::TooLarge => &inner.too_large,
-            DropKind::Other => &inner.other,
-            DropKind::Closed => return,
-        };
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.drops.count(kind);
     }
 
-    #[cold]
-    pub(crate) fn drop_one(&self) {
-        self.count(DropKind::Other);
-    }
-
-    /// Records dropped so far on every publication of this bus, by reason.
-    /// Also logged, once a second while the total grows.
+    /// Frames dropped so far on this bus's feeds, by reason: the runtime's
+    /// outputs and every [`Publication`](crate::publication::Publication)
+    /// made from it. [`Persist`](crate::persist::Persist) counts its own
+    /// records, and the [`bridge`](crate::bridge) counts none;
+    /// [`Persist::drops`] adds these to persist's own.
+    ///
+    /// [`Persist::drops`]: crate::persist::Persist::drops
     #[must_use]
     pub fn drops(&self) -> Drops {
-        let inner = &self.inner;
-        Drops {
-            not_connected: inner.not_connected.load(Ordering::Relaxed),
-            back_pressure: inner.back_pressure.load(Ordering::Relaxed),
-            too_large: inner.too_large.load(Ordering::Relaxed),
-            other: inner.other.load(Ordering::Relaxed),
-        }
+        self.drops.get()
     }
 
     /// [`Drops::total`] of [`Bus::drops`].
@@ -390,9 +258,58 @@ impl Bus {
 impl std::fmt::Debug for Bus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bus")
-            .field("source", &self.inner.source.id)
+            .field("source", &self.source.id)
             .field("dropped", &self.dropped())
             .finish_non_exhaustive()
+    }
+}
+
+/// Wait up to 10 s for an asynchronous add, driving the conductor meanwhile.
+pub(crate) fn await_added<T>(
+    aeron: &Aeron,
+    channel: &str,
+    mut poll: impl FnMut() -> Result<Option<T>, AeronCError>,
+) -> Result<T, Error> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match poll() {
+            Ok(Some(added)) => return Ok(added),
+            Ok(None) if Instant::now() < deadline => pause(aeron),
+            Ok(None) => return Err(Error::Aeron(format!("{channel}: not added within 10 s"))),
+            Err(e) => return Err(Error::Aeron(format!("{channel}: {e}"))),
+        }
+    }
+}
+
+/// One wait step of a blocking call: the conductor's duty cycle, then the
+/// core to whatever else is ready.
+pub(crate) fn pause(aeron: &Aeron) {
+    let _ = poll(aeron);
+    std::thread::yield_now();
+}
+
+/// The client conductor's duty cycle. Returns the work count.
+#[inline]
+pub(crate) fn poll(aeron: &Aeron) -> usize {
+    aeron
+        .main_do_work()
+        .map_or(0, |n| usize::try_from(n).unwrap_or(0))
+}
+
+/// Close `publications` now, so the media driver drops them at once and
+/// subscribers turn to the next publisher of each within seconds, rather
+/// than after this client's liveness timeout. Closing one handle closes
+/// every clone of it: a later claim on any is refused as closed. One already
+/// closed is passed over.
+///
+/// The client is in invoker mode, so each close is done before this
+/// returns: the remove command is in the driver's queue and the log
+/// released, with nothing left for the conductor to finish.
+pub(crate) fn close(publications: impl IntoIterator<Item = AeronExclusivePublication>) {
+    for publication in publications {
+        if !publication.is_closed() {
+            let _ = publication.close();
+        }
     }
 }
 
@@ -415,7 +332,7 @@ impl Claim {
     }
 
     #[inline]
-    pub(crate) fn commit(mut self) -> Result<(), rusteron_archive::AeronCError> {
+    pub(crate) fn commit(mut self) -> Result<(), AeronCError> {
         self.done = true;
         self.claim.commit().map(drop)
     }
@@ -430,8 +347,9 @@ impl Drop for Claim {
 }
 
 /// Claim `len` bytes of an exclusive `publication`, stamped with
-/// `reserved`: no CAS on the term tail and no shutdown check (the publication
-/// is closed under it). A feed stamps its publish time, persist its source id.
+/// `reserved`: no CAS on the term tail, and no check for a close (a claim on
+/// a closed publication is refused). A feed stamps its publish time, persist
+/// its source id.
 #[inline]
 pub(crate) fn claim_exclusive(
     publication: &AeronExclusivePublication,
@@ -472,7 +390,7 @@ pub(crate) fn classify(err: &AeronOfferError) -> DropKind {
     }
 }
 
-fn client(settings: &Settings) -> Result<Aeron, rusteron_archive::AeronCError> {
+fn client(settings: &Settings) -> Result<Aeron, AeronCError> {
     let ctx = AeronContext::new()?;
     if let Some(dir) = &settings.aeron_dir {
         ctx.set_dir(&dir.as_str().into_c_string())?;
@@ -481,7 +399,9 @@ fn client(settings: &Settings) -> Result<Aeron, rusteron_archive::AeronCError> {
     if !settings.app.is_empty() {
         ctx.set_client_name(&settings.app.as_str().into_c_string())?;
     }
-    ctx.set_use_conductor_agent_invoker(settings.aeron_invoker)?;
+    // No conductor thread: the owner's loop runs it (`Bus::poll`), so it
+    // never contends for the loop's core.
+    ctx.set_use_conductor_agent_invoker(true)?;
     let aeron = Aeron::new(&ctx)?;
     aeron.start()?;
     Ok(aeron)
@@ -530,5 +450,23 @@ mod tests {
             DropKind::TooLarge
         );
         assert_eq!(classify(&AeronOfferError::Closed), DropKind::Other);
+    }
+
+    #[test]
+    fn drop_counts_are_shared_by_their_clones_and_a_close_is_not_one() {
+        let counts = DropCounts::default();
+        let reader = counts.clone();
+        counts.count(DropKind::NotConnected);
+        counts.count(DropKind::Other);
+        counts.count(DropKind::Closed);
+        assert_eq!(
+            reader.get(),
+            Drops {
+                not_connected: 1,
+                other: 1,
+                ..Drops::default()
+            }
+        );
+        assert_eq!(reader.get().total(), 2);
     }
 }

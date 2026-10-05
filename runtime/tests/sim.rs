@@ -6,7 +6,6 @@ use ergon_runtime::clock::Nanos;
 use ergon_runtime::frames::{self, FrameLog};
 use ergon_runtime::rt::sim::{Sim, SimConfig};
 use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId, Out};
-use ergon_runtime::streams::Streams;
 use ergon_runtime::subscription::Delivery;
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -90,10 +89,6 @@ impl Agent for Probe {
     }
 }
 
-fn streams() -> Result<Streams, ergon_runtime::Error> {
-    Streams::parse("services: {}\nkinds: {}\n")
-}
-
 /// `a/md` at T0, T0+1ms (twice) and T0+3ms; `b/md` at T0+1ms; `late/md` at
 /// T0 and T0+4ms.
 fn input() -> Vec<u8> {
@@ -130,7 +125,7 @@ fn events_and_timers_merge_in_one_total_order() -> TestResult {
         timers: vec![(MS / 2, 1), (MS, 2), (3 * MS + 1, 3), (2 * MS, 9)],
         ..Probe::default()
     };
-    run(&mut probe, SimConfig::new(streams()?))?;
+    run(&mut probe, SimConfig::new())?;
     let message = |feed, ts, byte, first| Seen::Message {
         feed,
         ts,
@@ -166,8 +161,8 @@ fn events_and_timers_merge_in_one_total_order() -> TestResult {
 
 #[test]
 fn two_runs_capture_the_same_bytes_and_ids_count_from_one() -> TestResult {
-    let first = run(&mut Probe::default(), SimConfig::new(streams()?))?;
-    let second = run(&mut Probe::default(), SimConfig::new(streams()?))?;
+    let first = run(&mut Probe::default(), SimConfig::new())?;
+    let second = run(&mut Probe::default(), SimConfig::new())?;
     assert_eq!(first.to_bytes(), second.to_bytes());
     let bytes = first.to_bytes();
     let parsed = frames::parse(&bytes)?;
@@ -198,7 +193,7 @@ fn from_to_and_stop_bound_the_run() -> TestResult {
     let config = SimConfig {
         from: Some(Nanos(T0 + MS)),
         to: Some(Nanos(T0 + 2 * MS)),
-        ..SimConfig::new(streams()?)
+        ..SimConfig::new()
     };
     run(&mut windowed, config)?;
     let bytes: Vec<u8> = windowed
@@ -215,7 +210,7 @@ fn from_to_and_stop_bound_the_run() -> TestResult {
         stop_on: Some(b'B'),
         ..Probe::default()
     };
-    run(&mut stopped, SimConfig::new(streams()?))?;
+    run(&mut stopped, SimConfig::new())?;
     assert_eq!(stopped.seen.len(), 2, "A, then B stops the run");
     Ok(())
 }
@@ -226,7 +221,7 @@ fn a_paced_run_takes_its_simulated_time_over_the_speed() -> TestResult {
     let started = std::time::Instant::now();
     let config = SimConfig {
         speed: Some(1.0),
-        ..SimConfig::new(streams()?)
+        ..SimConfig::new()
     };
     run(&mut Probe::default(), config)?;
     assert!(started.elapsed() >= std::time::Duration::from_millis(3));
@@ -235,7 +230,7 @@ fn a_paced_run_takes_its_simulated_time_over_the_speed() -> TestResult {
 
 #[test]
 fn route_delay_reorders_feeds_before_timer_merge() -> TestResult {
-    let mut config = SimConfig::new(streams()?);
+    let mut config = SimConfig::new();
     config.route_delays.insert("a/md".into(), 2 * MS);
     let mut probe = Probe::default();
     run(&mut probe, config)?;
@@ -281,7 +276,7 @@ impl Agent for Echo {
 
 #[test]
 fn loopback_delivers_captured_output_after_configured_latency() -> TestResult {
-    let mut config = SimConfig::new(streams()?);
+    let mut config = SimConfig::new();
     config.loopback.insert("echo/out".into(), MS / 2);
     config.to = Some(Nanos(T0 + MS));
     let mut log = FrameLog::new();
@@ -377,7 +372,7 @@ fn exact_journal_preserves_live_delivery_order_and_late_timer() -> TestResult {
                 },
             ],
         }),
-        ..SimConfig::new(streams()?)
+        ..SimConfig::new()
     };
     let mut probe = Probe {
         timers: vec![(MS, 8)],
@@ -414,7 +409,7 @@ fn exact_journal_preserves_live_delivery_order_and_late_timer() -> TestResult {
 fn runtime_selects_the_replay_driver_from_mode() -> TestResult {
     use ergon_runtime::rt::{Mode, Runtime};
     let mut rt = Runtime::new(Mode::Replay {
-        config: SimConfig::new(streams()?),
+        config: Box::new(SimConfig::new()),
         logs: vec![input()],
     })?;
     rt.ctx().subscribe("a", "md")?;
@@ -435,7 +430,7 @@ fn malformed_simulated_output_fails_the_run_instead_of_losing_a_frame() -> TestR
         fn on_message(&mut self, _: &mut Ctx, _: FeedId, _: &[u8], _: Delivery) {}
         fn on_timer(&mut self, _: &mut Ctx, _: Expiry) {}
     }
-    let mut sim = Sim::new(SimConfig::new(streams()?), Vec::new())?;
+    let mut sim = Sim::new(SimConfig::new(), Vec::new())?;
     assert!(sim.run(&mut BadOutput).is_err());
     assert!(sim.ctx().captured().is_empty());
     Ok(())

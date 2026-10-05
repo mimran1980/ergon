@@ -1087,7 +1087,7 @@ dependencies = [
  "bitflags 2.13.2",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease 0.2.37",
  "proc-macro2",
@@ -1651,6 +1651,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cty"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
+
+[[package]]
 name = "curve25519-dalek"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2073,6 +2079,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ergon-runtime",
+ "lab",
  "libm",
  "log",
  "mimalloc",
@@ -2165,6 +2172,7 @@ dependencies = [
  "ergo-sbe",
  "jiff",
  "libc",
+ "libmimalloc-sys",
  "log",
  "minstant",
  "rusteron-archive",
@@ -2177,13 +2185,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ergon-runtime-server"
+version = "0.1.30"
+dependencies = [
+ "ergo-sbe",
+ "ergon-runtime",
+ "hdrhistogram",
+ "jiff",
+ "log",
+ "rusteron-archive",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2864,6 +2884,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ingester"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "ergon-runtime-server",
+ "jiff",
+ "lab",
+ "log",
+ "mimalloc",
+ "schema",
+ "signal-hook",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3077,6 +3111,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 
 [[package]]
+name = "lab"
+version = "0.1.0"
+dependencies = [
+ "ergon-runtime",
+ "log",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3168,6 +3212,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
 dependencies = [
  "cc",
+ "cty",
 ]
 
 [[package]]
@@ -3219,6 +3264,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "ergon-runtime",
+ "lab",
  "log",
  "mimalloc",
  "nautilus-binance",
@@ -4678,9 +4724,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-archive"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9596dd1a2a7ee3528f1dd390a16d9ee75613ef3db4ee36d9e02ccd64557b2f8c"
+checksum = "3aa11f2a468714c425f6d302b7c402e9c2a94628606d01b8b8dcacb7e1fdd2f2"
 dependencies = [
  "bindgen",
  "cmake",
@@ -4695,9 +4741,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "670a2b1d0646ce80d7f87026cd69343d14f79276a339e433553b5e8b11a0abbd"
+checksum = "71b18aa744e9c99d57b62a9be1267c77ac569c3502a90ccd6c1f8a9230b72a7e"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -4709,9 +4755,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.7"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ebeebf6f4dd5e65d537b1fdc336361db32488232ad951443efa4a16f875f98a"
+checksum = "05de9b6c21ccef3637247d94eb87df8aa7bd8470c9648a86cfae2e177cc8fe59"
 dependencies = [
  "bindgen",
  "cmake",
@@ -4791,7 +4837,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6117,7 +6163,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

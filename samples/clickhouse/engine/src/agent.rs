@@ -26,12 +26,13 @@
 
 use crate::{Book, Change, Emas, FeedState, GapRule, Sequenced, Spec, Strategy, aggregate};
 use ergon_runtime::clock::Nanos;
-use ergon_runtime::metrics::{Counter, Gauge, LocalHistogram as Histogram};
+use ergon_runtime::metrics::{Counter, Gauge, Histogram};
 use ergon_runtime::rt::{Agent, Ctx, Expiry, FeedId, Out};
 use ergon_runtime::subscription::Delivery;
 use ergon_runtime::timer::TimerId;
 use ergon_runtime::trace::{Trace, TraceId, Tracer};
 use ergon_runtime::{DetMap, Error};
+use lab::{Streams, Watch};
 use schema::market::{
     AnyMessage, BookAction, BookDeltasDecoder, BookSnapshotDecoder, InstrumentSpecDecoder,
     Side as MdSide,
@@ -50,6 +51,8 @@ const ORDERS: u64 = TraceId::namespace("order");
 const ORDER_TIMEOUT_NS: i64 = 30 * SECOND;
 /// The once-a-second timer's token.
 const EVERY_SECOND: u64 = 1;
+/// Live: read `streams.yaml` for new feed handlers.
+const WATCH: u64 = 2;
 /// An order's expiry timer: this bit and the order id.
 const ORDER_EXPIRY: u64 = 1 << 62;
 /// An instrument's stale timer: this bit, the venue index above bit 24 and
@@ -75,6 +78,11 @@ pub struct Engine {
     tracers: Vec<Tracer>,
     /// By [`FeedId`].
     routes: Vec<Route>,
+    /// The lab's registry: which feed handlers exist, and their regions.
+    streams: Streams,
+    /// Live: `streams.yaml`, followed so a new feed handler is subscribed to
+    /// with no restart. A replay or backtest has a fixed registry.
+    watch: Option<Watch>,
 }
 
 impl Engine {
@@ -85,7 +93,7 @@ impl Engine {
     /// # Errors
     ///
     /// The registry does not name a stream.
-    pub fn new(ctx: &mut Ctx) -> Result<Self, Error> {
+    pub fn new(ctx: &mut Ctx, streams: Streams) -> Result<Self, Error> {
         let service = format!("engine-{}", ctx.region());
         let signals = ctx.publish(&service, "signals")?;
         let orders = ctx.publish(&service, "orders")?;
@@ -105,12 +113,14 @@ impl Engine {
                 drift: metrics.gauge("clock_drift_ns", &[]),
                 live: false,
                 open: DetMap::default(),
-                order_ack: metrics.local_histogram("order_ack_ns", &[]),
-                order_fill: metrics.local_histogram("order_fill_ns", &[]),
+                order_ack: metrics.histogram("order_ack_ns", &[]),
+                order_fill: metrics.histogram("order_fill_ns", &[]),
                 metrics,
             },
             tracers: Vec::new(),
             routes: Vec::new(),
+            streams,
+            watch: None,
         };
         engine.route(exec, Route::Exec);
         engine.add_venues(ctx)?;
@@ -141,8 +151,8 @@ impl Engine {
     /// as late as the network makes them. Venues are only ever added: one
     /// taken out of the registry just goes quiet.
     fn add_venues(&mut self, ctx: &mut Ctx) -> Result<(), Error> {
-        let feeds: Vec<(String, String)> = ctx
-            .streams()
+        let feeds: Vec<(String, String)> = self
+            .streams
             .services
             .iter()
             .filter(|(name, _)| name.starts_with("md-"))
@@ -197,10 +207,10 @@ impl Engine {
                 live: metrics.gauge("feed_live", &l),
                 replayed: metrics.counter("feed_replayed", &l),
                 tob: metrics.counter("tob_quotes", &l),
-                tob_latency: metrics.local_histogram("tob_latency_ns", &l),
-                md_latency: metrics.local_histogram("md_to_engine_ns", &l),
-                venue_latency: metrics.local_histogram("venue_to_engine_ns", &l),
-                tick_to_order: metrics.local_histogram("tick_to_order_ns", &l),
+                tob_latency: metrics.histogram("tob_latency_ns", &l),
+                md_latency: metrics.histogram("md_to_engine_ns", &l),
+                venue_latency: metrics.histogram("venue_to_engine_ns", &l),
+                tick_to_order: metrics.histogram("tick_to_order_ns", &l),
                 name: label,
             });
         }
@@ -208,9 +218,41 @@ impl Engine {
     }
 }
 
+impl Engine {
+    /// Follow `watch` (live): a feed handler added to the registry, in any
+    /// region, is subscribed to within a second or two, with no restart.
+    ///
+    /// The registry is not an input the journal records: an exact replay
+    /// (`backtest --source journal`) runs on the registry it is given
+    /// (`--streams`, else `streams.yaml` as it is now), which must be the one
+    /// the live run started with. It never subscribes a feed handler the live
+    /// run added later, and stops with an error at that feed's first message.
+    #[must_use]
+    pub fn watching(mut self, watch: Watch) -> Self {
+        self.watch = Some(watch);
+        self
+    }
+
+    fn reread(&mut self, ctx: &mut Ctx) {
+        let Some(streams) = self.watch.as_mut().and_then(Watch::changed) else {
+            return;
+        };
+        // A new feed handler's name resolves through the new version.
+        ctx.set_directory(Box::new(streams.clone()));
+        self.streams = streams;
+        if let Err(e) = self.add_venues(ctx) {
+            log::error!("streams.yaml: {e}");
+        }
+    }
+}
+
 impl Agent for Engine {
     fn start(&mut self, ctx: &mut Ctx) -> Result<(), Error> {
         ctx.every_aligned(SECOND, EVERY_SECOND)
+            .map_err(|e| Error::Config(format!("timer: {e}")))?;
+        // Armed in every mode, so a live journal's firings of it replay
+        // exactly; with no watch (a replay, a backtest) it does nothing.
+        ctx.every(SECOND, WATCH)
             .map_err(|e| Error::Config(format!("timer: {e}")))?;
         Ok(())
     }
@@ -228,6 +270,8 @@ impl Agent for Engine {
     fn on_timer(&mut self, ctx: &mut Ctx, timer: Expiry) {
         if timer.token == EVERY_SECOND {
             self.core.every_second(ctx);
+        } else if timer.token == WATCH {
+            self.reread(ctx);
         } else if timer.token & STALE != 0 {
             let token = timer.token & !STALE;
             let (v, i) = ((token >> 24) as usize, (token & 0xff_ffff) as usize);
@@ -248,14 +292,6 @@ impl Agent for Engine {
                 .is_some()
         {
             self.core.expired.inc();
-        }
-    }
-
-    fn on_streams(&mut self, ctx: &mut Ctx) {
-        // A feed handler added to the registry, in any region, is subscribed
-        // to within a second or two, with no restart.
-        if let Err(e) = self.add_venues(ctx) {
-            log::error!("streams.yaml: {e}");
         }
     }
 }
@@ -556,11 +592,13 @@ impl Core {
                 };
             }
         }
-        let now = ctx.read();
-        trace.mark(now);
+        trace.mark(ctx.read());
         let (Some(bid), Some(ask)) = (bid, ask) else {
             return;
         };
+        // The event time, not a clock read: the input journal records it, so
+        // an exact replay decides the same.
+        let now = ctx.now();
         let asset = &mut self.assets[a];
         asset.mid = (bid + ask) as f64 / 2.0 / crate::SCALE;
         asset.emas.update(now.epoch_ns(), asset.mid);

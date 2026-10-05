@@ -18,8 +18,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
         },
-        "query": "SELECT DISTINCT app FROM engine.ema ORDER BY app",
-        "definition": "SELECT DISTINCT app FROM engine.ema ORDER BY app",
+        "query": "SELECT DISTINCT app FROM engine.ema WHERE app != '' ORDER BY app",
+        "definition": "SELECT DISTINCT app FROM engine.ema WHERE app != '' ORDER BY app",
         "refresh": 2,
         "multi": false,
         "includeAll": false,

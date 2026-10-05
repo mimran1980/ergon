@@ -1,0 +1,20 @@
+[package]
+name = "lab"
+description = "The ClickHouse lab's conventions: its feed registry (streams.yaml) as the runtime's directory, the node check, and how a lab application starts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+clickhouse = ["ergon-runtime/clickhouse"]
+
+[dependencies]
+ergon-runtime.workspace = true
+log.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+[lints]
+workspace = true
