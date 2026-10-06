@@ -30,6 +30,8 @@ lab.workspace = true
 [dev-dependencies]
 # The live-journal test replays raw frames through a ClickHouse source.
 ergon-runtime = { workspace = true, features = ["clickhouse"] }
+# A backtest recorded twice goes through the real ingester into ClickHouse.
+ergon-runtime-server = { path = "../../../runtime-server" }
 proptest = "1.11"
 rusteron-media-driver = { version = "0.2", features = ["static"] }
 
