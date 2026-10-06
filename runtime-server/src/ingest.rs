@@ -126,6 +126,10 @@ pub struct Ingester {
     /// recording with no checkpoint is read, and its pieces measured, from
     /// there, which stays put until its first commit purges anything.
     starts: BTreeMap<i64, i64>,
+    /// Each tracked recording's stream, from the last listing: a batch lays
+    /// its recordings out by stream, so what one stream's recordings share
+    /// (the apps' metrics, spans and events) is in as few pieces as can be.
+    streams: BTreeMap<i64, i32>,
     max_queued: usize,
     /// The driver's own statistics, and when they are next sampled.
     stats: Option<(AeronStats, Duration, Instant)>,
@@ -263,6 +267,7 @@ impl Ingester {
             sources,
             sources_path,
             starts: BTreeMap::new(),
+            streams: BTreeMap::new(),
             max_queued: settings.max_queued_bytes,
             stats,
         })
@@ -319,16 +324,7 @@ impl Ingester {
         self.writer
             .flush_elapsed_histograms(crate::unix_now_ns(), caught_up);
         if let Some(pending) = &self.pending {
-            // Each recording's part of the batch, from where it starts to its
-            // end: neither moves until the batch is committed, so its pieces
-            // are the same after a restart.
-            let spans = pending
-                .iter()
-                .map(|(&id, &end)| {
-                    let start = batch_origin(&self.checkpoints, &self.starts, id);
-                    (id, (start.unwrap_or(end), end))
-                })
-                .collect();
+            let spans = batch_spans(pending, &self.checkpoints, &self.starts, &self.streams);
             self.writer.set_batch(&dedup_token(pending), &spans);
         } else {
             self.writer.set_dedup_token("");
@@ -375,6 +371,7 @@ impl Ingester {
                 continue;
             }
             self.starts.insert(d.id, d.start);
+            self.streams.insert(d.id, d.stream_id);
             if self.replays.contains_key(&d.id) {
                 continue;
             }
@@ -506,6 +503,7 @@ impl Ingester {
         self.checkpoints.remove(&id);
         self.polled.remove(&id);
         self.starts.remove(&id);
+        self.streams.remove(&id);
         if self.sources.remove(&id).is_some()
             && let Err(e) = save(&self.sources_path, &self.sources)
         {
@@ -701,6 +699,26 @@ fn batch_origin(
         .copied()
 }
 
+/// Each recording's part of the `pending` batch, from where it starts to
+/// its end, laid out by stream and then recording id. None of these moves
+/// until the batch is committed, so its pieces are the same after a restart.
+fn batch_spans(
+    pending: &BTreeMap<i64, i64>,
+    checkpoints: &BTreeMap<i64, i64>,
+    starts: &BTreeMap<i64, i64>,
+    streams: &BTreeMap<i64, i32>,
+) -> Vec<(i64, (i64, i64))> {
+    let mut spans: Vec<_> = pending
+        .iter()
+        .map(|(&id, &end)| {
+            let start = batch_origin(checkpoints, starts, id).unwrap_or(end);
+            (id, (start, end))
+        })
+        .collect();
+    spans.sort_by_key(|&(id, _)| (streams.get(&id).copied(), id));
+    spans
+}
+
 /// How much of the archive the batch being read spans, over every recording.
 fn batch_span(
     polled: &BTreeMap<i64, i64>,
@@ -891,6 +909,14 @@ mod tests {
         // Every recording's part counts toward the batch's span.
         let polled = BTreeMap::from([(1, 1500), (2, 300), (3, 900), (4, 50)]);
         assert_eq!(batch_span(&polled, &checkpoints, &starts), 1000 + 200);
+        // A batch's parts, by stream and then id: the persist stream's two
+        // recordings side by side, whatever a feed's id.
+        let pending = BTreeMap::from([(1, 900), (2, 400), (3, 800)]);
+        let streams = BTreeMap::from([(1, 1001), (2, 2011), (3, 1001)]);
+        assert_eq!(
+            batch_spans(&pending, &checkpoints, &starts, &streams),
+            [(1, (500, 900)), (3, (700, 800)), (2, (300, 400))]
+        );
     }
 
     #[test]

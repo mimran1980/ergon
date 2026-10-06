@@ -531,8 +531,8 @@ pub const PIECE_SPAN: i64 = 1 << 20;
 
 /// The piece of its batch each queued record goes in. With `spans` (a batch
 /// from the archive, [`Writer::set_batch`]) and a place for every record: by
-/// that place, the recordings' spans laid end to end in id order and cut
-/// every [`PIECE_SPAN`] bytes, so a piece holds at most that much of the
+/// that place, the recordings' spans laid end to end in the order given and
+/// cut every [`PIECE_SPAN`] bytes, so a piece holds at most that much of the
 /// archive however many recordings share it. A crash leaves whole pieces in,
 /// since a batch is all queued before any of it is inserted, and the same
 /// batch read again gives each record the same piece whatever its order or
@@ -541,12 +541,12 @@ pub const PIECE_SPAN: i64 = 1 << 20;
 fn batch_pieces(
     queued: &[u8],
     at: &[(i64, i64)],
-    spans: Option<&BTreeMap<i64, (i64, i64)>>,
+    spans: Option<&[(i64, (i64, i64))]>,
     max: usize,
 ) -> Vec<usize> {
     let placed = spans.and_then(|spans| {
         let (mut bases, mut base) = (BTreeMap::new(), 0_i64);
-        for (&recording, &(start, end)) in spans {
+        for &(recording, (start, end)) in spans {
             bases.insert(recording, (base, start));
             base = base.saturating_add((end - start).max(0));
         }
@@ -652,7 +652,7 @@ pub struct Writer {
     /// Where the batch being inserted starts and ends in each recording,
     /// which its pieces are cut by (`Writer::set_batch`); `None` for a batch
     /// with no place in the archive.
-    batch_spans: Option<BTreeMap<i64, (i64, i64)>>,
+    batch_spans: Option<Vec<(i64, (i64, i64))>>,
     shape_wait: Duration,
 }
 
@@ -1166,14 +1166,14 @@ impl Writer {
 
     /// [`Writer::set_dedup_token`] for a batch of the archive, its records
     /// pushed with [`Writer::push_at`]. `spans` holds where the batch starts
-    /// and ends in each recording, by recording id: each record's piece is
-    /// its place in those spans laid end to end, cut every [`PIECE_SPAN`]
-    /// bytes. Both stay put while the batch is pending, so the same batch
+    /// and ends in each recording, by recording id, in the order they are
+    /// laid end to end: each record's piece is its place in that layout, cut
+    /// every [`PIECE_SPAN`] bytes. Both stay put while the batch is pending, so the same batch
     /// read again after a crash forms the same pieces, whatever order its
     /// records arrive in and whatever `tables.yaml` now leaves out.
-    pub fn set_batch(&mut self, token: &str, spans: &BTreeMap<i64, (i64, i64)>) {
+    pub fn set_batch(&mut self, token: &str, spans: &[(i64, (i64, i64))]) {
         self.set_dedup_token(token);
-        self.batch_spans = Some(spans.clone());
+        self.batch_spans = Some(spans.to_vec());
     }
 
     /// Close elapsed histogram windows, reload `tables.yaml` if it changed,
@@ -1559,7 +1559,7 @@ impl Writer {
                 batch_pieces(
                     &state.queued,
                     &state.at,
-                    self.batch_spans.as_ref(),
+                    self.batch_spans.as_deref(),
                     self.max_insert_bytes,
                 )
             };
@@ -1750,7 +1750,7 @@ mod tests {
     /// Each record's piece, by its place in the archive: the batch spans two
     /// windows of recording 1 from 1000, then two of recording 2 from 0.
     fn placed(at: &[(i64, i64)], max: usize) -> BTreeMap<(i64, i64), usize> {
-        let spans = BTreeMap::from([(1, (1000, 1000 + 2 * PIECE_SPAN)), (2, (0, 2 * PIECE_SPAN))]);
+        let spans = [(1, (1000, 1000 + 2 * PIECE_SPAN)), (2, (0, 2 * PIECE_SPAN))];
         let queued = queue(&vec![87; at.len()]);
         at.iter()
             .copied()
@@ -1784,18 +1784,19 @@ mod tests {
             }
         }
         assert_eq!(placed(&all, 1), pieces);
+        // Laid out the other way round, recording 2 comes first.
+        let swapped = [(2, (0, 2 * PIECE_SPAN)), (1, (1000, 1000 + 2 * PIECE_SPAN))];
+        assert_eq!(
+            batch_pieces(&queue(&[87; 8]), &all, Some(&swapped), 200),
+            [2, 2, 3, 3, 0, 0, 1, 1]
+        );
     }
 
     #[test]
     fn records_with_no_place_in_the_archive_are_cut_by_the_queue() {
         let queued = queue(&[87; 4]);
         assert_eq!(
-            batch_pieces(
-                &queued,
-                &[(-1, -1); 4],
-                Some(&BTreeMap::from([(1, (0, 400))])),
-                250
-            ),
+            batch_pieces(&queued, &[(-1, -1); 4], Some(&[(1, (0, 400))]), 250),
             [0, 0, 1, 1]
         );
         assert_eq!(

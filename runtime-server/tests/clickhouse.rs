@@ -1222,7 +1222,7 @@ fn replay_after_a_crash(
     let lab = Lab::new(test, both)?;
     let md = Source::at("h", "p", "md", 1, "");
     let span = (0, 2 * ergon_runtime_server::PIECE_SPAN);
-    let spans = std::collections::BTreeMap::from([(1, span), (2, span)]);
+    let spans = [(1, span), (2, span)];
     let push = |writer: &mut Writer, frames: &[(char, i64)]| -> Result<(), Box<dyn Error>> {
         assert!(writer.push(&md.message()?, md.id));
         writer.set_batch("1:2097152,2:2097152", &spans);
