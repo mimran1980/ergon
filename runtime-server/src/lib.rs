@@ -31,12 +31,19 @@
 //! does not list is off, as for the application, and a row it leaves out is
 //! consumed, not an error. (An event row naming an SBE message's table or
 //! persistence's own is an error.) It applies the configuration it has when
-//! it inserts: switching a table, or an app's entry, off also drops that
-//! table's rows still waiting in the archive, however long ago they were
-//! recorded (an `until` keeps those recorded before it). Listed tables are
-//! created even when off, so a query against an empty one still works.
+//! it inserts: switching a table, or an app's entry, off (or taking the table
+//! out) also drops that table's rows still waiting in the archive, or queued
+//! after a failed insert, however long ago they were recorded (an `until`
+//! keeps those recorded before it). Listed tables are created even when off,
+//! so a query against an empty one still works.
 //!
-//! A failed insert compares the table again, then retries the rows.
+//! A failed insert compares the table again, then retries the rows. Each
+//! batch goes in named pieces, which `ClickHouse` inserts once each, so a batch
+//! replayed after a restart does not land twice. Pieces are cut by place in the
+//! queue, and the queue a restart rebuilds holds the same records only while
+//! what decides them at queueing time is unchanged: a switch changed between
+//! a crash and the restart (event rows, spans and frames are switched when
+//! queued too) moves the cuts, and rows can then be lost or inserted twice.
 
 mod aeron_stats;
 mod clickhouse;
@@ -52,6 +59,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ergon_runtime::event;
+use ergon_runtime::frames::codec::FrameDecoder;
 use ergon_runtime::metrics::{
     HISTOGRAM_TEMPLATE_ID, METRIC_DEF_TEMPLATE_ID, METRICS_TEMPLATE_ID, MetricDef,
 };
@@ -307,6 +315,31 @@ fn kept(config: Option<&TableConfig>, app: &str, at: Option<u64>) -> bool {
     config.is_some_and(|c| c.is_on(app, at))
 }
 
+/// An event row's time, UNIX ns: it follows the row's shape id.
+fn event_time(message: &[u8]) -> Option<u64> {
+    message
+        .get(12..20)
+        .and_then(|b| Some(u64::from_le_bytes(b.try_into().ok()?)))
+}
+
+/// Raw frames opted in for `service/kind` in `feeds`; an exact entry
+/// overrides `*`.
+fn wants_frames(feeds: &BTreeMap<String, FeedConfig>, service: &str, kind: &str) -> bool {
+    feeds
+        .get(&format!("{service}/{kind}"))
+        .or_else(|| feeds.get("*"))
+        .is_some_and(|feed| feed.frames)
+}
+
+/// Is a feed's queued `Frame` row still opted in? One whose names do not
+/// decode is kept, for the insert to report.
+fn frame_wanted(feeds: &BTreeMap<String, FeedConfig>, message: &[u8]) -> bool {
+    let names = FrameDecoder::try_decode(message, 0)
+        .ok()
+        .and_then(|d| Some((d.service_as_str().ok()?, d.kind_as_str().ok()?)));
+    names.is_none_or(|(service, kind)| wants_frames(feeds, service, kind))
+}
+
 /// The wall clock now, in UNIX ns: one read, nothing paired with it.
 fn unix_now_ns() -> u64 {
     std::time::SystemTime::now()
@@ -370,6 +403,8 @@ struct TableState {
     /// if the table changes.
     queued: Vec<u8>,
     queued_count: usize,
+    /// Not in `tables.yaml` at the last flush either.
+    unlisted: bool,
 }
 
 impl TableState {
@@ -383,6 +418,7 @@ impl TableState {
             retry_at: Instant::now(),
             queued: Vec::new(),
             queued_count: 0,
+            unlisted: false,
         }
     }
 
@@ -462,8 +498,9 @@ const MAX_INSERT_BYTES: usize = 1 << 20;
 /// Indices of the queued records that start a new insert: each record that
 /// would take its piece past `max` bytes of queue, so a piece holds at most
 /// `max` unless one record alone is larger. Queue positions, not row bytes, so a
-/// retry cuts in the same places whatever `tables.yaml` or the table's columns
-/// say by then, and each piece's token keeps naming the same records.
+/// retry in this process cuts in the same places whatever `tables.yaml` or the
+/// table's columns say by then, and each piece's token keeps naming the same
+/// records. A queue rebuilt after a restart may not (see the module docs).
 fn piece_starts(queued: &[u8], max: usize) -> Vec<usize> {
     let mut starts = Vec::new();
     let (mut offset, mut piece) = (0, 0);
@@ -646,10 +683,7 @@ impl Writer {
     /// Raw-frame recording opted in for `service/kind`; exact entries override `*`.
     #[must_use]
     pub fn wants_frames(&self, service: &str, kind: &str) -> bool {
-        self.feeds
-            .get(&format!("{service}/{kind}"))
-            .or_else(|| self.feeds.get("*"))
-            .is_some_and(|feed| feed.frames)
+        wants_frames(&self.feeds, service, kind)
     }
 
     /// [`Writer::push`] of a message from a recording; `feed` when it is a
@@ -704,10 +738,7 @@ impl Writer {
                     .push((Instant::now(), source, self.feed, message.to_vec()));
                 return true;
             };
-            // The row's time follows its shape id.
-            let at = message
-                .get(12..20)
-                .and_then(|b| Some(u64::from_le_bytes(b.try_into().ok()?)));
+            let at = event_time(message);
             let app = self.origins.get(&source).map_or("", |o| o.app.as_str());
             let Some(state) = self.tables.iter_mut().find(|s| {
                 s.config.is_some()
@@ -1401,6 +1432,24 @@ impl Writer {
     fn flush(&mut self, report: &mut Report) {
         self.flush_histograms(report);
         for state in &mut self.tables {
+            // Taken out of `tables.yaml`, so off: what it still has queued
+            // goes, or the queue would never empty and nothing more would be
+            // read. An SBE message's rows count as skipped, as when they
+            // arrive for a table not listed; an event table's are consumed.
+            // Only once it is missing at two flushes running: a half-written
+            // `tables.yaml` that still parses can leave a table out of one read.
+            if state.config.is_none() {
+                if std::mem::replace(&mut state.unlisted, true) && state.queued_count > 0 {
+                    if matches!(state.source, Source::Sbe(_)) {
+                        self.skipped += state.queued_count;
+                    }
+                    self.queued_bytes -= state.queued.len();
+                    state.queued.clear();
+                    state.queued_count = 0;
+                }
+                continue;
+            }
+            state.unlisted = false;
             let Some(include) = &state.include else {
                 continue; // re-synced first; the messages wait
             };
@@ -1429,6 +1478,8 @@ impl Writer {
             };
             let mut starts = starts.into_iter().peekable();
             let (mut piece, mut inserted) = (0, Ok(()));
+            let frames = matches!(&state.source, Source::Sbe(t)
+                if t.schema_id == FrameDecoder::SCHEMA_ID && t.template_id == FrameDecoder::TEMPLATE_ID);
             for (index, (source, feed, message)) in records(&state.queued).enumerate() {
                 if starts.next_if_eq(&index).is_some() {
                     inserted = insert_piece(
@@ -1455,14 +1506,24 @@ impl Writer {
                         o.run.as_str(),
                     ]
                 });
-                // A feed was published whatever `tables.yaml` says; whether
-                // it is kept is decided now, for the app that recorded it.
-                if feed
-                    && !state
-                        .config
-                        .as_ref()
-                        .is_some_and(|c| c.is_on(known[2], now))
-                {
+                // Whether a row is kept is decided again now, by the switches
+                // as they are: a feed (published whatever `tables.yaml` says)
+                // for the app that recorded it, and a feed's frame by its
+                // feed's `frames` too; an event row or a span at its own
+                // time. What a failed insert left queued goes the same way as
+                // what still waits in the archive.
+                let config = state.config.as_ref();
+                let on = if feed {
+                    config.is_some_and(|c| c.is_on(known[2], now))
+                        && (!frames || frame_wanted(&self.feeds, message))
+                } else {
+                    match state.source {
+                        Source::Events(_) => kept(config, known[2], event_time(message)),
+                        Source::Traces => kept(config, known[2], traces::start(message)),
+                        Source::Sbe(_) | Source::Metrics | Source::Histograms => true,
+                    }
+                };
+                if !on {
                     continue;
                 }
                 names.clear();

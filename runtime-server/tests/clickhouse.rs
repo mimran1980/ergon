@@ -406,6 +406,119 @@ fn signal_row(shape: &ergon_runtime::event::Shape, edge: f64) -> Vec<u8> {
     row
 }
 
+/// An event row and a span that a failed insert left queued are switched
+/// again when they go in: a table turned off meanwhile drops them, as it
+/// drops those still waiting in the archive.
+#[test]
+fn a_switch_turned_off_after_a_failed_insert_drops_the_queued_rows() -> TestResult {
+    use ergon_runtime::event::{FieldDef, Kind, Shape};
+    use ergon_runtime::source::Source;
+    use ergon_runtime::trace::TraceDef;
+
+    let lab = Lab::new(
+        "switch_after_failure",
+        "tables:\n  signal: { kind: dynamic }\n  otel_traces: { kind: static }\n",
+    )?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    let md = Source::at("h", "p", "md", 1, "");
+    assert!(writer.push(&md.message()?, md.id));
+    let shape = Shape::new("signal", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(shape.message(), 0));
+    let def = TraceDef::new("connect", &[], &[]);
+    assert!(writer.push(&def.message()?, 0));
+    assert!(writer.push(&signal_row(&shape, 0.0), md.id));
+    assert!(writer.push(&span(def.def, 1_700_000_000_000_000_000)?, md.id));
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT count() FROM DB.signal")?, "1");
+    // The database is dropped under the running writer: this insert fails,
+    // and the row and the span stay queued.
+    lab.query("DROP DATABASE DB")?;
+    assert!(writer.push(&signal_row(&shape, 1.0), md.id));
+    assert!(writer.push(&span(def.def, 1_700_000_000_000_000_000)?, md.id));
+    assert!(writer.tick().inserted.is_empty());
+    // Both switched off before the retry.
+    lab.write_config(
+        "tables:\n  signal: { kind: dynamic, enabled: false }\n  otel_traces: { kind: static, enabled: false }\n",
+    )?;
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT count() FROM DB.signal")?, "0");
+    assert_eq!(lab.query("SELECT count() FROM DB.otel_traces")?, "0");
+    assert_eq!(writer.queued_bytes(), 0, "dropped, not left queued");
+    Ok(())
+}
+
+/// A table taken out of `tables.yaml` is off: what it still has queued is
+/// dropped, so the queue empties and the ingester keeps reading. An SBE
+/// message's rows are counted as skipped, as when they arrive for a table not
+/// listed; an event table's are consumed.
+#[test]
+fn a_table_taken_out_of_tables_yaml_drops_its_queued_rows() -> TestResult {
+    use ergon_runtime::event::{FieldDef, Kind, Shape};
+    use ergon_runtime::source::Source;
+
+    let lab = Lab::new(
+        "unlisted_after_queue",
+        "tables:\n  signal: { kind: dynamic }\n  shapes: { kind: static }\n",
+    )?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    let md = Source::at("h", "p", "md", 1, "");
+    assert!(writer.push(&md.message()?, md.id));
+    let shape = Shape::new("signal", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(shape.message(), 0));
+    assert!(writer.push(&signal_row(&shape, 1.0), md.id));
+    assert!(writer.push(&v1::message()?, 0));
+    clean(&writer.tick())?;
+    // Queued, then both tables taken out before the next insert.
+    assert!(writer.push(&signal_row(&shape, 2.0), md.id));
+    assert!(writer.push(&v1::message()?, 0));
+    lab.write_config("tables: {}\n")?;
+    clean(&writer.tick())?;
+    assert!(
+        writer.queued_bytes() > 0,
+        "held for a tick: one read of a half-written tables.yaml may miss a table"
+    );
+    clean(&writer.tick())?;
+    assert_eq!(
+        writer.queued_bytes(),
+        0,
+        "nothing left queued to hold the ingester back"
+    );
+    assert_eq!(
+        writer.tick().errors,
+        ["1 records skipped: their table is not in tables.yaml"]
+    );
+    assert_eq!(lab.query("SELECT count() FROM DB.signal")?, "1");
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "1");
+    Ok(())
+}
+
+/// A table missing from one read of `tables.yaml` only, as a half-written
+/// file can be, keeps what it queued, and inserts it once the table is back.
+#[test]
+fn a_table_missing_from_one_read_of_tables_yaml_keeps_its_queued_rows() -> TestResult {
+    use ergon_runtime::event::{FieldDef, Kind, Shape};
+    use ergon_runtime::source::Source;
+
+    let listed = "tables:\n  signal: { kind: dynamic }\n";
+    let lab = Lab::new("unlisted_once", listed)?;
+    let mut writer = lab.writer(v1::SCHEMA)?;
+    let md = Source::at("h", "p", "md", 1, "");
+    assert!(writer.push(&md.message()?, md.id));
+    let shape = Shape::new("signal", vec![FieldDef::new("edge", Kind::F64, None)])?;
+    assert!(writer.push(shape.message(), 0));
+    assert!(writer.push(&signal_row(&shape, 1.0), md.id));
+    clean(&writer.tick())?;
+    assert!(writer.push(&signal_row(&shape, 2.0), md.id));
+    lab.write_config("tables: {}\n")?;
+    clean(&writer.tick())?;
+    lab.write_config(listed)?;
+    clean(&writer.tick())?;
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT count() FROM DB.signal")?, "2");
+    assert_eq!(writer.queued_bytes(), 0);
+    Ok(())
+}
+
 #[test]
 fn event_rows_decode_by_their_shape_even_after_a_restart() -> TestResult {
     use ergon_runtime::event::{FieldDef, Kind, Shape};
@@ -986,6 +1099,105 @@ fn backtest_frame_preserves_source_run_and_streams_back_to_runtime() -> TestResu
     assert_eq!(input.head(0), Some((Nanos(123), 42, 4096, &message[..])));
     input.advance(0)?;
     assert_eq!(input.head(0), None);
+    Ok(())
+}
+
+/// A feed's frame row queued under one `feeds:` opt-in is decided again when
+/// it goes in: a feed opted out after a failed insert drops it, as that feed's
+/// frames still in the archive are no longer made.
+#[test]
+fn a_feed_opted_out_of_frames_after_a_failed_insert_drops_its_queued_frames() -> TestResult {
+    use ergon_runtime::clock::Nanos;
+    use ergon_runtime::frames::{FrameRow, SCHEMA};
+    use ergon_runtime::source::Source;
+
+    let lab = Lab::new(
+        "frames_opt_out",
+        "tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n",
+    )?;
+    let mut writer = lab.writer(SCHEMA)?;
+    let md = Source::at("h", "p", "md", 1, "");
+    assert!(writer.push(&md.message()?, md.id));
+    let frame = |position| -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut bytes = Vec::new();
+        FrameRow {
+            ts: Nanos(123),
+            recording: 42,
+            position,
+            session: 5,
+            stream: 2011,
+            source: md.id,
+            service: "md-test",
+            kind: "md",
+            message: &[0, 0, 1, 0, 7, 0, 0, 0],
+        }
+        .encode(&mut bytes)?;
+        Ok(bytes)
+    };
+    assert!(writer.push_from(&frame(4096)?, md.id, true));
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT count() FROM DB.frame")?, "1");
+    // The database is dropped under the running writer: this insert fails,
+    // and the frame stays queued.
+    lab.query("DROP DATABASE DB")?;
+    assert!(writer.push_from(&frame(8192)?, md.id, true));
+    assert!(writer.tick().inserted.is_empty());
+    // The feed opted out before the retry.
+    lab.write_config(
+        "tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n  'md-test/md': { frames: false }\n",
+    )?;
+    clean(&writer.tick())?;
+    assert_eq!(lab.query("SELECT count() FROM DB.frame")?, "0");
+    assert_eq!(writer.queued_bytes(), 0, "dropped, not left queued");
+    Ok(())
+}
+
+/// A message too short for its body is reported and skipped, never a panic:
+/// a feed's frame and a span cut off after their headers.
+#[test]
+fn a_short_frame_or_span_is_skipped_not_a_panic() -> TestResult {
+    use ergon_runtime::clock::Nanos;
+    use ergon_runtime::frames::{FrameRow, SCHEMA};
+    use ergon_runtime::trace::TraceDef;
+
+    let lab = Lab::new(
+        "short_messages",
+        "tables:\n  frame: { kind: dynamic }\n  otel_traces: { kind: static }\nfeeds:\n  '*': { frames: true }\n",
+    )?;
+    let mut writer = lab.writer(SCHEMA)?;
+    let mut frame = Vec::new();
+    FrameRow {
+        ts: Nanos(123),
+        recording: 42,
+        position: 4096,
+        session: 5,
+        stream: 2011,
+        source: 1,
+        service: "md-test",
+        kind: "md",
+        message: &[0, 0, 1, 0, 7, 0, 0, 0],
+    }
+    .encode(&mut frame)?;
+    writer.push_from(&frame[..8], 1, true);
+    let def = TraceDef::new("connect", &[], &[]);
+    assert!(writer.push(&def.message()?, 0));
+    writer.push(&span(def.def, 1_700_000_000_000_000_000)?[..8], 1);
+    let report = writer.tick();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.starts_with("frame: undecodable message skipped")),
+        "{report:?}"
+    );
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e == "a malformed Trace message, skipped"),
+        "{report:?}"
+    );
+    assert_eq!(writer.queued_bytes(), 0);
     Ok(())
 }
 

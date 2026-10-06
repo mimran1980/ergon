@@ -80,6 +80,24 @@
   before only one arm paid it.
 
 ### Fixed
+- Look up a journalled message from a recording by the recording's session
+  as well as its id, and compare frames only at the positions the journal
+  names. A persistent subscription now journals the recording's session for
+  replayed messages too, not the replay image's. After a publisher moves
+  between nodes, two archives can number a recording of the same feed alike,
+  and an exact replay of such a journal failed, or took another session's
+  frame. A journal recorded before this still replays: a replayed message
+  the session does not find is looked up by its recording alone, as then.
+- Apply `tables.yaml` again when the ingester inserts what it queued: event
+  rows and spans at their own time, and a feed's frames by its `frames`
+  opt-in, as feed rows already were. Rows a failed insert left queued were
+  inserted even after their table, app or feed was switched off.
+- Drop the queued rows of a table taken out of `tables.yaml`, once two reads
+  of the file in a row miss it. They stayed queued for good, and the ingester
+  stopped reading its archive.
+- Decode archive messages in the ingester with the checked `try_decode`. A
+  trace, metrics or frame message too short for its body panicked the
+  ingester, which then crashed on the same batch after every restart.
 - Let every archive connect a persistent feed starts run to Aeron's own
   timeout. The lookup gave up first, on its own clock, and dropping an
   unfinished connect closes nothing, so every retry against a slow archive

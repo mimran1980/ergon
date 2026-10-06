@@ -86,6 +86,10 @@ enum State {
     Running {
         subscription: AeronArchivePersistentSubscription,
         recording: i64,
+        /// The recording's session, from its descriptor: what every message
+        /// is journalled with, replayed or live, since the ingester stores it
+        /// with each frame and a replay's image has a session of its own.
+        session: i32,
         // Kept for as long as the subscription that was built from it.
         _archive: AeronArchiveContext,
     },
@@ -161,6 +165,7 @@ impl PersistentSubscription {
         let State::Running {
             subscription,
             recording,
+            session,
             ..
         } = &self.state
         else {
@@ -187,11 +192,7 @@ impl PersistentSubscription {
                         Metadata {
                             recording: *recording,
                             position: if JOURNAL { header.position() } else { 0 },
-                            session: if JOURNAL {
-                                header.get_values().map_or(0, |v| v.frame().session_id())
-                            } else {
-                                0
-                            },
+                            session: if JOURNAL { *session } else { 0 },
                             stream: self.stream_id,
                         },
                     );
@@ -254,9 +255,9 @@ impl PersistentSubscription {
                 Err(e) => Err(format!("connecting to its archive: {e}")),
             },
             State::Listing(listing) => match listing.poll(now) {
-                Ok(Some(recording)) => {
+                Ok(Some((recording, session))) => {
                     let channel = std::mem::take(&mut listing.channel);
-                    self.subscribe(recording, &channel)
+                    self.subscribe(recording, session, &channel)
                 }
                 Ok(None) => return,
                 Err(e) => Err(e),
@@ -288,7 +289,7 @@ impl PersistentSubscription {
         })
     }
 
-    fn subscribe(&mut self, recording: i64, channel: &str) -> Result<State, String> {
+    fn subscribe(&mut self, recording: i64, session: i32, channel: &str) -> Result<State, String> {
         let archive = archive_context(&self.aeron, channel, &self.local)?;
         let builder = PersistentSubscriptionBuilder::new()
             .and_then(|b| b.aeron(&self.aeron))
@@ -319,6 +320,7 @@ impl PersistentSubscription {
         Ok(State::Running {
             subscription,
             recording,
+            session,
             _archive: archive,
         })
     }
@@ -336,7 +338,7 @@ struct Listing {
     poller: AeronArchiveRecordingDescriptorPoller,
     _consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>>,
     channel: String,
-    newest: Rc<Cell<i64>>,
+    newest: Rc<Cell<(i64, i32)>>,
     until: Instant,
 }
 
@@ -347,12 +349,12 @@ impl Listing {
         stream_id: i32,
         port: u16,
     ) -> Result<State, String> {
-        let newest = Rc::new(Cell::new(-1));
+        let newest = Rc::new(Cell::new((-1, 0)));
         let (found, port) = (Rc::clone(&newest), format!(":{port}"));
         let consumer: Handler<Box<dyn FnMut(AeronArchiveRecordingDescriptor)>> =
             Handler::new(Box::new(move |d: AeronArchiveRecordingDescriptor| {
                 if d.stop_position() < 0 && d.original_channel().contains(&port) {
-                    found.set(found.get().max(d.recording_id()));
+                    found.set(found.get().max((d.recording_id(), d.session_id())));
                 }
             }));
         let inner = archive.get_inner_ref();
@@ -374,7 +376,7 @@ impl Listing {
     }
 
     /// The recording once the list is complete.
-    fn poll(&self, now: Instant) -> Result<Option<i64>, String> {
+    fn poll(&self, now: Instant) -> Result<Option<(i64, i32)>, String> {
         self.poller
             .poll()
             .map_err(|e| format!("listing its recordings: {e}"))?;
@@ -386,8 +388,8 @@ impl Listing {
             };
         }
         match self.newest.get() {
-            -1 => Err("no recording of its current session yet".into()),
-            recording => Ok(Some(recording)),
+            (-1, _) => Err("no recording of its current session yet".into()),
+            newest => Ok(Some(newest)),
         }
     }
 }

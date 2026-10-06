@@ -62,13 +62,13 @@ pub fn traces_shape() -> Shape {
 
 /// The `TraceDef` a `Trace` message needs, if it has not arrived.
 pub fn unknown_def(message: &[u8], defs: &HashMap<u64, TraceDef>) -> Option<bool> {
-    let t = codec::TraceDecoder::decode(message, 0).ok()?;
+    let t = codec::TraceDecoder::try_decode(message, 0).ok()?;
     Some(!defs.contains_key(&t.def()))
 }
 
 /// When a `Trace` message's trace or span started, UNIX ns.
 pub fn start(message: &[u8]) -> Option<u64> {
-    codec::TraceDecoder::decode(message, 0)
+    codec::TraceDecoder::try_decode(message, 0)
         .ok()
         .map(|t| t.start())
 }
@@ -100,7 +100,7 @@ pub fn write_trace(
     out: &mut Vec<u8>,
 ) -> Result<usize, DecodeError> {
     let bad = |_| DecodeError("undecodable Trace message");
-    let t = codec::TraceDecoder::decode(message, 0).map_err(bad)?;
+    let t = codec::TraceDecoder::try_decode(message, 0).map_err(bad)?;
     let Some(def) = defs.get(&t.def()) else {
         return Ok(0);
     };

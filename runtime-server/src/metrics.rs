@@ -180,7 +180,7 @@ fn labels(def: &MetricDef) -> impl ExactSizeIterator<Item = (&str, &str)> {
 pub fn unknown_series(message: &[u8], defs: &HashMap<u64, MetricDef>) -> Option<usize> {
     let template = u16::from_le_bytes(message.get(2..4)?.try_into().ok()?);
     if template == codec::HistogramEncoder::TEMPLATE_ID {
-        let decoded = codec::HistogramDecoder::decode(message, 0).ok()?;
+        let decoded = codec::HistogramDecoder::try_decode(message, 0).ok()?;
         let unknown = decoded
             .samples()
             .ok()?
@@ -188,7 +188,7 @@ pub fn unknown_series(message: &[u8], defs: &HashMap<u64, MetricDef>) -> Option<
             .count();
         return Some(unknown);
     }
-    let m = codec::MetricsDecoder::decode(message, 0).ok()?;
+    let m = codec::MetricsDecoder::try_decode(message, 0).ok()?;
     let counters = m
         .counters()
         .ok()?
@@ -207,7 +207,7 @@ pub fn write_metrics(
     defs: &HashMap<u64, MetricDef>,
     out: &mut Vec<u8>,
 ) -> Result<usize, DecodeError> {
-    let m = codec::MetricsDecoder::decode(message, 0)
+    let m = codec::MetricsDecoder::try_decode(message, 0)
         .map_err(|_| DecodeError("undecodable Metrics message"))?;
     let bad = |_| DecodeError("undecodable Metrics message");
     let mut rows = 0;
@@ -435,7 +435,7 @@ impl Fold {
         source: u64,
         feed: bool,
     ) -> Result<(), DecodeError> {
-        let decoded = codec::HistogramDecoder::decode(message, 0)
+        let decoded = codec::HistogramDecoder::try_decode(message, 0)
             .map_err(|_| DecodeError("undecodable Histogram message"))?;
         let ts = decoded.ts();
         for entry in decoded
