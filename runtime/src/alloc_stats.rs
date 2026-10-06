@@ -358,6 +358,13 @@ impl AllocStats {
     pub fn committed_bytes(&self) -> f64 {
         self.committed.get()
     }
+
+    /// Total `loop_ctx_switches_involuntary` published: the times the
+    /// sampling thread was preempted. Always 0 off Linux.
+    #[must_use]
+    pub fn loop_involuntary(&self) -> u64 {
+        self.loop_involuntary.get()
+    }
 }
 
 /// A gauge value: byte and thread counts stay far below 2^53, where `f64`
