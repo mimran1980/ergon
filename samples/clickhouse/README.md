@@ -669,6 +669,7 @@ The insert's token is those positions, and ClickHouse drops the repeat.
 Recovery collects the entire pending batch before inserting, even when replay
 delivery takes several ticks. A prefix cannot consume the full batch's token.
 Each table remembers the last 1000 inserts. An older retry can land twice.
+Histograms are the exception to exactly-once: see [Limits](#limits).
 
 One failed table holds that recording's checkpoint, so the archive grows until
 the table is fixed. A new session (restart or move) is a new recording.
@@ -742,7 +743,7 @@ interest and public trades. Venue-specific decimals stay text.
 - `just verify` counts restarts. After pausing and resuming the lab its last check fails.
 - Two publications on one stream must use the same channel parameters.
 - Metrics of a process that exits before the next `poll` are lost. A counter's `delta` survives a restart. Its `value` starts again at 0.
-- A crash can drop the histogram window still open in the ingester, at most 5 s.
+- Histogram windows are folded in the ingester's memory, so they are not exactly-once across a crash: the samples already folded into an open window are lost, and a window closed just before the crash can land again, partly, after the restart. At most 5 s of each series either way. A histogram insert whose reply was lost can also land twice.
 - A heartbeat round, every 5 s, sends up to 8 dictionary messages per `Persist::poll` call until it is done.
 - A persistent subscription can replay only the segments the ingester has not yet purged.
 - The kind VM clock can lag the venues by 100–400 ms. `venue_to_local_ns` then reads 0.
