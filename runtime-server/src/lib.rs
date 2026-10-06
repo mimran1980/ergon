@@ -39,11 +39,11 @@
 //!
 //! A failed insert compares the table again, then retries the rows. Each
 //! batch goes in named pieces, which `ClickHouse` inserts once each, so a batch
-//! replayed after a restart does not land twice. Pieces are cut by place in the
-//! queue, and the queue a restart rebuilds holds the same records only while
-//! what decides them at queueing time is unchanged: a switch changed between
-//! a crash and the restart (event rows, spans and frames are switched when
-//! queued too) moves the cuts, and rows can then be lost or inserted twice.
+//! replayed after a restart does not land twice. A record's piece is where
+//! it is in the batch's span of the archive, so the same batch read again
+//! forms the same pieces whatever order its records arrive in: a piece
+//! already in keeps the rows the switches let in then, and the pieces still
+//! to go follow the switches now.
 
 mod aeron_stats;
 mod clickhouse;
@@ -405,6 +405,9 @@ struct TableState {
     queued_count: usize,
     /// Not in `tables.yaml` at the last flush either.
     unlisted: bool,
+    /// Where each queued record is in the archive, `(recording, position)`,
+    /// in queue order: `(-1, -1)` for one pushed with no place there.
+    at: Vec<(i64, i64)>,
 }
 
 impl TableState {
@@ -419,6 +422,7 @@ impl TableState {
             queued: Vec::new(),
             queued_count: 0,
             unlisted: false,
+            at: Vec::new(),
         }
     }
 
@@ -487,6 +491,10 @@ fn messages(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// A row held for its shape or definition: when it arrived, its source, from
+/// a feed or not, where it is in the archive, and the message.
+type Held = (Instant, u64, bool, (i64, i64), Vec<u8>);
+
 /// A queued record's length, source id and feed flag, before its message.
 const RECORD_HEADER: usize = 4 + 8 + 1;
 
@@ -495,24 +503,65 @@ const RECORD_HEADER: usize = 4 + 8 + 1;
 /// client's timeout and the server's memory and was retried forever.
 const MAX_INSERT_BYTES: usize = 1 << 20;
 
-/// Indices of the queued records that start a new insert: each record that
-/// would take its piece past `max` bytes of queue, so a piece holds at most
-/// `max` unless one record alone is larger. Queue positions, not row bytes, so a
-/// retry in this process cuts in the same places whatever `tables.yaml` or the
-/// table's columns say by then, and each piece's token keeps naming the same
-/// records. A queue rebuilt after a restart may not (see the module docs).
-fn piece_starts(queued: &[u8], max: usize) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let (mut offset, mut piece) = (0, 0);
-    for (index, (_, _, message)) in records(queued).enumerate() {
-        let size = RECORD_HEADER + message.len();
-        if offset > piece && offset + size - piece > max {
-            starts.push(index);
-            piece = offset;
+/// The piece of each queued record by its place in the queue, for records
+/// with no place in the archive: a new piece starts at each record that would
+/// take its piece past `max` bytes of queue, so a piece holds at most `max`
+/// unless one record alone is larger. A retry in this process cuts in the
+/// same places; a queue rebuilt after a restart may not, which is why a batch
+/// from the archive is cut by [`batch_pieces`] instead.
+fn queue_pieces(queued: &[u8], max: usize) -> Vec<usize> {
+    let (mut offset, mut start, mut piece) = (0, 0, 0);
+    records(queued)
+        .map(|(_, _, message)| {
+            let size = RECORD_HEADER + message.len();
+            if offset > start && offset + size - start > max {
+                piece += 1;
+                start = offset;
+            }
+            offset += size;
+            piece
+        })
+        .collect()
+}
+
+/// Bytes of the archive one piece of a batch covers. Fixed, not
+/// [`Writer::set_max_insert_bytes`]: a piece must name the same records
+/// after a restart, whatever the setting is then.
+pub const PIECE_SPAN: i64 = 1 << 20;
+
+/// The piece of its batch each queued record goes in. With `spans` (a batch
+/// from the archive, [`Writer::set_batch`]) and a place for every record: by
+/// that place, the recordings' spans laid end to end in id order and cut
+/// every [`PIECE_SPAN`] bytes, so a piece holds at most that much of the
+/// archive however many recordings share it. A crash leaves whole pieces in,
+/// since a batch is all queued before any of it is inserted, and the same
+/// batch read again gives each record the same piece whatever its order or
+/// what `tables.yaml` now leaves out: a piece name `ClickHouse` has seen
+/// names only records already in. Otherwise by place in the queue.
+fn batch_pieces(
+    queued: &[u8],
+    at: &[(i64, i64)],
+    spans: Option<&BTreeMap<i64, (i64, i64)>>,
+    max: usize,
+) -> Vec<usize> {
+    let placed = spans.and_then(|spans| {
+        let (mut bases, mut base) = (BTreeMap::new(), 0_i64);
+        for (&recording, &(start, end)) in spans {
+            bases.insert(recording, (base, start));
+            base = base.saturating_add((end - start).max(0));
         }
-        offset += size;
-    }
-    starts
+        at.iter()
+            .map(|&(recording, position)| {
+                let &(base, start) = bases.get(&recording)?;
+                // A position is where its record ends: (start, end] is the span.
+                let offset = base.saturating_add((position - start).max(1) - 1);
+                usize::try_from(offset / PIECE_SPAN).ok()
+            })
+            .collect()
+    });
+    placed
+        .filter(|pieces: &Vec<usize>| pieces.len() == records(queued).count())
+        .unwrap_or_else(|| queue_pieces(queued, max))
 }
 
 /// Insert piece `piece` of the batch named `token` from `rows` into
@@ -595,9 +644,15 @@ pub struct Writer {
     /// source. They are queued, so nothing is checkpointed past them, and
     /// wait up to `shape_wait` for it: the application sends every shape
     /// every 5 s.
-    pending: Vec<(Instant, u64, bool, Vec<u8>)>,
+    pending: Vec<Held>,
     /// The message being pushed is from a feed's recording.
     feed: bool,
+    /// Where the message being pushed is in the archive, or `(-1, -1)`.
+    at: (i64, i64),
+    /// Where the batch being inserted starts and ends in each recording,
+    /// which its pieces are cut by (`Writer::set_batch`); `None` for a batch
+    /// with no place in the archive.
+    batch_spans: Option<BTreeMap<i64, (i64, i64)>>,
     shape_wait: Duration,
 }
 
@@ -653,6 +708,8 @@ impl Writer {
             shape_errors: Vec::new(),
             pending: Vec::new(),
             feed: false,
+            at: (-1, -1),
+            batch_spans: None,
             shape_wait: Duration::from_secs(30),
         };
         let text = std::fs::read_to_string(&writer.config_path)
@@ -690,9 +747,17 @@ impl Writer {
     /// feed's, whose tables `tables.yaml` switches here, when inserted
     /// (subscribers needed every message, so it was published regardless).
     pub fn push_from(&mut self, message: &[u8], source: u64, feed: bool) -> bool {
+        self.push_at(message, source, feed, (-1, -1))
+    }
+
+    /// [`Writer::push_from`] of the message at `(recording, position)` in the
+    /// archive: where its batch's pieces are cut ([`Writer::set_batch`]).
+    pub fn push_at(&mut self, message: &[u8], source: u64, feed: bool, at: (i64, i64)) -> bool {
         self.feed = feed;
+        self.at = at;
         let queued = self.push_message(message, source);
         self.feed = false;
+        self.at = (-1, -1);
         queued
     }
 
@@ -735,7 +800,7 @@ impl Writer {
                 }
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, self.feed, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, self.at, message.to_vec()));
                 return true;
             };
             let at = event_time(message);
@@ -788,6 +853,7 @@ impl Writer {
         state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
+        state.at.push(self.at);
         self.queued_bytes += RECORD_HEADER + message.len();
         true
     }
@@ -816,7 +882,7 @@ impl Writer {
             Some(true) => {
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, self.feed, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, self.at, message.to_vec()));
                 true
             }
         }
@@ -837,6 +903,7 @@ impl Writer {
         state.queued.push(u8::from(self.feed));
         state.queued.extend_from_slice(message);
         state.queued_count += 1;
+        state.at.push(self.at);
         self.queued_bytes += RECORD_HEADER + message.len();
         true
     }
@@ -856,7 +923,7 @@ impl Writer {
             Some(_) => {
                 self.queued_bytes += message.len();
                 self.pending
-                    .push((Instant::now(), source, self.feed, message.to_vec()));
+                    .push((Instant::now(), source, self.feed, self.at, message.to_vec()));
                 true
             }
         }
@@ -953,13 +1020,13 @@ impl Writer {
                 // The rows that were waiting for it.
                 let waiting: Vec<_> = self
                     .pending
-                    .extract_if(.., |(_, _, _, row)| {
+                    .extract_if(.., |(_, _, _, _, row)| {
                         row.get(8..12) == Some(&id.to_le_bytes()[..])
                     })
                     .collect();
-                for (_, source, feed, row) in waiting {
+                for (_, source, feed, at, row) in waiting {
                     self.queued_bytes -= row.len();
-                    self.push_from(&row, source, feed);
+                    self.push_at(&row, source, feed, at);
                 }
             }
         }
@@ -1016,14 +1083,14 @@ impl Writer {
     fn repush(&mut self, templates: [u16; 2]) {
         let waiting: Vec<_> = self
             .pending
-            .extract_if(.., |(_, _, _, m)| {
+            .extract_if(.., |(_, _, _, _, m)| {
                 m.get(2..4)
                     .is_some_and(|t| templates.iter().any(|x| t == x.to_le_bytes()))
             })
             .collect();
-        for (_, source, feed, m) in waiting {
+        for (_, source, feed, at, m) in waiting {
             self.queued_bytes -= m.len();
-            self.push_from(&m, source, feed);
+            self.push_at(&m, source, feed, at);
         }
     }
 
@@ -1082,7 +1149,8 @@ impl Writer {
     }
 
     /// Insert at most `bytes` of a table's queue at a time (1 MiB by
-    /// default); a larger queue goes in several inserts.
+    /// default); a larger queue goes in several inserts. A batch of the
+    /// archive ([`Writer::set_batch`]) is cut by [`PIECE_SPAN`] instead.
     pub const fn set_max_insert_bytes(&mut self, bytes: usize) {
         self.max_insert_bytes = bytes;
     }
@@ -1093,6 +1161,19 @@ impl Writer {
     pub fn set_dedup_token(&mut self, token: &str) {
         self.dedup_token.clear();
         self.dedup_token.push_str(token);
+        self.batch_spans = None;
+    }
+
+    /// [`Writer::set_dedup_token`] for a batch of the archive, its records
+    /// pushed with [`Writer::push_at`]. `spans` holds where the batch starts
+    /// and ends in each recording, by recording id: each record's piece is
+    /// its place in those spans laid end to end, cut every [`PIECE_SPAN`]
+    /// bytes. Both stay put while the batch is pending, so the same batch
+    /// read again after a crash forms the same pieces, whatever order its
+    /// records arrive in and whatever `tables.yaml` now leaves out.
+    pub fn set_batch(&mut self, token: &str, spans: &BTreeMap<i64, (i64, i64)>) {
+        self.set_dedup_token(token);
+        self.batch_spans = Some(spans.clone());
     }
 
     /// Close elapsed histogram windows, reload `tables.yaml` if it changed,
@@ -1445,6 +1526,7 @@ impl Writer {
                     }
                     self.queued_bytes -= state.queued.len();
                     state.queued.clear();
+                    state.at.clear();
                     state.queued_count = 0;
                 }
                 continue;
@@ -1471,17 +1553,27 @@ impl Writer {
             let client = client_in(&self.ch, state.database());
             // A named batch goes in pieces, each encoded and sent before the
             // next: neither one insert nor this buffer grows with the queue.
-            let starts = if self.dedup_token.is_empty() {
-                Vec::new()
+            let pieces = if self.dedup_token.is_empty() {
+                vec![0; state.queued_count]
             } else {
-                piece_starts(&state.queued, self.max_insert_bytes)
+                batch_pieces(
+                    &state.queued,
+                    &state.at,
+                    self.batch_spans.as_ref(),
+                    self.max_insert_bytes,
+                )
             };
-            let mut starts = starts.into_iter().peekable();
-            let (mut piece, mut inserted) = (0, Ok(()));
+            let queued: Vec<_> = records(&state.queued).collect();
+            let piece_of = |index: usize| pieces.get(index).copied().unwrap_or(0);
+            let mut order: Vec<usize> = (0..queued.len()).collect();
+            order.sort_by_key(|&index| piece_of(index));
+            let mut piece = order.first().map_or(0, |&index| piece_of(index));
+            let mut inserted = Ok(());
             let frames = matches!(&state.source, Source::Sbe(t)
                 if t.schema_id == FrameDecoder::SCHEMA_ID && t.template_id == FrameDecoder::TEMPLATE_ID);
-            for (index, (source, feed, message)) in records(&state.queued).enumerate() {
-                if starts.next_if_eq(&index).is_some() {
+            for &index in &order {
+                let (source, feed, message) = queued[index];
+                if piece_of(index) != piece {
                     inserted = insert_piece(
                         &client,
                         (state.source.name(), &columns),
@@ -1489,7 +1581,7 @@ impl Writer {
                         &self.dedup_token,
                         piece,
                     );
-                    piece += 1;
+                    piece = piece_of(index);
                     if inserted.is_err() {
                         break;
                     }
@@ -1576,6 +1668,7 @@ impl Writer {
                     }
                     self.queued_bytes -= state.queued.len();
                     state.queued.clear();
+                    state.at.clear();
                     state.queued_count = 0;
                 }
                 Err(e) => {
@@ -1642,15 +1735,72 @@ mod tests {
     fn pieces_start_at_each_limit_of_queue_bytes() {
         // Records of 13 + 87 = 100 bytes, at most 250 per piece.
         let queued = queue(&[87; 7]);
-        assert_eq!(piece_starts(&queued, 250), [2, 4, 6]);
-        assert_eq!(piece_starts(&queued, 100), [1, 2, 3, 4, 5, 6]);
-        assert!(piece_starts(&queued, 1 << 20).is_empty());
-        assert!(piece_starts(&[], 1).is_empty());
+        assert_eq!(queue_pieces(&queued, 250), [0, 0, 1, 1, 2, 2, 3]);
+        assert_eq!(queue_pieces(&queued, 100), [0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(queue_pieces(&queued, 1 << 20), [0; 7]);
+        assert!(queue_pieces(&[], 1).is_empty());
     }
 
     #[test]
     fn a_record_larger_than_the_limit_is_a_piece_of_its_own() {
         let queued = queue(&[10, 500, 10, 10]);
-        assert_eq!(piece_starts(&queued, 100), [1, 2]);
+        assert_eq!(queue_pieces(&queued, 100), [0, 1, 2, 2]);
+    }
+
+    /// Each record's piece, by its place in the archive: the batch spans two
+    /// windows of recording 1 from 1000, then two of recording 2 from 0.
+    fn placed(at: &[(i64, i64)], max: usize) -> BTreeMap<(i64, i64), usize> {
+        let spans = BTreeMap::from([(1, (1000, 1000 + 2 * PIECE_SPAN)), (2, (0, 2 * PIECE_SPAN))]);
+        let queued = queue(&vec![87; at.len()]);
+        at.iter()
+            .copied()
+            .zip(batch_pieces(&queued, at, Some(&spans), max))
+            .collect()
+    }
+
+    #[test]
+    fn a_batchs_pieces_follow_archive_places_whatever_the_queue_holds() {
+        // Four records of each recording, half a piece apart from where its
+        // part of the batch starts: recording 1 fills pieces 0 and 1, and
+        // recording 2, laid after it, pieces 2 and 3.
+        let half = PIECE_SPAN / 2;
+        let all: Vec<_> = [(1, 1000), (2, 0)]
+            .into_iter()
+            .flat_map(|(recording, start)| (1..=4).map(move |k| (recording, start + k * half)))
+            .collect();
+        let pieces = placed(&all, 200);
+        assert_eq!(
+            pieces.values().copied().collect::<Vec<_>>(),
+            [0, 0, 1, 1, 2, 2, 3, 3]
+        );
+        // Interleaved, reversed, with recording 1 switched off, or with
+        // another insert limit: each record keeps its piece.
+        let interleaved: Vec<_> = (0..4).flat_map(|k| [all[k + 4], all[k]]).collect();
+        let reversed: Vec<_> = all.iter().rev().copied().collect();
+        let only_2: Vec<_> = all.iter().filter(|(r, _)| *r == 2).copied().collect();
+        for queue in [&interleaved[..], &reversed[..], &only_2[..]] {
+            for (place, piece) in placed(queue, 200) {
+                assert_eq!(pieces[&place], piece, "{place:?} in {queue:?}");
+            }
+        }
+        assert_eq!(placed(&all, 1), pieces);
+    }
+
+    #[test]
+    fn records_with_no_place_in_the_archive_are_cut_by_the_queue() {
+        let queued = queue(&[87; 4]);
+        assert_eq!(
+            batch_pieces(
+                &queued,
+                &[(-1, -1); 4],
+                Some(&BTreeMap::from([(1, (0, 400))])),
+                250
+            ),
+            [0, 0, 1, 1]
+        );
+        assert_eq!(
+            batch_pieces(&queued, &[(1, 100); 4], None, 250),
+            [0, 0, 1, 1]
+        );
     }
 }

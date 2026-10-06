@@ -307,12 +307,52 @@ fn a_replayed_batch_is_inserted_once() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn a_large_pending_batch_is_replayed_completely_before_inserting() -> TestResult {
+/// A recording's id, start and stop.
+type Stopped = (i64, i64, i64);
+
+/// Wait until `count` recordings of `stream_id` have stopped with something
+/// in them, and return them in id order.
+fn stopped(stream_id: i32, count: usize) -> Result<Vec<Stopped>, Box<dyn Error>> {
     use rusteron_archive::{
         Aeron, AeronArchiveAsyncConnect, AeronArchiveContext, AeronContext, IntoCString,
     };
 
+    let ctx = AeronContext::new()?;
+    ctx.set_dir(&aeron_dir().into_c_string())?;
+    let aeron = Aeron::new(&ctx)?;
+    aeron.start()?;
+    let archive_ctx = AeronArchiveContext::new()?;
+    archive_ctx.set_aeron(&aeron)?;
+    archive_ctx.set_control_request_channel(c"aeron:ipc?term-length=64k")?;
+    archive_ctx.set_control_response_channel(c"aeron:ipc?term-length=64k")?;
+    let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &aeron)?
+        .poll_blocking(Duration::from_secs(10))?;
+    let mut recordings = Vec::new();
+    wait_until(&format!("{count} recordings to stop"), || {
+        recordings.clear();
+        archive.list_recordings_fn(&mut 0, 0, i32::MAX, |d| {
+            if d.stream_id() == stream_id && d.stop_position() > 0 {
+                recordings.push((d.recording_id(), d.start_position(), d.stop_position()));
+            }
+        })?;
+        Ok(recordings.len() == count)
+    })?;
+    Ok(recordings)
+}
+
+/// A pending batch of each recording up to `end`: a crash after saving the
+/// batch, before its insert.
+fn pending_at(ends: &[(i64, i64)]) -> String {
+    use std::fmt::Write;
+
+    ends.iter().fold(String::new(), |mut text, (id, end)| {
+        let _ = writeln!(text, "{id} {end}");
+        text
+    })
+}
+
+#[test]
+fn a_large_pending_batch_is_replayed_completely_before_inserting() -> TestResult {
     let lab = Lab::new(
         "aeron_pending_prefix",
         "tables:\n  shapes: { kind: dynamic }\n",
@@ -327,28 +367,12 @@ fn a_large_pending_batch_is_replayed_completely_before_inserting() -> TestResult
     drop(app);
     drop(recorder);
 
-    let ctx = AeronContext::new()?;
-    ctx.set_dir(&aeron_dir().into_c_string())?;
-    let aeron = Aeron::new(&ctx)?;
-    aeron.start()?;
-    let archive_ctx = AeronArchiveContext::new()?;
-    archive_ctx.set_aeron(&aeron)?;
-    archive_ctx.set_control_request_channel(c"aeron:ipc?term-length=64k")?;
-    archive_ctx.set_control_response_channel(c"aeron:ipc?term-length=64k")?;
-    let archive = AeronArchiveAsyncConnect::new_with_aeron(&archive_ctx, &aeron)?
-        .poll_blocking(Duration::from_secs(10))?;
-    let mut pending = None;
-    wait_until("the complete recording to stop", || {
-        archive.list_recordings_fn(&mut 0, 0, i32::MAX, |d| {
-            if d.stream_id() == stream_id && d.stop_position() > 0 {
-                pending = Some(format!("{} {}\n", d.recording_id(), d.stop_position()));
-            }
-        })?;
-        Ok(pending.is_some())
-    })?;
-    // Crash after saving the full batch identity, before sending its insert.
+    let ends: Vec<_> = stopped(stream_id, 1)?
+        .iter()
+        .map(|&(id, _, stop)| (id, stop))
+        .collect();
     let pending_path = lab.dir.join("checkpoint.pending");
-    std::fs::write(&pending_path, pending.ok_or("missing recording endpoint")?)?;
+    std::fs::write(&pending_path, pending_at(&ends))?;
     let mut recovery = ingester(&lab, lab.ch.clone(), stream_id)?;
     wait_until("the complete pending batch to be committed", || {
         let report = recovery.tick()?;
@@ -363,6 +387,77 @@ fn a_large_pending_batch_is_replayed_completely_before_inserting() -> TestResult
         Ok(!pending_path.exists())
     })?;
     assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "300000");
+    Ok(())
+}
+
+/// A restart reads a pending batch of two recordings, and the small one's
+/// replay ends long before the large one's: it is not opened again from its
+/// checkpoint, which would read its records into the batch twice.
+#[test]
+fn a_pending_replay_that_ends_first_is_not_read_again() -> TestResult {
+    let lab = Lab::new(
+        "aeron_pending_reopen",
+        "tables:\n  shapes: { kind: dynamic }\n",
+    )?;
+    let stream_id = stream(36);
+    let recorder = ingester(&lab, lab.ch.clone(), stream_id)?;
+    for n in [100, 300_000] {
+        let app = client(&lab, stream_id)?;
+        wait_until("the archive to record the stream", || {
+            Ok(app.persist.is_connected())
+        })?;
+        record(&app.persist, n)?;
+    }
+    drop(recorder);
+
+    let ends: Vec<_> = stopped(stream_id, 2)?
+        .iter()
+        .map(|&(id, _, stop)| (id, stop))
+        .collect();
+    let pending_path = lab.dir.join("checkpoint.pending");
+    std::fs::write(&pending_path, pending_at(&ends))?;
+    let mut recovery = ingester(&lab, lab.ch.clone(), stream_id)?;
+    wait_until("the pending batch to be committed", || {
+        lab::clean(&recovery.tick()?)?;
+        Ok(!pending_path.exists())
+    })?;
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "300100");
+    Ok(())
+}
+
+/// A batch saved in a tick in which a new recording's replay had delivered
+/// nothing yet names that recording at its start. A restart has nothing of
+/// it to read for the batch, and must insert the batch, not wait for it.
+#[test]
+fn a_pending_batch_naming_a_recording_at_its_start_is_inserted() -> TestResult {
+    let lab = Lab::new(
+        "aeron_pending_start",
+        "tables:\n  shapes: { kind: dynamic }\n",
+    )?;
+    let stream_id = stream(37);
+    let recorder = ingester(&lab, lab.ch.clone(), stream_id)?;
+    for n in [100, 50] {
+        let app = client(&lab, stream_id)?;
+        wait_until("the archive to record the stream", || {
+            Ok(app.persist.is_connected())
+        })?;
+        record(&app.persist, n)?;
+    }
+    drop(recorder);
+
+    let [(first, _, stop), (second, start, _)] = stopped(stream_id, 2)?[..] else {
+        return Err("expected two recordings".into());
+    };
+    let pending_path = lab.dir.join("checkpoint.pending");
+    std::fs::write(&pending_path, pending_at(&[(first, stop), (second, start)]))?;
+    let mut recovery = ingester(&lab, lab.ch.clone(), stream_id)?;
+    wait_until("the pending batch to be committed", || {
+        lab::clean(&recovery.tick()?)?;
+        Ok(!pending_path.exists())
+    })?;
+    assert_eq!(lab.query("SELECT count() FROM DB.shapes")?, "100");
+    // The second recording is read as usual after it.
+    ingest(&mut recovery, &lab, "shapes", 150)?;
     Ok(())
 }
 

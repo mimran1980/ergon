@@ -1201,6 +1201,112 @@ fn a_short_frame_or_span_is_skipped_not_a_panic() -> TestResult {
     Ok(())
 }
 
+/// Feed `a` (recording 1) and `b` (recording 2), frames `k` = 1 to 4 each,
+/// `k` half pieces into its recording's part of a batch of the archive, two
+/// pieces long: frames 1 and 2 of a feed are one piece, 3 and 4 the next.
+/// `landed` went in before a crash: whole pieces, since a batch is all
+/// queued before any of it is inserted. Then the batch is read again as
+/// `replayed`, in its order, under `tables_yaml`, and every frame of it must
+/// be in exactly once.
+fn replay_after_a_crash(
+    test: &str,
+    tables_yaml: &str,
+    landed: &[(char, i64)],
+    replayed: &[(char, i64)],
+) -> Result<Lab, Box<dyn Error>> {
+    use ergon_runtime::clock::Nanos;
+    use ergon_runtime::frames::{FrameRow, SCHEMA};
+    use ergon_runtime::source::Source;
+
+    let both = "tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n";
+    let lab = Lab::new(test, both)?;
+    let md = Source::at("h", "p", "md", 1, "");
+    let span = (0, 2 * ergon_runtime_server::PIECE_SPAN);
+    let spans = std::collections::BTreeMap::from([(1, span), (2, span)]);
+    let push = |writer: &mut Writer, frames: &[(char, i64)]| -> Result<(), Box<dyn Error>> {
+        assert!(writer.push(&md.message()?, md.id));
+        writer.set_batch("1:2097152,2:2097152", &spans);
+        for &(feed, k) in frames {
+            let recording = if feed == 'a' { 1 } else { 2 };
+            let position = k * ergon_runtime_server::PIECE_SPAN / 2;
+            let mut bytes = Vec::new();
+            FrameRow {
+                ts: Nanos(123),
+                recording,
+                position,
+                session: 5,
+                stream: 2011,
+                source: md.id,
+                service: if feed == 'a' { "md-a" } else { "md-b" },
+                kind: "md",
+                message: &[0, 0, 1, 0, 7, 0, 0, 0],
+            }
+            .encode(&mut bytes)?;
+            assert!(writer.push_at(&bytes, md.id, true, (recording, position)));
+        }
+        Ok(())
+    };
+    let mut before = lab.writer(SCHEMA)?;
+    push(&mut before, landed)?;
+    clean(&before.tick())?;
+    drop(before);
+    lab.write_config(tables_yaml)?;
+    let mut after = lab.writer(SCHEMA)?;
+    push(&mut after, replayed)?;
+    clean(&after.tick())?;
+    assert_eq!(after.queued_bytes(), 0);
+    Ok(lab)
+}
+
+/// Each frame in, as its feed and `k`.
+const FRAMES_IN: &str = "SELECT service, intDiv(position, 524288) AS k FROM DB.frame \
+     ORDER BY service, k FORMAT TSV";
+
+/// A switch changed between a crash and its restart drops no frame of a feed
+/// it did not switch: each piece names the same frames of the archive.
+#[test]
+fn a_restart_with_a_feed_switched_off_loses_no_other_feeds_frames() -> TestResult {
+    let lab = replay_after_a_crash(
+        "replay_switched",
+        "tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n  'md-a/md': { frames: false }\n",
+        &[('a', 1), ('b', 1), ('a', 2), ('b', 2)],
+        // Feed a is off now: its frames are no longer made.
+        &[('b', 1), ('b', 2), ('b', 3), ('b', 4)],
+    )?;
+    assert_eq!(
+        lab.query(FRAMES_IN)?,
+        "md-a\t1\nmd-a\t2\nmd-b\t1\nmd-b\t2\nmd-b\t3\nmd-b\t4"
+    );
+    Ok(())
+}
+
+/// A batch read again in another order, as a restart's bounded replay can
+/// interleave its recordings, lands every frame once.
+#[test]
+fn a_restart_that_reads_the_batch_in_another_order_lands_each_frame_once() -> TestResult {
+    let all = "tables:\n  frame: { kind: dynamic }\nfeeds:\n  '*': { frames: true }\n";
+    let lab = replay_after_a_crash(
+        "replay_reordered",
+        all,
+        &[('a', 1), ('a', 2), ('b', 1), ('b', 2)],
+        &[
+            ('a', 1),
+            ('a', 2),
+            ('a', 3),
+            ('a', 4),
+            ('b', 1),
+            ('b', 2),
+            ('b', 3),
+            ('b', 4),
+        ],
+    )?;
+    assert_eq!(
+        lab.query(FRAMES_IN)?,
+        "md-a\t1\nmd-a\t2\nmd-a\t3\nmd-a\t4\nmd-b\t1\nmd-b\t2\nmd-b\t3\nmd-b\t4"
+    );
+    Ok(())
+}
+
 #[test]
 fn raw_frames_are_opted_in_per_feed_and_have_a_total_order_key() -> TestResult {
     let lab = Lab::new(

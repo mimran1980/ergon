@@ -92,6 +92,22 @@
   rows and spans at their own time, and a feed's frames by its `frames`
   opt-in, as feed rows already were. Rows a failed insert left queued were
   inserted even after their table, app or feed was switched off.
+- Cut each batch the ingester inserts by its records' places in the archive,
+  not by place in its queue: each recording's part of the batch, laid end to
+  end and cut every 1 MiB. After a crash the restart reads the batch again,
+  and if a switch had changed meanwhile, or its recordings arrived in another
+  order, the pieces moved: ClickHouse then dropped pieces holding rows that
+  had never gone in, and let others in twice. A batch now reads at most 64 MiB
+  of the archive, so its pieces stay inside ClickHouse's deduplication window.
+  Let a batch an older ingester left pending (`checkpoint.pending`) go in
+  before upgrading, since it is cut the new way.
+- Insert a pending batch that names a recording at its start. A batch saved in
+  a tick in which a new recording's replay had delivered nothing yet named it
+  there, and after a crash the restart waited for that recording for good.
+- Reopen an ingester replay from where it got to, not from its checkpoint.
+  A replay that ended while its batch was uncommitted (an insert failed, or
+  an application exited) was opened again from the checkpoint, and its
+  records were inserted twice with the next batch.
 - Drop the queued rows of a table taken out of `tables.yaml`, once two reads
   of the file in a row miss it. They stayed queued for good, and the ingester
   stopped reading its archive.

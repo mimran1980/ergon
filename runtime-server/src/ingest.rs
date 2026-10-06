@@ -122,10 +122,25 @@ pub struct Ingester {
     /// resume mid-recording knows it before the next `Source` message.
     sources: BTreeMap<i64, i64>,
     sources_path: PathBuf,
+    /// Where each tracked recording starts, from the last listing: a
+    /// recording with no checkpoint is read, and its pieces measured, from
+    /// there, which stays put until its first commit purges anything.
+    starts: BTreeMap<i64, i64>,
     max_queued: usize,
     /// The driver's own statistics, and when they are next sampled.
     stats: Option<(AeronStats, Duration, Instant)>,
 }
+
+/// The most of the archive one batch reads, over all its recordings. Its
+/// pieces are [`crate::PIECE_SPAN`] of it each, and `ClickHouse` drops a
+/// piece it has seen only among the last `DEDUP_WINDOW` a table took, so a
+/// batch, overshot by one poll (1024 fragments of at most 64 KiB), must have
+/// fewer.
+const MAX_BATCH_SPAN: i64 = 64 << 20;
+const _: () = assert!(
+    ((MAX_BATCH_SPAN + (1024 << 16)) / crate::PIECE_SPAN + 2).cast_unsigned()
+        < crate::clickhouse::DEDUP_WINDOW
+);
 
 fn aeron(e: impl std::fmt::Display) -> Error {
     Error::Aeron(e.to_string())
@@ -247,6 +262,7 @@ impl Ingester {
             checkpoints,
             sources,
             sources_path,
+            starts: BTreeMap::new(),
             max_queued: settings.max_queued_bytes,
             stats,
         })
@@ -303,7 +319,17 @@ impl Ingester {
         self.writer
             .flush_elapsed_histograms(crate::unix_now_ns(), caught_up);
         if let Some(pending) = &self.pending {
-            self.writer.set_dedup_token(&dedup_token(pending));
+            // Each recording's part of the batch, from where it starts to its
+            // end: neither moves until the batch is committed, so its pieces
+            // are the same after a restart.
+            let spans = pending
+                .iter()
+                .map(|(&id, &end)| {
+                    let start = batch_origin(&self.checkpoints, &self.starts, id);
+                    (id, (start.unwrap_or(end), end))
+                })
+                .collect();
+            self.writer.set_batch(&dedup_token(pending), &spans);
         } else {
             self.writer.set_dedup_token("");
         }
@@ -345,26 +371,42 @@ impl Ingester {
         for d in recordings {
             let names = self.feeds.get(&d.stream_id).cloned();
             let feed = names.is_some();
-            if (d.stream_id != self.stream_id && !feed) || self.replays.contains_key(&d.id) {
+            if d.stream_id != self.stream_id && !feed {
                 continue;
             }
+            self.starts.insert(d.id, d.start);
+            if self.replays.contains_key(&d.id) {
+                continue;
+            }
+            let committed = batch_origin(&self.checkpoints, &self.starts, d.id).unwrap_or(d.start);
+            // A replay opened again (it ended, or lost its image) goes on from
+            // what the writer already holds: from the checkpoint it would hand
+            // the writer those records twice.
             let from = self
-                .checkpoints
+                .polled
                 .get(&d.id)
-                .map_or(d.start, |&c| c.max(d.start));
+                .map_or(committed, |&p| p.max(committed));
             // While an insert is uncommitted, replay that batch and stop.
             // A live replay would pull in messages that were not part of it.
             let length = if let Some(pending) = &self.pending {
                 match pending.get(&d.id) {
                     Some(&end) if end > from => end - from,
-                    _ => continue,
+                    // Nothing of the batch is left to read here: the writer
+                    // holds it, or there was none (saved before its replay
+                    // delivered anything, the batch ends at its start).
+                    // Counted read, or the batch would wait for it for good.
+                    Some(_) => {
+                        self.polled.insert(d.id, from);
+                        continue;
+                    }
+                    None => continue,
                 }
             } else {
                 -1
             };
             // A stopped recording (its application exited) that is all in
             // ClickHouse is no longer needed.
-            if length < 0 && d.stop >= 0 && from >= d.stop {
+            if length < 0 && d.stop >= 0 && committed >= d.stop {
                 self.purge(d.id, report)?;
                 continue;
             }
@@ -430,7 +472,7 @@ impl Ingester {
 
     /// After a poll: save the feed sources learned, and stop replays that
     /// reached the end of a stopped recording or never started, to open them
-    /// again next tick from their checkpoints.
+    /// again next tick from where they got to.
     fn settle(&mut self, learned: Vec<(i64, u64)>) -> Result<(), Error> {
         let mut finished = Vec::new();
         for (&recording, replay) in &mut self.replays {
@@ -463,6 +505,7 @@ impl Ingester {
         self.archive.purge_recording(id).map_err(aeron)?;
         self.checkpoints.remove(&id);
         self.polled.remove(&id);
+        self.starts.remove(&id);
         if self.sources.remove(&id).is_some()
             && let Err(e) = save(&self.sources_path, &self.sources)
         {
@@ -491,7 +534,11 @@ impl Ingester {
         loop {
             let mut any = false;
             for (&recording, replay) in &mut self.replays {
-                if capped && writer.queued_bytes() >= max_queued {
+                if capped
+                    && (writer.queued_bytes() >= max_queued
+                        || batch_span(&self.polled, &self.checkpoints, &self.starts)
+                            >= MAX_BATCH_SPAN)
+                {
                     caught_up = false;
                     break;
                 }
@@ -639,6 +686,33 @@ impl Drop for Ingester {
     }
 }
 
+/// Where a batch starts in `recording`: its checkpoint, or its start in the
+/// archive if that is later or it has none. Neither moves while a batch is
+/// pending: only a commit moves the checkpoint, and segments are purged only
+/// behind it.
+fn batch_origin(
+    checkpoints: &BTreeMap<i64, i64>,
+    starts: &BTreeMap<i64, i64>,
+    recording: i64,
+) -> Option<i64> {
+    checkpoints
+        .get(&recording)
+        .max(starts.get(&recording))
+        .copied()
+}
+
+/// How much of the archive the batch being read spans, over every recording.
+fn batch_span(
+    polled: &BTreeMap<i64, i64>,
+    checkpoints: &BTreeMap<i64, i64>,
+    starts: &BTreeMap<i64, i64>,
+) -> i64 {
+    polled
+        .iter()
+        .map(|(&id, &p)| batch_origin(checkpoints, starts, id).map_or(0, |o| (p - o).max(0)))
+        .sum()
+}
+
 /// A replay is caught up only after it has delivered all archived messages.
 fn replay_caught_up(polled: &BTreeMap<i64, i64>, ends: &BTreeMap<i64, i64>) -> bool {
     ends.iter()
@@ -691,7 +765,7 @@ fn take(
     } else {
         reserved.cast_unsigned()
     };
-    writer.push_from(message, from, meta.feed);
+    writer.push_at(message, from, meta.feed, (recording, position));
     if let Some((service, kind)) = meta.names {
         let row = FrameRow {
             ts: Nanos(reserved),
@@ -705,7 +779,7 @@ fn take(
             message,
         };
         if row.encode(frame_row).is_ok() {
-            writer.push_from(frame_row, from, true);
+            writer.push_at(frame_row, from, true, (recording, position));
         }
     }
 }
@@ -804,6 +878,20 @@ fn record_feeds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batch_starts_at_its_checkpoint_else_at_its_recording_start() {
+        let checkpoints = BTreeMap::from([(1, 500), (2, 100)]);
+        let starts = BTreeMap::from([(1, 0), (2, 300), (3, 700)]);
+        assert_eq!(batch_origin(&checkpoints, &starts, 1), Some(500));
+        // Purged past its checkpoint by something else: its start.
+        assert_eq!(batch_origin(&checkpoints, &starts, 2), Some(300));
+        assert_eq!(batch_origin(&checkpoints, &starts, 3), Some(700));
+        assert_eq!(batch_origin(&checkpoints, &starts, 4), None);
+        // Every recording's part counts toward the batch's span.
+        let polled = BTreeMap::from([(1, 1500), (2, 300), (3, 900), (4, 50)]);
+        assert_eq!(batch_span(&polled, &checkpoints, &starts), 1000 + 200);
+    }
 
     #[test]
     fn a_partial_replay_batch_does_not_close_historical_histograms() {
