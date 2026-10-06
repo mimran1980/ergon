@@ -36,7 +36,7 @@ fn url() -> String {
 }
 
 fn aeron_dir() -> String {
-    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into())
+    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into())
 }
 
 #[test]

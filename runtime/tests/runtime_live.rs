@@ -4,7 +4,7 @@
 //! it: the runtime's duty cycle, or a test's own wait.
 //!
 //! Needs an Aeron media driver at `AERON_TEST_DIR` (default
-//! `/tmp/persist-test-aeron`); `just test` starts it. Fails, never skips,
+//! `target/persist-test-aeron`); `just test` starts it. Fails, never skips,
 //! without it.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -74,7 +74,7 @@ const FRAME: usize = 32;
 const MS: i64 = 1_000_000;
 
 fn aeron_dir() -> String {
-    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into())
+    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into())
 }
 
 /// Streams unique to this test in this run.

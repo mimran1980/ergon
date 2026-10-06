@@ -2,7 +2,7 @@
 //!
 //! In a test binary of its own: the handler is the process's, and the
 //! signal goes to the whole process. Needs an Aeron media driver at
-//! `AERON_TEST_DIR` (default `/tmp/persist-test-aeron`); `just test` starts
+//! `AERON_TEST_DIR` (default `target/persist-test-aeron`); `just test` starts
 //! it. Fails, never skips, without it.
 
 use std::error::Error;
@@ -33,7 +33,7 @@ impl Agent for Quiet {
 fn runtime(stop: Stop) -> Result<Runtime, Box<dyn Error>> {
     let settings = Settings {
         aeron_dir: Some(
-            std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into()),
+            std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into()),
         ),
         app: "sigterm-test".into(),
         ..Settings::new("unused.yaml")

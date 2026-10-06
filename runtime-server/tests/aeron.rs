@@ -2,7 +2,7 @@
 //!
 //! Needs the test `ClickHouse` (`CLICKHOUSE_TEST_URL`) and an Aeron
 //! `ArchivingMediaDriver` on `AERON_TEST_DIR` (default
-//! `/tmp/persist-test-aeron`); `just test` starts both. Every test fails,
+//! `target/persist-test-aeron`); `just test` starts both. Every test fails,
 //! never skips, when they are missing. Each test records its own stream.
 //!
 //! Each client runs its Aeron conductor in its owner's loop: here, every
@@ -37,7 +37,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 const CHANNEL: &str = "aeron:ipc?term-length=1m";
 
 fn aeron_dir() -> String {
-    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into())
+    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into())
 }
 
 /// Test `n`'s stream in this run, so recordings left by other runs are never

@@ -26,6 +26,8 @@ mod azure 'azure.justfile'
 
 cluster := "clickhouse-lab"
 build_jobs := "1"
+# The test media driver's directory: .cargo/config.toml gives the tests the same.
+aeron_test_dir := env("AERON_TEST_DIR", clean(justfile_directory() / "../../target/persist-test-aeron"))
 test_threads := "2"
 # kind by default; LAB_CONTEXT=lab-vms is the k3s cluster of `just azure up`.
 context := env("LAB_CONTEXT", "kind-" + cluster)
@@ -245,9 +247,9 @@ _test-clickhouse:
 # Stop the throwaway ClickHouse and Aeron driver that `just test` leaves running.
 test-stop:
     docker rm -f persist-test-clickhouse
-    pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
+    pkill -f 'aeron.dir={{aeron_test_dir}}' || true
 
-# Media driver + archive in one JVM. The tests use /tmp/persist-test-aeron;
+# Media driver + archive in one JVM, in aeron_test_dir (target/persist-test-aeron);
 # 1 MiB segments so they see purges. Parallel tests each record streams of
 # their own (two sessions for one with the `tracing` bridge), more at once
 # than the archive's default 20 recordings and replays. Cap the JVM on the
@@ -256,23 +258,23 @@ test-stop:
 _test-aeron: _aeron-jar
     #!/usr/bin/env bash
     set -euo pipefail
-    driver='Xmx128m.*aeron.dir=/tmp/persist-test-aeron.*max.concurrent.recordings=64'
+    driver='Xmx128m.*aeron.dir={{aeron_test_dir}}.*max.concurrent.recordings=64'
     # A driver whose directory is gone (macOS cleans /tmp) is no driver.
-    if [[ ! -f /tmp/persist-test-aeron/cnc.dat ]] || ! pgrep -f "$driver" >/dev/null; then
-        pkill -f 'aeron.dir=/tmp/persist-test-aeron' || true
+    if [[ ! -f {{aeron_test_dir}}/cnc.dat ]] || ! pgrep -f "$driver" >/dev/null; then
+        pkill -f 'aeron.dir={{aeron_test_dir}}' || true
         touch target/aeron-test.started
         sleep 1 # `-nt` compares whole seconds
         nohup java -Xms32m -Xmx128m -XX:MaxDirectMemorySize=64m -XX:+UseSerialGC \
             -XX:ReservedCodeCacheSize=32m -XX:MaxMetaspaceSize=64m -Xss512k \
             --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -cp {{aeron_jar}} \
-            -Daeron.dir=/tmp/persist-test-aeron -Daeron.dir.delete.on.start=true \
+            -Daeron.dir={{aeron_test_dir}} -Daeron.dir.delete.on.start=true \
             -Daeron.archive.dir=target/aeron-test-archive -Daeron.archive.segment.file.length=1m \
             -Daeron.archive.max.concurrent.recordings=64 -Daeron.archive.max.concurrent.replays=64 \
             -Daeron.archive.control.channel='aeron:udp?endpoint=localhost:18010' \
             -Daeron.archive.replication.channel='aeron:udp?endpoint=localhost:0' \
             io.aeron.archive.ArchivingMediaDriver > target/aeron-test.log 2>&1 &
         for ((attempt=0; attempt<600; attempt++)); do
-            [[ /tmp/persist-test-aeron/cnc.dat -nt target/aeron-test.started ]] && exit 0
+            [[ {{aeron_test_dir}}/cnc.dat -nt target/aeron-test.started ]] && exit 0
             pgrep -f "$driver" >/dev/null || break
             sleep 0.2
         done

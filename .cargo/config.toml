@@ -1,0 +1,6 @@
+# The test media driver's directory, shared by every crate's tests and
+# benches and by the samples' `just _test-aeron`. Under target/, not /tmp,
+# which the OS and cron jobs clean, taking a running driver with it. An
+# AERON_TEST_DIR already in the environment wins.
+[env]
+AERON_TEST_DIR = { value = "target/persist-test-aeron", relative = true }

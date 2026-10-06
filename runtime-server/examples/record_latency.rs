@@ -57,7 +57,7 @@ const STREAM: i32 = 9_000;
 )]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aeron_dir =
-        std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into());
+        std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into());
     let dir = std::env::temp_dir().join(format!("persist-latency-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let config = dir.join("tables.yaml");

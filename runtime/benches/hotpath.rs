@@ -287,7 +287,7 @@ impl Shared {
 
 fn claim() -> BenchResult<bool> {
     let aeron_dir =
-        std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into());
+        std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into());
     let settings = Settings {
         aeron_dir: Some(aeron_dir.clone()),
         app: "hotpath-bench".into(),

@@ -24,7 +24,7 @@
 //! as min / p50 / p99 / p99.99 / max.
 //!
 //! Needs an Aeron media driver at `AERON_TEST_DIR` (default
-//! `/tmp/persist-test-aeron`); `just bench-runtime` starts it.
+//! `target/persist-test-aeron`); `just bench-runtime` starts it.
 //!
 //! `-- --profile=hand-rolled|runtime [--samples=N]` runs that
 //! arm alone for N batches, with no gate: for a profiler where a VM has no
@@ -60,7 +60,7 @@ const SECOND: i64 = 1_000_000_000;
 type BenchResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 fn aeron_dir() -> String {
-    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| "/tmp/persist-test-aeron".into())
+    std::env::var("AERON_TEST_DIR").unwrap_or_else(|_| env!("AERON_TEST_DIR").into())
 }
 
 /// Streams unique to this process, so a concurrent run never shares them.
