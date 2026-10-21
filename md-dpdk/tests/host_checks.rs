@@ -1142,6 +1142,14 @@ fn require_refuses_on_one_warning_and_never_on_information_or_unknown() {
     let arm = Fixture::graviton("require-arm");
     let x86 = Fixture::x86("require-x86");
     x86.remove("/proc/sys/net/core/busy_read");
+    // M3 under the socket transport: unknown at warning severity
+    let unread = m3_socket_buffers(
+        &SocketBuffers {
+            rcvbuf: Probe::Unknown("not Linux".into()),
+            sndbuf: Probe::NotSet,
+        },
+        false,
+    );
     let quiet = HostReport {
         hot: HotSet::new(),
         notes: vec!["ergon-md-dpdk info: a note".into()],
@@ -1149,10 +1157,12 @@ fn require_refuses_on_one_warning_and_never_on_information_or_unknown() {
             m2_term_buffers(false),
             m4_busy_polling(&arm.host()), // information
             m4_busy_polling(&x86.host()), // unknown
+            unread[0].clone(),
         ],
     };
     assert_eq!(quiet.findings[1].severity, Severity::Info);
     assert!(quiet.findings[2].is_unknown());
+    assert!(quiet.findings[3].is_unknown() && quiet.findings[3].severity == Severity::Warn);
     assert!(quiet.warnings().is_empty(), "{:?}", quiet.findings);
     assert_eq!(quiet.require(), Ok(()));
 
