@@ -45,7 +45,7 @@ webpki-roots = { version = "1", optional = true }
 # The host and NIC checks (`checks`): `Driver::new` runs T1, T3, T7 and T8;
 # ergon-io's warning thread runs T2, N1, N2 and N3 on each route's egress
 # device. Pure functions over sysfs and procfs, plus ethtool over netlink.
-ergon-tune = { version = "0.1.31", path = "../tune", features = ["nic"] }
+ergon-tune = { version = "0.1.32", path = "../tune", features = ["nic"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }

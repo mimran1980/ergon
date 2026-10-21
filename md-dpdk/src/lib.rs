@@ -4,6 +4,8 @@
 //! [`rusteron_media_driver`] Aeron media driver, on AWS (ENA, `net_ena`) and
 //! Azure (MANA, `net_netvsc` or `net_mana`, ports selected by MAC).
 //!
+//! Guide: [the book](https://mimran1980.github.io/ergon/md-dpdk/overview.html).
+//!
 //! Aeron's C media driver sends and receives through a table of function
 //! pointers, `aeron_udp_channel_transport_bindings_t`. This crate compiles a
 //! native implementation of that table on DPDK (two dedicated ENA ports, one

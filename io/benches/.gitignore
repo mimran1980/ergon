@@ -1,7 +1,7 @@
 /target
-# Per-run SSH keys, binaries, tarballs, raw per-message records, remote job
-# output and the generated tables stay local. The write-up (BENCHMARK.md),
-# the run ids, the environment dumps and the perf census are what get committed.
+# Per-run SSH keys, binaries, tarballs, raw per-message records and remote job
+# output stay local. The write-up (BENCHMARK.md), the generated tables, the
+# environment dumps and the perf census are what get committed.
 results/**/ssh/
 results/**/bin/
 results/**/res/
@@ -17,5 +17,5 @@ results/**/records/
 results/**/logs/
 results/**/scripts/
 results/**/cond-warnings.txt
-results/**/tables.md
-results/**/tables-local.md
+# Local fair-run render, not part of the 2026-10-18 table restore.
+results/flags-aws-20261019T175248Z/tables.md

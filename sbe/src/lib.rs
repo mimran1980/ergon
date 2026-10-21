@@ -19,11 +19,13 @@
 //! # Documentation
 //!
 //! - **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — getting started,
-//!   feature tour, core concepts, configuration, recipes, design notes
+//!   feature tour, core concepts, configuration, recipes, design notes, then
+//!   the [samples](https://mimran1980.github.io/ergon/samples/overview.html)
 //! - [Getting started](https://mimran1980.github.io/ergon/sbe/getting-started.html) ·
 //!   [Feature tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) ·
 //!   [Coming from sbe-tool](https://mimran1980.github.io/ergon/sbe/getting-started/from-sbe-tool.html) ·
-//!   [Type-state design](https://mimran1980.github.io/ergon/sbe/design-notes/type-state.html)
+//!   [Type-state design](https://mimran1980.github.io/ergon/sbe/design-notes/type-state.html) ·
+//!   [Samples](https://mimran1980.github.io/ergon/samples/overview.html)
 //! - [Crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md)
 //!
 //! ## In a few words

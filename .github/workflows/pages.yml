@@ -30,7 +30,7 @@ jobs:
       - uses: extractions/setup-just@v4
 
       - name: Install system dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       # mdBook 0.5.x: just book-deps installs mdbook-mermaid 0.17.1, which is
       # built on mdbook-preprocessor 0.5 and cannot parse mdBook 0.4's input.

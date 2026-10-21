@@ -4,16 +4,18 @@
 # Prerequisites:
 #   - Java 8+ (17 OK)
 #   - Maven
-#   - Optional: FIX_SBE_CONFORMANCE_HOME pointing at a clone of
+#   - FIX_SBE_CONFORMANCE_HOME may point at a clone of
 #     https://github.com/FIXTradingCommunity/fix-sbe-conformance
 #     (default: clones into a local work dir under target/)
 #
-# Primary gate (always):
+# Primary gate:
 #   cargo test -p ergo-sbe --test fix_sbe_conformance_test
 #   Byte-identity of ergo responses vs Real Logic UnderTest goldens for tests 1–3.
+#   The RLValidator test is not compiled in this invocation.
 #
-# Secondary gate (when Java suite builds):
-#   RL inject → (ergon bytes == RL golden) → official RLValidator.
+# Secondary gate:
+#   Build the Java suite, then run RLValidator with --cfg ergon_rlvalidator.
+#   A missing directory, a failed build or a failed validator stops this script.
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,7 +30,7 @@ echo "date-utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "--- cargo test fix_sbe_conformance_test ---"
 cargo test -p ergo-sbe --test fix_sbe_conformance_test -- --test-threads=1
 
-# Optional Java validator
+# Java validator. A missing suite fails this script.
 CONF_HOME="${FIX_SBE_CONFORMANCE_HOME:-}"
 if [[ -z "$CONF_HOME" ]]; then
   CONF_HOME="$ROOT/target/fix-sbe-conformance"
@@ -38,11 +40,15 @@ if [[ -z "$CONF_HOME" ]]; then
   fi
 fi
 
-if [[ -d "$CONF_HOME" ]]; then
-  echo "--- building Java suite at $CONF_HOME ---"
-  # Java 9+ needs javax.annotation-api for generated sbe-tool sources
-  if ! grep -q 'javax.annotation-api' "$CONF_HOME/pom.xml" 2>/dev/null; then
-    python3 - "$CONF_HOME/pom.xml" <<'PY'
+if [[ ! -d "$CONF_HOME" ]]; then
+  echo "ERROR: Java suite directory is missing: $CONF_HOME" >&2
+  exit 1
+fi
+
+echo "--- building Java suite at $CONF_HOME ---"
+# Java 9+ needs javax.annotation-api for generated sbe-tool sources
+if ! grep -q 'javax.annotation-api' "$CONF_HOME/pom.xml" 2>/dev/null; then
+  python3 - "$CONF_HOME/pom.xml" <<'PY'
 import sys
 from pathlib import Path
 p = Path(sys.argv[1])
@@ -61,13 +67,15 @@ if 'javax.annotation-api' not in t:
     p.write_text(t[:block] + dep + t[block:])
     print('patched javax.annotation-api into pom')
 PY
-  fi
-  (cd "$CONF_HOME" && mvn -q -DskipTests package)
-  export FIX_SBE_CONFORMANCE_HOME="$CONF_HOME"
-  echo "--- RLValidator on ergon-equivalent responses ---"
-  cargo test -p ergo-sbe --test fix_sbe_conformance_test optional_java_rlvalidator_accepts_ergon_equivalent_responses -- --exact --nocapture
-else
-  echo "WARN: Java suite unavailable; cargo byte-identity tests are the gate."
 fi
+(cd "$CONF_HOME" && mvn -q -DskipTests package)
+export FIX_SBE_CONFORMANCE_HOME="$CONF_HOME"
+echo "--- RLValidator on ergon-equivalent responses ---"
+(
+  export RUSTFLAGS="${RUSTFLAGS:-} --cfg ergon_rlvalidator"
+  cargo test -p ergo-sbe --test fix_sbe_conformance_test \
+    optional_java_rlvalidator_accepts_ergon_equivalent_responses \
+    -- --exact --nocapture --test-threads=1
+)
 
 echo "=== fix-sbe-conformance: complete ==="

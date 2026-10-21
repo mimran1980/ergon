@@ -41,7 +41,6 @@ COPY sbe ./sbe
 COPY cluster ./cluster
 COPY cluster-test-harness ./cluster-test-harness
 COPY io ./io
-COPY clock ./clock
 COPY tune ./tune
 COPY md-dpdk ./md-dpdk
 RUN cargo build --release -p ergon-md-dpdk-harness --features static --bin rtt --bin counters

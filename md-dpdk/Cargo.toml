@@ -36,7 +36,7 @@ log = "0.4"
 # The low-latency host and NIC checks `driver::ConfiguredDriver` runs at start
 # (src/checks.rs). Path and version, as ergo-sbe is for the cluster crate: the
 # release publishes it first (scripts/check-publish-set.sh).
-ergon-tune = { version = "0.1.31", path = "../tune", features = ["nic"] }
+ergon-tune = { version = "0.1.32", path = "../tune", features = ["nic"] }
 
 # The M3 probe socket's buffer sizes and the re-check thread's CPU affinity,
 # without `unsafe` (already in the lock through ergon-tune).

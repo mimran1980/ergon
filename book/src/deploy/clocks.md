@@ -1,5 +1,10 @@
 # Clocks
 
+The `ergon-clock` crate was removed on 2026-10-21. Its last measurement
+write-up is
+[ergon-clock-BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/docs/history/ergon-clock-BENCHMARKS.md).
+This page is the current choice of clock.
+
 ## Which clock for what
 
 | need | read | why |

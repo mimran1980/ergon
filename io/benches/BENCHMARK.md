@@ -1,5 +1,9 @@
 # ergon-io benchmarks
 
+The longer write-up removed on 2026-10-18 is
+[BENCHMARK-2026-10-18.md](BENCHMARK-2026-10-18.md). Quote this page when the
+two disagree.
+
 Every ergon-io latency figure lives here, once. Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
 
 ## Answers

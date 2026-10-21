@@ -1,5 +1,9 @@
 # ergon-md-dpdk: kernel UDP against DPDK on AWS
 
+The round-by-round write-up that was removed on 2026-10-18 is
+[BENCHMARKS-ROUNDS-2026-10-18.md](BENCHMARKS-ROUNDS-2026-10-18.md). Quote
+this page when the two disagree.
+
 Aeron ping-pong between two hosts in one cluster placement group, isolated
 CPUs, 5 reps a mode. `ergon-md-dpdk` is a proof of concept, not for
 production ([README](README.md)); the DPDK rows show what kernel bypass is

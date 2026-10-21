@@ -51,9 +51,10 @@ lane. `scripts/check-test-policy.sh` rejects:
 | `[skip ci]`-style markers, `continue-on-error: true`, any `if:` other than `always()` | workflows |
 
 The policy cannot see a test that returns `Ok` early without printing those
-words. Known case: `optional_java_rlvalidator_accepts_ergon_equivalent_responses`
-(`sbe/tests/fix_sbe_conformance_test.rs`) returns `Ok` when
-`FIX_SBE_CONFORMANCE_HOME` is unset, and no workflow sets it.
+words. The RLValidator leg is not such a test. It is compiled only with
+`--cfg ergon_rlvalidator` (`scripts/run-fix-sbe-conformance.sh`). With that
+cfg, a missing suite, class directory or classpath fails the test. `just test`
+does not pass the cfg, so the leg is absent from the default suite.
 
 A failure seen while changing the repository is not a pass because it looks
 pre-existing. Fix it, or stop and report it as a blocker. Never make a lane
@@ -103,8 +104,12 @@ re-audited.
 
 - The root README orients; crate usage goes in that crate's README.
 - One sample inventory: `samples/README.md`. No per-sample READMEs.
-- Describe current, verified behaviour. No dated plans, completion ledgers or
-  archived task trees: git history is the archive.
+- A page that describes how the software behaves describes current, verified
+  behaviour. A superseded number is not the current result.
+- Keep the record in the tree. The AI-assistance account, benchmark round
+  write-ups, screenshots and release notes stay. Git history is not a
+  substitute for that record. Dated plans and scratch task trees do not
+  belong in the tree.
 - One page owns a fact; other pages link to it.
 
 ## Package boundaries

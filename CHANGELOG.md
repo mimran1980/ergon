@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.1.32] — 2026-10-21
+
+### Changed
+
+- `ergon-tune` T10 names the hosts where EC2 will not set `ThreadsPerCore`:
+  bare metal, and T2, C7a, M7a, R7a, Apple silicon Mac and Graviton
+  (AWS *CPU options for Amazon EC2 instances*; bare metal from *Rules for
+  specifying CPU options*). The finding stays a warning. `require` still
+  refuses every warning, including this one.
+- The FIX RLValidator test is compiled only with `--cfg ergon_rlvalidator`.
+  `just test` does not pass that cfg, so the leg is absent from the default
+  suite. With the cfg, a missing suite, class directory or classpath fails
+  the test. `scripts/run-fix-sbe-conformance.sh` builds the suite, sets the
+  cfg and stops if the suite is missing.
+- Crate READMEs and rustdoc link the book. In the book, Samples follows
+  ergo-sbe.
+- CI removes the runner's preinstalled Microsoft apt source before
+  `apt-get update` (that host returned 403, and nothing here installs from
+  it). GitHub Action majors are the Node 24 releases.
+- `proptest` 1.12.0. Lockfile: `smol_str` 0.3.6.
+- The shared-cpus chart publish reads the job token on stdin. The plugin
+  is still not released: no registry artifact, and no EKS measurement.
+- The EKS workload image no longer copies the removed `ergon-clock` crate.
+- Historical pages removed on 2026-10-18 are back in the tree (the
+  AI-assistance account, dated benchmark write-ups, result tables,
+  screenshots). A page that describes behaviour describes the current
+  verified behaviour. A superseded figure is not the current result. The
+  token table sums this MacBook's local `ccusage` with the other machine's
+  high-water mark already in that file.
+
+### Removed
+
+- **Breaking (`ergon-md-dpdk`):** `DpdkError::UnsupportedPlatform` and
+  `DpdkError::AlreadyInitialized`. Nothing constructed them. The `dpdk`
+  feature does not build off Linux x86_64 or aarch64, and selecting
+  `dpdk-ena` without it is `FeatureDisabled`. A second install while a
+  leaked runtime is still up is `DpdkError::Native`.
+
 ## [0.1.31] — 2026-10-21
 
 ### Added
@@ -108,6 +146,11 @@
   `dpdk` feature), selected by `RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena`
   or `DpdkTransport::install`. It interoperates with kernel peers. A
   proof of concept, not for production.
+- `k8s/nri-shared-cpus` (experimental, not released): a containerd NRI
+  plugin and kubelet device plugin. A Guaranteed pod asks for integer CPUs
+  and `ergon.io/shared-millicpus` and gets its exclusive CPUs plus shared
+  housekeeping CPUs; every thread starts on the shared CPUs. Tested on
+  kind, not yet on EKS. Nothing is on a registry.
 - `ergon-md-dpdk`: `RUSTERON_DPDK_GAP_ATTRIB=1` splits each agent loop gap
   into work and descheduling, by the thread's own CPU time across it against
   its wall length (half or more on the CPU is work). Four counters —

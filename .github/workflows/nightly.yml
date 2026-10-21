@@ -19,7 +19,7 @@ jobs:
           submodules: recursive
 
       - name: Install ripgrep (required by check-test-policy.sh)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       - name: Prove test policy and reject suppressions
         run: |

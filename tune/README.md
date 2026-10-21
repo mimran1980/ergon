@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/ergon-tune)](https://crates.io/crates/ergon-tune)
 [![API Docs](https://docs.rs/ergon-tune/badge.svg)](https://docs.rs/ergon-tune/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/tune/overview.html)
 
 Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 

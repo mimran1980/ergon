@@ -1,5 +1,7 @@
 # ergon-md-dpdk
 
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/md-dpdk/overview.html)
+
 > **Not recommended for production use.**
 >
 > This crate is a proof of concept: a kernel-bypass UDP transport for Aeron,

@@ -11,10 +11,6 @@ use std::fmt;
 pub enum DpdkError {
     /// `dpdk-ena` was selected but the crate was not built with the `dpdk` feature.
     FeatureDisabled,
-    /// The transport was requested outside Linux `x86_64` or `aarch64`.
-    UnsupportedPlatform,
-    /// An EAL/DPDK transport already exists in this process.
-    AlreadyInitialized,
     /// [`DpdkTransport::close`](crate::DpdkTransport::close) was called while
     /// other handles to the same native instance were still alive, so nothing
     /// was freed. Close the last handle instead.
@@ -41,11 +37,6 @@ impl fmt::Display for DpdkError {
             Self::FeatureDisabled => write!(
                 f,
                 "the `dpdk-ena` transport was selected but ergon-md-dpdk was not built with the `dpdk` feature"
-            ),
-            Self::UnsupportedPlatform => write!(f, "the `dpdk-ena` transport requires Linux x86_64 or aarch64"),
-            Self::AlreadyInitialized => write!(
-                f,
-                "a DPDK EAL/transport is already initialized in this process; DPDK permits only one"
             ),
             Self::StillHeld => write!(
                 f,

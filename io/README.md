@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/ergon-io)](https://crates.io/crates/ergon-io)
 [![API Docs](https://docs.rs/ergon-io/badge.svg)](https://docs.rs/ergon-io/)
+[![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/io/overview.html)
 
 Network I/O for exchange clients on one busy-spinning thread: WebSocket and
 HTTP/1.1 over TLS 1.3.

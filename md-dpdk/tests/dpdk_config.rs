@@ -1073,7 +1073,7 @@ fn dropping_the_handle_leaks_rather_than_freeing_the_native_runtime() {
     // which is why the other tests are unaffected.
     let err = DpdkTransport::install(&ctx, &canonical()).unwrap_err();
     assert!(
-        matches!(err, DpdkError::AlreadyInitialized | DpdkError::Native(_)),
+        matches!(err, DpdkError::Native(_)),
         "a leaked runtime must make the next install fail closed, got {err:?}"
     );
 }
