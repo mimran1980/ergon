@@ -209,9 +209,8 @@ release-check: test check-coverage check-generated-rustdoc
 #
 # Why this exists: `just release` runs the benchmark gates ~40 minutes into its
 # own run, so they execute on a machine hot from compiling and testing. On the
-# tightest maintained pair (encode_scalar_body_only, ergon ~0.99 against a hard
-# 1.00 ceiling) that measurement noise alone decides pass/fail — measured 0.985
-# idle vs 1.027-1.104 mid-release, on identical code.
+# tightest maintained pair (encode_scalar_body_only, against a hard 1.00
+# ceiling) noise from that load can decide pass/fail on identical code.
 #
 # This recipe does NOT weaken anything. Every gate still runs except the bench
 # re-run, and step 9/9 (`package-bench-artifacts.sh`) fails closed unless BOTH
