@@ -9,9 +9,11 @@
 - **Breaking (ergon-md-dpdk API), released as 0.1.31 all the same:** the
   transport no longer depends on `ergon-clock`. It reads the CPU counter at
   the rate DPDK's EAL gives it (`rte_get_tsc_hz()`), or `CLOCK_MONOTONIC` when
-  the kernel's clock source is not the counter (or a hypervisor's view of
-  it), the TSC is not invariant (x86_64), or DPDK's rate is not `CNTFRQ_EL0`
-  (aarch64). `RUSTERON_DPDK_CLOCK` keeps its values.
+  DPDK gives no usable rate, the kernel's clock source is not the counter (or
+  a hypervisor's view of it), the TSC is not invariant (x86_64), or DPDK's
+  rate is not `CNTFRQ_EL0` (aarch64). The rate is no longer measured and
+  cross-checked at start: on x86_64 it is DPDK's (see md-dpdk/README.md,
+  Clocks). `RUSTERON_DPDK_CLOCK` keeps its values.
   - Removed: `clock::clock_config`, `clock::transport_clock` and
     `DpdkError::Clock`.
   - Changed: `DpdkTransport::clock()` returns `&clock::TransportClock`

@@ -276,15 +276,18 @@ unsafe impl Sync for NativeTransport {}
 
 #[cfg(feature = "dpdk")]
 impl NativeTransport {
-    /// Free the native runtime. Only [`DpdkTransport::close`] calls this, on
-    /// the last handle, after its `unsafe` contract has been promised.
+    /// Free the native runtime. [`DpdkTransport::close`] calls this on the
+    /// last handle, after its `unsafe` contract has been promised, and
+    /// [`DpdkTransport::install`] on a transport it created but never
+    /// installed.
     ///
     /// There is deliberately no `Drop` here: dropping a handle must not free
     /// the runtime the Aeron context's bindings point into.
     fn destroy(self) {
         if !self.ptr.is_null() {
-            // SAFETY: the caller is DpdkTransport::close, which is unsafe and
-            // whose contract is that no driver can still call these bindings.
+            // SAFETY: the callers are DpdkTransport::close, which is unsafe and
+            // whose contract is that no driver can still call these bindings,
+            // and install's error path, before the bindings were installed.
             unsafe { rusteron_dpdk_transport_close(self.ptr) };
         }
     }

@@ -306,10 +306,10 @@ assert_report() {
 
 # assert_clock <report> <label>: an embedded DPDK transport reads the CPU
 # counter at the rate the real EAL gives it (rte_get_tsc_hz), which on aarch64
-# is the generic timer's own (CNTFRQ_EL0, as the harness reads it). The CI
-# runners' kernels keep time with the counter or a hypervisor's view of it,
-# and their CPUs vouch for it, so a fallback to CLOCK_MONOTONIC here means the
-# real EAL path is broken.
+# is the generic timer's own (CNTFRQ_EL0, as the harness reads it). A fallback
+# to CLOCK_MONOTONIC fails the run and prints the transport's reason: a host
+# whose kernel clock source or CPU rules the counter out says so there;
+# otherwise the real EAL path is broken.
 assert_clock() {
     local report=$1 label=$2
     [[ "$(report_field "$report" transport)" == '"dpdk"' ]] || return 0

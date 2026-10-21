@@ -405,8 +405,9 @@ The counter is used only when:
 
 The rate is DPDK's and nothing re-measures it. On aarch64 it is
 `CNTFRQ_EL0`'s, or the counter is not used. On x86_64 it is the CPU's stated
-rate or DPDK's own short measurement, depending on the DPDK version and the
-CPU.
+rate or one 100 ms measurement DPDK makes at start, depending on the DPDK
+version and the CPU. DPDK rounds a measurement to the nearest 10 MHz on
+23.11 (up to 0.2% off at 2.5 GHz) and to the nearest 100 kHz from 24.11.
 
 **Which one ran:** each port's `clock` counter (type 80) reads 1 TSC,
 2 `CNTVCT_EL0`, 0 `CLOCK_MONOTONIC`. `DpdkTransport::clock()` returns a
