@@ -395,6 +395,11 @@ fn symmetric_unicast(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
 /// receives both batches across its two subscriptions. The first batch must
 /// not be corrupted by the reconnect, and the second must land on the new
 /// transport — no caller-pointer retention in the copied remote address.
+/// How long the reconnect primary keeps its last publication up after its
+/// final offer, so the receiver's NAKs for any lost frame are answered before
+/// the driver stops. Aeron's NAK delay and retransmit are well under this.
+const RECONNECT_TAIL: Duration = Duration::from_secs(3);
+
 fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
     let mut res = ScenarioResult::default();
     let split = cfg.msgs / 3;
@@ -408,6 +413,13 @@ fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
             let pub2 = open_publication(aeron, &cfg.pub_ctrl2, cfg.stream, cfg.timeout)?;
             add_and_wait(&pub2, &cfg.destinations[1], cfg.timeout)?;
             send_batch(&pub2, cfg, split..cfg.msgs)?;
+            // The primary only sends, so nothing else keeps it alive once the
+            // last offer returns, and the process then stops its driver: a
+            // frame lost on the way could no longer be retransmitted. Keep the
+            // publication (and the driver) up for a tail so NAKs are answered.
+            // pub1 needs no tail: closing it leaves the driver lingering it.
+            sleep(RECONNECT_TAIL);
+            drop(pub2);
             res.sent = cfg.msgs;
             res.push(format!(
                 "reconnected: batch1 {split} msgs, batch2 {} msgs",

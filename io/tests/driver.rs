@@ -718,8 +718,8 @@ fn pinned_threads_start_on_their_cpus() -> R {
 
 #[test]
 fn background_dns_waits_never_hold_up_other_connects() -> R {
-    let _helpers = dial_helpers();
     use ergon_io::dns::DnsConfig;
+    let _helpers = dial_helpers();
     // The property is the helper's: one dial waits on DNS there while the
     // other opens. A pod with one CPU has no core for the helper and refuses
     // typed instead (asserted; the helper half runs on a pod with two CPUs).
