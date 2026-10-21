@@ -81,30 +81,21 @@ impl DpdkTransport {
             config.validate()?;
             validate_context(context, config)?;
             let choice = crate::clock::ClockChoice::from_env()?;
+            pin_agents_to_configured_cpus(context)?;
             // The kernel's clock source can rule the counter out before DPDK
             // is asked (unreadable: the counter stays, as DPDK decides).
-            let refused = match choice {
-                crate::clock::ClockChoice::Counter => std::fs::read_to_string(crate::clock::CLOCKSOURCE_PATH)
-                    .ok()
-                    .and_then(|source| crate::clock::kernel_refuses_counter(&source)),
-                crate::clock::ClockChoice::Monotonic => None,
-            };
-            let native_choice = if refused.is_some() {
-                crate::clock::ClockChoice::Monotonic
-            } else {
-                choice
-            };
-            pin_agents_to_configured_cpus(context)?;
-            let native = NativeTransport::create(config, native_choice)?;
-            let clock = match (native_clock(), refused) {
-                (Ok(TransportClock::Monotonic { .. }), Some(reason)) => TransportClock::Monotonic { reason },
-                (Ok(clock), _) => clock,
-                (Err(err), _) => {
-                    // Created in this call and never installed: free it.
-                    native.destroy();
-                    return Err(err);
+            let clocksource = crate::clock::kernel_clocksource();
+            let (native, clock) = crate::clock::start_clock(choice, clocksource.as_deref(), |native_choice| {
+                let native = NativeTransport::create(config, native_choice)?;
+                match native_clock() {
+                    Ok(clock) => Ok((native, clock)),
+                    Err(err) => {
+                        // Created in this call and never installed: free it.
+                        native.destroy();
+                        Err(err)
+                    }
                 }
-            };
+            })?;
             let transport = Self {
                 inner: Arc::new(native),
                 ports: [config.sender.pci_address.clone(), config.receiver.pci_address.clone()],

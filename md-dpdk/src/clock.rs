@@ -209,3 +209,162 @@ const COUNTER_CLOCKSOURCE: &str = if cfg!(target_arch = "aarch64") {
 /// Clock sources that are a hypervisor's scaled view of the counter: KVM's
 /// pvclock, Hyper-V's TSC page (Azure), Xen's.
 const PARAVIRT_CLOCKSOURCES: [&str; 3] = ["kvm-clock", "hyperv_clocksource_tsc_page", "xen"];
+
+/// The kernel's clock source as Linux names it ([`CLOCKSOURCE_PATH`]), or
+/// `None` where it cannot be read.
+#[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
+pub(crate) fn kernel_clocksource() -> Option<String> {
+    std::fs::read_to_string(CLOCKSOURCE_PATH).ok()
+}
+
+/// Starts the native clock through `start` and says which clock the
+/// transport reads.
+///
+/// `start` is asked for `choice`, except that [`ClockChoice::Counter`] becomes
+/// [`ClockChoice::Monotonic`] where the kernel's clock source (`clocksource`,
+/// `None` when unreadable, which keeps the counter) rules the counter out
+/// ([`kernel_refuses_counter`]). It returns what it started and the clock the
+/// native side reports. The result is that clock, except that a
+/// `CLOCK_MONOTONIC` the kernel forced gives the kernel's reason, not
+/// [`MonotonicReason::Chosen`].
+///
+/// # Errors
+///
+/// `start`'s.
+#[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
+pub(crate) fn start_clock<T, E>(
+    choice: ClockChoice,
+    clocksource: Option<&str>,
+    start: impl FnOnce(ClockChoice) -> Result<(T, TransportClock), E>,
+) -> Result<(T, TransportClock), E> {
+    let kernel = match choice {
+        ClockChoice::Counter => clocksource.and_then(kernel_refuses_counter),
+        ClockChoice::Monotonic => None,
+    };
+    let asked = if kernel.is_some() {
+        ClockChoice::Monotonic
+    } else {
+        choice
+    };
+    let (started, native) = start(asked)?;
+    let clock = match (native, kernel) {
+        (TransportClock::Monotonic { .. }, Some(reason)) => TransportClock::Monotonic { reason },
+        (native, _) => native,
+    };
+    Ok((started, clock))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use super::{ClockChoice, MonotonicReason, RateSource, TransportClock, start_clock};
+
+    /// This architecture's counter as Linux names it as a clock source.
+    const COUNTER: &str = if cfg!(target_arch = "aarch64") {
+        "arch_sys_counter\n"
+    } else {
+        "tsc\n"
+    };
+
+    const fn counter(hz: u64) -> TransportClock {
+        TransportClock::Counter {
+            hz,
+            rate: RateSource::Eal,
+            eal_hz: hz,
+            measured_hz: hz,
+        }
+    }
+
+    const fn monotonic(reason: MonotonicReason) -> TransportClock {
+        TransportClock::Monotonic { reason }
+    }
+
+    /// What the native side is asked for, and what the transport reports,
+    /// when the native side reports `native`.
+    fn decide(
+        choice: ClockChoice,
+        clocksource: Option<&str>,
+        native: &TransportClock,
+    ) -> (ClockChoice, TransportClock) {
+        let Ok(decided) = start_clock::<_, Infallible>(choice, clocksource, |asked| Ok((asked, native.clone())));
+        decided
+    }
+
+    /// The kernel keeps time with the counter, or a hypervisor's view of it:
+    /// the native side is asked for the counter, and whatever it reports
+    /// (the counter, or why not) is the transport's clock.
+    #[test]
+    fn a_kernel_on_the_counter_leaves_the_choice_to_the_native_side() {
+        for source in [COUNTER, "kvm-clock\n", "hyperv_clocksource_tsc_page\n", "xen\n"] {
+            for native in [
+                counter(3_000_000_000),
+                monotonic(MonotonicReason::NoCounterRate { eal_hz: 0 }),
+                monotonic(MonotonicReason::TscNotInvariant),
+            ] {
+                assert_eq!(
+                    decide(ClockChoice::Counter, Some(source), &native),
+                    (ClockChoice::Counter, native.clone()),
+                    "{source:?}"
+                );
+            }
+        }
+    }
+
+    /// The kernel left the counter (`hpet`, `acpi_pm`): the native side is
+    /// asked for `CLOCK_MONOTONIC`, and the transport reports the kernel's
+    /// clock source as the reason, not the choice the native side saw.
+    #[test]
+    fn a_kernel_off_the_counter_asks_for_clock_monotonic_and_names_its_source() {
+        for source in ["hpet", "acpi_pm"] {
+            assert_eq!(
+                decide(
+                    ClockChoice::Counter,
+                    Some(&format!("{source}\n")),
+                    &monotonic(MonotonicReason::Chosen)
+                ),
+                (
+                    ClockChoice::Monotonic,
+                    monotonic(MonotonicReason::KernelClocksource(source.to_string()))
+                ),
+                "{source}"
+            );
+        }
+    }
+
+    /// An unreadable clock source (no sysfs) rules nothing out: the counter
+    /// is asked for, and the native side's report stands.
+    #[test]
+    fn an_unreadable_clocksource_keeps_the_counter() {
+        for native in [
+            counter(24_000_000),
+            monotonic(MonotonicReason::NoCounterRate { eal_hz: 0 }),
+        ] {
+            assert_eq!(
+                decide(ClockChoice::Counter, None, &native),
+                (ClockChoice::Counter, native.clone())
+            );
+        }
+    }
+
+    /// `RUSTERON_DPDK_CLOCK=monotonic` is asked for whatever the kernel's
+    /// clock source, and reported as the choice, not the kernel's.
+    #[test]
+    fn the_monotonic_choice_wins_over_the_kernel_clocksource() {
+        for source in [Some(COUNTER), Some("hpet\n"), None] {
+            assert_eq!(
+                decide(ClockChoice::Monotonic, source, &monotonic(MonotonicReason::Chosen)),
+                (ClockChoice::Monotonic, monotonic(MonotonicReason::Chosen)),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// The native side's failure is the result, as it gave it.
+    #[test]
+    fn a_failed_start_is_returned() {
+        let result: Result<((), TransportClock), &str> =
+            start_clock(ClockChoice::Counter, Some("hpet\n"), |_| Err("no"));
+        assert_eq!(result, Err("no"));
+    }
+}
