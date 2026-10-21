@@ -20,7 +20,7 @@ name = "read"
 harness = false
 
 [dependencies]
-ergon-clock = { version = "0.1.30", path = ".." }
+ergon-clock = { version = "0.1.31", path = ".." }
 libc = "0.2"
 minstant = "0.1"
 # quanta as users get it: default features (its `mock` adds a thread-local
