@@ -19,8 +19,9 @@
   - Changed: `DpdkTransport::clock()` returns `&clock::TransportClock`
     (`Counter { hz }` or `Monotonic { reason }`), not
     `ergon_clock::advanced::Clock`.
-  - Added: `clock::TransportClock`, `clock::MonotonicReason`,
-    `clock::kernel_refuses_counter` and `clock::CLOCKSOURCE_PATH`.
+  - Added: `clock::TransportClock` (`#[non_exhaustive]`),
+    `clock::MonotonicReason`, `clock::kernel_refuses_counter` and
+    `clock::CLOCKSOURCE_PATH`.
   - Kept: `clock::CLOCK_ENV`, `clock::ClockChoice` and
     `ClockChoice::from_env`.
   - Native ABI: the config's 48-byte clock parameters are now a one-byte

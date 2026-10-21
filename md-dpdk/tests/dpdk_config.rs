@@ -936,7 +936,7 @@ fn install_reports_the_clock_the_native_transport_reads() {
         assert_eq!(guard.clock(), &expected, "{value:?} at {rate} Hz");
         let source = match guard.clock() {
             TransportClock::Counter { .. } => common::COUNTER_SOURCE,
-            TransportClock::Monotonic { .. } => common::SOURCE_MONOTONIC,
+            _ => common::SOURCE_MONOTONIC,
         };
         assert_eq!(
             unsafe { common::rusteron_dpdk_clock_source() },

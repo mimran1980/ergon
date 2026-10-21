@@ -71,6 +71,7 @@ impl ClockChoice {
 
 /// The clock the transport reads ([`DpdkTransport::clock`](crate::DpdkTransport::clock)).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransportClock {
     /// The CPU counter: the TSC on `x86_64`, `CNTVCT_EL0` on `aarch64`.
     Counter {

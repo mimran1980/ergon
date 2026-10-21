@@ -24,12 +24,14 @@ pub struct Report {
     pub backpressure_ops: u64,
     /// Unrecovered sequence gaps observed by the receiver.
     pub gaps: u64,
-    /// The embedded DPDK transport's clock: `counter` or `monotonic`; empty
-    /// for kernel UDP or a standalone driver.
+    /// The embedded DPDK transport's clock: `counter`, `monotonic`, or
+    /// `unknown` (one this harness does not know, named in `clock_reason`);
+    /// empty for kernel UDP or a standalone driver.
     pub clock: String,
     /// The counter's rate when `clock` is `counter`, else 0.
     pub clock_hz: u64,
-    /// Why `clock` is `monotonic`; empty otherwise.
+    /// Why `clock` is `monotonic`, or what the `unknown` clock is; empty
+    /// otherwise.
     pub clock_reason: String,
     /// `CNTFRQ_EL0` as this process reads it on aarch64, else 0.
     pub cntfrq_hz: u64,

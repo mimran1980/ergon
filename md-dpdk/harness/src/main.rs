@@ -211,6 +211,12 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
                     report.clock = "monotonic".to_string();
                     report.clock_reason = reason.to_string();
                 }
+                // A clock this harness does not know yet: named, never taken
+                // for the counter.
+                other => {
+                    report.clock = "unknown".to_string();
+                    report.clock_reason = other.to_string();
+                }
             }
             report.cntfrq_hz = cntfrq_hz();
         }
