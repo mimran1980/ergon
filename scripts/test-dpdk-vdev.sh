@@ -300,7 +300,29 @@ assert_report() {
     log "assert $label: ok=$ok sent=$sent received=$received duration_ms=$duration backpressure_ops=$backpressure"
     [[ "$ok" == true ]] || die "$label: report not ok"
     [[ "$received" == "$expect_received" ]] || die "$label: received $received != $expect_received"
+    assert_clock "$report" "$label"
     echo "$sent"
+}
+
+# assert_clock <report> <label>: an embedded DPDK transport reads the CPU
+# counter at the rate the real EAL gives it (rte_get_tsc_hz), which on aarch64
+# is the generic timer's own (CNTFRQ_EL0, as the harness reads it). The CI
+# runners' kernels keep time with the counter or a hypervisor's view of it,
+# and their CPUs vouch for it, so a fallback to CLOCK_MONOTONIC here means the
+# real EAL path is broken.
+assert_clock() {
+    local report=$1 label=$2
+    [[ "$(report_field "$report" transport)" == '"dpdk"' ]] || return 0
+    local clock; clock=$(report_field "$report" clock)
+    local hz; hz=$(report_field "$report" clock_hz)
+    local cntfrq; cntfrq=$(report_field "$report" cntfrq_hz)
+    local reason; reason=$(grep -o '"clock_reason": "[^"]*"' "$report" | head -1 | cut -d'"' -f4)
+    log "assert $label: clock=$clock clock_hz=$hz cntfrq_hz=$cntfrq ${reason:+reason=$reason}"
+    [[ "$clock" == '"counter"' ]] || die "$label: the transport reads CLOCK_MONOTONIC, not the counter: $reason"
+    (( hz > 0 )) || die "$label: the counter's rate is $hz"
+    if [[ "$(uname -m)" == aarch64 ]]; then
+        [[ "$hz" == "$cntfrq" ]] || die "$label: the counter's rate $hz Hz is not CNTFRQ_EL0's $cntfrq Hz"
+    fi
 }
 
 # ---------------------------------------------------------------------------

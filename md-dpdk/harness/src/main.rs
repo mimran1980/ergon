@@ -12,6 +12,7 @@ mod scenario;
 use std::error::Error;
 use std::time::Duration;
 
+use ergon_md_dpdk::clock::TransportClock;
 use ergon_md_dpdk::configure_media_transport_from_env;
 use log::info;
 use rusteron_client::{Aeron, AeronContext, IntoCString};
@@ -197,6 +198,22 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             .map_err(|e| format!("transport configuration failed: {e}"))?;
         report.transport = if transport.is_some() { "dpdk" } else { "udp" }.to_string();
         info!("[transport] selected {}", report.transport);
+        if let Some(transport) = &transport {
+            // The clock the real EAL's rate gave the transport (the vdev
+            // script asserts the counter, at CNTFRQ_EL0's rate on aarch64).
+            info!("[transport] clock: {}", transport.clock());
+            match transport.clock() {
+                TransportClock::Counter { hz } => {
+                    report.clock = "counter".to_string();
+                    report.clock_hz = *hz;
+                }
+                TransportClock::Monotonic { reason } => {
+                    report.clock = "monotonic".to_string();
+                    report.clock_reason = reason.to_string();
+                }
+            }
+            report.cntfrq_hz = cntfrq_hz();
+        }
 
         let driver = AeronDriver::launch_embedded_guard(driver_ctx.clone(), false);
         let dir = driver_ctx.get_dir().to_string();
@@ -232,4 +249,20 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
     drop(client_ctx);
     drop(transport);
     Ok(report)
+}
+
+/// The generic timer's rate, `CNTFRQ_EL0`, read here (0 off aarch64): what
+/// the transport's counter rate must equal there.
+fn cntfrq_hz() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let hz: u64;
+        // SAFETY: Linux lets EL0 read CNTFRQ_EL0; the read touches no memory.
+        unsafe { std::arch::asm!("mrs {}, cntfrq_el0", out(reg) hz, options(nomem, nostack, preserves_flags)) };
+        hz
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        0
+    }
 }
