@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
       - name: helm lint
         run: helm lint k8s/nri-shared-cpus/charts/ergon-shared-cpus
