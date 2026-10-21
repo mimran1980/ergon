@@ -445,7 +445,7 @@ must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
   `SO_TIMESTAMPNS`. A NIC with no such channel open reads no clock for them.
   `channel-rcv-ts-offset` needs nothing from the transport.
 - **Cost, one run** (Graviton G3, DPDK): p50 within 0.07 µs of without at
-  every point; idle max 153 against 79 µs; one rep a point reached
+  idle and every steady rate; idle max 153 against 79 µs; one rep a point reached
   152–183 µs. Repeat before relying on it
   ([G3](BENCHMARKS.md#graviton5-c9g2xlarge-round-g3--best-measured-p50--p9999--max)).
 

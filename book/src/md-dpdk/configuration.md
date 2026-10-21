@@ -11,7 +11,7 @@
   Amazon Linux 2023). Without it the crate still builds everywhere, and
   selecting DPDK returns `DpdkError::FeatureDisabled`.
 - **`static`:** links Aeron's C driver statically.
-- **Graviton:** build for the core, or gcc turns every atomic add on the hot
+- **Graviton:** build for the core, or Ubuntu's and Debian's gcc turn every atomic add on the hot
   path into a library call (GCC's `-moutline-atomics`): `CFLAGS=-mcpu=native` (as measured) or the core
   (`neoverse-v2` Graviton4, `neoverse-v3` Graviton5), and the same in
   `RUSTFLAGS=-Ctarget-cpu=`. rusteron builds Aeron's own C for the build
@@ -166,7 +166,7 @@ the pod spec or the channel URI; **node** needs node-level access.
 | `AERON_DIR` on a *sized* 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | node mount, pod env | the log buffers sit on hugepages, allocated up front | required, not A/B'd: an unsized hugetlbfs reports no free space, and Aeron refuses every log buffer |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients | pod | clients fault their mappings in before the first message | not measured here |
 | `AERON_MTU_LENGTH=1408` (at most `RUSTERON_DPDK_MAX_AERON_MTU`, 1,408 by default) | pod | every frame fits one packet buffer | jumbo frames, Graviton G2, **one run**: 1,344 B bursts p50 242 → 210 µs, max 954 → 1,533 µs; idle unchanged. A candidate for bulk or bursty channels only |
-| `AERON_RCV_INITIAL_WINDOW_LENGTH`, `AERON_SOCKET_SO_RCVBUF`, `_SNDBUF` all 2 MiB; `net.core.rmem_max`/`wmem_max` 16 MiB | pod; sysctls node | the window fits the socket buffer | one result: a 1 MiB window did not help on x86 or Azure |
+| `AERON_RCV_INITIAL_WINDOW_LENGTH`, `AERON_SOCKET_SO_RCVBUF`, `_SNDBUF` all 2 MiB; `net.core.rmem_max`/`wmem_max` 16 MiB | pod; sysctls node | the window fits the socket buffer | 2 MiB not A/B'd here; a 1 MiB window did not help on x86 or Azure (one result) |
 | Azure: `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us` **and**, per channel, `rcv-wnd` of 256 × the smallest datagram (80 KiB for 288 B) | pod | status messages go out every 20 µs, and the sender never has more in flight than MANA's 256-entry ring holds | round 13, one pair, 32 B: flat-out 7.25 M msgs/s plain, 1.21 M window alone, 7.14 M both; idle max 2,206 / 52,265 / 1,164 µs. Set both or neither |
 | transparent hugepages off | node | the kernel stops building large pages in the background | mixed: round 6 idle max 632 → 286 µs; round 4 idle max 498 → 1,180 µs (p99.99 67.01 → 53.15 µs) |
 | a ~1 kHz keep-alive on sparse, latency-critical streams | application | a lost frame is noticed within a millisecond, not at Aeron's next heartbeat (100 ms) | not A/B'd: one lost ping cost 134 ms (Azure round 5) |
@@ -197,7 +197,7 @@ on different ports.
   the host on the NIC's clock ([time sync](../deploy/clocks.md#set-up-time-sync)).
 - **Media receive timestamps** (`media-rcv-ts-offset=reserved` on a
   subscription). One run (Graviton G3, DPDK): p50 within 0.07 µs of without
-  at every point; idle max 153 against 79 µs; one rep a point reached
+  at idle and every steady rate; idle max 153 against 79 µs; one rep a point reached
   152–183 µs ([G3](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#graviton5-c9g2xlarge-round-g3--best-measured-p50--p9999--max)).
   Repeat before relying on it.
 - **Your own code:** `quanta` for durations, `CLOCK_REALTIME` for stamps

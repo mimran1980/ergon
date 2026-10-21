@@ -66,7 +66,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | spot instance | spare AWS capacity, sold cheaper; AWS can take it back | a `c9g.2xlarge` pair: $0.306 spot against $0.696 on demand an hour ([cost](../deploy/benchmarks.md#cost-per-hour)) |
 | x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | Graviton5 had the lowest latency measured; its median lead is not proven ([benchmarks](../deploy/benchmarks.md)) |
 | SMT, hyperthread, sibling, vCPU | SMT runs two hyperthreads (siblings) on one core. A vCPU is a hyperthread on x86, a whole core on Graviton (no SMT) | on x86, leave each busy core's sibling idle |
-| bare metal | an instance with no hypervisor | `c7i.metal-24xl`, one round: lower max under load, but an 845 µs idle max; 6 times a `c7i.4xlarge` pair's price |
+| bare metal | an instance with no hypervisor | `c7i.metal-24xl`, round 4: DPDK max 103 µs at 1 M msgs/s, 845 µs idle; 6 times a `c7i.4xlarge` pair's price |
 | round trip (ping-pong) | one message out and its reply back | every latency here is a round trip |
 | rep | one repeat of a run | p50 and p99.99 are the median of 5 reps |
 | NAK, retransmit, drop, short send | the receiver asking for a resend; a frame sent again; a packet the NIC threw away; a send that put out less than asked | any one makes the rep lossy |
