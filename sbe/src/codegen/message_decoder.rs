@@ -14,15 +14,16 @@ use crate::ir::{ByteOrder, Presence, PrimitiveType};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, acting_accessors, enum_uses_null_as_option, field_has_conversion_free,
-    named_accessor_ident, owner_accessor_names, resolve_field_ident, tail_accessor_ident,
+    DECODER_RESERVED, FixedArrayTextKind, acting_accessors, enum_uses_null_as_option,
+    field_has_conversion_free, fixed_array_text_kind, named_accessor_ident, owner_accessor_names,
+    resolve_field_ident, tail_accessor_ident,
 };
 use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
 use super::runtime::{
     constant_value_expr, deprecated_attr_tokens, doc_attr_tokens, emit_field_consts,
-    schema_marker_ident, to_pascal_case, to_snake_case,
+    float_null_check, schema_marker_ident, to_pascal_case, to_snake_case,
 };
 use super::tail_stages::generate_decoder_consuming_stages;
 
@@ -67,17 +68,7 @@ pub(crate) fn generate_message_decoder(
     // Prefer the resolved message block length (includes schema-declared
     // padding via `blockLength="…"`). Fall back to a tight field-span only if
     // resolve left it zero (should not happen for real messages).
-    // Constant fields have zero wire footprint; skip them so block_length stays
-    // 0 for constant-only messages (e.g. value_ref MsgTwo–MsgFive).
-    let computed_block_length = msg
-        .fields
-        .iter()
-        .filter(|f| f.presence != Presence::Constant)
-        .fold(0, |acc, f| {
-            let size = f.field_type.size();
-            acc.max(f.offset + size)
-        });
-    let block_length = msg.block_length.max(computed_block_length);
+    let block_length = msg.block_length.max(fixed_extent(&msg.fields));
 
     let header_pascal = to_pascal_case(header_type);
     let (header_bl, header_ti, header_si, header_vr, header_ti_constant, header_si_constant) = {
@@ -147,7 +138,7 @@ pub(crate) fn generate_message_decoder(
     let _header_bl_ident = syn::Ident::new(&header_bl, proc_macro2::Span::call_site());
     let _header_ti_ident = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
     let _header_si_ident = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
-    let _header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
+    let header_vr_ident = syn::Ident::new(&header_vr, proc_macro2::Span::call_site());
 
     let sealed_path = &gen_ctx.sealed_path;
 
@@ -262,14 +253,15 @@ pub(crate) fn generate_message_decoder(
             // the constant would be a dangerous lie. Use EncodedLength instead.
             quote::quote! {}
         } else {
-            let max_doc = " Upper bound of any encoded form of this message (header + body). \
-                 Prefer exact sizing via `Encoder::compute_length()` / the staged \
-                 `*EncodedLength` builder when the message has groups or var-data; \
-                 a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
-                 constant is a true fixed upper bound you intend to use.";
-            let max_doc_lit = syn::LitStr::new(max_doc, proc_macro2::Span::call_site());
+            let max_doc = " Size of one encoding that has exactly one entry per group and each \
+                 var-data field at its schema `maxLength` (0 when the schema declares none). \
+                 An upper bound only when the message has no groups and every var-data field \
+                 declares a `maxLength`. Otherwise size exactly with \
+                 `Encoder::compute_length()` / the staged `*EncodedLength` builder; a \
+                 stack `[0u8; Self::MAX_ENCODED_LENGTH]` is then too small.";
+            let max_doc = super::runtime::doc_lines_tokens(max_doc);
             quote::quote! {
-                #[doc = #max_doc_lit]
+                #max_doc
                 pub const MAX_ENCODED_LENGTH: usize = #max_encoded_lit;
                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             }
@@ -562,6 +554,7 @@ pub(crate) fn generate_message_decoder(
     let taken_accessor_names = owner_accessor_names(
         &msg.fields,
         conversions,
+        domain_types,
         DECODER_RESERVED,
         msg.groups
             .iter()
@@ -687,6 +680,42 @@ pub(crate) fn generate_message_decoder(
                             #elements
                         }
                     });
+                    if prim_size == 1
+                        && let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                        && let Some(as_str) = named_accessor_ident(
+                            &format!("{fname_snake}_as_str"),
+                            &taken_accessor_names,
+                        )
+                    {
+                        let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                        let ascii = matches!(kind, FixedArrayTextKind::Ascii);
+                        let absent = if since > 0 {
+                            quote::quote! {
+                                if self.acting_version < #since_lit
+                                    || #offset_end_lit > self.acting_block_length
+                                {
+                                    return Ok("");
+                                }
+                            }
+                        } else {
+                            quote::quote! {
+                                if #offset_end_lit > self.acting_block_length {
+                                    return Ok("");
+                                }
+                            }
+                        };
+                        impl_body.extend(quote::quote! {
+                            /// This fixed text field with trailing NUL padding removed.
+                            #[inline]
+                            pub fn #as_str(&self) -> Result<&str, sbe_rt::DecodeError> {
+                                #absent
+                                let start = self.offset + #offset_lit;
+                                let bytes = &self.buf[start..start + #len_lit];
+                                sbe_rt::decode_fixed_text(#field_lit, bytes, #ascii)
+                            }
+                        });
+                    }
                     // Destination-buffer copy for byte-width arrays (Java getVehicleCode(byte[])).
                     if prim_size == 1 {
                         let copy_ident = syn::Ident::new(
@@ -713,9 +742,7 @@ pub(crate) fn generate_message_decoder(
                         let null_val = f.null_value.unwrap_or(0);
                         let null_check_expr =
                             if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
-                                // Any IEEE NaN is null (matches sbe-tool is_nan()).
-                                let _ = null_val;
-                                "val.is_nan()".to_string()
+                                float_null_check(*prim, f.null_value)
                             } else {
                                 format!("val == {null_val}_u64 as {r_type}")
                             };
@@ -962,13 +989,12 @@ pub(crate) fn generate_message_decoder(
                         });
                     }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
-                        // One name for the decoder's boolean getter at every
-                        // shape and location: `try_*` means fallible decode.
-                        // `{field}_bool` is the *encoder setter*, so using it
-                        // for a getter too collided on meaning, and naming the
-                        // two shapes differently is what let the domain DTO
-                        // call an accessor that did not exist.
-                        let fname_bool = quote::format_ident!("try_{}_bool", fname_snake);
+                        // One name for the boolean getter at every shape and
+                        // location, matching the `{field}_bool` encoder setter
+                        // as every other getter/setter pair does. Naming the
+                        // two shapes differently is what once let the domain
+                        // DTO call an accessor that did not exist.
+                        let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         impl_body.extend(quote::quote! {
                             /// Returns `Some(true)` / `Some(false)` for valid
                             /// boolean values, or `None` when the field is absent
@@ -1021,7 +1047,7 @@ pub(crate) fn generate_message_decoder(
                         impl_body.extend(raw_body);
                     }
                     if crate::structured_ir::is_bool_value_enum(elements, enum_name) {
-                        let fname_bool = quote::format_ident!("try_{}_bool", fname_snake);
+                        let fname_bool = quote::format_ident!("{}_bool", fname_snake);
                         // `null_as_option` makes the raw enum accessor return
                         // `Option<T>`, so `.as_bool()` cannot be called on it
                         // directly. The contract is unchanged — `NullVal` is
@@ -1129,7 +1155,7 @@ pub(crate) fn generate_message_decoder(
         .map(|g| {
             let raw = to_pascal_case(&g.name);
             if multi_message {
-                format!("{}{}", &name, raw)
+                format!("{}{}", name, raw)
             } else {
                 raw
             }
@@ -1414,31 +1440,48 @@ pub(crate) fn generate_message_decoder(
             });
         }
         let mut offset = body_end;
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.#header_vr_ident() as u64,
+        )?;
     });
 
-    // Group dimension checks
+    // Group dimension checks. Both the tailed skip and the fixed-stride
+    // multiply use the dimension header's block length and the frame's
+    // acting version. The compiled stride at version 0 rejects a valid
+    // extension (the next tail is read out of the padding) and accepts a
+    // wire block length of 0 when slack bytes cover the compiled width.
     for g in &msg.groups {
-        let (dim_name, dim_size, _, count_field) = get_dimension_info(elements, &g.dimension_type);
+        let (dim_name, dim_size, bl_field, count_field) =
+            get_dimension_info(elements, &g.dimension_type);
         let g_snake = to_snake_case(&g.name);
         let ds_lit = syn::LitInt::new(&dim_size.to_string(), proc_macro2::Span::call_site());
         let dn_ident = syn::Ident::new(&dim_name, proc_macro2::Span::call_site());
         let cf_ident = syn::Ident::new(&count_field, proc_macro2::Span::call_site());
-        let ebl_lit = syn::LitInt::new(
-            &g.effective_block_length().to_string(),
-            proc_macro2::Span::call_site(),
-        );
+        let bf_ident = syn::Ident::new(&bl_field, proc_macro2::Span::call_site());
         let has_tails = !g.groups.is_empty() || !g.var_data.is_empty();
-        let entry_dec_ident = {
+        let (entry_dec_ident, group_dec_ident) = {
             let raw = to_pascal_case(&g.name);
             let unique = if multi_message {
                 format!("{name}{raw}")
             } else {
                 raw
             };
-            syn::Ident::new(
-                &format!("{unique}EntryDecoder"),
-                proc_macro2::Span::call_site(),
+            (
+                syn::Ident::new(
+                    &format!("{unique}EntryDecoder"),
+                    proc_macro2::Span::call_site(),
+                ),
+                syn::Ident::new(&format!("{unique}Decoder"), proc_macro2::Span::call_site()),
             )
+        };
+        let wire_block = quote::quote! {
+            let (count, group_block_length) = sbe_rt::checked_group_dimensions(
+                #g_snake,
+                dim.#cf_ident() as u64,
+                dim.#bf_ident() as u64,
+                #group_dec_ident::min_readable_fixed_extent(acting_version),
+            )?;
         };
         if has_tails {
             verify_stmts.push(quote::quote! {
@@ -1451,13 +1494,7 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = match sbe_rt::checked_group_count(
-                        "numInGroup",
-                        dim.#cf_ident() as u64,
-                    ) {
-                        Ok(count) => count,
-                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-                    };
+                    #wire_block
                     let mut entry_offset = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
@@ -1468,7 +1505,7 @@ pub(crate) fn generate_message_decoder(
                         }
                     };
                     for _ in 0..count {
-                        match #entry_dec_ident::skip(buf, entry_offset, #ebl_lit, 0) {
+                        match #entry_dec_ident::skip(buf, entry_offset, group_block_length, acting_version) {
                             Ok(next) => entry_offset = next,
                             Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
                         }
@@ -1487,13 +1524,7 @@ pub(crate) fn generate_message_decoder(
                     }
                     let bytes: [u8; #ds_lit] = read_bytes::<#ds_lit>(buf, offset);
                     let dim = #dn_ident(bytes);
-                    let count = match sbe_rt::checked_group_count(
-                        "numInGroup",
-                        dim.#cf_ident() as u64,
-                    ) {
-                        Ok(count) => count,
-                        Err(e) => return Err(sbe_rt::VerifyError::DecodeError(e)),
-                    };
+                    #wire_block
                     let dim_end = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
@@ -1503,7 +1534,7 @@ pub(crate) fn generate_message_decoder(
                             });
                         }
                     };
-                    let entries = match count.checked_mul(#ebl_lit) {
+                    let entries = match count.checked_mul(group_block_length) {
                         Some(v) => v,
                         None => {
                             return Err(sbe_rt::VerifyError::MessageTooShort {
@@ -1705,13 +1736,10 @@ pub(crate) fn generate_message_decoder(
                 &self.decoder.buf[end..]
             }
             #meta_bytes
-            /// Schema version from the message header (or wrap args), not the
-            /// compiled schema constant. Fields with `sinceVersion` and optional
-            /// presence depend on this value.
+            /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
-            /// Block length from the wire header / wrap args. Tail offsets use
-            /// this acting length, not only the compiled `BLOCK_LENGTH`.
+            /// Block length from the header or wrap args, which tail offsets use.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
@@ -1912,7 +1940,7 @@ pub(crate) fn vardata_text_helpers(
     } else {
         "The wire bytes must be valid UTF-8."
     };
-    let safety_lit = syn::LitStr::new(safety_note, span);
+    let safety_note = super::runtime::doc_lines_tokens(safety_note);
     let unchecked = str_unchecked.map(|str_unchecked| {
         quote::quote! {
             /// View this text var-data field as `&str` without character encoding
@@ -1920,7 +1948,7 @@ pub(crate) fn vardata_text_helpers(
             ///
             /// # Safety
             ///
-            #[doc = #safety_lit]
+            #safety_note
             #[inline]
             pub unsafe fn #str_unchecked(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_ident()?;

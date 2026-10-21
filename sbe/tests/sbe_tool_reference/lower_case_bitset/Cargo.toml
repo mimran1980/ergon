@@ -1,0 +1,12 @@
+[package]
+name = "parity_lower_case_bitset"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "lower case bitset"
+edition = "2021"
+
+[lib]
+name = "parity_lower_case_bitset"
+path = "src/lib.rs"
+
+[workspace]

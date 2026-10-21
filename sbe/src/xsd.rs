@@ -11,7 +11,7 @@
 //!
 //! # Relationship to [`crate::parse`]
 //!
-//! [`parse`](crate::parse) is **always on** and rejects malformed XML, a bad
+//! [`parse`] is **always on** and rejects malformed XML, a bad
 //! root, unexpected elements, and unknown attributes on its own. This module
 //! is an **opt-in, deliberately stricter** gate for schema authors; it is
 //! not a prerequisite for parsing.

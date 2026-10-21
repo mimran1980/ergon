@@ -4,9 +4,12 @@
 //! Rust client talks to the actual RFQ state machine — not the Echo
 //! service.
 //!
-//! Requires the cookbook RFQ cluster running as leader. Launch it:
+//! Requires the cookbook RFQ cluster running as leader. Launch it on Java 25
+//! (17 or newer; the book's "Java for Archive and Cluster" page has the
+//! production options):
 //!   cd aeron-cookbook-code && ./gradlew :rfq:cluster:installDist
 //!   java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED \
+//!     --add-opens java.base/java.util.zip=ALL-UNNAMED \
 //!     -cp 'rfq/cluster/build/install/cluster/lib/*' com.aeroncookbook.rfq.ClusterApp
 //!
 //! Then: RFQ_AERON_DIR=<dir> cargo run --example rfq_roundtrip

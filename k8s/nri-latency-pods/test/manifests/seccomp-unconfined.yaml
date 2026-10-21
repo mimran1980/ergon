@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 3, refused: seccomp.ergon.io: "unconfined". PSS Baseline forbids an
+# explicit Unconfined profile and the plugin refuses it by default. The
+# message names io-uring as the fix.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seccomp-unconfined
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    seccomp.ergon.io/app: "unconfined"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

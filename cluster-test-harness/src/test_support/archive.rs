@@ -1,9 +1,9 @@
 //! Embedded archive media driver, ported from rusteron-archive/testing.rs.
 
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 
-use super::jar;
+use super::{jar, jvm};
 
 /// A Java `ArchivingMediaDriver` child process.
 pub struct EmbeddedArchiveDriver {
@@ -18,10 +18,8 @@ impl EmbeddedArchiveDriver {
         let _ = std::fs::create_dir_all(&aeron_dir);
         let aeron_all = jar::find_jar("aeron-all-");
 
-        let process = Command::new("java")
+        let process = jvm::command()
             .args([
-                "--add-opens",
-                "java.base/jdk.internal.misc=ALL-UNNAMED",
                 "-cp",
                 &aeron_all.display().to_string(),
                 "io.aeron.archive.ArchivingMediaDriver",

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pod C: a plain pod that does not ask for the plugin. It must start even when
+# the plugin is down.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: c
+  namespace: ergon-e2e
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 10m
+          memory: 32Mi

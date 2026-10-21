@@ -34,6 +34,33 @@ pub trait ControlledEgressListener {
     /// Application message from the cluster. Return the desired poll action.
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]) -> ControlledPollAction;
 
+    /// [`Self::on_message`] plus the Aeron header's reserved value.
+    ///
+    /// The default calls [`Self::on_message`] and ignores `reserved_value`.
+    fn on_message_with_reserved_value(
+        &mut self,
+        cluster_session_id: i64,
+        timestamp: i64,
+        buffer: &[u8],
+        reserved_value: i64,
+    ) -> ControlledPollAction {
+        let _ = reserved_value;
+        self.on_message(cluster_session_id, timestamp, buffer)
+    }
+
+    /// A frame this client does not decode. The default returns [`ControlledPollAction::Continue`].
+    fn on_extension_message(
+        &mut self,
+        acting_block_length: u16,
+        template_id: u16,
+        schema_id: u16,
+        acting_version: u16,
+        buffer: &[u8],
+    ) -> ControlledPollAction {
+        let _ = (acting_block_length, template_id, schema_id, acting_version, buffer);
+        ControlledPollAction::Continue
+    }
+
     /// Session lifecycle event (connect result, state change). Default: no-op.
     fn on_session_event(
         &mut self,
@@ -121,17 +148,22 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<ControlledPollAction, ClusterError> {
         let frag = match Fragment::decode(data)? {
             Some(f) => f,
-            None => return Ok(ControlledPollAction::Continue),
+            None => return self.dispatch_extension(data),
         };
-        self.dispatch_fragment(frag)
+        self.dispatch_fragment(frag, 0)
     }
 
-    /// Dispatch a pre-decoded [`Fragment`]. Use when the caller already
-    /// decoded (e.g. one decode shared between state tracking and dispatch
-    /// on the poll path).
+    /// Dispatch a pre-decoded [`Fragment`]. `reserved_value` is the Aeron
+    /// header's reserved value, or 0 when the caller has no header.
     #[inline]
-    pub(crate) fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<ControlledPollAction, ClusterError> {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_controlled(frag)));
+    pub(crate) fn dispatch_fragment(
+        &mut self,
+        frag: Fragment<'_>,
+        reserved_value: i64,
+    ) -> Result<ControlledPollAction, ClusterError> {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.dispatch_controlled(frag, reserved_value)
+        }));
         match result {
             Ok(r) => r,
             Err(_) => Err(crate::ClusterError::ListenerPanicked {
@@ -140,7 +172,33 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
         }
     }
 
-    fn dispatch_controlled(&mut self, frag: Fragment<'_>) -> Result<ControlledPollAction, ClusterError> {
+    /// An unknown template. Continue when `data` has no SBE header.
+    pub(crate) fn dispatch_extension(&mut self, data: &[u8]) -> Result<ControlledPollAction, ClusterError> {
+        let Some(view) = crate::fragment::extension_view(data) else {
+            return Ok(ControlledPollAction::Continue);
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.listener.on_extension_message(
+                view.acting_block_length,
+                view.template_id,
+                view.schema_id,
+                view.acting_version,
+                view.payload,
+            )
+        }));
+        match result {
+            Ok(action) => Ok(action),
+            Err(_) => Err(ClusterError::ListenerPanicked {
+                context: "controlled extension",
+            }),
+        }
+    }
+
+    fn dispatch_controlled(
+        &mut self,
+        frag: Fragment<'_>,
+        reserved_value: i64,
+    ) -> Result<ControlledPollAction, ClusterError> {
         Ok(match frag {
             Fragment::Message {
                 cluster_session_id,
@@ -152,7 +210,8 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 {
                     return Ok(ControlledPollAction::Continue);
                 }
-                self.listener.on_message(cluster_session_id, timestamp, payload)
+                self.listener
+                    .on_message_with_reserved_value(cluster_session_id, timestamp, payload, reserved_value)
             }
             Fragment::SessionEvent {
                 correlation_id,
@@ -161,6 +220,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 leader_member_id,
                 code,
                 detail,
+                leader_heartbeat_timeout_ns: _,
             } => {
                 if self
                     .expected_session_id
@@ -176,7 +236,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                     code,
                     detail,
                 );
-                ControlledPollAction::Continue
+                ControlledPollAction::Commit
             }
             Fragment::NewLeader {
                 cluster_session_id,
@@ -196,7 +256,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                     leader_member_id,
                     ingress_endpoints,
                 );
-                ControlledPollAction::Continue
+                ControlledPollAction::Commit
             }
             Fragment::Challenge {
                 correlation_id,
@@ -211,7 +271,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                 }
                 self.listener
                     .on_challenge(correlation_id, cluster_session_id, encoded_challenge);
-                ControlledPollAction::Continue
+                ControlledPollAction::Commit
             }
             Fragment::AdminResponse {
                 cluster_session_id,
@@ -235,7 +295,7 @@ impl<L: ControlledEgressListener> ControlledEgressAdapter<L> {
                     message,
                     payload,
                 );
-                ControlledPollAction::Continue
+                ControlledPollAction::Commit
             }
         })
     }

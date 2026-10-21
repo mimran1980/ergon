@@ -29,6 +29,8 @@ pub(crate) enum Fragment<'a> {
         leader_member_id: i32,
         code: EventCode,
         detail: &'a str,
+        /// Leader heartbeat from the event, when the cluster sent one.
+        leader_heartbeat_timeout_ns: Option<i64>,
     },
     /// New leader elected.
     NewLeader {
@@ -104,6 +106,8 @@ impl<'a> Fragment<'a> {
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
                 let code = decoder.code();
+                // Read before `into_detail_as_str` consumes the decoder.
+                let leader_heartbeat_timeout_ns = decoder.leader_heartbeat_timeout_ns();
                 let (detail, _) = decoder.into_detail_as_str().map_err(|e| ClusterError::ProtocolError {
                     reason: format!("session event detail: {e}"),
                 })?;
@@ -114,6 +118,7 @@ impl<'a> Fragment<'a> {
                     leader_member_id: lmid,
                     code,
                     detail,
+                    leader_heartbeat_timeout_ns,
                 }
             }
             AnyMessage::NewLeaderEvent(decoder) => {
@@ -175,4 +180,33 @@ impl<'a> Fragment<'a> {
             _ => return Ok(None),
         }))
     }
+}
+
+/// Header fields of a frame the schema does not decode, for an extension hook.
+pub(crate) struct ExtensionView<'a> {
+    /// Acting block length from the SBE header.
+    pub acting_block_length: u16,
+    /// Template id from the SBE header.
+    pub template_id: u16,
+    /// Schema id from the SBE header.
+    pub schema_id: u16,
+    /// Acting schema version from the SBE header.
+    pub acting_version: u16,
+    /// Bytes after the 8-byte header.
+    pub payload: &'a [u8],
+}
+
+/// Split an 8-byte SBE header from its payload. `None` when `data` is shorter
+/// than a header; [`Fragment::decode`] already reports that as an error.
+pub(crate) fn extension_view(data: &[u8]) -> Option<ExtensionView<'_>> {
+    if data.len() < SBE_MESSAGE_HEADER_LENGTH {
+        return None;
+    }
+    Some(ExtensionView {
+        acting_block_length: u16::from_le_bytes([data[0], data[1]]),
+        template_id: u16::from_le_bytes([data[2], data[3]]),
+        schema_id: u16::from_le_bytes([data[4], data[5]]),
+        acting_version: u16::from_le_bytes([data[6], data[7]]),
+        payload: &data[SBE_MESSAGE_HEADER_LENGTH..],
+    })
 }

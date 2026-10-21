@@ -6,34 +6,16 @@ check-aeron-cluster:
     cd cluster && cargo clippy --all-targets -- -D warnings
     cd cluster && cargo test --lib
 
-# Cluster integration tests (requires Java 17+ and built Aeron jars — run
-# `just build-aeron-jars` once first; slow).
+# Cluster integration tests (requires a JDK 17 or newer, 25 recommended, and
+# built Aeron jars — run `just build-aeron-jars` once first; slow). The
+# harness runs $JAVA_HOME/bin/java, else java on PATH.
+# Cluster integration tests (Java 25 and built Aeron jars; slow)
 test-aeron-cluster-harness:
     cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 
-# Build Aeron cluster test jars (requires Java 17+; run once before test-harness tests).
+# Run once before the test-harness tests. Aeron's Gradle 9.7.1 runs on JDK 17
+# to 26 ($JAVA_HOME, else java on PATH): 27 fails with "Unsupported class
+# file major version 71".
+# Build the Aeron cluster test jars (JDK 17 to 26; 25 recommended)
 build-aeron-jars:
     cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar
-
-hash-aeron-jars:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); elif command -v shasum >/dev/null 2>&1; then SHA256=(shasum -a 256); else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
-    echo "# SHA-256 hashes of test jars" > cluster-test-harness/test-jars.sha256
-    for dir in aeron-all aeron-cluster aeron-archive; do
-      jar=$(find aeron/$dir/build/libs -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)
-      if [ -n "$jar" ]; then
-        "${SHA256[@]}" "$jar" | tee -a cluster-test-harness/test-jars.sha256
-      fi
-    done
-    echo "=== SHA-256 hashes saved to cluster-test-harness/test-jars.sha256 ==="
-
-check-aeron-jars:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just hash-aeron-jars
-    if ! git diff --exit-code cluster-test-harness/test-jars.sha256; then
-      echo "ERROR: Jar SHA-256 mismatch. Run 'just hash-aeron-jars' and commit." >&2
-      exit 1
-    fi
-    echo "OK: Jar hashes match committed."

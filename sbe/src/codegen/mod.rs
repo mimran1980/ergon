@@ -68,6 +68,7 @@ pub(crate) use message_header_template::*;
 pub(crate) mod nullification;
 pub(crate) use nullification::*;
 pub(crate) mod runtime;
+mod schema_dispatch;
 use quote::format_ident;
 pub(crate) use runtime::*;
 pub(crate) mod group_encoder;
@@ -252,7 +253,6 @@ impl GeneratedModuleSet {
     }
 
     /// Iterate modules in a stable order (write each to `OUT_DIR`).
-    #[must_use]
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
     }
@@ -378,7 +378,7 @@ impl Generator {
             Ok(())
         };
 
-        let schema_context = format!("schema '{}'", &schema.package);
+        let schema_context = format!("schema '{}'", schema.package);
         check("schemaId", u64::from(schema.id), schema_context.clone())?;
         check("version", u64::from(schema.version), schema_context)?;
 
@@ -551,16 +551,49 @@ impl Generator {
                 reason: format!("exceeds schema version {}", schema.version),
             });
         }
-        if version < schema.version
-            && (self.config.domain_objects
-                || !self.config.conversions.is_empty()
-                || !self.config.domain_types.is_empty())
+        if version >= schema.version {
+            return Ok(());
+        }
+        let reason = if self.config.domain_objects
+            || !self.config.conversions.is_empty()
+            || !self.config.domain_types.is_empty()
         {
-            return Err(GenerateError::InvalidConfiguration {
-                option: "encode_version".into(),
-                value: version.to_string(),
-                reason: "cannot drop members while generating domain objects or conversions".into(),
-            });
+            "cannot drop members while generating domain objects or conversions"
+        } else if self.config.source_traits {
+            "cannot drop members while generating source traits"
+        } else {
+            return Ok(());
+        };
+        Err(GenerateError::InvalidConfiguration {
+            option: "encode_version".into(),
+            value: version.to_string(),
+            reason: reason.into(),
+        })
+    }
+
+    /// Source trait names must not collide with a schema type, or the
+    /// generated module would define the name twice.
+    fn validate_source_traits(&self, schema: &Schema) -> Result<(), GenerateError> {
+        if !self.config.source_traits {
+            return Ok(());
+        }
+        let elements = partition_tokens(&schema.ir.tokens);
+        let occupied = occupied_type_names(&elements);
+        let multi = elements.messages.len() > 1;
+        for tokens in &elements.messages {
+            let msg = parse_message_structure(tokens, &elements);
+            for name in source_trait_names(&msg, multi) {
+                if occupied.contains(&name) {
+                    return Err(GenerateError::InvalidConfiguration {
+                        option: "source_traits".into(),
+                        value: name.clone(),
+                        reason: format!(
+                            "the generated trait `{name}` collides with the schema type of \
+                             that name"
+                        ),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -608,9 +641,11 @@ impl Generator {
         let effective = self.effective_domain_types(&[(schema, "")]);
         self.with_config_scope(|| {
             self.validate_header_values(schema)?;
+            validate_type_mappings(&self.config, &[&partition_tokens(&schema.ir.tokens)])?;
             self.validate_conversions(schema)?;
             self.validate_paths()?;
             self.validate_encode_version(schema)?;
+            self.validate_source_traits(schema)?;
             let mut modules = GeneratedModuleSet::default();
             let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective)?;
             modules.push(GeneratedModule {
@@ -641,9 +676,43 @@ impl Generator {
             self.validate_paths()?;
             for (schema, _) in schemas {
                 self.validate_encode_version(schema)?;
+                self.validate_source_traits(schema)?;
             }
             self.generate_multi_inner(schemas, &effective)
         })
+    }
+
+    /// Generate an opt-in cross-schema dispatcher alongside existing codecs.
+    ///
+    /// Each entry names a sibling module generated with dispatch enabled.
+    /// The returned module exposes AnySchemaMessage, whose variants wrap each
+    /// module's AnyMessage, and SchemaDecodeError. Unknown schema ids retain
+    /// the supplied frame in Other; as_bytes() forwards frames without allocating.
+    ///
+    /// Schema ids must be unique and headers must have identical layouts and
+    /// byte order, with a non-constant schemaId. This rejects ambiguous dispatch
+    /// instead of guessing a header layout. Existing codec generation is unaffected.
+    ///
+    /// # Errors
+    ///
+    /// [GenerateError] for an empty or ambiguous schema set, invalid or
+    /// colliding module/variant names, invalid headers, or disabled dispatch.
+    pub fn generate_schema_dispatch(
+        &self,
+        schemas: &[(&Schema, &str)],
+        module_name: &str,
+    ) -> Result<GeneratedModule, GenerateError> {
+        if !self.config.enable_dispatch {
+            return Err(GenerateError::InvalidConfiguration {
+                option: "schema_dispatch".into(),
+                value: module_name.into(),
+                reason: "schema modules must be generated with dispatch enabled".into(),
+            });
+        }
+        for (schema, _) in schemas {
+            self.validate_header_values(schema)?;
+        }
+        schema_dispatch::generate(schemas, module_name)
     }
 
     fn generate_multi_inner(
@@ -781,6 +850,9 @@ impl Generator {
             for (schema, _) in schemas.iter() {
                 union_elements.push((schema, partition_tokens(&schema.ir.tokens)));
             }
+            let elements: Vec<&crate::structured_ir::SchemaElements> =
+                union_elements.iter().map(|(_, e)| e).collect();
+            validate_type_mappings(&self.config, &elements)?;
             self.validate_conversions_union(&union_elements)?;
         }
 
@@ -1088,7 +1160,7 @@ impl Generator {
         writeln!(
             src,
             "/// Generated from SBE schema package `{}` id {} version {}.",
-            &schema.package, schema.id, schema.version
+            schema.package, schema.id, schema.version
         )
         .unwrap();
         // Lint allow list is intentionally narrow — do not re-add
@@ -1176,6 +1248,14 @@ impl Generator {
                 continue;
             }
             generate_enum(&mut src, enum_tokens);
+            if let Some(mapping) = self
+                .config
+                .enum_mappings
+                .iter()
+                .find(|m| m.sbe_enum == enum_tokens[0].name)
+            {
+                src.push_str(&enum_mapping_impl_tokens(enum_tokens, mapping).to_string());
+            }
             if self.config.has_hooks() {
                 let ctx = Self::build_enum_ctx(enum_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
@@ -1201,6 +1281,22 @@ impl Generator {
             }
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
+            if let Some(mapping) = self
+                .config
+                .composite_mappings
+                .iter()
+                .find(|m| m.composite == composite_tokens[0].name)
+            {
+                src.push_str(
+                    &composite_mapping_impl_tokens(
+                        composite_tokens,
+                        mapping,
+                        &self.config.enum_mappings,
+                        &self.config.composite_mappings,
+                    )
+                    .to_string(),
+                );
+            }
             if self.config.has_hooks() {
                 let ctx = Self::build_composite_ctx(composite_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
@@ -1303,6 +1399,18 @@ impl Generator {
                     self.config.all_enums_as_option,
                 );
                 src.push_str(&converter_ts);
+            }
+            if self.config.source_traits {
+                let source_ts = generate_source_traits(
+                    msg,
+                    &elements,
+                    ir.byte_order,
+                    multi,
+                    &ir.header_type,
+                    &conv_sels,
+                    domain_types,
+                );
+                src.push_str(&source_ts.to_string());
             }
             src.push('\n');
             if self.config.enable_meta_attributes {
@@ -1957,7 +2065,7 @@ mod tests {
             "the versioned set at offset ten must require its complete eleventh byte"
         );
         assert!(
-            source.contains("pub fn try_enabled_bool(&self) -> Result<Option<bool>,")
+            source.contains("pub fn enabled_bool(&self) -> Result<Option<bool>,")
                 && source.contains("InvalidBoolean"),
             "a versioned BooleanType group field must carry the typed bool accessor"
         );
@@ -2090,7 +2198,7 @@ mod tests {
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
         assert!(
-            src.contains("fn try_ts(") && src.contains("chrono::DateTime"),
+            src.contains("fn ts(") && src.contains("chrono::DateTime"),
             "should generate fallible concrete DateTime accessor for UTCTimestamp field"
         );
         assert!(
@@ -2384,7 +2492,7 @@ mod tests {
         // name stays as the wire-type accessor.
         let consumer_src = &collected[1].source;
         assert!(
-            consumer_src.contains("fn try_enabled_bool"),
+            consumer_src.contains("fn enabled_bool"),
             "with_bool_domain_type must produce bool getter in multi-schema; got:\n{consumer_src}",
         );
         Ok(())
@@ -2475,6 +2583,59 @@ mod tests {
         // Codec surface still present.
         assert!(lean.contains("struct PingDecoder"));
         assert!(lean.contains("struct PingEncoder"));
+        Ok(())
+    }
+
+    /// sbe-tool `RustUtilTest.generateRustLiteralsHappyPaths`, float cases, plus
+    /// NaN, a leading `+`, and values `-1.5` that look like `Enum.variant`.
+    #[test]
+    fn float_constant_literals() -> Result<(), Box<dyn std::error::Error>> {
+        use super::runtime::constant_value_expr;
+        use crate::ir::PrimitiveType::{Double, Float};
+        let cases = [
+            (Double, "Infinity", "f64::INFINITY"),
+            (Double, "+Infinity", "f64::INFINITY"),
+            (Double, "-Infinity", "-f64::INFINITY"),
+            (Float, "Infinity", "f32::INFINITY"),
+            (Float, "-Infinity", "-f32::INFINITY"),
+            (Float, "NaN", "f32::NAN"),
+            (Double, "NaN", "f64::NAN"),
+            (Float, "-1.5", "-1.5_f32"),
+            (Float, "-0.0", "-0.0_f32"),
+            (Double, "-1.5", "-1.5_f64"),
+            (Double, "-0.0", "-0.0_f64"),
+            (Float, "+2", "2.0_f32"),
+            (Double, "1e-7", "1e-7_f64"),
+        ];
+        for (prim, schema, rust) in cases {
+            assert_eq!(constant_value_expr(prim, schema), rust, "{prim:?} {schema}");
+            syn::parse_str::<syn::Expr>(rust)?;
+        }
+        Ok(())
+    }
+
+    /// A NaN null matches any NaN; any other null is compared with `==`.
+    #[test]
+    fn float_null_checks() -> Result<(), Box<dyn std::error::Error>> {
+        use super::runtime::float_null_check;
+        use crate::ir::PrimitiveType::{Double, Float};
+        let quiet = u64::from(f32::NAN.to_bits());
+        let payload = u64::from(0x7fc0_0001_u32);
+        assert_eq!(float_null_check(Float, None), "val.is_nan()");
+        assert_eq!(float_null_check(Float, Some(quiet)), "val.is_nan()");
+        assert_eq!(float_null_check(Float, Some(payload)), "val.is_nan()");
+        assert_eq!(
+            float_null_check(Double, Some(f64::NAN.to_bits())),
+            "val.is_nan()"
+        );
+        assert_eq!(
+            float_null_check(Float, Some(0x7f80_0000)),
+            "val == f32::from_bits(2139095040u32)"
+        );
+        assert_eq!(
+            float_null_check(Double, Some((-1.0_f64).to_bits())),
+            format!("val == f64::from_bits({})", (-1.0_f64).to_bits())
+        );
         Ok(())
     }
 }

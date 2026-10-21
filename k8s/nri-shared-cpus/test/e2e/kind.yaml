@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One schedulable control-plane node. The kubelet runs the static CPU manager
+# with reservedSystemCPUs 0,1 (the shared housekeeping set for this test).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ergon-nri-e2e
+containerdConfigPatches:
+  # Turn on containerd's NRI default validator so required-plugins works
+  # (containerd >= 2.2). If the node image has no NRI section this is
+  # inert, and the e2e records that.
+  - |
+    [plugins."io.containerd.nri.v1.nri".default_validator]
+      enable = true
+  # Make sure NRI itself is enabled.
+  - |
+    [plugins."io.containerd.nri.v1.nri"]
+      disable = false
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ergon.io/shared-cpus=true"
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        cpuManagerPolicy: static
+        reservedSystemCPUs: "0,1"
+        # Keep the reconcile period short so the e2e can observe the kubelet
+        # re-writing cpusets without waiting 10 s per step.
+        cpuManagerReconcilePeriod: "2s"
+        # Publish node capacity quickly. The device plugin's size changes when
+        # the ConfigMap changes (step 17), and the default node status period
+        # is minutes, so the e2e would wait or flake.
+        nodeStatusUpdateFrequency: "5s"
+        nodeStatusReportFrequency: "5s"

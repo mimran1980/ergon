@@ -74,9 +74,9 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                     for e in &domain_entries {
                         g.add(|mut entry| {
                             entry
-                                .try_price(e.price)
+                                .price(e.price)
                                 .unwrap()
-                                .try_qty(e.qty)
+                                .qty(e.qty)
                                 .unwrap()
                                 .side(e.side);
                             Ok(())
@@ -140,9 +140,9 @@ fn bench_group_encode_decimal(c: &mut Criterion) {
                             for e in entries {
                                 g.add(|mut entry| {
                                     entry
-                                        .try_price(e.price)
+                                        .price(e.price)
                                         .unwrap()
-                                        .try_qty(e.qty)
+                                        .qty(e.qty)
                                         .unwrap()
                                         .side(e.side);
                                     Ok(())

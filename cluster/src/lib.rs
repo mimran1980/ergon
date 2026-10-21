@@ -120,6 +120,8 @@ pub mod config;
 pub mod controlled;
 /// Credential supplier traits for challenge-response auth.
 pub mod credentials;
+/// Session-message header applied to a raw publication.
+pub mod decorator;
 /// Egress adapter + listener dispatch for session and app messages.
 pub mod egress;
 /// Multi-member ingress endpoint maps (`0=host:port,…`).
@@ -133,6 +135,8 @@ pub(crate) mod fragment;
 pub mod idle;
 /// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).
 pub mod poller;
+/// Connect-protocol constants shared by the blocking and polled handshakes.
+mod protocol;
 /// [`SessionState`] machine for connected / new-leader / closed.
 pub mod state;
 /// Aeron channel URI helpers (`AeronUriStringBuilder`).
@@ -142,9 +146,10 @@ pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim, ConnectStep};
 pub use config::SessionBuilder;
 pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
+pub use decorator::IngressSessionDecorator;
 pub use egress::{EgressAdapter, EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
-pub use error::{AeronErrorSource, ClusterError, PublicationFailure};
+pub use error::{AeronErrorSource, ClusterError, ClusterEvent, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
 pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;

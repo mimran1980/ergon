@@ -10,20 +10,27 @@ import 'just/samples.just'
 import 'just/aeron.just'
 import 'just/housekeeping.just'
 import 'just/book.just'
+import 'just/dpdk.just'
+import 'just/nri.just'
 
 # Default: list available commands.
+[private]
 default:
     @just --list
 
 # ── build ─────────────────────────────────────────────────────────────────
 
-# Compile product workspace + sample harnesses (no tests, no Java jars).
+# Compile product workspace + sample harnesses, then check that rusteron, the
+# aeron submodule and any jars built in it are one Aeron release (no tests, no Java jars).
 build:
-    cargo build --workspace --all-features --exclude ergo-aeron-cluster-test-harness
+    cargo build --workspace --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness
+    cargo build -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets
     cargo build -p ergo-aeron-cluster
     cd samples/exchange-example && cargo build
     cd samples/cluster-ha-orderbook && cargo build
     cd samples/cluster-rfq && cargo build
+    # Last, so cargo has fetched the rusteron sources the offline check reads.
+    ./scripts/check-aeron-version.sh
 
 # ── check ─────────────────────────────────────────────────────────────────
 
@@ -32,10 +39,22 @@ policy:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
+    bash scripts/tests/test-lab-snapshot.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-packaged-cluster-features.sh
+    bash scripts/tests/test-bench-historic.sh
+    bash scripts/tests/test-stale-deny-ignores.sh
+    bash scripts/tests/test-cluster-ergo-sbe-features.sh
+    bash scripts/tests/test-book-content.sh
+    bash scripts/tests/test-rerun-if-changed.sh
+    bash scripts/tests/test-aeron-version.sh
+    bash scripts/tests/test-publish-set.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
+    ./scripts/check-stale-deny-ignores.sh
+    ./scripts/check-cluster-ergo-sbe-features.sh
+    ./scripts/check-rerun-if-changed.sh
+    ./scripts/check-publish-set.sh
 
 # Every cheap correctness gate in one pass — the ones that otherwise only run
 # inside `just release`.
@@ -51,6 +70,7 @@ policy:
 #
 # Run this before starting a release. It takes minutes, not hours, and every
 # entry either passes or tells you exactly what drifted.
+# Every cheap release gate in one pass: run before `just release`
 preflight:
     # Cheapest gate, and one that actually bit: the 0.1.17 release aborted at
     # step 2/8 on sample-crate fmt drift that had been sitting on the branch.
@@ -60,16 +80,25 @@ preflight:
     cargo fmt --all --check
     cd samples/exchange-example && cargo fmt --check
     @echo "=== clippy (same workspace set as CI) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
     @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
+    bash scripts/tests/test-lab-snapshot.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-generated-public-api.sh
     bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/tests/test-packaged-cluster-features.sh
+    bash scripts/tests/test-bench-historic.sh
+    bash scripts/tests/test-stale-deny-ignores.sh
+    bash scripts/tests/test-cluster-ergo-sbe-features.sh
+    bash scripts/tests/test-book-content.sh
+    bash scripts/tests/test-rerun-if-changed.sh
+    bash scripts/tests/test-aeron-version.sh
+    bash scripts/tests/test-publish-set.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -84,6 +113,11 @@ preflight:
     ./scripts/regenerate-codegen-matrix-fixture.py --check
     @echo "=== config ==="
     ./scripts/check-mutation-config.sh
+    ./scripts/check-stale-deny-ignores.sh
+    ./scripts/check-cluster-ergo-sbe-features.sh
+    ./scripts/check-rerun-if-changed.sh
+    ./scripts/check-aeron-version.sh
+    ./scripts/check-publish-set.sh
     @echo ""
     @echo "audit: all cheap gates pass"
 
@@ -91,9 +125,11 @@ preflight:
 check-local: policy
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    cargo test -p ergon-md-dpdk -- --test-threads=1
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
     cd samples/exchange-example && cargo fmt --check
@@ -105,7 +141,7 @@ check-local: policy
     cd samples/cluster-rfq && cargo fmt --check
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
-# Product-only gate: fmt, clippy, and tests for the two publishable prototype crates only.
+# Product-only gate: fmt, clippy, and tests for ergo-sbe and ergo-aeron-cluster only (the other published crates are in check-local and test).
 check-products: policy
     ./scripts/regenerate-golden.sh --check
     cargo fmt --all --check
@@ -127,11 +163,13 @@ check-products: policy
 # generated flyweight API, which is the artifact users actually read, so a
 # broken intra-doc link or a link to a type the generator does not emit can only
 # be caught here.
+# Strict rustdoc of a generated consumer crate
 check-generated-rustdoc:
     RUSTDOCFLAGS='-D warnings -D rustdoc::broken_intra_doc_links' cargo doc --manifest-path samples/sbe-feature-tour/Cargo.toml --no-deps
 
 # Verify that all public structs/enums in the generated golden have doc comments.
 # Uses syn-based parsing (see sbe/tests/generated_docs_test.rs).
+# Every public struct and enum in the generated golden has a doc comment
 check-generated-docs:
     cargo test -p ergo-sbe --test generated_docs_test --all-features -- --test-threads=1
 
@@ -152,12 +190,21 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
+    ./scripts/check-publish-set.sh
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-clock --no-deps
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
+    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
+    # One multi-package dry run, so ergon-io and ergon-md-dpdk verify against
+    # the packaged ergon-clock and ergon-tune: none of the four is on
+    # crates.io at this version until the release publishes them.
+    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
     bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
     @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
     bash scripts/measure-codegen-cold-path.sh
-    @echo "release-check: product crates pass, benches compile, ergo-sbe dry-run publish OK"
+    @echo "release-check: product crates pass, benches compile, dry-run publishes OK"
 
 # Release when the benchmark gates were already proven on a QUIET machine.
 #
@@ -178,6 +225,7 @@ release-check: test check-coverage check-generated-rustdoc
 #
 # Re-run the benches if you commit anything afterwards; the manifest check will
 # reject stale evidence rather than let it through.
+# Release with benchmark gates already proven on a quiet machine
 release-verified: _check-release-notes
     @echo "=== 0/8 confirm benchmark evidence exists for HEAD ==="
     bash scripts/package-bench-artifacts.sh /tmp/ergon-bench-evidence-precheck
@@ -192,6 +240,7 @@ release-verified: _check-release-notes
 # Runs the benchmark gates inline, ~40 min in, on a machine hot from the test
 # suite. If the tightest maintained ratio fails there, re-measure on an idle
 # machine before believing it, then use `just release-verified`.
+# Full release: test, bench, publish, tag, GitHub release, version bump
 release: _check-release-notes
     just clean
     just _release-pre
@@ -246,6 +295,11 @@ _release-post:
     bash scripts/check-packaged-cluster-features.sh --unpack
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
+    @echo "=== publish ergon-clock, ergon-tune, ergon-io, ergon-md-dpdk ==="
+    # Cargo publishes them in dependency order and waits for crates.io to
+    # list ergon-tune before it publishes ergon-io, and ergon-clock and
+    # ergon-tune before it publishes ergon-md-dpdk.
+    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk
     @echo "=== tag ==="
     just _tag
     @echo "=== GitHub release (with bench archives) ==="
@@ -269,19 +323,22 @@ audit:
 # Comprehensive test suite: unit, integration, doctests/rustdoc, Java cluster
 # lifecycle tests, sample tests, and benchmark compilation. Missing Java,
 # Gradle, jars, or another required dependency is a failure.
+# Everything: unit, integration, doctests, Java cluster, samples, bench compile
 test: policy
     @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
     @echo "=== 2/7 clippy (workspace + samples) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
+    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
     @echo "=== 3/7 unit + integration tests ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
     ./scripts/regenerate-codegen-matrix-fixture.py --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
     @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
     cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
@@ -308,7 +365,8 @@ test: policy
 
 # Workspace unit tests only.
 test-unit: policy
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
 
 # Every test gate: standard suite + Miri UB detection + fuzz corpus replay.
@@ -351,6 +409,7 @@ check-coverage:
 # mutants. This is a MANUAL gate — too slow for CI (~16 h with --jobs 1).
 # Run locally before landing codegen changes; use --jobs 1 to avoid
 # exhausting disk space with parallel build trees.
+# Mutation testing of parser, resolver and codegen (manual; about 16 h)
 check-mutation:
     ./scripts/check-mutation-config.sh
     cargo mutants --jobs 1
@@ -368,8 +427,9 @@ fmt:
 # Auto-fix: fmt + clippy --fix (same feature split as check).
 fix:
     just fmt
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness --fix --allow-dirty --allow-staged -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/exchange-example && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-rfq && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
@@ -383,12 +443,14 @@ fix:
 # Each invocation owns a unique result root, so the gate can only read estimates
 # produced by that same invocation.
 # Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
+# Head-to-head ergon vs sbe-tool benches; every ratio gated at 1.00 in both LTO profiles
 bench:
     ./scripts/run-sbe-bench.sh
 
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while
 # pre-fix ergon regressed because generated entry setters did not inline.
+# Group-codegen comparison against sbe-tool, both LTO profiles
 bench-groups:
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_bench
     cargo bench -p ergo-sbe-benchmarks --bench group_encode_decimal_bench
@@ -410,6 +472,7 @@ bench-historic-update:
 # order) — it has no sbe-tool arm, so it informs the lane guidance in the book
 # rather than gating a ratio. Both LTO profiles, because the cache changes
 # decoder size and inlining.
+# Non-gating codec matrix and offset/alignment diagnostics, both LTO profiles
 bench-diagnostics:
     cargo bench -p ergo-sbe-benchmarks --bench codec_matrix_bench
     cargo bench -p ergo-sbe-benchmarks --bench alignment_bench
@@ -426,6 +489,7 @@ bench-cold:
 # disassembly for the named perf-probe symbols, in both optimisation profiles.
 # Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
 # than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
+# Callgrind instruction counts and disassembly per probe; fails if ergon Ir/op exceeds sbe-tool
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 
@@ -433,11 +497,13 @@ bench-instructions:
 # pairs — currently `cluster_decode_session_event`, the pair carrying a
 # documented no-LTO-only wall-clock allowance (see check-bench-gate.sh).
 # Same Linux/Valgrind/llvm-objdump requirement and fail-closed contract.
+# Callgrind instruction counts for the cluster codec pairs (Linux + Valgrind)
 bench-cluster-instructions:
     ./scripts/run-cluster-instruction-probes.sh --all-profiles
 
 # Regenerate the two sbe-tool comparators the head-to-head benches measure
 # against, from the pinned simple-binary-encoding submodule.
+# Regenerate the sbe-tool comparators from the pinned submodule
 update-bench-reference:
     ./scripts/regenerate-sbe-benchmark-reference.sh
 
@@ -452,6 +518,14 @@ check-bench-reference:
 # absolute workspace paths. package-bench-artifacts expects:
 #   LTO    → <repo>/target/criterion
 #   no-LTO → <repo>/target/bench-no-lto/criterion
+#
+# Each profile is measured BENCH_REPEATS times (default 5), and every
+# invocation is snapshotted under `repeats/<k>/`. One invocation's confidence
+# interval is not the harness's resolution: identical code walked 3.5 % across
+# three invocations on 2026-10-20 while each run's own ratio CI was ±0.5 %.
+# The gate grades the envelope of the invocations, and a pair it cannot
+# separate establishes no winner rather than a breach.
+# Cluster codec benches, ergon vs sbe-tool, both LTO profiles
 bench-cluster:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -459,21 +533,39 @@ bench-cluster:
     lto_crit="$root/target/criterion"
     no_lto_crit="$root/target/bench-no-lto/criterion"
     no_lto_target="$root/target/bench-no-lto"
+    repeats="${BENCH_REPEATS:-5}"
     mkdir -p "$lto_crit" "$no_lto_crit"
     commit="$(git -C "$root" rev-parse HEAD)"
     rustc_v="$(rustc --version)"
     target="$(rustc -vV | sed -n 's/^host: //p')"
     run_id="cluster-$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$root" rev-parse --short HEAD)"
     stamp="$root/scripts/stamp-cluster-bench-manifest.sh"
+    snap="$root/scripts/snapshot-bench-repeat.sh"
+    # A stale snapshot from an earlier run would widen this run's envelope
+    # with foreign evidence; the gate refuses a mixed one, so clear it here.
+    rm -rf "$lto_crit/repeats" "$no_lto_crit/repeats"
     # LTO-on (release profile: lto=true, codegen-units=1)
-    CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
+    for k in $(seq 1 "$repeats"); do
+        echo "=== cluster LTO — invocation $k/$repeats ==="
+        # The Criterion home is shared with ergon-clock-bench, and Criterion
+        # leaves `new/` in place for groups this binary does not touch. The
+        # marker bounds the snapshot to what this invocation is about to write.
+        touch "$lto_crit/.bench-since"
+        CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
+        "$snap" "$lto_crit" "$k"
+    done
     "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
     # LTO-off — publish both profiles per the benchmark fairness matrix
-    CARGO_TARGET_DIR="$no_lto_target" \
-      CARGO_PROFILE_BENCH_LTO=false \
-      CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
-      CRITERION_HOME="$no_lto_crit" \
-      cargo bench -p ergo-aeron-cluster
+    for k in $(seq 1 "$repeats"); do
+        echo "=== cluster no-LTO — invocation $k/$repeats ==="
+        touch "$no_lto_crit/.bench-since"
+        CARGO_TARGET_DIR="$no_lto_target" \
+          CARGO_PROFILE_BENCH_LTO=false \
+          CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
+          CRITERION_HOME="$no_lto_crit" \
+          cargo bench -p ergo-aeron-cluster
+        "$snap" "$no_lto_crit" "$k"
+    done
     "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
     echo ""
     echo "=== Gate (LTO) ==="

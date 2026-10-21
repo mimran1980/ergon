@@ -2,6 +2,8 @@
 //!
 //! **Build-dep only:** codecs in `src/generated/rfq_codec.rs` (gitignored).
 
+// rustfmt skips the generated module: the build script rewrites it on every
+// regeneration.
 #[allow(
     dead_code,
     unused_imports,
@@ -17,4 +19,5 @@
     warnings
 )]
 #[path = "generated/rfq_codec.rs"]
+#[rustfmt::skip]
 pub mod rfq_codec;

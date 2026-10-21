@@ -259,7 +259,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 InvalidAscii { field: &'static str },
                 /// Boolean wire enum was `NullVal` or an unknown discriminant.
                 InvalidBoolean { field: &'static str, discriminant: u64 },
-                /// Domain `try_*` conversion failed.
+                /// A domain-type conversion failed.
                 DomainConversionFailed { field: &'static str, reason: &'static str },
             }
 
@@ -313,10 +313,38 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 GroupCountOverflow { maximum: u32, actual: u32 },
                 /// Checked arithmetic overflow in encoded length computation.
                 EncodedLengthOverflow,
-                /// Domain `try_*` conversion failed.
+                /// A domain-type conversion failed, as hand-written encode code
+                /// reports it. Generated encoders report `Conversion`.
                 DomainConversionFailed { field: &'static str, reason: &'static str },
                 /// Nested decode failure during encode/verify paths.
                 Decode(DecodeError),
+                /// `Some` of an optional field's null value (NaN for a float
+                /// without another `nullValue`), which reads back as `None`.
+                SomeNullValue { at: FieldPath },
+                /// A domain conversion refused the value at `at` (`None` from
+                /// a mapped setter's `?`).
+                Conversion { at: Option<FieldPath>, error: ConversionError },
+            }
+
+            impl EncodeError {
+                /// Add entry `index` of the group being encoded to the path.
+                #[cold]
+                #[must_use]
+                pub(crate) fn in_entry(self, index: usize) -> Self {
+                    match self {
+                        Self::SomeNullValue { at } => Self::SomeNullValue { at: at.in_entry(index) },
+                        Self::Conversion { at: Some(at), error } => Self::Conversion { at: Some(at.in_entry(index)), error },
+                        other => other,
+                    }
+                }
+            }
+
+            impl From<MappingError> for EncodeError {
+                /// A mapped setter's refusal, so `?` works in an encode closure.
+                #[inline]
+                fn from(error: MappingError) -> Self {
+                    Self::Conversion { at: None, error: ConversionError::Mapping(error) }
+                }
             }
 
             impl core::fmt::Display for EncodeError {
@@ -335,6 +363,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         Self::EncodedLengthOverflow => write!(f, "encoded length computation overflowed"),
                         Self::DomainConversionFailed { field, reason } => write!(f, "domain conversion failed for field {field}: {reason}"),
                         Self::Decode(e) => write!(f, "decode error: {e}"),
+                        Self::SomeNullValue { at } => write!(f, "field {at}: Some(null value) reads back as None"),
+                        Self::Conversion { at: Some(at), error } => write!(f, "domain conversion failed for field {at}: {error}"),
+                        Self::Conversion { at: None, error } => write!(f, "domain conversion failed: {error}"),
                     }
                 }
             }
@@ -343,6 +374,109 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
                     match self {
                         Self::Decode(e) => Some(e),
+                        Self::Conversion { error, .. } => Some(error),
+                        _ => None,
+                    }
+                }
+            }
+
+            /// Where an encoder refused a value: the field's schema path
+            /// (`fills.allocs.qty`) and its entry index in each group on the
+            /// way. `Display`: `fills[1].allocs[0].qty`.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub struct FieldPath {
+                field: &'static str,
+                entries: [u32; FieldPath::MAX_ENTRIES],
+                depth: u8,
+            }
+
+            impl FieldPath {
+                /// Entry indices kept, outermost first; deeper ones show as `[?]`.
+                pub const MAX_ENTRIES: usize = 3;
+
+                pub(crate) const fn new(field: &'static str) -> Self {
+                    Self { field, entries: [0; Self::MAX_ENTRIES], depth: 0 }
+                }
+
+                /// The groups and the field, in schema names joined by `.`.
+                #[must_use]
+                pub const fn field(&self) -> &'static str {
+                    self.field
+                }
+
+                /// The entry index in each group on the path, outermost first.
+                #[must_use]
+                pub fn entries(&self) -> &[u32] {
+                    &self.entries[..Self::MAX_ENTRIES.min(self.depth.into())]
+                }
+
+                fn in_entry(mut self, index: usize) -> Self {
+                    self.entries.rotate_right(1);
+                    self.entries[0] = u32::try_from(index).unwrap_or(u32::MAX);
+                    self.depth = self.depth.saturating_add(1);
+                    self
+                }
+            }
+
+            impl core::fmt::Display for FieldPath {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    let mut entries = self.entries().iter();
+                    let mut segments = self.field.split('.').peekable();
+                    while let Some(segment) = segments.next() {
+                        f.write_str(segment)?;
+                        if segments.peek().is_some() {
+                            match entries.next() {
+                                Some(index) => write!(f, "[{index}].")?,
+                                None => f.write_str("[?].")?,
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+            }
+
+            /// A domain conversion's refusal, `Copy` so `EncodeError` stays `Copy`.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum ConversionError {
+                /// A generated enum or composite mapping refused it.
+                Mapping(MappingError),
+                /// The conversion's `&'static str` error.
+                Reason(&'static str),
+                /// Any other error type, named; the domain setter returns it whole.
+                Custom { error_type: &'static str },
+            }
+
+            impl ConversionError {
+                #[cold]
+                #[inline(never)]
+                pub(crate) fn of<E: core::any::Any>(error: E) -> Self {
+                    let any: &dyn core::any::Any = &error;
+                    if let Some(mapping) = any.downcast_ref::<MappingError>() {
+                        Self::Mapping(*mapping)
+                    } else if let Some(reason) = any.downcast_ref::<&'static str>() {
+                        Self::Reason(reason)
+                    } else {
+                        Self::Custom { error_type: core::any::type_name::<E>() }
+                    }
+                }
+            }
+
+            impl core::fmt::Display for ConversionError {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::Mapping(e) => write!(f, "{e}"),
+                        Self::Reason(reason) => f.write_str(reason),
+                        Self::Custom { error_type } => write!(f, "refused with a `{error_type}`"),
+                    }
+                }
+            }
+
+            impl core::error::Error for ConversionError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::Mapping(e) => Some(e),
                         _ => None,
                     }
                 }
@@ -353,6 +487,208 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 fn from(e: DecodeError) -> Self {
                     Self::Decode(e)
                 }
+            }
+
+            /// Why a generated enum or composite mapping refused a value; it
+            /// never substitutes a default.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum MappingError {
+                /// `NullVal` (the null value, or an undeclared discriminant the
+                /// decoder folds into it) has no application value.
+                NullEnum { enum_name: &'static str },
+                /// `Some` of an optional member's null value, which reads back
+                /// as `None`.
+                SomeNullValue { composite: &'static str, member: &'static str },
+            }
+
+            impl core::fmt::Display for MappingError {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::NullEnum { enum_name } => write!(f, "{enum_name}::NullVal has no application value"),
+                        Self::SomeNullValue { composite, member } => write!(f, "{composite}.{member}: Some(null value) reads back as None"),
+                    }
+                }
+            }
+
+            impl core::error::Error for MappingError {}
+
+            /// A region reserved for one frame (an Aeron `try_claim`, a ring
+            /// slot, an [`OfferClaim`]). [`send_frame`] encodes into it, then
+            /// commits it or, on any error or panic, aborts it.
+            pub trait Claim {
+                /// What the transport reports when it cannot publish.
+                type Error;
+                /// The claimed bytes, which the frame must fill exactly. Hand
+                /// them out zeroed: no encoder writes a block's padding.
+                fn frame_mut(&mut self) -> &mut [u8];
+                /// Publish the frame.
+                fn commit(self) -> Result<(), Self::Error>;
+                /// Give the region back unpublished.
+                fn abort(self);
+            }
+
+            /// Why [`send_frame`] published nothing; the claim was aborted
+            /// unless the transport refused the commit.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum SendError<E> {
+                /// The encoder refused the frame.
+                Encode(EncodeError),
+                /// The frame's length is not the claim's.
+                LengthMismatch { claimed: usize, frame: usize },
+                /// The frame does not start with the message's header.
+                HeaderMismatch,
+                /// The transport refused to publish.
+                Commit(E),
+            }
+
+            impl<E> From<EncodeError> for SendError<E> {
+                #[inline]
+                fn from(e: EncodeError) -> Self {
+                    Self::Encode(e)
+                }
+            }
+
+            impl<E: core::fmt::Display> core::fmt::Display for SendError<E> {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::Encode(e) => write!(f, "frame not sent: {e}"),
+                        Self::LengthMismatch { claimed, frame } => write!(f, "frame not sent: {frame} bytes for a {claimed}-byte claim"),
+                        Self::HeaderMismatch => f.write_str("frame not sent: wrong message header"),
+                        Self::Commit(e) => write!(f, "frame not committed: {e}"),
+                    }
+                }
+            }
+
+            impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for SendError<E> {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::Encode(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
+
+            /// Aborts the claim on drop unless committed: an early return or
+            /// a panic gives the region back.
+            struct AbortOnDrop<C: Claim>(Option<C>);
+
+            impl<C: Claim> Drop for AbortOnDrop<C> {
+                #[inline]
+                fn drop(&mut self) {
+                    if let Some(claim) = self.0.take() {
+                        claim.abort();
+                    }
+                }
+            }
+
+            /// Encode one frame into `claim` with `encode` (which returns its
+            /// length) and commit it, unless the length is not the claim's or
+            /// the frame does not start with `header` (the message's
+            /// `HEADER_TEMPLATE`): then, and if `encode` fails or panics, the
+            /// claim is aborted. The generated `send` and `send_fixed` use it.
+            ///
+            /// # Errors
+            ///
+            /// [`SendError`], one variant per reason nothing was sent.
+            #[inline]
+            pub fn send_frame<C, W>(claim: C, header: &[u8], encode: W) -> Result<(), SendError<C::Error>>
+            where
+                C: Claim,
+                W: FnOnce(&mut [u8]) -> Result<usize, EncodeError>,
+            {
+                let mut guard = AbortOnDrop(Some(claim));
+                if let Some(claim) = guard.0.as_mut() {
+                    let buf = claim.frame_mut();
+                    let claimed = buf.len();
+                    let frame = encode(&mut *buf)?;
+                    if frame != claimed {
+                        return Err(SendError::LengthMismatch { claimed, frame });
+                    }
+                    if buf.get(..header.len()) != Some(header) {
+                        return Err(SendError::HeaderMismatch);
+                    }
+                }
+                match guard.0.take() {
+                    Some(claim) => claim.commit().map_err(SendError::Commit),
+                    None => Ok(()),
+                }
+            }
+
+            /// [`Claim`] for a transport that copies a finished frame (Aeron
+            /// `offer`): `commit` hands `buf` to `offer`; `abort` never calls it.
+            pub struct OfferClaim<'a, F> {
+                buf: &'a mut [u8],
+                offer: F,
+            }
+
+            impl<'a, F> OfferClaim<'a, F> {
+                /// Claim `buf`, exactly the frame's length, for `offer`. It is
+                /// zeroed, so a reused buffer never leaks an earlier frame into
+                /// the padding.
+                #[inline]
+                pub fn new(buf: &'a mut [u8], offer: F) -> Self {
+                    buf.fill(0);
+                    Self { buf, offer }
+                }
+            }
+
+            impl<F, E> Claim for OfferClaim<'_, F>
+            where
+                F: FnOnce(&[u8]) -> Result<(), E>,
+            {
+                type Error = E;
+                #[inline]
+                fn frame_mut(&mut self) -> &mut [u8] {
+                    &mut *self.buf
+                }
+                #[inline]
+                fn commit(self) -> Result<(), E> {
+                    (self.offer)(self.buf)
+                }
+                #[inline]
+                fn abort(self) {}
+            }
+
+            /// Zero-pad `src` into a fixed text field. `ascii` rejects a
+            /// non-ASCII string before any byte is written.
+            #[inline]
+            pub fn encode_fixed_text<const N: usize>(
+                field: &'static str,
+                src: &str,
+                ascii: bool,
+            ) -> Result<[u8; N], EncodeError> {
+                if ascii && !src.is_ascii() {
+                    return Err(EncodeError::InvalidAscii { field });
+                }
+                if src.len() > N {
+                    return Err(EncodeError::FixedArrayTooLong {
+                        field,
+                        max_length: N,
+                        actual: src.len(),
+                    });
+                }
+                let mut out = [0u8; N];
+                out[..src.len()].copy_from_slice(src.as_bytes());
+                Ok(out)
+            }
+
+            /// Fixed text with trailing NUL padding removed. `ascii` rejects
+            /// a byte above 127.
+            #[inline]
+            pub fn decode_fixed_text<'a>(
+                field: &'static str,
+                bytes: &'a [u8],
+                ascii: bool,
+            ) -> Result<&'a str, DecodeError> {
+                let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+                let text = &bytes[..end];
+                if ascii && !text.is_ascii() {
+                    return Err(DecodeError::InvalidAscii { field });
+                }
+                core::str::from_utf8(text)
+                    .map_err(|error| DecodeError::InvalidUtf8 { field, error })
             }
 
             /// Meta attribute selector (Java `MetaAttribute` parity).
@@ -495,6 +831,26 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     });
                 }
                 checked_header_usize(field, value)
+            }
+
+            /// Validate a group's wire dimensions before any entry can be read.
+            #[inline]
+            pub(crate) fn checked_group_dimensions(
+                field: &'static str,
+                wire_count: u64,
+                wire_block_length: u64,
+                min_fixed: usize,
+            ) -> Result<(usize, usize), DecodeError> {
+                let count = checked_group_count("numInGroup", wire_count)?;
+                let block_length = checked_header_usize("blockLength", wire_block_length)?;
+                if count > 0 && block_length < min_fixed {
+                    return Err(DecodeError::BufferTooShort {
+                        field,
+                        needed: min_fixed,
+                        available: block_length,
+                    });
+                }
+                Ok((count, block_length))
             }
 
             #tail_boundary_cache
@@ -958,6 +1314,33 @@ pub(crate) fn to_upper_snake_case(s: &str) -> String {
 }
 
 pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
+    // Before the valueRef check: `-1.5` splits on '.' like `Enum.variant`, and
+    // an enum can never be float-encoded, so a float constant is never a valueRef.
+    match prim {
+        PrimitiveType::Float => {
+            if let Some(v) = crate::xml::parse_sbe_float::<f32>(val) {
+                return float_literal(
+                    v.is_nan(),
+                    v.is_infinite(),
+                    v.is_sign_negative(),
+                    "f32",
+                    &format!("{v:?}"),
+                );
+            }
+        }
+        PrimitiveType::Double => {
+            if let Some(v) = crate::xml::parse_sbe_float::<f64>(val) {
+                return float_literal(
+                    v.is_nan(),
+                    v.is_infinite(),
+                    v.is_sign_negative(),
+                    "f64",
+                    &format!("{v:?}"),
+                );
+            }
+        }
+        _ => {}
+    }
     // Convert dotted valueRef like "TimeUnit.nanosecond" → "TimeUnit::Nanosecond".
     // Only if the prefix is non-numeric — float constants like "1.5" must not
     // be mistaken for enum references.
@@ -980,15 +1363,35 @@ pub(crate) fn constant_value_expr(prim: PrimitiveType, val: &str) -> String {
     match prim {
         // parser validates single-char constants, generator trusts it; add a debug_assert! if parser ever skips validation
         PrimitiveType::Char => format!("b'{}'", val),
-        PrimitiveType::Float => {
-            format!("{}f32", val)
-        }
-        PrimitiveType::Double => {
-            format!("{}f64", val)
-        }
-        _ => {
-            format!("{}", val)
-        }
+        _ => val.to_string(),
+    }
+}
+
+/// A Rust expression for a parsed float: the named constants for NaN and the
+/// infinities (no literal spells them), otherwise the exact `Debug` digits.
+fn float_literal(nan: bool, infinite: bool, negative: bool, ty: &str, digits: &str) -> String {
+    let sign = if negative { "-" } else { "" };
+    if nan {
+        format!("{ty}::NAN")
+    } else if infinite {
+        format!("{sign}{ty}::INFINITY")
+    } else {
+        format!("{digits}_{ty}")
+    }
+}
+
+/// Null test for an optional float/double read into `val`. A NaN null matches
+/// any NaN (`is_nan()`), as sbe-tool does; any other null compares with `==`
+/// against the schema value, as sbe-tool does, so `-0.0` also matches `0.0`.
+pub(crate) fn float_null_check(prim: PrimitiveType, null_value: Option<u64>) -> String {
+    let is_nan = match (prim, null_value) {
+        (_, None) => true,
+        (PrimitiveType::Float, Some(bits)) => f32::from_bits(bits as u32).is_nan(),
+        (_, Some(bits)) => f64::from_bits(bits).is_nan(),
+    };
+    match null_value {
+        Some(bits) if !is_nan => format!("val == {}", field_const_value_expr(bits, prim)),
+        _ => "val.is_nan()".to_string(),
     }
 }
 
@@ -1646,15 +2049,17 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
 /// unaligned UB. See README “Composite layout & little-endian”.
 /// Null-sentinel comparison for a `presence="optional"` composite member
 /// (e.g. a Decimal composite's `mantissa`). Mirrors the top-level optional
-/// primitive field check in `message_decoder.rs`: any IEEE NaN is null for
-/// float/double (matches sbe-tool's `is_nan()`), otherwise wire equality
-/// against the schema `nullValue` (default 0, matching top-level optionals).
-fn composite_member_null_check(
+/// primitive field check in `message_decoder.rs`: [`float_null_check`] for
+/// float/double, otherwise wire equality against the schema `nullValue`
+/// (default 0, matching top-level optionals).
+pub(crate) fn composite_member_null_check(
     prim: PrimitiveType,
     null_value: Option<u64>,
 ) -> proc_macro2::TokenStream {
     if prim == PrimitiveType::Float || prim == PrimitiveType::Double {
-        quote::quote! { val.is_nan() }
+        let check: syn::Expr = syn::parse_str(&float_null_check(prim, null_value))
+            .expect("float null check is a valid expression");
+        quote::quote! { #check }
     } else {
         let null_val = null_value.unwrap_or(0);
         let null_lit = syn::LitInt::new(&format!("{null_val}_u64"), proc_macro2::Span::call_site());
@@ -2533,8 +2938,9 @@ pub(crate) fn generate_any_message(
                     "Take the `{pascal}` decoder, or `None` if this frame is a different template.\n\nThis message is fixed-block, so there is no memoized lane to take: every field is random-access off the block and this decoder reads them all."
                 )
             };
+            let doc_base = doc_lines_tokens(&doc_base);
             lane_accessors.extend(quote::quote! {
-                #[doc = #doc_base]
+                #doc_base
                 #[inline]
                 #[must_use]
                 pub fn #into_base(self) -> Option<#decoder<'a>> {
@@ -2550,8 +2956,9 @@ pub(crate) fn generate_any_message(
                 let doc_memo = format!(
                     "Take the `{pascal}` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template."
                 );
+                let doc_memo = doc_lines_tokens(&doc_memo);
                 lane_accessors.extend(quote::quote! {
-                    #[doc = #doc_memo]
+                    #doc_memo
                     #[inline]
                     #[must_use]
                     pub fn #into_memo(self) -> Option<#memo<'a>> {
@@ -3138,11 +3545,7 @@ fn escape_doc_html(s: &str) -> String {
 
 /// `#[doc = "..."]` token for a schema description (doctest-safe).
 pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
-    let lit = syn::LitStr::new(
-        &sanitize_description_for_doc(desc),
-        proc_macro2::Span::call_site(),
-    );
-    quote::quote! { #[doc = #lit] }
+    doc_lines_tokens(&sanitize_description_for_doc(desc))
 }
 
 /// One `#[doc]` attribute per line of `text`.
@@ -3153,10 +3556,20 @@ pub(crate) fn doc_attr_tokens(desc: &str) -> proc_macro2::TokenStream {
 /// an indented **code block**, so rustdoc then tries to compile the prose as a
 /// doctest and fails. Emitting one attribute per line renders as `///`, which
 /// cannot form an indented code block.
+///
+/// When the first line starts with a space (`/// Text`), continuation lines
+/// get one too, so every rendered line reads alike; rustdoc strips the common
+/// indent either way.
 pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
+    let pad = text.starts_with(' ');
     let mut out = proc_macro2::TokenStream::new();
-    for line in text.split('\n') {
-        let lit = syn::LitStr::new(line, proc_macro2::Span::call_site());
+    for (i, line) in text.split('\n').enumerate() {
+        let line = if pad && i > 0 && !line.is_empty() && !line.starts_with(' ') {
+            std::borrow::Cow::Owned(format!(" {line}"))
+        } else {
+            std::borrow::Cow::Borrowed(line)
+        };
+        let lit = syn::LitStr::new(&line, proc_macro2::Span::call_site());
         out.extend(quote::quote! { #[doc = #lit] });
     }
     out

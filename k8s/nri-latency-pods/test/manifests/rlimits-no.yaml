@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Candidate 5, not asked for: the same pod shape without the annotations.
+# The limits stay at the default and chrt -f must fail. This is the degrade
+# path: a pod that does not opt in is left alone.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rlimits-no
+  namespace: ergon-latency-pods
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

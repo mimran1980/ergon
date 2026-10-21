@@ -56,13 +56,11 @@ while IFS='=' read -r key value; do
     fn="${key##*/}"                  # encode_fixed
     criterion_dir_key="${group//\//_}/$fn"  # ergo_historic_null_option/encode_fixed
 
-    if ! current=$(get_estimate "$criterion_dir_key" 2>/dev/null); then
-        echo "  WARN $key — no current estimate (bench may not have run)"
-        continue
-    fi
-
-    if [[ -z "$current" ]]; then
-        echo "  WARN $key — empty estimate"
+    # A missing estimate means the bench did not run or was renamed; passing
+    # would let the gate report success with nothing compared.
+    if ! current=$(get_estimate "$criterion_dir_key" 2>/dev/null) || [[ -z "$current" ]]; then
+        echo "  FAIL $key — no current estimate (bench did not run or was renamed)"
+        failures=$((failures + 1))
         continue
     fi
 
@@ -85,7 +83,7 @@ if [[ "$parsed" -eq 0 ]]; then
     exit 1
 fi
 if [[ "$failures" -gt 0 ]]; then
-    echo "FAIL: $failures historic benchmark(s) exceed baseline"
+    echo "FAIL: $failures historic benchmark(s) missing or exceed baseline"
     exit 1
 else
     echo "PASS: all historic benchmarks within tolerance"

@@ -1,0 +1,32 @@
+# JVM options for Aeron Archive, Cluster and the Java media driver, as a java
+# argument file: `java @aeron.jvm -cp aeron-all.jar <main class>`. For Java 17
+# and newer; run it on Java 25. cluster-test-harness/tests/jvm_settings.rs
+# starts a cluster node with it and round-trips a message through it.
+# Sources: Aeron's aeron-samples/scripts/java-common and cluster scripts, and
+# the aeron-io/benchmarks scripts/run-java.
+
+# Agrona reaches jdk.internal.misc.Unsafe: without this, IllegalAccessError.
+--add-opens java.base/jdk.internal.misc=ALL-UNNAMED
+# Archive CRC32 checksums reach into java.util.zip.
+--add-opens java.base/java.util.zip=ALL-UNNAMED
+
+# Archive, Cluster and the driver allocate nothing in steady state: the
+# collector with the cheapest barriers.
+-XX:+UseParallelGC
+# A fixed heap committed at start. Size it for the clustered service's state.
+-Xms2g
+-Xmx2g
+-XX:+AlwaysPreTouch
+# Room enough that code-cache pressure never deoptimises hot code.
+-XX:MaxMetaspaceSize=1g
+-XX:ReservedCodeCacheSize=1g
+
+# Every collection and safepoint with its cause, written by a background
+# thread to tmpfs. %p is the process id.
+-Xlog:async
+-Xlog:gc*,safepoint=info,arguments=info:file=/dev/shm/aeron-jvm-%p.log:time,uptime,level,tags:filecount=4,filesize=16m
+
+-Djava.net.preferIPv4Stack=true
+# No bounds checks in Agrona's buffers. Read once, when the class loads: it
+# must be set here, not by the application.
+-Dagrona.disable.bounds.checks=true

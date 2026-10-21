@@ -133,8 +133,18 @@ pub(crate) fn null_image_stmts_for_field(
         }
         FieldType::Enum { encoding_type, .. } | FieldType::Set { encoding_type, .. } => {
             let size = encoding_type.size();
-            // Prefer schema nullValue; enums default to encoding-type max (from resolve).
-            let null_val = f.null_value.unwrap_or(match encoding_type {
+            // Prefer the field's nullValue, then the enum's resolved null (its own
+            // or its encodingType typedef's, the `NullVal` discriminant), then the
+            // encoding type's default.
+            let enum_null = match &f.field_type {
+                FieldType::Enum { name, .. } => elements
+                    .enums
+                    .iter()
+                    .find(|e| e[0].name == *name)
+                    .and_then(|e| e[0].encoding.null_value),
+                _ => None,
+            };
+            let null_val = f.null_value.or(enum_null).unwrap_or(match encoding_type {
                 PrimitiveType::UInt8 => 255,
                 PrimitiveType::UInt16 => 65535,
                 PrimitiveType::UInt32 => 4294967295,

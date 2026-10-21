@@ -2,7 +2,8 @@
 //!
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 
-// Generated under `src/generated/normalized_app.rs` (gitignored).
+// Generated under `src/generated/normalized_app.rs` (gitignored). rustfmt
+// skips it: the build script rewrites it on every regeneration.
 pub mod follower;
 pub mod ha_book;
 pub mod market;
@@ -18,5 +19,6 @@ pub mod market;
     warnings
 )]
 #[path = "generated/normalized_app.rs"]
+#[rustfmt::skip]
 pub mod normalized_app;
 pub mod publish;

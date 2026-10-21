@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The latency namespace. The validating admission policy scopes to the POD
+# label ergon.io/latency: "hot", not to a namespace label: the label marks the
+# containers that must not get an exec probe or a sidecar. The namespace still
+# enforces PSS Baseline, which is why the device grants come from the NRI
+# plugin rather than a hostPath.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ergon-latency-pods
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ergon-latency-pods-other
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ergon-latency-pods-plain

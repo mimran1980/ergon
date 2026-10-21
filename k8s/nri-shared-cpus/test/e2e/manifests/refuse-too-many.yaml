@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Refusal: M = 2001 needs 3 shared CPUs, this node has 2. The scheduler sees
+# only the total (capacity 4000) and schedules it; the plugin refuses.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: refuse-too-many
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          # Integer CPU: rules 2 to 4 want a Guaranteed pod with whole CPUs
+          # before rule 6 is reached. Small enough to schedule on the one node.
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "2001"
+        limits:
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "2001"

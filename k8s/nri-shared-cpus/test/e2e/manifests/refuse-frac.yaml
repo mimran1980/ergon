@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Refusal: Guaranteed but a fractional cpu count (1500m).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: refuse-frac
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 1500m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: 1500m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"

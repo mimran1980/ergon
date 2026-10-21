@@ -1,5 +1,5 @@
 [book]
-title = "ergo-sbe book"
+title = "ergon book"
 authors = ["Mohammed Imran"]
 language = "en"
 src = "src"
@@ -12,7 +12,13 @@ default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/mimran1980/ergon"
 edit-url-template = "https://github.com/mimran1980/ergon/edit/main/book/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.search]
 enable = true
 limit-results = 30
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

@@ -1113,3 +1113,128 @@ fn nested_entry_fields_named_acting_version_compile() -> Result<(), Box<dyn std:
     );
     Ok(())
 }
+
+/// Domain-typed accessors take the plain field name, so they collide wherever
+/// a raw accessor would: with reserved inherent methods (`wrap`, `inner`,
+/// `fixed`, `acting_version` take the `_field` rename on the type that reserves
+/// them), with tail conveniences (`orders_count`, `note_len` keep the field and
+/// the convenience yields), and with entry `acting_*` getters, which yield to
+/// an entry field of that name. The decoder, encoder, memoized wrapper, fixed
+/// view, `Display` and DTO must all call the same resolved name.
+const DOMAIN_CLASH_XML: &str = r#"<messageSchema package="domclash" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varString">
+      <type name="length" primitiveType="uint16"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="wrap" id="1" type="uint32" semanticType="Qty"/>
+    <field name="fixed" id="2" type="uint32" semanticType="Qty"/>
+    <field name="inner" id="3" type="uint32" semanticType="Qty"/>
+    <field name="actingVersion" id="4" type="uint32" semanticType="Qty"/>
+    <field name="ordersCount" id="5" type="uint32" semanticType="Qty"/>
+    <field name="noteLen" id="6" type="uint32" semanticType="Qty"/>
+    <group name="orders" id="10" dimensionType="groupSizeEncoding">
+      <field name="actingVersion" id="11" type="uint32" semanticType="Qty"/>
+      <field name="fillsCount" id="12" type="uint32" semanticType="Qty"/>
+      <group name="fills" id="13" dimensionType="groupSizeEncoding">
+        <field name="actingBlockLength" id="14" type="uint32" semanticType="Qty"/>
+      </group>
+      <data name="memo" id="15" type="varString"/>
+    </group>
+    <data name="note" id="20" type="varString"/>
+  </message>
+</messageSchema>"#;
+
+#[test]
+fn domain_accessors_named_after_reserved_and_tail_methods_compile()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema = Schema::from_ir(parse(DOMAIN_CLASH_XML)?);
+    let src = Generator::new(
+        GenerationConfig::new("domclash")
+            .with_domain_type(
+                ergo_sbe::ConversionSelector::semantic_type("Qty"),
+                "std::num::Wrapping<u32>",
+            )
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
+            .with_display_debug(true),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .expect("one module")
+    .source
+    .clone();
+    for sig in [
+        "pub fn wrap_field(\n        &self,",
+        "pub fn inner_field(\n        &self,",
+        "pub fn acting_version_field(\n        &self,",
+        "pub fn orders_count(\n        &self,",
+        "pub fn wrap_field(\n        &mut self,",
+        "pub fn fixed_field(\n        &mut self,",
+    ] {
+        assert!(
+            src.contains(sig),
+            "missing resolved domain accessor `{sig}`"
+        );
+    }
+    compile_and_run(
+        "domclash",
+        &src,
+        r#"
+        use std::num::Wrapping as W;
+        impl TryFromSbe<u32> for W<u32> {
+            type Error = core::convert::Infallible;
+            fn try_from_sbe(wire: u32) -> Result<Self, Self::Error> { Ok(W(wire)) }
+        }
+        impl TryToSbe<u32> for W<u32> {
+            type Error = core::convert::Infallible;
+            fn try_to_sbe(&self) -> Result<u32, Self::Error> { Ok(self.0) }
+        }
+        let dto = MDomain {
+            wrap: W(1), fixed: W(2), inner: W(3), acting_version: W(4),
+            orders_count: W(5), note_len: W(6),
+            orders: vec![MOrdersEntryDomain {
+                acting_version: W(7),
+                fills_count: W(8),
+                fills: vec![MOrdersEntryFillsEntryDomain { acting_block_length: W(9) }],
+                memo: b"m".to_vec(),
+            }],
+            note: b"n".to_vec(),
+        };
+        let mut storage = [0u8; 128];
+        let len = dto.encoded_length_with_header()?;
+        assert_eq!(dto.encode(&mut storage[..len])?, len);
+        let frame = &storage[..len];
+        assert_eq!(MDomain::try_from_slice_with_header(frame, 0)?, dto);
+
+        let dec = MDecoder::try_decode(frame, 0)?;
+        assert_eq!(
+            (dec.wrap_field()?, dec.fixed()?, dec.inner_field()?, dec.acting_version_field()?),
+            (W(1), W(2), W(3), W(4)),
+        );
+        assert_eq!((dec.orders_count()?, dec.note_len()?), (W(5), W(6)));
+        assert!(format!("{dec:?}").contains('5'));
+        let memo = MDecoder::try_decode(frame, 0)?.memoized();
+        assert_eq!((memo.wrap_field()?, memo.orders_count()?), (W(1), W(5)));
+        MDecoder::try_decode(frame, 0)?
+            .ordered()
+            .fixed(|v| {
+                assert_eq!((v.fixed().ok(), v.inner_field().ok()), (Some(W(2)), Some(W(3))));
+                Ok(())
+            })?;
+        "#,
+    );
+    Ok(())
+}

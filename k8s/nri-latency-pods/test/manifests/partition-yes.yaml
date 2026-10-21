@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 2, granted: a Guaranteed integer-CPU container with the shared-cpus
+# opt-in and cpu-partition.ergon.io. The createRuntime hook makes a child
+# cgroup (ERGON_ISOLATED_CGROUP) that holds only the exclusive CPUs, writes
+# cpuset.cpus.exclusive down the hierarchy and then cpuset.cpus.partition =
+# isolated. The parent keeps E ∪ S and stays member/root so the helpers keep
+# load balancing. The app moves its loop tid into the child and then pins to
+# ERGON_ISOLATED_CPUS (move-then-pin).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: partition-yes
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    cpu-partition.ergon.io/app: "isolated"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }

@@ -94,6 +94,36 @@ pub(crate) fn parse_u64_val(s: &str, prim_type: Option<PrimitiveType>) -> Option
     try_parse_u64_val(s, prim_type).ok().flatten()
 }
 
+/// Parse a schema float literal the way sbe-tool's Java parser does: a decimal
+/// number, `NaN`, or `Infinity` with an optional sign. Rust's `parse` also takes
+/// `inf`, `infinity` and `nan` in any case; those are rejected so a schema ergo
+/// accepts is one sbe-tool accepts.
+pub(crate) fn parse_sbe_float<T: std::str::FromStr>(s: &str) -> Option<T> {
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if unsigned.starts_with(|c: char| c.is_ascii_alphabetic())
+        && unsigned != "NaN"
+        && unsigned != "Infinity"
+    {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Reject a float/double constant that [`parse_sbe_float`] cannot read, so it
+/// fails at parse time rather than as an uncompilable generated module.
+pub(crate) fn check_float_constant(prim: Option<PrimitiveType>, val: &str) -> Result<(), String> {
+    let ok = match prim {
+        Some(PrimitiveType::Float) => parse_sbe_float::<f32>(val).is_some(),
+        Some(PrimitiveType::Double) => parse_sbe_float::<f64>(val).is_some(),
+        _ => true,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("'{val}' is not a valid float constant"))
+    }
+}
+
 /// Fallible null/min/max parser. Empty → `Ok(None)`. Present-but-invalid → `Err`.
 pub(crate) fn try_parse_u64_val(
     s: &str,
@@ -107,16 +137,20 @@ pub(crate) fn try_parse_u64_val(
             return Ok(Some(s.chars().next().unwrap() as u64));
         }
         Some(PrimitiveType::Float) | Some(PrimitiveType::Double) => {
-            // Parse as float/double, then reinterpret bits as u64.
-            // This preserves NaN, infinity, and negative zero bit patterns.
-            if let Some(PrimitiveType::Float) = prim_type {
-                if let Ok(v) = s.parse::<f32>() {
-                    return Ok(Some(v.to_bits() as u64));
-                }
-            } else if let Ok(v) = s.parse::<f64>() {
-                return Ok(Some(v.to_bits() as u64));
-            }
-            return Err(format!("'{s}' is not a valid float null/min/max value"));
+            // Reinterpret as bits: preserves infinity and negative zero. A NaN
+            // (`-NaN` too) is Java's canonical quiet NaN, as sbe-tool writes it.
+            let bits = if let Some(PrimitiveType::Float) = prim_type {
+                parse_sbe_float::<f32>(s)
+                    .map(|v| if v.is_nan() { f32::NAN } else { v })
+                    .map(|v| u64::from(v.to_bits()))
+            } else {
+                parse_sbe_float::<f64>(s)
+                    .map(|v| if v.is_nan() { f64::NAN } else { v })
+                    .map(f64::to_bits)
+            };
+            return bits
+                .map(Some)
+                .ok_or_else(|| format!("'{s}' is not a valid float null/min/max value"));
         }
         Some(prim) if prim.is_unsigned_int() => {
             let v = s

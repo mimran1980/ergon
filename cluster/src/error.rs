@@ -352,6 +352,33 @@ impl From<AeronOfferError> for ClusterError {
     }
 }
 
+/// A cluster event recorded by the application, in the style of Java
+/// `ClusterEvent`: a message with no stack trace and no logging framework.
+///
+/// Not raised by the client. Construct one when an application wants a
+/// distinct error value for its own log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterEvent {
+    message: String,
+}
+
+impl ClusterEvent {
+    /// An event whose display text is `message`.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ClusterEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ClusterEvent {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

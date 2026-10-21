@@ -1,9 +1,10 @@
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use super::jar;
+use super::{jar, jvm};
 
 static NEXT_BASE_PORT: AtomicU16 = AtomicU16::new(9000);
 
@@ -25,22 +26,31 @@ fn classpath() -> std::ffi::OsString {
 }
 
 fn launch_node(base_port: u16, member_id: u16, node_count: u16) -> Child {
-    launch_node_impl(base_port, member_id, node_count, false)
+    launch_node_impl(base_port, member_id, node_count, false, "echo", None)
 }
 
 fn launch_node_keep_dirs(base_port: u16, member_id: u16, node_count: u16) -> Child {
-    launch_node_impl(base_port, member_id, node_count, true)
+    launch_node_impl(base_port, member_id, node_count, true, "echo", None)
 }
 
-fn launch_node_impl(base_port: u16, member_id: u16, node_count: u16, keep: bool) -> Child {
-    let mut cmd = Command::new("java");
-    cmd.args([
-        "--add-opens",
-        "java.base/jdk.internal.misc=ALL-UNNAMED",
-        "-cp",
-    ])
-    .arg(classpath())
-    .args([
+/// `jvm_args` replaces [`jvm::test_options`] when given.
+fn launch_node_impl(
+    base_port: u16,
+    member_id: u16,
+    node_count: u16,
+    keep: bool,
+    service: &str,
+    jvm_args: Option<&[OsString]>,
+) -> Child {
+    let mut cmd = match jvm_args {
+        None => jvm::command(),
+        Some(args) => {
+            let mut cmd = jvm::try_java().unwrap_or_else(|e| panic!("{e}"));
+            cmd.args(args);
+            cmd
+        }
+    };
+    cmd.arg("-cp").arg(classpath()).args([
         "ClusterLauncher",
         &base_port.to_string(),
         &member_id.to_string(),
@@ -48,6 +58,9 @@ fn launch_node_impl(base_port: u16, member_id: u16, node_count: u16, keep: bool)
     ]);
     if keep {
         cmd.arg("keep");
+    }
+    if service != "echo" {
+        cmd.arg(service);
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -90,18 +103,33 @@ fn read_ready(child: &mut Child) -> (String, String, String) {
     (ingress, egress, aeron_dir)
 }
 
+fn single_node_with(service: &str, jvm_args: Option<&[OsString]>) -> TestCluster {
+    let base_port = NEXT_BASE_PORT.fetch_add(100, Ordering::SeqCst);
+    let mut child = launch_node_impl(base_port, 0, 1, false, service, jvm_args);
+    let (ingress, egress, aeron_dir) = read_ready(&mut child);
+    TestCluster {
+        processes: vec![child],
+        ingress_channel: ingress,
+        egress_channel: egress,
+        aeron_dir: PathBuf::from(aeron_dir),
+        base_port,
+    }
+}
+
 impl TestCluster {
     pub fn single_node() -> Self {
-        let base_port = NEXT_BASE_PORT.fetch_add(100, Ordering::SeqCst);
-        let mut child = launch_node(base_port, 0, 1);
-        let (ingress, egress, aeron_dir) = read_ready(&mut child);
-        Self {
-            processes: vec![child],
-            ingress_channel: ingress,
-            egress_channel: egress,
-            aeron_dir: PathBuf::from(aeron_dir),
-            base_port,
-        }
+        single_node_with("echo", None)
+    }
+
+    /// One echo node whose JVM gets `jvm_args` in place of
+    /// [`jvm::test_options`]: system properties (`-D`) configure Aeron.
+    pub fn single_node_with_jvm_args(jvm_args: &[OsString]) -> Self {
+        single_node_with("echo", Some(jvm_args))
+    }
+
+    /// One node running the official `BasicAuctionClusteredService`.
+    pub fn single_node_auction() -> Self {
+        single_node_with("auction", None)
     }
 
     /// Launch a 3-node static cluster. Node 0 is the leader.

@@ -67,6 +67,34 @@ fn all_reference_message_headers_follow_schema_byte_order() {
         ("issue1028", "issue1028.xml", false),
         ("issue1057", "issue1057.xml", false),
         ("issue1066", "issue1066.xml", false),
+        ("issue1116", "issue1116.xml", false),
+        ("issue1118", "issue1118.xml", false),
+        ("infinity", "floating-point-infinity-schema.xml", false),
+        (
+            "message_block_length",
+            "message-block-length-test.xml",
+            false,
+        ),
+        (
+            "lower_case_bitset",
+            "message-with-lower-case-bitset.xml",
+            false,
+        ),
+        (
+            "lower_case_enum",
+            "value-ref-with-lower-case-enum.xml",
+            false,
+        ),
+        (
+            "since_version_filter",
+            "since-version-filter-schema.xml",
+            false,
+        ),
+        (
+            "group_constant_fields",
+            "group-with-constant-fields.xml",
+            false,
+        ),
         ("optional_enum_nullify", "optional_enum_nullify.xml", false),
         (
             "fixed_array",
@@ -1730,6 +1758,475 @@ fn issue1066_optional_field() {
     );
 }
 
+// ── sbe-tool 1.40.2 regressions ───────────────────────────────────────────
+
+/// The enum's null comes from its encodingType typedef (`nullValue="254"`),
+/// not the uint8 default 255.
+#[test]
+fn issue1116_enum_null_from_encoding_type() {
+    dual_encode_run(
+        "issue1116",
+        &schema("issue1116.xml"),
+        "issue1116",
+        r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            foo_bar::FooBar as ToolFooBar,
+            message_header_codec,
+            issue_1116_codec::{Issue1116Decoder as ToolDec, Issue1116Encoder as ToolEnc},
+        };
+
+        const LEN: usize = Issue1116Encoder::compute_length_with_header();
+        for (ev, tv) in [
+            (FooBar::Foo, ToolFooBar::Foo),
+            (FooBar::Bar, ToolFooBar::Bar),
+            (FooBar::NullVal, ToolFooBar::NullVal),
+        ] {
+            let mut ebuf = [0u8; LEN];
+            let el = Issue1116Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue1116FixedFields { foo_bar: ev })
+                .encoded_length_with_header();
+
+            let mut tbuf = [0u8; LEN];
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.foo_bar(tv);
+            let tl = t.get_limit();
+            assert_frames_eq(&format!("issue1116 {tv:?}"), &ebuf[..el], &tbuf[..tl]);
+            if tv == ToolFooBar::NullVal {
+                assert_eq!(ebuf[8], 254, "NullVal is the typedef's nullValue");
+            }
+
+            assert_eq!(Issue1116Decoder::try_from(&tbuf[..tl])?.foo_bar(), ev);
+            let tool_header = message_header_codec::MessageHeaderDecoder::default()
+                .wrap(ReadBuf::new(&ebuf[..el]), 0);
+            assert_eq!(ToolDec::default().header(tool_header, 0).foo_bar(), tv);
+        }
+        println!("PASS: issue1116_enum_null_from_encoding_type");
+        "###,
+    );
+}
+
+/// Choices named after Rust keywords (`Type`, `Match`) set the same bits on
+/// both sides, whatever each generator calls the accessor.
+#[test]
+fn issue1118_keyword_set_choices() {
+    dual_encode_run(
+        "issue1118",
+        &schema("issue1118.xml"),
+        "issue1118",
+        r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            flags::Flags as ToolFlags,
+            message_header_codec,
+            issue_1118_codec::{Issue1118Decoder as ToolDec, Issue1118Encoder as ToolEnc},
+        };
+
+        const LEN: usize = Issue1118Encoder::compute_length_with_header();
+        for bits in 0u8..8 {
+            let (ty, mt, ord) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0);
+            let mut flags = Flags::default();
+            flags.type_(ty).match_(mt).ordinary(ord);
+            let mut ebuf = [0u8; LEN];
+            let el = Issue1118Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&Issue1118FixedFields { flags })
+                .encoded_length_with_header();
+
+            let mut tool_flags = ToolFlags::new(0);
+            tool_flags.set_type(ty).set_match(mt).set_ordinary(ord);
+            let mut tbuf = [0u8; LEN];
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.flags(tool_flags);
+            let tl = t.get_limit();
+            assert_frames_eq(&format!("issue1118 bits={bits}"), &ebuf[..el], &tbuf[..tl]);
+            assert_eq!(ebuf[8], bits);
+
+            let decoded = Issue1118Decoder::try_from(&tbuf[..tl])?.flags();
+            assert_eq!((decoded.is_type_(), decoded.is_match_(), decoded.is_ordinary()), (ty, mt, ord));
+            let tool_header = message_header_codec::MessageHeaderDecoder::default()
+                .wrap(ReadBuf::new(&ebuf[..el]), 0);
+            let tool_decoded = ToolDec::default().header(tool_header, 0).flags();
+            assert_eq!(
+                (tool_decoded.get_type(), tool_decoded.get_match(), tool_decoded.get_ordinary()),
+                (ty, mt, ord),
+            );
+        }
+        println!("PASS: issue1118_keyword_set_choices");
+        "###,
+    );
+}
+
+/// Optional floats whose nullValue is +/-Infinity: `None` writes the infinity
+/// image on both sides and each side decodes the other's as `None`; finite
+/// values (including the opposite infinity) stay present.
+#[test]
+fn infinity_null_values_and_constants() {
+    dual_encode_run(
+        "infinity",
+        &schema("floating-point-infinity-schema.xml"),
+        "infinity",
+        r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            message_header_codec,
+            infinity_values_codec::{
+                InfinityValuesDecoder as ToolDec,
+                InfinityValuesEncoder as ToolEnc,
+            },
+        };
+
+        const LEN: usize = InfinityValuesEncoder::compute_length_with_header();
+        let cases: [(Option<f32>, Option<f32>, Option<f64>, Option<f64>); 4] = [
+            (None, None, None, None),
+            (Some(1.5), Some(-1.5), Some(1.5), Some(-1.5)),
+            (Some(f32::NEG_INFINITY), Some(f32::INFINITY), Some(f64::NEG_INFINITY), Some(f64::INFINITY)),
+            (Some(-0.0), None, Some(0.25), None),
+        ];
+        for (fp, fneg, dp, dneg) in cases {
+            let mut ebuf = [0xABu8; LEN];
+            let el = InfinityValuesEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&InfinityValuesFixedFields {
+                    float_positive_null: fp,
+                    float_negative_null: fneg,
+                    double_positive_null: dp,
+                    double_negative_null: dneg,
+                })
+                .encoded_length_with_header();
+
+            let mut tbuf = [0xABu8; LEN];
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.float_positive_null_opt(fp)
+                .float_negative_null_opt(fneg)
+                .double_positive_null_opt(dp)
+                .double_negative_null_opt(dneg);
+            let tl = t.get_limit();
+            let label = format!("infinity {fp:?} {fneg:?} {dp:?} {dneg:?}");
+            assert_frames_eq(&label, &ebuf[..el], &tbuf[..tl]);
+
+            let ergo = InfinityValuesDecoder::try_from(&tbuf[..tl])?;
+            let ergo_values = (
+                ergo.float_positive_null(),
+                ergo.float_negative_null(),
+                ergo.double_positive_null(),
+                ergo.double_negative_null(),
+            );
+            assert_eq!(ergo_values, (fp, fneg, dp, dneg), "{label}: ergon decode");
+            assert_eq!(ergo.float_positive_infinity().to_bits(), 0x7f80_0000);
+            assert_eq!(ergo.float_negative_infinity().to_bits(), 0xff80_0000);
+            assert_eq!(ergo.double_positive_infinity().to_bits(), 0x7ff0_0000_0000_0000);
+            assert_eq!(ergo.double_negative_infinity().to_bits(), 0xfff0_0000_0000_0000);
+
+            let tool_header = message_header_codec::MessageHeaderDecoder::default()
+                .wrap(ReadBuf::new(&ebuf[..el]), 0);
+            let tool = ToolDec::default().header(tool_header, 0);
+            let tool_values = (
+                tool.float_positive_null(),
+                tool.float_negative_null(),
+                tool.double_positive_null(),
+                tool.double_negative_null(),
+            );
+            assert_eq!(tool_values, (fp, fneg, dp, dneg), "{label}: sbe-tool decode");
+        }
+        println!("PASS: infinity_null_values_and_constants");
+        "###,
+    );
+}
+
+// ── pin-time sbe-tool schemas ─────────────────────────────────────────────
+
+/// An explicit message blockLength (11) larger than its fields (9) pads the
+/// block before a group with a uint8 count.
+#[test]
+fn message_block_length_padding_and_group() {
+    dual_encode_run(
+        "message_block_length",
+        &schema("message-block-length-test.xml"),
+        "message_block_length",
+        r###"
+        use tool::{
+            Encoder, WriteBuf,
+            event_type::EventType as ToolEvent,
+            message_header_codec,
+            msg_name_codec::{MsgNameEncoder as ToolEnc, encoder::GrNameEncoder as ToolGroup},
+        };
+
+        const MAX_ENTRIES: u8 = 3;
+        let mut epad = [0u8; MsgNameEncoder::compute_length_with_header(MAX_ENTRIES as usize)];
+        let mut tpad = epad;
+        for n in 0..=MAX_ENTRIES {
+            let len = MsgNameEncoder::compute_length_with_header(usize::from(n));
+            assert_eq!(len, 8 + 11 + 3 + usize::from(n) * 16, "n={n}: blockLength 11, entries 16");
+            let (ebuf, tbuf) = (&mut epad[..len], &mut tpad[..len]);
+            let mut event = EventType::default();
+            event.choice0(true).choice7(n % 2 == 1);
+            let el = MsgNameEncoder::wrap_and_apply_header(ebuf, 0)
+                .fixed(&MsgNameFixedFields { field1: 0x0102_0304_0506_0708, field2: event })
+                .gr_name(n, |g| {
+                    for i in 0..n {
+                        g.add(|ent| {
+                            ent.gr_field1(u64::from(i) + 1).gr_field2(-i64::from(i));
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })?
+                .encoded_length_with_header();
+            assert_eq!(el, len);
+
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.field_1(0x0102_0304_0506_0708);
+            let mut tool_event = ToolEvent::new(0);
+            tool_event.set_choice_0(true).set_choice_7(n % 2 == 1);
+            t.field_2(tool_event);
+            let mut g = t.gr_name_encoder(n, ToolGroup::default());
+            for i in 0..n {
+                assert_eq!(g.advance().unwrap(), Some(usize::from(i)));
+                g.gr_field_1(u64::from(i) + 1).gr_field_2(-i64::from(i));
+            }
+            t = g.parent().unwrap();
+            assert_eq!(t.get_limit(), len);
+            assert_frames_eq(&format!("message_block_length n={n}"), &epad[..len], &tpad[..len]);
+        }
+        println!("PASS: message_block_length_padding_and_group");
+        "###,
+    );
+}
+
+#[test]
+fn lower_case_bitset_choices() {
+    dual_encode_run(
+        "lower_case_bitset",
+        &schema("message-with-lower-case-bitset.xml"),
+        "lower_case_bitset",
+        r###"
+        use tool::{
+            Encoder, WriteBuf,
+            event_type::EventType as ToolEvent,
+            message_header_codec,
+            some_message_codec::SomeMessageEncoder as ToolEnc,
+        };
+
+        const LEN: usize = SomeMessageEncoder::compute_length_with_header();
+        for bits in 0u8..32 {
+            let on = |b: u8| bits & (1 << b) != 0;
+            let mut event = EventType::default();
+            event.a(on(0)).bb(on(1)).ccc(on(2)).d(on(3)).ee_eee(on(4));
+            let mut ebuf = [0u8; LEN];
+            let el = SomeMessageEncoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&SomeMessageFixedFields { my_event: event })
+                .encoded_length_with_header();
+
+            let mut tool_event = ToolEvent::new(0);
+            tool_event.set_a(on(0)).set_bb(on(1)).set_ccc(on(2)).set_d(on(3)).set_ee_eee(on(4));
+            let mut tbuf = [0u8; LEN];
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.my_event(tool_event);
+            let tl = t.get_limit();
+            assert_frames_eq(&format!("lower_case_bitset bits={bits}"), &ebuf[..el], &tbuf[..tl]);
+        }
+        println!("PASS: lower_case_bitset_choices");
+        "###,
+    );
+}
+
+/// A message whose only field is a constant enum (`valueRef="engineType.gas"`)
+/// is a header with an empty body on both sides.
+#[test]
+fn lower_case_enum_constant_message() {
+    dual_encode_run(
+        "lower_case_enum",
+        &schema("value-ref-with-lower-case-enum.xml"),
+        "lower_case_enum",
+        r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            engine_type::EngineType as ToolEngine,
+            message_header_codec,
+            some_message_codec::{SomeMessageDecoder as ToolDec, SomeMessageEncoder as ToolEnc},
+        };
+
+        const LEN: usize = SomeMessageEncoder::compute_length_with_header();
+        let mut ebuf = [0u8; LEN];
+        let el = SomeMessageEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&SomeMessageFixedFields {})
+            .encoded_length_with_header();
+
+        let mut tbuf = [0u8; LEN];
+        let mut t = ToolEnc::default()
+            .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+        t = t.header(0).parent().unwrap();
+        let tl = t.get_limit();
+        assert_frames_eq("lower_case_enum", &ebuf[..el], &tbuf[..tl]);
+
+        assert_eq!(SomeMessageDecoder::try_from(&tbuf[..tl])?.engine_type(), EngineType::Gas);
+        let tool_header = message_header_codec::MessageHeaderDecoder::default()
+            .wrap(ReadBuf::new(&ebuf[..el]), 0);
+        assert_eq!(ToolDec::default().header(tool_header, 0).engine_type(), ToolEngine::gas);
+        println!("PASS: lower_case_enum_constant_message");
+        "###,
+    );
+}
+
+/// Messages introduced at schema versions 0 and 5 stamp the same header.
+#[test]
+fn since_version_filter_messages() {
+    dual_encode_run(
+        "since_version_filter",
+        &schema("since-version-filter-schema.xml"),
+        "since_version_filter",
+        r###"
+        use tool::{
+            Encoder, WriteBuf,
+            message_header_codec,
+            message_since_0_codec::MessageSince0Encoder as Tool0,
+            message_since_5_codec::MessageSince5Encoder as Tool5,
+        };
+
+        for a in [0i32, -1, i32::MAX] {
+            let mut ebuf = [0u8; MessageSince0Encoder::compute_length_with_header()];
+            let el = MessageSince0Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&MessageSince0FixedFields { a })
+                .encoded_length_with_header();
+            let mut tbuf = [0u8; MessageSince0Encoder::compute_length_with_header()];
+            let mut t = Tool0::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.a(a);
+            let tl = t.get_limit();
+            assert_frames_eq(&format!("since0 a={a}"), &ebuf[..el], &tbuf[..tl]);
+
+            let mut ebuf = [0u8; MessageSince5Encoder::compute_length_with_header()];
+            let el = MessageSince5Encoder::wrap_and_apply_header(&mut ebuf, 0)
+                .fixed(&MessageSince5FixedFields { a })
+                .encoded_length_with_header();
+            let mut tbuf = [0u8; MessageSince5Encoder::compute_length_with_header()];
+            let mut t = Tool5::default()
+                .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.a(a);
+            let tl = t.get_limit();
+            assert_frames_eq(&format!("since5 a={a}"), &ebuf[..el], &tbuf[..tl]);
+        }
+        println!("PASS: since_version_filter_messages");
+        "###,
+    );
+}
+
+/// Constant fields (on the message, in composites and in group entries) take
+/// no wire space; only `a`, `e.w`, and each entry's `g` and `h.w` are written.
+/// Each side decodes the other's frame, constants included.
+#[test]
+fn group_constant_fields_entries() {
+    dual_encode_run(
+        "group_constant_fields",
+        &schema("group-with-constant-fields.xml"),
+        "group_constant_fields",
+        r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            message_header_codec,
+            model::Model as ToolModel,
+            constants_galore_codec::{
+                ConstantsGaloreDecoder as ToolDec,
+                ConstantsGaloreEncoder as ToolEnc,
+                encoder::FEncoder as ToolF,
+            },
+        };
+
+        const MAX_ENTRIES: u16 = 3;
+        let mut epad = [0xABu8; ConstantsGaloreEncoder::compute_length_with_header(MAX_ENTRIES as usize)];
+        let mut tpad = epad;
+        for n in 0..=MAX_ENTRIES {
+            let len = ConstantsGaloreEncoder::compute_length_with_header(usize::from(n));
+            assert_eq!(len, 8 + 2 + 4 + usize::from(n) * 2, "n={n}: sbe-tool's blocks are 2 bytes");
+            let (ebuf, tbuf) = (&mut epad[..len], &mut tpad[..len]);
+            let el = ConstantsGaloreEncoder::wrap_and_apply_header(ebuf, 0)
+                .fixed(&ConstantsGaloreFixedFields { a: 7, e: CompositeWithConst::new(9) })
+                .f(n, |g| {
+                    for i in 0..n as u8 {
+                        g.add(|ent| {
+                            ent.g(i).h(CompositeWithConst::new(i + 100));
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })?
+                .encoded_length_with_header();
+            assert_eq!(el, len);
+
+            let mut t = ToolEnc::default()
+                .wrap(WriteBuf::new(tbuf), message_header_codec::ENCODED_LENGTH);
+            t = t.header(0).parent().unwrap();
+            t.a(7);
+            let mut e = t.ee_ncoder();
+            e.w(9);
+            t = e.parent().unwrap();
+            let mut g = t.fe_ncoder(n, ToolF::default());
+            for i in 0..n as u8 {
+                assert_eq!(g.advance().unwrap(), Some(usize::from(i)));
+                g.g(i);
+                let mut h = g.he_ncoder();
+                h.w(i + 100);
+                g = h.parent().unwrap();
+            }
+            t = g.parent().unwrap();
+            assert_eq!(t.get_limit(), len);
+            let (ebuf, tbuf) = (&epad[..len], &tpad[..len]);
+            assert_frames_eq(&format!("group_constant_fields n={n}"), ebuf, tbuf);
+
+            let ergo = ConstantsGaloreDecoder::try_from(tbuf)?;
+            let e = ergo.e_value();
+            assert_eq!(
+                (ergo.a(), ergo.b(), ergo.c(), ergo.d(), e.w(), e.x(), e.y()),
+                (7, 9000, Model::C, 9000, 9, 250, 9000),
+            );
+            let mut seen = 0u8;
+            for entry in ergo.f()? {
+                let h = entry.h_value();
+                assert_eq!(
+                    (entry.g(), h.w(), h.x(), h.y(), entry.i(), entry.j(), entry.k(), entry.l()),
+                    (seen, seen + 100, 250, 9000, 9000, 9000, Model::C, "Huzzah"),
+                );
+                seen += 1;
+            }
+            assert_eq!(u16::from(seen), n);
+
+            let tool_header = message_header_codec::MessageHeaderDecoder::default()
+                .wrap(ReadBuf::new(ebuf), 0);
+            let tool = ToolDec::default().header(tool_header, 0);
+            assert_eq!((tool.a(), tool.b(), tool.c(), tool.d()), (7, 9000, ToolModel::C, 9000));
+            let mut e = tool.ed_ecoder();
+            assert_eq!((e.w(), e.x(), e.y()), (9, 250, 9000));
+            let tool = e.parent().unwrap();
+            let mut f = tool.fd_ecoder();
+            assert_eq!(f.count(), n);
+            for i in 0..n as u8 {
+                assert_eq!(f.advance().unwrap(), Some(usize::from(i)));
+                assert_eq!(
+                    (f.g(), f.i(), f.j(), f.k(), f.l()),
+                    (i, 9000, 9000, ToolModel::C, &b"Huzzah"[..]),
+                );
+                let mut h = f.hd_ecoder();
+                assert_eq!((h.w(), h.x(), h.y()), (i + 100, 250, 9000));
+                f = h.parent().unwrap();
+            }
+            assert_eq!(f.advance().unwrap(), None);
+        }
+        println!("PASS: group_constant_fields_entries");
+        "###,
+    );
+}
+
 // ── issue987 composite ────────────────────────────────────────────────────
 
 #[test]
@@ -3309,6 +3806,14 @@ fn all_vendored_reference_crates_have_manifests() {
         "issue1028",
         "issue1057",
         "issue1066",
+        "issue1116",
+        "issue1118",
+        "infinity",
+        "message_block_length",
+        "lower_case_bitset",
+        "lower_case_enum",
+        "since_version_filter",
+        "group_constant_fields",
         "optional_enum_nullify",
         "new_order_single",
         "code_generation",

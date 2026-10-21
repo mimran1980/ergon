@@ -1,8 +1,8 @@
 # Domain DTOs
 
 Use when you want **owned** values (`Vec` groups, owned tails) and simple
-structs — **not** the zero-copy hot path. Flyweights stay faster for
-low-latency applications.
+structs — **not** the zero-copy hot path. DTOs allocate on decode; the
+flyweight path does not. A DTO-vs-flyweight latency A/B was **not measured**.
 
 For re-encode, eligible flat groups are bulk-written directly from
 `&[EntryDomain]`: no temporary `Vec<Entry>` and no encode-time allocation.

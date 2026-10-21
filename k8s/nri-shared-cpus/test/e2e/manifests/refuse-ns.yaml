@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Refusal: namespace not in the plugin's list. Created in `default`, which is
+# not in namespaces: [ergon-e2e].
+apiVersion: v1
+kind: Pod
+metadata:
+  name: refuse-ns
+  namespace: default
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: 100m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"

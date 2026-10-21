@@ -145,13 +145,12 @@ pub fn encode_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|mut e| {
-                    e.try_price(*price).map_err(|_| {
-                        sbe_rt::EncodeError::DomainConversionFailed {
+                    e.price(*price)
+                        .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "price",
                             reason: "conversion",
-                        }
-                    })?;
-                    e.try_size(*size)
+                        })?;
+                    e.size(*size)
                         .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "size",
                             reason: "conversion",
@@ -174,13 +173,12 @@ pub fn encode_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|mut e| {
-                    e.try_price(*price).map_err(|_| {
-                        sbe_rt::EncodeError::DomainConversionFailed {
+                    e.price(*price)
+                        .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "price",
                             reason: "conversion",
-                        }
-                    })?;
-                    e.try_size(*size)
+                        })?;
+                    e.size(*size)
                         .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "size",
                             reason: "conversion",
@@ -221,13 +219,12 @@ pub fn encode_vardata_book(
         .bids(bids.len() as u16, |g| {
             for (price, size, orders) in bids {
                 g.add(|mut e| {
-                    e.try_price(*price).map_err(|_| {
-                        sbe_rt::EncodeError::DomainConversionFailed {
+                    e.price(*price)
+                        .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "price",
                             reason: "conversion",
-                        }
-                    })?;
-                    e.try_size(*size)
+                        })?;
+                    e.size(*size)
                         .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "size",
                             reason: "conversion",
@@ -235,7 +232,7 @@ pub fn encode_vardata_book(
                     e.orders(orders.len() as u16, |og| {
                         for (qty, oid) in *orders {
                             og.add(|mut o| {
-                                o.try_quantity(*qty).map_err(|_| {
+                                o.quantity(*qty).map_err(|_| {
                                     sbe_rt::EncodeError::DomainConversionFailed {
                                         field: "quantity",
                                         reason: "conversion",
@@ -253,13 +250,12 @@ pub fn encode_vardata_book(
         .asks(asks.len() as u16, |g| {
             for (price, size, orders) in asks {
                 g.add(|mut e| {
-                    e.try_price(*price).map_err(|_| {
-                        sbe_rt::EncodeError::DomainConversionFailed {
+                    e.price(*price)
+                        .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "price",
                             reason: "conversion",
-                        }
-                    })?;
-                    e.try_size(*size)
+                        })?;
+                    e.size(*size)
                         .map_err(|_| sbe_rt::EncodeError::DomainConversionFailed {
                             field: "size",
                             reason: "conversion",
@@ -267,7 +263,7 @@ pub fn encode_vardata_book(
                     e.orders(orders.len() as u16, |og| {
                         for (qty, oid) in *orders {
                             og.add(|mut o| {
-                                o.try_quantity(*qty).map_err(|_| {
+                                o.quantity(*qty).map_err(|_| {
                                     sbe_rt::EncodeError::DomainConversionFailed {
                                         field: "quantity",
                                         reason: "conversion",

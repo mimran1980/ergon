@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!-- Versioned (sinceVersion > 0) fields carrying a configured domain type.
-     `try_*` on a versioned field returns Result<Option<T>, E>, so the domain
+     The domain accessor on a versioned field returns Result<Option<T>, E>, so the domain
      DTO's from_decoder expression must not re-wrap it in Some(..). Covers both
      the composite branch and the primitive-scalar branch of
      `codegen::domain_cluster`. -->

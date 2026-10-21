@@ -9,7 +9,7 @@ implementations — they move with experimental APIs on purpose.
 | Step | Sample | Why |
 |------|--------|-----|
 | **1** | [`sbe-feature-tour/`](sbe-feature-tour/) | **Golden path.** Full feature map: stages, EncodedLength, checked constructors + verify, Display, DTO with `DomainVarData::Strings`, all three conversion styles |
-| **2a** | [`l3-book/`](l3-book/) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (plain `include!`) |
+| **2a** | [`l3-book/`](l3-book/) | Nested/ragged books; **`with_domain_type` only**; **build-dep only** (`#[path]` into `src/generated/`) |
 | **2b** | [`exchange-example/`](exchange-example/) | Multi-schema; **`with_conversion` only**; IPC + app `TryFromSbe` |
 | **3** | [`sbe-codegen-examples/`](sbe-codegen-examples/) | Generator **as a library** (no `build.rs`) |
 | Later | [`cluster-tutorial/`](cluster-tutorial/) | Connect, offer, poll, keep-alive, close |
@@ -38,9 +38,9 @@ library at runtime.
 
 | Pattern | `build-dependencies` | `dependencies` | Typical use |
 |---------|----------------------|----------------|-------------|
-| **Build only** (**product / samples default**) | `ergo-sbe` | — | `generate_to_dir` → `src/generated/` (gitignored) + `#[path = "generated/….rs"]` |
-| **OUT_DIR only** | `ergo-sbe` | — | `generate_to_out_dir` + `include!(concat!(env!("OUT_DIR"), …))` — fine for apps; **poor IDE go-to-def** |
-| **Build + runtime** | `ergo-sbe` | `ergo-sbe` | Macros such as `sbe_mod!` plus build-time generation |
+| **Build only** (**samples default**) | `ergo-sbe` | — | `generate_to_dir` → `src/generated/` (gitignored, unpublished) + `#[path = "generated/….rs"]` |
+| **OUT_DIR only** | `ergo-sbe` | — | `generate_to_out_dir` + `include!(concat!(env!("OUT_DIR"), …))` — the product shape without macros |
+| **Build + runtime** (**product default**) | `ergo-sbe` | `ergo-sbe` | `generate_to_out_dir` + `sbe_mod!` (expands to that `include!`) — what `cluster/build.rs` and the introduction do |
 | **Runtime only** | — | `ergo-sbe` | Call `parse` / `Generator` as a library (no `build.rs`) |
 
 | Sample | Pattern | Purpose | External requirements |
@@ -51,13 +51,13 @@ library at runtime.
 | [`cluster-rfq/`](cluster-rfq/) | **Build only** | RFQ / auction protocol codecs + cluster examples | Java harness for live examples |
 | [`cluster-ha-orderbook/`](cluster-ha-orderbook/) | **Build only** (may still dep cluster) | Claim-based Cluster publishing + HA-shaped book | Java harness only for leader-kill coverage |
 | [`sbe-codegen-examples/`](sbe-codegen-examples/) | **Runtime only** | Generator API as a library (no `build.rs`) | None |
-| [`cluster-tutorial/`](cluster-tutorial/) | **Neither** (uses `ergo-aeron-cluster`) | Connect, offer, poll, keep-alive, close walkthrough | Java 17+ and built Aeron artifacts |
+| [`cluster-tutorial/`](cluster-tutorial/) | **Neither** (uses `ergo-aeron-cluster`) | Connect, offer, poll, keep-alive, close walkthrough | JDK 25 (17+) and built Aeron artifacts |
 
 ### Seeing generated code (without committing it)
 
 `include!(concat!(env!("OUT_DIR"), …))` and `sbe_mod!` put files under a
-hashed path like `target/debug/build/<crate>-<hash>/out/….rs` — hard to find
-and rust-analyzer usually **cannot** jump into them.
+hashed path like `target/debug/build/<crate>-<hash>/out/….rs`, which is
+awkward to open by hand.
 
 Samples instead write to a **stable, local path**:
 
@@ -85,7 +85,7 @@ mod messages;
 
 ## Buffer sizing (samples & tests)
 
-- **Const-sized messages:** stack `[0u8; MsgEncoder::compute_length()]`
+- **Const-sized messages:** stack `[0u8; MsgEncoder::compute_length_with_header()]`
 - **Dynamic / ragged:** size with `*EncodedLength` / `compute_length_with_header(…)`,
   then encode into a claim/slot of that exact length — avoid oversize
   `vec![0u8; 4096]` “guess” buffers
@@ -135,7 +135,7 @@ cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 
 | Sample | Config | Decode / encode surface |
 |--------|--------|-------------------------|
-| [`l3-book/`](l3-book/) | **`with_domain_type` only** | `dec.try_price()?` → `Decimal`; `enc.try_price(d)?` |
+| [`l3-book/`](l3-book/) | **`with_domain_type` only** | `dec.price()?` → `Decimal`; `enc.price(d)?` |
 | [`exchange-example/`](exchange-example/) | **`with_conversion` only** | `dec.price_as::<T>()?`; `enc.price_from(&t)?` (+ app `TryFromSbe`) |
 | [`sbe-feature-tour/`](sbe-feature-tour/) | **All three** (different selectors) | bool/timestamp concrete (`Generated`); Decimal generic (`demo_conversion_only`); ManualDecimal concrete + app impl (`demo_domain_type_manual_impl`) |
 

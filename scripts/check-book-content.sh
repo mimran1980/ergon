@@ -4,14 +4,15 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+book_src=${BOOK_CONTENT_ROOT:-$root/book/src}
 rc=0
 
 check_pattern() {
     local pattern="$1"
     local message="$2"
-    if grep -rn "$pattern" "$root/book/src/" --include='*.md' | grep -v 'check-book-content\|allowlist' > /dev/null 2>&1; then
+    if grep -rn "$pattern" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist' > /dev/null 2>&1; then
         echo "  FAIL: $message"
-        grep -rn "$pattern" "$root/book/src/" --include='*.md' | grep -v 'check-book-content\|allowlist'
+        grep -rn "$pattern" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist'
         rc=1
     fi
 }
@@ -26,9 +27,81 @@ check_pattern 'NaiveDateTime::from_timestamp_opt' \
 check_pattern 'naive.*\.timestamp()' \
     'NaiveDateTime::timestamp() is deprecated — use .and_utc().timestamp()'
 
-# Old API: with_domain_objects(bool) inside code fences (not prose)
-check_pattern '\`\`\`.*\n.*with_domain_objects(true)' \
-    'with_domain_objects(true) is obsolete — use with_domain_objects(DomainVarData::Bytes)'
+# Old API inside a fence. A line-oriented grep cannot see this: the call is
+# not required to sit on the line after the opening fence, and macOS grep
+# has no multiline mode. Prose mentioning the call is not a failure.
+if ! python3 - "$book_src" <<'PY'
+import pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+failed = False
+for path in sorted(root.rglob("*.md")):
+    lines = path.read_text(errors="replace").splitlines()
+    in_fence = False
+    body = []
+    start = 0
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith("```"):
+            if in_fence:
+                if "with_domain_objects(true)" in "\n".join(body):
+                    print(f"  FAIL: {path}:{start}: with_domain_objects(true) inside a fence")
+                    failed = True
+                body = []
+                in_fence = False
+            else:
+                in_fence = True
+                start = number
+                body = []
+        elif in_fence:
+            body.append(line)
+    if in_fence and "with_domain_objects(true)" in "\n".join(body):
+        print(f"  FAIL: {path}:{start}: with_domain_objects(true) inside a fence")
+        failed = True
+sys.exit(1 if failed else 0)
+PY
+then
+    rc=1
+fi
+
+# Every {{#include}} / {{#rustdoc_include}} must name a file that exists and,
+# for a named anchor, an ANCHOR / ANCHOR_END pair in it. mdbook renders a
+# missing one as an empty block and still exits 0, and the SBE fence harness
+# skips `rust,ignore` and non-Rust fences, so a renamed anchor or moved file
+# would otherwise blank a book example silently.
+if ! python3 - "$book_src" <<'PY'
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+directive = re.compile(r"(?<!\\)\{\{#(?:include|rustdoc_include)\s+([^}\s]+)\s*\}\}")
+lines_only = re.compile(r"\d*(:\d*)?")
+failed = False
+for page in sorted(root.rglob("*.md")):
+    for number, line in enumerate(page.read_text(errors="replace").splitlines(), 1):
+        for match in directive.finditer(line):
+            target, _, anchor = match.group(1).partition(":")
+            source = page.parent / target
+            where = f"{page}:{number}: {{{{#include {match.group(1)}}}}}"
+            if not source.is_file():
+                print(f"  FAIL: {where}: {source} does not exist")
+                failed = True
+                continue
+            if not anchor or lines_only.fullmatch(anchor):
+                continue
+            name = re.escape(anchor)
+            text = source.read_text(errors="replace").splitlines()
+            start = [i for i, l in enumerate(text) if re.search(rf"ANCHOR:\s*{name}(?![\w-])", l)]
+            end = [i for i, l in enumerate(text) if re.search(rf"ANCHOR_END:\s*{name}(?![\w-])", l)]
+            if not start:
+                print(f"  FAIL: {where}: anchor '{anchor}' not found in {source}")
+                failed = True
+            elif not [e for e in end if e > start[0]]:
+                print(f"  FAIL: {where}: anchor '{anchor}' has no ANCHOR_END after it in {source}")
+                failed = True
+sys.exit(1 if failed else 0)
+PY
+then
+    rc=1
+fi
 
 # CString::new in code fences — must use c"…" literals
 check_pattern 'CString::new' \

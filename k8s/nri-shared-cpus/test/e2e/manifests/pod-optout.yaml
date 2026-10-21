@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Opt-out: the container is still set up with the shared CPUs and the env, but
+# the OCI start-affinity hook is not injected. PID 1 keeps the whole cpuset.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optout
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    default-affinity.ergon.io/app: "all"
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["pin-test", "hold"]
+      resources:
+        requests:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"

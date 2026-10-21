@@ -8,7 +8,9 @@
 pub enum SessionState {
     /// Ingress connected to the leader; session is active.
     Connected,
-    /// Disconnected from leader; waiting for a NewLeaderEvent on egress.
+    /// Disconnected from leader; waiting for a NewLeaderEvent on egress (up to
+    /// the new-leader timeout) or, once one has come, for the new leader's
+    /// ingress publication to connect (up to the message timeout).
     AwaitingNewLeader,
     /// `close()` was called; will finalise on the next poll.
     PendingClose,

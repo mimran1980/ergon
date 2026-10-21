@@ -97,23 +97,33 @@ The `as_option()` method is also generated on every enum for manual use:
 
 ## Null-aware accessors on BooleanType
 
-For `BooleanType` fields, ergon emits a `try_*_bool()` accessor alongside the
-standard enum getter. One name at every shape and location — the `try_`
-prefix marks the fallible decode, and `{field}_bool` is the *encoder* setter:
+For `BooleanType` fields, ergon emits a `{field}_bool()` accessor alongside the
+standard enum getter. One name at every shape and location, the same name as
+the `{field}_bool(v)` encoder setter; it returns `Result` because the decode
+is fallible:
 
 ```rust,ignore
 // Standard getter — returns the enum variant (raw wire discriminant).
 pub fn available(&self) -> BooleanType { … }
 
 // Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
-pub fn try_available_bool(&self) -> Result<bool, DecodeError> { … }
+pub fn available_bool(&self) -> Result<bool, DecodeError> { … }
 
 // A `sinceVersion > 0` field can also be absent, so its getter adds the
 // `Option` layer — the only shape difference, at message and group level:
-pub fn try_added_later_bool(&self) -> Result<Option<bool>, DecodeError> { … }
+pub fn added_later_bool(&self) -> Result<Option<bool>, DecodeError> { … }
 ```
 
 For enums and other types, the `NullVal` variant remains the default.
 `with_null_as_option` (above) is the opt-in `Option<T>` mapping; the
 wire encoding is identical either way.
 
+
+## Generated enum mappings
+
+`with_enum_mapping` maps an SBE enum onto an application enum that has no
+`NullVal` (see [App Types](../recipes/app-types-composites.md#nullval-and-unknown-values)).
+There, `NullVal` is never turned into a variant: it decodes as
+`sbe_rt::MappingError::NullEnum`, or as `None` when the enum is also under
+`with_null_as_option`. Because the decoder folds an undeclared discriminant
+into `NullVal`, an unknown value reaches the mapping as that same `NullVal`.

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 5, PHC granted: ptp.ergon.io: "auto". The plugin hands the pod the
+# node's /dev/ptp* read-only (NRI AddDevice) and bind-mounts the node facts
+# file so RequirePtp and ergon-tune can read the NIC's node and PHC name
+# without a PSS-forbidden hostPath. Env: ERGON_PTP_DEVICE, ERGON_NODE_FACTS.
+# The app must not run a PTP daemon: a pod that steps the NIC clock affects
+# every tenant.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ptp-yes
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    ptp.ergon.io/app: "auto"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

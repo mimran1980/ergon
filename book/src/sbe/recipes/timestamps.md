@@ -37,22 +37,39 @@ Schema:
 <field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
 ```
 
-Generated API — `try_created_at()` returns `DateTime<Utc>`, `try_updated_at()`
+Generated API — `created_at()` returns `DateTime<Utc>`, `updated_at()`
 returns `NaiveDateTime`:
 
 ```rust,ignore
 // Decode
-let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
-let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
+let created: chrono::DateTime<chrono::Utc> = dec.created_at()?;
+let updated: chrono::NaiveDateTime = dec.updated_at()?;
 
 // Encode
-enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(
+enc.created_at(chrono::Utc::now())?;
+enc.updated_at(
     chrono::DateTime::from_timestamp_micros(1_720_000_000_000_000)
         .ok_or("micros out of range")?
         .naive_utc(),
 )?;
 ```
+
+## `timeUnit` on a `UTCTimestamp` field
+
+A `uint64` `UTCTimestamp` field may say what it counts with `timeUnit`
+(`second`, `millisecond`, `microsecond` or `nanosecond`; nanoseconds when
+absent). The built-in `DateTime<Utc>` conversion honours it: the domain
+accessors read and write the field in its own unit, so one
+`semantic_type("UTCTimestamp")` mapping serves fields of every precision.
+
+```xml
+<field name="sentAt" id="1" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond"/>
+```
+
+Writing a `DateTime` more precise than the field — sub-millisecond digits into
+a millisecond field — is an error rather than a truncation; truncate it first
+(`chrono::DurationRound::duration_trunc`) when that is what you mean. Under
+`DomainImpl::Manual` your impl receives the field's own unit.
 
 ## One selector, many fields
 
@@ -79,13 +96,13 @@ let config = GenerationConfig::new("msgs")
 All three fields get their own concrete accessor, generated from that one call:
 
 ```rust,ignore
-enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(chrono::Utc::now())?;
-enc.try_expires_at(chrono::Utc::now())?;
+enc.created_at(chrono::Utc::now())?;
+enc.updated_at(chrono::Utc::now())?;
+enc.expires_at(chrono::Utc::now())?;
 
-let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
-let updated: chrono::DateTime<chrono::Utc> = dec.try_updated_at()?;
-let expires: chrono::DateTime<chrono::Utc> = dec.try_expires_at()?;
+let created: chrono::DateTime<chrono::Utc> = dec.created_at()?;
+let updated: chrono::DateTime<chrono::Utc> = dec.updated_at()?;
+let expires: chrono::DateTime<chrono::Utc> = dec.expires_at()?;
 ```
 
 This is why `UTCTimestamp` and `UTCTimestampMicros` need **separate**
@@ -113,7 +130,7 @@ fields at three different wire precisions, all normalized to the **same**
 the three is the bare `uint64` + `semanticType="UTCTimestamp"` shape the
 built-in converter matches, so none gets an auto-generated impl — that's
 exactly the case [`DomainImpl::Manual`](../configuration/conversion-vs-domain.md#option-b-manual-impl--concrete-signatures-your-own-conversion-logic)
-is for: concrete `try_*` signatures from ergo-sbe, conversion body from you.
+is for: concrete domain accessor signatures from ergo-sbe, conversion body from you.
 
 Distinguish the three precisions with single-element composites (a distinct
 Rust type per precision — `TimestampMillis(u64)` is not `TimestampNanos(u64)`
@@ -164,7 +181,8 @@ use my_msgs::{TimestampMillis, TimestampMicros, TimestampNanos};
 impl TryFromSbe<TimestampNanos> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_from_sbe(wire: TimestampNanos) -> Result<Self, Self::Error> {
-        let ns = wire.0; // single-element composite is a transparent wrapper
+        // A single-member composite wraps its wire bytes: TimestampNanos([u8; 8]).
+        let ns = u64::from_le_bytes(wire.0);
         chrono::DateTime::from_timestamp((ns / 1_000_000_000) as i64, (ns % 1_000_000_000) as u32)
             .ok_or("timestamp out of range")
     }
@@ -172,14 +190,18 @@ impl TryFromSbe<TimestampNanos> for chrono::DateTime<chrono::Utc> {
 impl TryToSbe<TimestampNanos> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_to_sbe(&self) -> Result<TimestampNanos, Self::Error> {
-        Ok(TimestampNanos(self.timestamp_nanos_opt().ok_or("overflow")? as u64))
+        // The wire type is uint64: pre-epoch has no representation, so it is
+        // an error. `as u64` on a negative i64 would wrap silently.
+        let ns = self.timestamp_nanos_opt().ok_or("overflow")?;
+        let ns = u64::try_from(ns).map_err(|_| "timestamp before 1970")?;
+        Ok(TimestampNanos(ns.to_le_bytes()))
     }
 }
 
 impl TryFromSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_from_sbe(wire: TimestampMicros) -> Result<Self, Self::Error> {
-        let us = wire.0;
+        let us = u64::from_le_bytes(wire.0);
         chrono::DateTime::from_timestamp((us / 1_000_000) as i64, ((us % 1_000_000) * 1_000) as u32)
             .ok_or("timestamp out of range")
     }
@@ -187,14 +209,15 @@ impl TryFromSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
 impl TryToSbe<TimestampMicros> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_to_sbe(&self) -> Result<TimestampMicros, Self::Error> {
-        Ok(TimestampMicros(self.timestamp_micros() as u64))
+        let us = u64::try_from(self.timestamp_micros()).map_err(|_| "timestamp before 1970")?;
+        Ok(TimestampMicros(us.to_le_bytes()))
     }
 }
 
 impl TryFromSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_from_sbe(wire: TimestampMillis) -> Result<Self, Self::Error> {
-        let ms = wire.0;
+        let ms = u64::from_le_bytes(wire.0);
         chrono::DateTime::from_timestamp((ms / 1000) as i64, ((ms % 1000) * 1_000_000) as u32)
             .ok_or("timestamp out of range")
     }
@@ -202,7 +225,8 @@ impl TryFromSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
 impl TryToSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
     type Error = &'static str;
     fn try_to_sbe(&self) -> Result<TimestampMillis, Self::Error> {
-        Ok(TimestampMillis(self.timestamp_millis() as u64))
+        let ms = u64::try_from(self.timestamp_millis()).map_err(|_| "timestamp before 1970")?;
+        Ok(TimestampMillis(ms.to_le_bytes()))
     }
 }
 ```
@@ -212,13 +236,13 @@ wire precisions — the caller never has to know or care which precision a
 given field was wire-encoded at:
 
 ```rust,ignore
-let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
-let updated: chrono::DateTime<chrono::Utc> = dec.try_updated_at()?;
-let deleted: chrono::DateTime<chrono::Utc> = dec.try_deleted_at()?;
+let created: chrono::DateTime<chrono::Utc> = dec.created_at()?;
+let updated: chrono::DateTime<chrono::Utc> = dec.updated_at()?;
+let deleted: chrono::DateTime<chrono::Utc> = dec.deleted_at()?;
 
-enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(chrono::Utc::now())?;
-enc.try_deleted_at(chrono::Utc::now())?;
+enc.created_at(chrono::Utc::now())?;
+enc.updated_at(chrono::Utc::now())?;
+enc.deleted_at(chrono::Utc::now())?;
 ```
 
 If you forget one of the three impls, the compile error names it directly —

@@ -58,6 +58,7 @@ const SHAPES: &[(&str, &str, &str)] = &[
     // Fixed arrays keep the wire type even when a selector matches.
     ("a_dom", "[u8; 4]", "[u8; 4]"),
     ("a_plain", "[u8; 4]", "[u8; 4]"),
+    ("a_collision", "[u8; 4]", "[u8; 4]"),
     (
         "c_dom",
         "rust_decimal::Decimal",
@@ -71,6 +72,18 @@ const SHAPES: &[(&str, &str, &str)] = &[
     ("e_norm", "Model", "Option<Model>"),
     ("set_opt", "Opts", "Option<Opts>"),
     ("s_dep", "u32", "Option<u32>"),
+    // Non-NaN float nulls: the decoder compares against the schema null.
+    ("f_opt_inf", "Option<f32>", "Option<f32>"),
+    ("d_opt_neg", "Option<f64>", "Option<f64>"),
+    // The enum's null comes from its encodingType typedef.
+    ("e_td_null", "Side", "Option<Side>"),
+    ("c_float_null", "Bounds", "Option<Bounds>"),
+    // The built-in chrono conversion rescales a millisecond timeUnit.
+    (
+        "ts_ms",
+        "chrono::DateTime<chrono::Utc>",
+        "Option<chrono::DateTime<chrono::Utc>>",
+    ),
 ];
 
 const VERSIONS: &[u16] = &[0, 1];
@@ -88,7 +101,7 @@ fn expected_cells() -> Vec<(String, &'static str)> {
 }
 
 /// `TryFromSbe`/`TryToSbe` impls for every wire type the matrix maps to a
-/// domain type. Domain `try_*` accessors name these in their signatures, so the
+/// domain type. Domain accessors name these in their signatures, so the
 /// generated module does not compile without them.
 const DOMAIN_IMPLS: &str = r#"
         use rust_decimal::Decimal;
@@ -150,10 +163,18 @@ fn with_matrix_domain_types(c: GenerationConfig) -> GenerationConfig {
         "rust_decimal::Decimal",
     )
     .with_manual_domain_type(ConversionSelector::semantic_type("TagText"), "u32")
+    .with_domain_type(
+        ConversionSelector::semantic_type("UTCTimestamp"),
+        "chrono::DateTime<chrono::Utc>",
+    )
 }
 
+/// Crates the domain-typed matrix cells name: `rust_decimal` for the manual
+/// impls, `chrono` for the built-in timestamp conversion.
+const DOMAIN_DEPS: &str = "rust_decimal = \"1\"\nchrono = \"0.4\"\n";
+
 /// Conversion selectors only — no domain type, so the generated surface is
-/// `*_as` / `*_from` plus `*_wire` raw renames rather than `try_*`.
+/// `*_as` / `*_from` plus `*_wire` raw renames rather than domain accessors.
 fn with_matrix_conversions(c: GenerationConfig) -> GenerationConfig {
     c.with_conversion(ConversionSelector::semantic_type("ScaledPrice"))
         .with_conversion(ConversionSelector::named_type("Money"))
@@ -417,7 +438,12 @@ fn domain_dto_shape_matrix_types_and_compiles() -> Result<(), Box<dyn std::error
         "a constant-presence field must not appear in the DTO"
     );
 
-    compile_and_run_with_deps("cm_shapes", &src, DOMAIN_IMPLS, "rust_decimal = \"1\"\n");
+    assert!(
+        src.contains("timestamp is more precise than the field's timeUnit"),
+        "the ts_ms cells must reach the built-in chrono rescale branch"
+    );
+
+    compile_and_run_with_deps("cm_shapes", &src, DOMAIN_IMPLS, DOMAIN_DEPS);
     Ok(())
 }
 
@@ -500,7 +526,7 @@ fn selector_precedence_field_path_beats_semantic_beats_named()
 }
 
 /// A domain type configured for an **enum** or **set** field must reach the
-/// DTO. `converter_impls` generated `try_*` accessors for these fields all
+/// DTO. `converter_impls` generated domain accessors for these fields all
 /// along, but the domain-DTO generator ignored them and emitted the raw
 /// generated type — the configured mapping silently did nothing.
 #[test]
@@ -640,7 +666,7 @@ fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
         }
         let src = format!("{src}\n{}", v.module_suffix);
         let (prelude, deps) = if v.domain_impls {
-            (DOMAIN_IMPLS, "rust_decimal = \"1\"\n")
+            (DOMAIN_IMPLS, DOMAIN_DEPS)
         } else {
             ("", "")
         };
@@ -832,5 +858,225 @@ fn iterator_surface_body(encode_extra: bool) -> String {
 fn decoder_iterator_surface_matrix() -> Result<(), Box<dyn std::error::Error>> {
     let (_, src) = generate_domain_with(&matrix_schema(), "cm_iterators", |c| c);
     compile_and_run_with_deps("cm_iterators", &src, &iterator_surface_body(true), "");
+    Ok(())
+}
+
+/// Generated code must not emit Markdown block doc comments.
+///
+/// `prettyplease` renders a single `#[doc]` carrying a blank line as a
+/// `/** … */` block whose continuation lines take the item's indentation.
+/// Markdown then reads a 4-space-indented paragraph after a blank line as an
+/// **indented code block**, so a consumer that checks the generated module
+/// into `src/` gets a rustdoc-collected doctest of prose that cannot compile.
+/// Emitting one `#[doc]` per line (`runtime::doc_lines_tokens`) renders as
+/// `///`, which cannot form an indented block.
+///
+/// The module still *compiles*, so every `compile_and_run*` case stays green
+/// while `cargo test --doc` fails. This test therefore runs the generated
+/// modules' doctests, proves that runner fails on a block doc comment, and
+/// keeps the source scan to name the offending line.
+///
+/// The schema must contain a message with **no groups and no var-data** —
+/// that is the branch carrying the two-paragraph doc. A schema whose messages
+/// all have tails renders the single-paragraph form and never exercises it.
+#[test]
+fn generated_code_has_no_block_doc_comments() -> Result<(), Box<dyn std::error::Error>> {
+    let plain = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schemas/bool-semantic-schema.xml"
+    ));
+    let modules = [
+        (
+            "cm_docs_fixed",
+            generate_domain_with(&plain, "cm_docs_fixed", |c| c).1,
+        ),
+        (
+            "cm_docs_matrix",
+            generate_domain_with(&matrix_schema(), "cm_docs_matrix", with_matrix_domain_types).1,
+        ),
+    ];
+    let mut offenders = Vec::new();
+    let mut fixed_block_messages = 0usize;
+    for (name, src) in &modules {
+        fixed_block_messages += src
+            .matches("This message is fixed-block, so there is no memoized lane")
+            .count();
+        for (i, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("/**") {
+                offenders.push(format!("  {name}:{}: {}", i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        fixed_block_messages > 0,
+        "no fixed-block message reached the two-paragraph doc branch; this \
+         check would pass vacuously"
+    );
+    assert!(
+        offenders.is_empty(),
+        "generated code contains a block doc comment, which rustdoc may harvest \
+         as a doctest of prose:\n{}",
+        offenders.join("\n")
+    );
+
+    let as_refs: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, s.as_str())).collect();
+    let domain_impls = format!("const _: () = {{ use cm_docs_matrix::*; {DOMAIN_IMPLS} }};");
+    common::run_doctests("cm_docs", &as_refs, &domain_impls, DOMAIN_DEPS)
+        .map_err(|out| format!("generated modules' doctests fail:\n{out}"))?;
+    let prose = "/**\nFirst paragraph.\n\n    indented prose that rustdoc reads as code\n*/\npub struct Prose;\n";
+    assert!(
+        common::run_doctests("cm_docs_negative", &[("prose", prose)], "", "").is_err(),
+        "the doctest runner must fail on a block doc comment with indented prose, \
+         or the check above proves nothing"
+    );
+    Ok(())
+}
+
+/// Short nested block at the two group locations the matrix splits apart.
+///
+/// A group nested in a message-level entry and a group nested in a nested
+/// entry are separate `wrap_trusted` call sites. Both must reject
+/// `blockLength` 0 with `numInGroup` 1 before a fixed-stride bulk read.
+#[test]
+fn short_nested_block_rejected_at_entry_and_nested_entry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="short_block_loc" id="9" version="0"
+                   byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="Book" id="1" blockLength="0">
+    <group name="rows" id="1" dimensionType="groupSizeEncoding">
+      <field name="tag" id="2" type="uint8"/>
+      <group name="cells" id="3" dimensionType="groupSizeEncoding">
+        <field name="qty" id="4" type="uint32"/>
+      </group>
+    </group>
+    <group name="outer" id="10" dimensionType="groupSizeEncoding">
+      <field name="tag" id="11" type="uint8"/>
+      <group name="mid" id="12" dimensionType="groupSizeEncoding">
+        <field name="tag" id="13" type="uint8"/>
+        <group name="inner" id="14" dimensionType="groupSizeEncoding">
+          <field name="qty" id="15" type="uint32"/>
+        </group>
+      </group>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(GenerationConfig::new("short_block_loc"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    compile_and_run_with_deps(
+        "cm_short_block_loc",
+        &src,
+        r#"
+        fn assert_short(err: sbe_rt::DecodeError) {
+            match err {
+                sbe_rt::DecodeError::BufferTooShort { needed, available, .. } => {
+                    assert!(needed > available, "needed {needed}, available {available}");
+                }
+                other => panic!("expected BufferTooShort, got {other:?}"),
+            }
+        }
+
+        assert_eq!(RowsCellsDecoder::min_readable_fixed_extent(0), 4);
+        assert_eq!(OuterMidInnerDecoder::min_readable_fixed_extent(0), 4);
+
+        // Group-entry location: rows entry -> cells. Header, then the rows
+        // dimension (block 1, count 1), one tag byte, then cells at
+        // blockLength 0, numInGroup 1. The buffer ends on that header.
+        let mut entry_buf = [0u8; 17];
+        entry_buf[2] = 1; // templateId
+        entry_buf[4] = 9; // schemaId
+        entry_buf[8] = 1; // rows blockLength
+        entry_buf[10] = 1; // rows count
+        entry_buf[12] = 7; // tag
+        entry_buf[15] = 1; // cells count, blockLength stays 0
+        let book = BookDecoder::try_decode(&entry_buf, 0)?;
+        let mut rows = book.rows()?;
+        match rows.next() {
+            Some(Err(err)) => assert_short(err),
+            Some(Ok(entry)) => match entry.cells() {
+                Err(err) => assert_short(err),
+                Ok(mut cells) => {
+                    let mut dst = Vec::new();
+                    match cells.bulk_decode_into(&mut dst) {
+                        Err(err) => assert_short(err),
+                        Ok(_) => panic!("bulk decoded a cells blockLength of 0"),
+                    }
+                }
+            },
+            None => panic!("missing row"),
+        }
+
+        // Empty cells stay legal: nothing is read.
+        entry_buf[15] = 0;
+        let book = BookDecoder::try_decode(&entry_buf, 0)?;
+        let mut rows = book.rows()?;
+        let entry = rows.next().expect("row").expect("row decodes");
+        let cells = entry.cells().expect("empty cells");
+        assert!(cells.is_empty());
+
+        // Nested-group-entry location: outer -> mid entry -> inner.
+        let mut deep = [0u8; 26];
+        deep[2] = 1;
+        deep[4] = 9;
+        deep[12] = 1; // outer blockLength
+        deep[14] = 1; // outer count
+        deep[16] = 3; // outer tag
+        deep[17] = 1; // mid blockLength
+        deep[19] = 1; // mid count
+        deep[21] = 4; // mid tag
+        deep[24] = 1; // inner count, blockLength stays 0
+        let book = BookDecoder::try_decode(&deep, 0)?;
+        let mut outer = book.outer()?;
+        let outer_entry = match outer.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(err)) => {
+                assert_short(err);
+                return Ok(());
+            }
+            None => panic!("missing outer entry"),
+        };
+        let mut mid = match outer_entry.mid() {
+            Ok(group) => group,
+            Err(err) => {
+                assert_short(err);
+                return Ok(());
+            }
+        };
+        match mid.next() {
+            Some(Err(err)) => assert_short(err),
+            Some(Ok(entry)) => match entry.inner() {
+                Err(err) => assert_short(err),
+                Ok(mut inner) => {
+                    let mut dst = Vec::new();
+                    match inner.bulk_decode_into(&mut dst) {
+                        Err(err) => assert_short(err),
+                        Ok(_) => panic!("bulk decoded an inner blockLength of 0"),
+                    }
+                }
+            },
+            None => panic!("missing mid entry"),
+        }
+        "#,
+        "",
+    );
     Ok(())
 }

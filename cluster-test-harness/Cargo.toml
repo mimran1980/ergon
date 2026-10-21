@@ -13,7 +13,7 @@ rusteron-client = { workspace = true }
 
 [dev-dependencies]
 rusteron-media-driver = { workspace = true }
-serial_test = { version = "3", features = ["file_locks"] }
+serial_test = { version = "4", features = ["file_locks"] }
 
 [lib]
 name = "ergo_aeron_cluster_test_harness"

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pin the data NIC's IRQs to the KEPT CPU (inside reservedSystemCPUs), never
+# to a busy housekeeping CPU and never to a hot core.
+#
+# Measured: Graviton kernel-UDP with NIC IRQs on the busy housekeeping CPU
+# gave max 151 us against 79-93 on a spare core, and at 1 M/s lost frames with
+# a 10.8 ms max. So the default is the kept CPU (candidate 4 of the
+# latency-pod shortlist: "pin the latency pod's NIC IRQs to the shared CPUs" is NOT the
+# default and is experimental).
+#
+# This unit wraps md-dpdk/deploy/aws-eks/node/irq-affinity.sh. Copy that
+# script to /opt/ergon/bin/irq-affinity.sh on the node (user data), then
+# install this unit.
+[Unit]
+Description=ergon: pin NIC IRQs to the kept CPU and turn adaptive moderation off
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=IRQ_CPU=1
+Environment=NETDEV=eth0
+Environment=ETHTOOL=off
+ExecStart=/opt/ergon/bin/irq-affinity.sh
+# Re-run at each link-up: a DHCP renew or an ENI move resets affinity.
+ExecStartPost=/bin/sh -c 'echo $IRQ_CPU > /proc/irq/$(grep -m1 "$NETDEV" /proc/interrupts | cut -d: -f1 | tr -d " ")/smp_affinity_list'
+
+[Install]
+WantedBy=multi-user.target

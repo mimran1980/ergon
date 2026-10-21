@@ -9,6 +9,24 @@ provides a **three-tier** constructor API with different failure contracts:
 | **Trusted** | bare name (`wrap`, `decode`, …) | **Panics** after the same extent proof | Known-good buffers |
 | **Unchecked** | `unsafe fn *_unchecked` | **UB** (raw pointer ops) | Proven-tight hot loops |
 
+The ladder, from untrusted bytes to typed fields:
+
+```mermaid
+flowchart LR
+    B["untrusted bytes"] --> W["wrap / decode"]
+    W --> Z["private zero-check core"]
+    Z --> G["typed getters / setters"]
+    U["*_unchecked: skip the proof"] -.->|"UB on OOB, not the default"| W
+```
+
+`try_*` returns `Result::Err`; bare names panic after the same extent
+proof; `decode` is the hybrid above. `*_unchecked` is not shipped as a
+default path — only after an independent extent proof.
+
+Wire layout follows official SBE offsets and order for the shapes under
+test ([compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md));
+official SBE wire compatibility outranks API convenience.
+
 **The trusted tier is safe Rust.** Bare constructors run the same header +
 fixed-body extent proof as `try_*`, then **panic** on failure. After that proof,
 field accessors/setters use unchecked loads/stores (justified by the

@@ -1,0 +1,30 @@
+[package]
+name = "ergon-clock"
+description = "Calibrated hardware-counter clock for low-latency threads: rdtsc or CNTVCT_EL0 scaled to UTC nanoseconds by one 32.32 multiply, calibrated once at start-up, kept on CLOCK_REALTIME by an idle-time update, with a reported CLOCK_MONOTONIC fallback"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/ergon-clock"
+keywords = ["clock", "tsc", "rdtsc", "timestamp", "low-latency"]
+categories = ["date-and-time", "hardware-support"]
+# Published package = the library only. The tests, the example and
+# BENCHMARKS.md are repo-only. bench/ is ergon-clock-bench, an unpublished
+# crate of its own (Criterion and the clockbench binary), and the only place
+# quanta and minstant are built: as the comparison (BENCHMARKS.md has the
+# numbers and why ergon-clock uses neither).
+include = [
+    "/Cargo.toml",
+    "/README.md",
+    "/src/**/*.rs",
+]
+
+[dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

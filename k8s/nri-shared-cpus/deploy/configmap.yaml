@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One ConfigMap per node group: sharedCpus is the housekeeping CPU list of
+# the nodes this DaemonSet runs on. It must be inside the kubelet's
+# reservedSystemCPUs, minus the CPU(s) kept for NIC IRQs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ergon-shared-cpus
+  namespace: ergon-system
+data:
+  config.yaml: |
+    sharedCpus: "4"
+    oversubscription: 1
+    namespaces: [trading]
+    defaultAffinity: shared
+    hookPath: /opt/ergon/bin/ergon-cpus
+    annotationOptIn: false
+    metricsAddress: ":9466"
+    # Where this process can see the host's /dev. The DaemonSet mounts it
+    # read-only at /host/dev so the plugin can stat the PHC and PM QoS nodes
+    # and grant them (NRI AddDevice needs the major/minor). Granted paths stay
+    # the container's /dev/... names.
+    devRoot: /host/dev

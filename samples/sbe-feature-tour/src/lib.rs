@@ -19,7 +19,7 @@
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
 //! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
-//! | [`demo_domain_type_manual_impl`] | **`with_manual_domain_type(..)`** — concrete `try_manual_price(...)?`, app-supplied impl |
+//! | [`demo_domain_type_manual_impl`] | **`with_manual_domain_type(..)`** — concrete `manual_price(...)?`, app-supplied impl |
 //! | [`demo_bulk_add`] | `bulk_add` on the fixed-stride nested `acceleration` group |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
@@ -74,7 +74,7 @@ pub fn demo_fixed_heartbeat() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let dec = HeartbeatDecoder::try_decode(&buf[..written], 0)?;
     assert_eq!(dec.sequence(), 7);
-    let decoded_ts: DateTime<Utc> = dec.try_timestamp()?;
+    let decoded_ts: DateTime<Utc> = dec.timestamp()?;
     assert_eq!(decoded_ts.timestamp_nanos_opt(), Some(nanos));
     Ok(buf[..written].to_vec())
 }
@@ -268,7 +268,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.serial_number(), 1234);
     assert_eq!(car.model_year(), 2013);
     // Domain conversion: BooleanType → bool when configured.
-    let available: bool = car.try_available()?;
+    let available: bool = car.available()?;
     assert!(available);
     assert_eq!(car.code(), Model::A);
     assert_eq!(car.discounted_model(), Model::C); // constant field
@@ -696,7 +696,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 // ─── 9. with_manual_domain_type(..): concrete signatures, own impl ──
 
 // App-supplied conversion for `ManualDecimal` (see build.rs). This is a
-// straight copy-paste of the doc comment on `try_manual_price` in the
+// straight copy-paste of the doc comment on `manual_price` in the
 // generated module — DomainImpl::Manual gives you that snippet as a
 // starting point precisely so you don't have to write this from scratch.
 impl TryFromSbe<ManualDecimal> for Rd {
@@ -736,15 +736,15 @@ impl TryToSbe<ManualDecimal> for Rd {
 }
 
 /// `with_manual_domain_type(ManualDecimal, "rust_decimal::Decimal")`
-/// (see `build.rs`). Same concrete `try_manual_price(...)?` / `try_manual_price()?`
+/// (see `build.rs`). Same concrete `manual_price(...)?` / `manual_price()?`
 /// signatures as `DomainImpl::Generated` gives `Decimal64`-style fields
 /// elsewhere — the difference is entirely in who writes the two `impl`
 /// blocks above.
 ///
 /// | API on Quote | Present? |
 /// |--------------|----------|
-/// | `try_manual_price(rust_decimal::Decimal) -> Result<..>` | yes |
-/// | `try_manual_price() -> Result<rust_decimal::Decimal, ..>` | yes |
+/// | `manual_price(rust_decimal::Decimal) -> Result<..>` | yes |
+/// | `manual_price() -> Result<rust_decimal::Decimal, ..>` | yes |
 /// | Auto-generated `impl TryFromSbe<ManualDecimal>` | **no** — that's the `impl` block above |
 // ANCHOR: demo_domain_type_manual_impl
 pub fn demo_domain_type_manual_impl() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -754,11 +754,11 @@ pub fn demo_domain_type_manual_impl() -> Result<Vec<u8>, Box<dyn std::error::Err
     let mut enc = QuoteEncoder::try_wrap_and_apply_header(&mut buf, 0)?;
     enc.price_from(&Rd::new(1, 0))?;
     enc.size_from(&Rd::new(1, 0))?;
-    enc.try_manual_price(price)?;
+    enc.manual_price(price)?;
     let len = QuoteEncoder::compute_length_with_header();
 
     let dec = QuoteDecoder::try_from(&buf[..len])?;
-    let decoded = dec.try_manual_price()?;
+    let decoded = dec.manual_price()?;
     assert_eq!(decoded, price);
     Ok(buf[..len].to_vec())
 }
@@ -859,7 +859,7 @@ mod tests {
     fn domain_type_manual_impl_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let wire = demo_domain_type_manual_impl()?;
         let dec = QuoteDecoder::try_from(wire.as_slice())?;
-        assert_eq!(dec.try_manual_price()?, Rd::new(12345, 2));
+        assert_eq!(dec.manual_price()?, Rd::new(12345, 2));
         // The raw wire composite is a plain ManualDecimal — no auto-impl,
         // no hidden generated conversion beyond the app's own impl above.
         assert_eq!(dec.manual_price_value().mantissa(), 12345);

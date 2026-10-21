@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ergon-shared-cpus.fullname" . }}
+  namespace: {{ include "ergon-shared-cpus.namespace" . }}
+  labels:
+    {{- include "ergon-shared-cpus.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    sharedCpus: {{ .Values.config.sharedCpus | quote }}
+    oversubscription: {{ .Values.config.oversubscription }}
+    namespaces: [{{ range $i, $n := .Values.config.namespaces }}{{ if $i }}, {{ end }}{{ $n | quote }}{{ end }}]
+    defaultAffinity: {{ .Values.config.defaultAffinity | quote }}
+    hookPath: {{ .Values.config.hookPath | quote }}
+    annotationOptIn: {{ .Values.config.annotationOptIn }}
+    metricsAddress: {{ .Values.config.metricsAddress | quote }}
+    # Where this process can see the host's /dev. The DaemonSet mounts it
+    # read-only so the plugin can stat the PHC and PM QoS nodes and grant
+    # them (NRI AddDevice needs the major/minor). Granted paths stay the
+    # container's /dev/... names.
+    devRoot: {{ .Values.config.devRoot | quote }}

@@ -1,0 +1,12 @@
+[package]
+name = "parity_infinity"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Floating point infinity literal test"
+edition = "2021"
+
+[lib]
+name = "parity_infinity"
+path = "src/lib.rs"
+
+[workspace]

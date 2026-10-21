@@ -158,6 +158,13 @@ endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
 [[case]]
+key = "group_constant_fields"
+exact_encode = ["group_constant_fields_entries"]
+cross_decode = ["group_constant_fields_entries"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
 key = "group_with_data"
 exact_encode = [
     "group_with_data_message1",
@@ -166,6 +173,13 @@ exact_encode = [
     "group_with_data_var_data_only_message4",
 ]
 cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "infinity"
+exact_encode = ["infinity_null_values_and_constants"]
+cross_decode = ["infinity_null_values_and_constants"]
 endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
@@ -187,6 +201,20 @@ versioning = []
 key = "issue1066"
 exact_encode = ["issue1066_optional_field"]
 cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue1116"
+exact_encode = ["issue1116_enum_null_from_encoding_type"]
+cross_decode = ["issue1116_enum_null_from_encoding_type"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "issue1118"
+exact_encode = ["issue1118_keyword_set_choices"]
+cross_decode = ["issue1118_keyword_set_choices"]
 endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
@@ -226,6 +254,27 @@ endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
 [[case]]
+key = "lower_case_bitset"
+exact_encode = ["lower_case_bitset_choices"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "lower_case_enum"
+exact_encode = ["lower_case_enum_constant_message"]
+cross_decode = ["lower_case_enum_constant_message"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "message_block_length"
+exact_encode = ["message_block_length_padding_and_group"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
 key = "nested_composite"
 exact_encode = ["nested_composite_ref_field"]
 cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
@@ -249,6 +298,13 @@ versioning = []
 [[case]]
 key = "optional_enum_nullify"
 exact_encode = ["optional_enum_nullify_values"]
+cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "since_version_filter"
+exact_encode = ["since_version_filter_messages"]
 cross_decode = ["all_reference_message_headers_follow_schema_byte_order"]
 endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []

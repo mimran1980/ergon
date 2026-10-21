@@ -55,18 +55,28 @@ sys.exit(0 if d.get('commit') == sys.argv[2] else 1)
 }
 
 SBE_RUN_ID=""
-for candidate in $(ls -t "$SBE_RUNS" 2>/dev/null); do
+# Newest first, which a glob cannot sort by.
+while IFS= read -r candidate; do
     m_lto="$SBE_RUNS/$candidate/lto/criterion/run-manifest.json"
     m_nolto="$SBE_RUNS/$candidate/no-lto/criterion/run-manifest.json"
     if manifest_commit_matches "$m_lto" && manifest_commit_matches "$m_nolto"; then
         SBE_RUN_ID="$candidate"
         break
     fi
-done
+done < <(ls -t "$SBE_RUNS" 2>/dev/null)
 [ -n "$SBE_RUN_ID" ] || fail \
     "no SBE bench run with run-manifest commit matching HEAD ($COMMIT) — re-run 'just bench' on this commit"
 SBE_RUN_DIR="$SBE_RUNS/$SBE_RUN_ID"
 [ -d "$SBE_RUN_DIR" ] || fail "SBE run dir missing: $SBE_RUN_DIR"
+
+# The gate's own stdout for the no-LTO profile. `book/src/project/verification.md`
+# requires this artifact by name on the GitHub release. Checked before any
+# archive is written, so a run that did not keep it leaves no partial output:
+# shipping a release without the gate output is exactly what that requirement
+# exists to prevent.
+GATE_LOG="$SBE_RUN_DIR/no-lto/gate.txt"
+[ -s "$GATE_LOG" ] || fail \
+    "missing $GATE_LOG — the run did not record the no-LTO gate stdout; re-run 'just bench'"
 
 for profile in no-lto lto; do
     CRITERION_DIR="$SBE_RUN_DIR/$profile/criterion"
@@ -114,6 +124,9 @@ sys.exit(0 if d.get('commit') == sys.argv[2] else 1)
     echo "SBE $profile: $estimate_count estimates → bench-sbe-$profile.tar.gz"
 done
 
+cp "$GATE_LOG" "$OUT_DIR/sbe-bench-gate-no-lto.txt"
+echo "SBE no-LTO gate stdout → sbe-bench-gate-no-lto.txt"
+
 # ── Cluster artifacts (produced by just bench-cluster) ────────────────────
 
 package_cluster() {
@@ -127,7 +140,35 @@ package_cluster() {
             return 0
         fi
     fi
-    estimate_count=$(find "$dir" -name "estimates.json" -path "*/new/*" 2>/dev/null | wc -l | tr -d ' ')
+    # The run's own evidence is the `repeats/<k>/` tree the runner snapshotted,
+    # which is also what the gate grades. The cluster Criterion home is shared
+    # with other bench binaries (`target/criterion` also holds ergon-clock-bench's
+    # groups) and Criterion leaves `new/` in place for groups a run does not
+    # touch, so counting or shipping `new/` folds foreign keys into the release
+    # artifact — one run packaged 53 "estimates" of which 35 belonged to other
+    # benches. With no repeats on disk there is nothing better to go on, so fall
+    # back to `new/`.
+    local estimate_count evidence
+    estimate_count=0
+    evidence=""
+    if [ -d "$dir/repeats" ]; then
+        # One invocation's set is the estimate count: `repeats` on the manifest
+        # already says how many invocations there were.
+        local k n
+        for k in $(ls -1 "$dir/repeats" 2>/dev/null | sort -n); do
+            [ -d "$dir/repeats/$k" ] || continue
+            n=$(find "$dir/repeats/$k" -name estimates.json 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$n" -gt 0 ]; then
+                estimate_count="$n"
+                evidence=repeats
+                break
+            fi
+        done
+    fi
+    if [ "$estimate_count" -eq 0 ]; then
+        estimate_count=$(find "$dir" -name "estimates.json" -path "*/new/*" 2>/dev/null | wc -l | tr -d ' ')
+        evidence=new
+    fi
     if [ "$estimate_count" -eq 0 ]; then
         if [ "$REQUIRE_CLUSTER" = "1" ]; then
             fail "no cluster estimates for $label under $dir"
@@ -178,24 +219,35 @@ d['estimates'] = $estimate_count
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
 "
-    # Package criterion tree + manifest. Parent of criterion is the profile root.
+    # Package the run's evidence + manifest. Parent of criterion is the profile
+    # root. Only `repeats/` is shipped when it is the evidence: `new/` in a
+    # shared home carries whatever else wrote there, and this archive is the
+    # release's proof.
     parent="$(cd "$(dirname "$dir")" && pwd)"
     base="$(basename "$dir")"
     ARCHIVE="$OUT_DIR/bench-cluster-$label.tar.gz"
-    tar -czf "$ARCHIVE" -C "$parent" "$base" -C "$dir" run-manifest.json 2>/dev/null \
-        || tar -czf "$ARCHIVE" -C "$parent" "$base"
-    # Ensure manifest is inside archive
-    if ! tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json'; then
-        # re-pack with manifest at archive root
+    if [ "$evidence" = "repeats" ]; then
         tmp=$(mktemp -d)
-        cp -R "$dir"/* "$tmp/" 2>/dev/null || true
+        cp -R "$dir/repeats" "$tmp/repeats"
         cp "$MANIFEST" "$tmp/run-manifest.json"
         tar -czf "$ARCHIVE" -C "$tmp" .
         rm -rf "$tmp"
+    else
+        tar -czf "$ARCHIVE" -C "$parent" "$base" -C "$dir" run-manifest.json 2>/dev/null \
+            || tar -czf "$ARCHIVE" -C "$parent" "$base"
+        # Ensure manifest is inside archive
+        if ! tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json'; then
+            # re-pack with manifest at archive root
+            tmp=$(mktemp -d)
+            cp -R "$dir"/* "$tmp/" 2>/dev/null || true
+            cp "$MANIFEST" "$tmp/run-manifest.json"
+            tar -czf "$ARCHIVE" -C "$tmp" .
+            rm -rf "$tmp"
+        fi
     fi
     tar -tzf "$ARCHIVE" | grep -q 'estimates.json' || fail "$ARCHIVE missing estimates.json"
     tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json' || fail "$ARCHIVE missing run-manifest.json"
-    echo "Cluster $label: $estimate_count estimates → bench-cluster-$label.tar.gz"
+    echo "Cluster $label: $estimate_count estimates ($evidence) → bench-cluster-$label.tar.gz"
 }
 
 package_cluster "lto" "$REPO_ROOT/target/criterion"

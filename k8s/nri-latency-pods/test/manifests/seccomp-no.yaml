@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Candidate 6, not widened: RuntimeDefault alone blocks io_uring. The memlock
+# annotation keeps a Grants object so the plugin exports
+# ERGON_SECCOMP=runtime-default; io_uring_setup must return EPERM.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seccomp-no
+  namespace: ergon-latency-pods
+  annotations:
+    rlimits.ergon.io/app: "memlock"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

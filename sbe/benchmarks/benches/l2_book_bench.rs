@@ -61,12 +61,7 @@ fn bench_l2_encode(c: &mut Criterion) {
                         .levels(n as u16, |g| {
                             for (price, qty, side) in entries {
                                 g.add(|mut entry| {
-                                    entry
-                                        .try_price(*price)
-                                        .unwrap()
-                                        .try_qty(*qty)
-                                        .unwrap()
-                                        .side(*side);
+                                    entry.price(*price).unwrap().qty(*qty).unwrap().side(*side);
                                     Ok(())
                                 })?;
                             }
@@ -131,9 +126,9 @@ fn bench_l2_decode(c: &mut Criterion) {
                 let levels = dec.levels().unwrap();
                 let mut total: i128 = 0;
                 for level in levels {
-                    let price: RustDecimal = black_box(level.try_price().expect("valid"));
+                    let price: RustDecimal = black_box(level.price().expect("valid"));
                     total = total.wrapping_add(price.mantissa() as i128);
-                    let qty: RustDecimal = black_box(level.try_qty().expect("valid"));
+                    let qty: RustDecimal = black_box(level.qty().expect("valid"));
                     total = total.wrapping_add(qty.mantissa() as i128);
                     black_box(level.side());
                 }

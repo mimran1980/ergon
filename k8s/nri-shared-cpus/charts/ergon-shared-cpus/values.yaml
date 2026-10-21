@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One values file per node group: sharedCpus is the housekeeping CPU list of
+# the nodes the DaemonSet runs on. It must be inside the kubelet's
+# reservedSystemCPUs, minus the CPU(s) kept for NIC IRQs.
+
+# The image is not published yet. Set repository/tag to a local build to try
+# the chart before RELEASE.md is signed off.
+image:
+  repository: ghcr.io/mimran1980/ergon-shared-cpus
+  # Empty means appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# The DaemonSet writes hostPaths (the NRI socket, the device plugin socket,
+# the hook binary), which needs the privileged Pod Security Standard. The
+# chart sets those labels on its own namespace.
+namespace: ergon-system
+
+nodeSelector:
+  ergon.io/shared-cpus: "true"
+
+tolerations:
+  - operator: Exists
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+# /etc/ergon-shared-cpus/config.yaml, written from a ConfigMap. Strict YAML,
+# no hot reload. Every key here maps 1:1 to that file.
+config:
+  # Required. The housekeeping CPUs. Inside reservedSystemCPUs.
+  sharedCpus: "4"
+  # Capacity = len(sharedCpus) x 1000 x this, max 100000.
+  oversubscription: 1
+  # Allowlist. Empty refuses every opt-in.
+  namespaces:
+    - trading
+  # shared (inject the hook) | all (no hook; use the wrapper).
+  defaultAffinity: shared
+  # Must end with /ergon-cpus. Written as root on the node.
+  hookPath: /opt/ergon/bin/ergon-cpus
+  # Allow cpu-shared.ergon.io/<container> without the device plugin.
+  annotationOptIn: false
+  metricsAddress: ":9466"
+  # Where this process can see the host's /dev. The DaemonSet mounts it
+  # read-only so the plugin can stat the PHC and PM QoS nodes and grant them
+  # (NRI AddDevice needs the major/minor). Granted paths stay /dev/...
+  # names.
+  devRoot: /host/dev
+
+metrics:
+  port: 9466
+  # Service for the metrics port. Off by default: scraping a node plugin
+  # usually goes through a DaemonSet annotation, not a Service.
+  service:
+    enabled: false
+    port: 9466
+
+# Extra host paths, if a deployment needs more than the three the plugin
+# writes and the two it reads (host /dev at /host/dev, host cgroup v2 at
+# /sys/fs/cgroup — both read-only). The cgroup mount path is not configurable:
+# it must be the node's own /sys/fs/cgroup, because that is the path
+# config.cgroupRoot names and the createRuntime hook resolves on the node.
+extraHostPaths: []
+#  - name: example
+#    path: /opt/example
+#    type: DirectoryOrCreate
+#    mountPath: /host/example
+#    readOnly: true
+
+tolerationsRaw: []

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 5, PHC refused: the pod names a /dev/ptp* this node does not have. The
+# create fails closed and the message lists the node's devices.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ptp-bad
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    ptp.ergon.io/app: "/dev/ptp9"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

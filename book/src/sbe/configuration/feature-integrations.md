@@ -99,10 +99,10 @@ let config = GenerationConfig::new("msgs")
 ```
 
 ```rust,ignore
-let created: chrono::DateTime<chrono::Utc> = dec.try_created_at()?;
-let updated: chrono::NaiveDateTime = dec.try_updated_at()?;
-enc.try_created_at(chrono::Utc::now())?;
-enc.try_updated_at(chrono::DateTime::from_timestamp(1_720_000_000, 0).unwrap().naive_utc())?;
+let created: chrono::DateTime<chrono::Utc> = dec.created_at()?;
+let updated: chrono::NaiveDateTime = dec.updated_at()?;
+enc.created_at(chrono::Utc::now())?;
+enc.updated_at(chrono::DateTime::from_timestamp(1_720_000_000, 0).unwrap().naive_utc())?;
 ```
 
 One `semantic_type("UTCTimestamp")` covers every field with that attribute.

@@ -623,7 +623,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
             assert_eq!(row.raw_later_set(), None);
             assert_eq!(row.later_bool(), None);
             assert_eq!(row.raw_later_bool(), None);
-            assert_eq!(row.try_later_bool_bool().unwrap(), None);
+            assert_eq!(row.later_bool_bool().unwrap(), None);
         }
 
         // Acting version 1 declares laterArray..laterBool required, so a v1
@@ -680,7 +680,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
         let Some(first) = decoded.entries()?.next() else {
             panic!("a well-formed v1 entry block must yield its entry");
         };
-        assert_eq!(first.try_later_bool_bool().unwrap(), Some(true));
+        assert_eq!(first.later_bool_bool().unwrap(), Some(true));
         assert!(first.later_value().is_none());
 
         // Latest-version add_struct covers multi-byte primitive arrays plus
@@ -708,7 +708,7 @@ fn versioned_group_non_scalar_fields_do_not_read_past_older_entry_blocks()
         assert_eq!(row.later_enum(), Some(LaterEnum::A));
         assert_eq!(row.later_set(), Some(LaterSet(1)));
         assert_eq!(row.later_bool(), Some(BooleanType::T));
-        assert_eq!(row.try_later_bool_bool().unwrap(), Some(true));
+        assert_eq!(row.later_bool_bool().unwrap(), Some(true));
         assert_eq!(row.later_value(), Some(42u32));
         "#,
     );

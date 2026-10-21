@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Candidate 5, granted: the rlimits only (MEMLOCK for mlockall, RTPRIO as a
+# limit value, NOFILE) on an unprivileged pod. No IPC_LOCK, no capabilities,
+# no privileged, and no scheduler change: RT scheduling is not built. The
+# plugin raises the limits from its config and exports the contract env.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rlimits-yes
+  namespace: ergon-latency-pods
+  annotations:
+    rlimits.ergon.io/app: "memlock,rt-prio,nofile"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

@@ -86,6 +86,96 @@ fn parse_set_choice_bit_out_of_range_is_error() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// sbe-tool `PrimitiveValueTest`: `NaN` and `Infinity` with any sign parse to
+/// their IEEE images at the declared width, finite values keep their sign bit,
+/// and spellings Java's parser rejects are rejected.
+#[test]
+fn float_null_min_max_literals_match_java() -> Result<(), Box<dyn std::error::Error>> {
+    let f = Some(PrimitiveType::Float);
+    let d = Some(PrimitiveType::Double);
+    let float = |s| try_parse_u64_val(s, f);
+    let double = |s| try_parse_u64_val(s, d);
+    assert_eq!(float("Infinity")?, Some(0x7f80_0000));
+    assert_eq!(float("+Infinity")?, Some(0x7f80_0000));
+    assert_eq!(float("-Infinity")?, Some(0xff80_0000));
+    assert_eq!(double("Infinity")?, Some(0x7ff0_0000_0000_0000));
+    assert_eq!(double("+Infinity")?, Some(0x7ff0_0000_0000_0000));
+    assert_eq!(double("-Infinity")?, Some(0xfff0_0000_0000_0000));
+    assert_eq!(float("NaN")?, Some(u64::from(f32::NAN.to_bits())));
+    assert_eq!(float("-NaN")?, Some(u64::from(f32::NAN.to_bits())));
+    assert_eq!(double("NaN")?, Some(f64::NAN.to_bits()));
+    assert_eq!(double("+NaN")?, Some(f64::NAN.to_bits()));
+    assert_eq!(double("-NaN")?, Some(f64::NAN.to_bits()));
+    assert_eq!(float("-0.0")?, Some(u64::from((-0.0_f32).to_bits())));
+    assert_eq!(double("-0.0")?, Some((-0.0_f64).to_bits()));
+    assert_eq!(float("-1.5")?, Some(u64::from((-1.5_f32).to_bits())));
+    assert_eq!(double("1e-7")?, Some(1e-7_f64.to_bits()));
+    for bad in [
+        "inf", "-inf", "infinity", "INFINITY", "nan", "NAN", "Inf", "-nan",
+    ] {
+        assert!(float(bad).is_err(), "float {bad} must be rejected");
+        assert!(double(bad).is_err(), "double {bad} must be rejected");
+    }
+    Ok(())
+}
+
+/// sbe-tool `SetTypeTest.shouldThrowExceptionWhenNegativeValueSpecified`.
+#[test]
+fn parse_set_negative_choice_bit_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+<set name="S" encodingType="uint8">
+  <choice name="Neg">-1</choice>
+</set>
+  </types>
+</messageSchema>"#;
+    assert!(parse(xml).is_err(), "set choice bit -1 must error");
+
+    Ok(())
+}
+
+/// Java `EnumType` precedence for the null: the enum's own `nullValue`, else
+/// the encodingType typedef's, else the primitive default.
+#[test]
+fn enum_null_value_precedence() -> Result<(), Box<dyn std::error::Error>> {
+    let schema = |enum_null: &str, typedef_null: &str| {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="x" id="1" version="0" byteOrder="littleEndian">
+  <types>
+<composite name="messageHeader">
+  <type name="blockLength" primitiveType="uint16"/>
+  <type name="templateId" primitiveType="uint16"/>
+  <type name="schemaId" primitiveType="uint16"/>
+  <type name="version" primitiveType="uint16"/>
+</composite>
+<type name="Enc" primitiveType="uint8" presence="optional"{typedef_null}/>
+<enum name="E" encodingType="Enc"{enum_null}>
+  <validValue name="A">0</validValue>
+</enum>
+  </types>
+</messageSchema>"#
+        )
+    };
+    let enum_null = |xml: String| -> Result<Option<u64>, Box<dyn std::error::Error>> {
+        let ir = parse(&xml)?;
+        let token = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginEnum)
+            .ok_or("no enum token")?;
+        Ok(token.encoding.null_value)
+    };
+    assert_eq!(
+        enum_null(schema(r#" nullValue="7""#, r#" nullValue="254""#))?,
+        Some(7)
+    );
+    assert_eq!(enum_null(schema("", r#" nullValue="254""#))?, Some(254));
+    assert_eq!(enum_null(schema("", ""))?, Some(255));
+    Ok(())
+}
+
 #[test]
 fn parse_set_duplicate_choice_bit_is_error() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -633,43 +723,111 @@ fn parse_field_inheriting_presence() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn parse_value_ref_dot_notation() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+/// One schema whose single constant field is `<field {field}/>`, with an enum
+/// `Colour` (uint8), an enum `Side` (char) and a set `Flags` (uint8) in scope.
+fn value_ref_schema(field: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
-<enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="Colour.Red"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef dot-notation code path — may succeed or warn
-    let _ = parse(xml);
+<enum name="Colour" encodingType="uint8"><validValue name="Red">1</validValue></enum>
+<enum name="Side" encodingType="char"><validValue name="Buy">B</validValue></enum>
+<set name="Flags" encodingType="uint8"><choice name="A">0</choice></set></types>
+<sbe:message name="M" id="1"><field name="c" id="1" presence="constant" {field}/></sbe:message>
+</sbe:messageSchema>"#
+    )
+}
 
+#[test]
+fn parse_value_ref_accepts_what_sbe_tool_accepts() -> Result<(), Box<dyn std::error::Error>> {
+    // The field's own enum, and a primitive whose encoding matches the enum's.
+    parse(&value_ref_schema(r#"type="Colour" valueRef="Colour.Red""#))?;
+    parse(&value_ref_schema(r#"type="uint8" valueRef="Colour.Red""#))?;
+    parse(&value_ref_schema(r#"type="char" valueRef="Side.Buy""#))?;
     Ok(())
 }
 
 #[test]
-fn parse_value_ref_unknown_enum_warns() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
-<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="NonExistent.SomeVal"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef unknown-enum warning path
-    let _ = parse(xml);
-
+fn parse_value_ref_rejects_what_sbe_tool_rejects() -> Result<(), Box<dyn std::error::Error>> {
+    // Each of these built silently before; sbe-tool's Field.validate rejects
+    // them all, and the decoder would have returned the field enum's variant.
+    for (field, expected) in [
+        (
+            r#"type="uint8" valueRef="SimpleVal""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef="Colour.""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef=".Red""#,
+            "enum-name.valid-value-name",
+        ),
+        (
+            r#"type="uint8" valueRef="NonExistent.SomeVal""#,
+            "enum name not found",
+        ),
+        (
+            r#"type="Colour" valueRef="Colour.Blue""#,
+            "validValue name not found",
+        ),
+        (r#"type="Flags" valueRef="Flags.A""#, "not an enum"),
+        (r#"type="Flags" constantValue="1""#, "set or composite"),
+        (
+            r#"type="messageHeader" constantValue="1""#,
+            "set or composite",
+        ),
+        (
+            r#"type="Colour" constantValue="1""#,
+            "valueRef for constant enum",
+        ),
+        (
+            r#"type="Colour" valueRef="Side.Buy""#,
+            "does not match field type",
+        ),
+        (
+            r#"type="uint16" valueRef="Colour.Red""#,
+            "does not match field type",
+        ),
+    ] {
+        let Err(err) = parse(&value_ref_schema(field)) else {
+            return Err(format!("expected {field} to be rejected").into());
+        };
+        let message = format!("{err}");
+        assert!(
+            message.contains(expected),
+            "{field}: expected '{expected}' in '{message}'"
+        );
+    }
     Ok(())
 }
 
 #[test]
-fn parse_value_ref_no_dot() -> Result<(), Box<dyn std::error::Error>> {
-    let xml = r#"<?xml version="1.0"?>
-<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
-<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
-<sbe:message name="M" id="1"><field name="c" id="1" type="uint8" presence="constant" valueRef="SimpleVal"/></sbe:message>
-</sbe:messageSchema>"#;
-    // Exercise the valueRef no-dot path
-    let _ = parse(xml);
-
+fn parse_rejects_constant_set_and_composite_in_group_entries()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Entry blockLength leaves constants out, so a wire read of one would
+    // land in the next entry or past the buffer.
+    for field in [
+        r#"type="Flags" presence="constant" constantValue="3""#,
+        r#"type="groupSizeEncoding" presence="constant" constantValue="1""#,
+    ] {
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
+<types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+<composite name="groupSizeEncoding"><type name="blockLength" primitiveType="uint16"/><type name="numInGroup" primitiveType="uint16"/></composite>
+<set name="Flags" encodingType="uint8"><choice name="A">0</choice><choice name="B">1</choice></set></types>
+<sbe:message name="M" id="1"><group name="g" id="2" dimensionType="groupSizeEncoding">
+<field name="x" id="3" type="uint8"/><field name="c" id="4" {field}/></group></sbe:message>
+</sbe:messageSchema>"#
+        );
+        let Err(err) = parse(&xml) else {
+            return Err(format!("expected {field} to be rejected").into());
+        };
+        let message = format!("{err}");
+        assert!(message.contains("set or composite"), "{field}: {message}");
+    }
     Ok(())
 }
 
@@ -3544,6 +3702,40 @@ fn include_with_non_types_sibling_elements_is_tolerated() -> Result<(), Box<dyn 
     parse(&schema).unwrap();
     std::fs::remove_file(&inc).ok();
 
+    Ok(())
+}
+
+#[test]
+fn include_whose_root_is_a_message_is_an_error() -> Result<(), Box<dyn std::error::Error>> {
+    // sbe-tool splices an included <message> into the schema. We read messages
+    // only from the root document, so the include must fail, not vanish.
+    let dir = std::env::temp_dir().join(format!("ergon_xml_inc_msg_{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let inc = dir.join("order.xml");
+    std::fs::write(
+        &inc,
+        r#"<?xml version="1.0"?>
+<sbe:message xmlns:sbe="http://fixprotocol.io/2016/sbe" name="Order" id="2">
+<field name="qty" id="1" type="uint32"/>
+</sbe:message>"#,
+    )?;
+    let schema = format!(
+        r#"<?xml version="1.0"?>
+<messageSchema package="test" id="1" version="0" byteOrder="littleEndian">
+  <include href="{}"/>
+  <types>{HEADER_TYPES}</types>
+  <message name="M" id="1">
+<field name="f" id="1" type="uint8"/>
+  </message>
+</messageSchema>"#,
+        inc.display()
+    );
+    let result = parse(&schema);
+    std::fs::remove_file(&inc).ok();
+    let Err(err) = result else {
+        return Err("an included <message> must not be dropped silently".into());
+    };
+    assert!(format!("{err}").contains("not supported"), "{err}");
     Ok(())
 }
 

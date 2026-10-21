@@ -12,9 +12,9 @@ Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
 **Generated API (concrete):**
 
 ```rust,ignore
-enc.try_price(rust_decimal::Decimal::new(100, 0))?;
-let p: rust_decimal::Decimal = dec.try_price()?;
-let ts: DateTime<Utc> = dec.try_exchange_timestamp()?;
+enc.price(rust_decimal::Decimal::new(100, 0))?;
+let p: rust_decimal::Decimal = dec.price()?;
+let ts: DateTime<Utc> = dec.exchange_timestamp()?;
 ```
 
 `with_domain_type` **already enables conversion** for that selector. Do not also
@@ -158,8 +158,8 @@ like encode. Dynamic
 groups fill `EntryInfo` from that walk; fixed-stride groups reuse the
 iterator's count and stride. Neither shape pre-scans entries or re-opens the
 dimension header. The optimizer and measured workload determine the callback
-wrapper's final cost. Message-level `fixed` receives a fixed-fields-only view;
-custom error types use `try_fixed` / `try_bids` / `try_asks`.
+wrapper's final cost. Message-level `fixed` receives a fixed-fields-only view.
+Callbacks return `DecodeError`; convert to an application error after the walk.
 
 ### On a hot path, collect nothing
 

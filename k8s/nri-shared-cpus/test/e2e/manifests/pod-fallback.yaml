@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fallback opt-in: the pod annotation only, no extended resource. The plugin
+# must give it the same layout as pod A (annotationOptIn is on for the e2e).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fallback
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    cpu-shared.ergon.io/app: "250"
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["pin-test", "hold"]
+      resources:
+        requests:
+          cpu: "2"
+          memory: 64Mi
+        limits:
+          cpu: "2"
+          memory: 64Mi

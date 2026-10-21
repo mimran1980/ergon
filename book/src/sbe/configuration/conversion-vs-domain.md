@@ -7,8 +7,8 @@ Do **not** call both for the same selector — domain type already enables conve
 | **Idea** | Generic convert API; **you** plug any app type | Always use **this** Rust path |
 | **build.rs** | `.with_conversion(named_type("Decimal"))` | `.with_domain_type(…, "rust_decimal::Decimal")` |
 | **You write** | `TryFromSbe<Decimal>` / `TryToSbe<Decimal>` for your type | Usually nothing for bool / rust_decimal / chrono |
-| **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.try_price()?` |
-| **Encode** | `enc.price_from(&cents)?` | `enc.try_price(rust_decimal::Decimal::new(12345, 2))?` |
+| **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.price()?` |
+| **Encode** | `enc.price_from(&cents)?` | `enc.price(rust_decimal::Decimal::new(12345, 2))?` |
 | **Raw wire** | `price_value()` / `price_wire(...)` | same when conversion is active |
 | **Sample** | [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [demo_conversion_only](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) | [l3-book](https://github.com/mimran1980/ergon/tree/main/samples/l3-book) |
 
@@ -24,7 +24,7 @@ the raw accessor it delegates to:
 
 | Field | `with_conversion` | `with_domain_type` |
 |-------|-------------------|--------------------|
-| Required, `sinceVersion=0` | `price_as::<T>() -> Result<T, _>` | `try_price() -> Result<T, _>` |
+| Required, `sinceVersion=0` | `price_as::<T>() -> Result<T, _>` | `price() -> Result<T, _>` |
 | `sinceVersion > 0` | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
 | `presence="optional"` scalar | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
 
@@ -79,7 +79,7 @@ the `TryFromSbe`/`TryToSbe` impl for `bool` / `rust_decimal::Decimal` /
 `chrono::DateTime<Utc>`. If you need different conversion behaviour for one of
 those exact three types — a custom rounding rule, stricter validation,
 different null handling — call additive [`with_manual_domain_type`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.GenerationConfig.html#method.with_manual_domain_type)
-instead: same generated `try_price(...)?` / `try_price()?` signatures, but you
+instead: same generated `price(...)?` / `price()?` signatures, but you
 write the impl:
 
 ```rust,ignore
@@ -103,12 +103,12 @@ error[E0277]: `rust_decimal::Decimal` has no `TryFromSbe<Decimal>` impl
   |
   | missing `impl TryFromSbe<Decimal> for rust_decimal::Decimal`
   |
-  = note: if this field uses DomainImpl::Manual, the generated `try_*`
+  = note: if this field uses DomainImpl::Manual, the generated domain
           accessor's doc comment has a ready-to-paste starting point
 ```
 
 Second, for the three built-ins, that pointer is real: the generated
-`try_price` method's own doc comment (visible on hover, or in `cargo doc`)
+`price` method's own doc comment (visible on hover, or in `cargo doc`)
 carries the *exact* impl `DomainImpl::Generated` would have written — copy it
 out and adjust. `sbe/tests/baseline_test.rs`'s
 `domain_type_manual_impl_doc_comment_has_generated_snippet` asserts this
@@ -120,3 +120,12 @@ Only `Debug`. The generated `Display`/`Debug` bodies format domain values with
 `{:?}`, so a plain `#[derive(Debug)]` struct works — `Display` is never
 required. Note that `TryFromSbe::Error` / `TryToSbe::Error` is a separate
 associated type and *does* need `Debug + Display`; `&'static str` satisfies it.
+
+### Option C — generated mappings for enums and composites
+
+When the application type mirrors the SBE type — an enum with the same
+variants, a struct with the same members — `with_enum_mapping` and
+`with_composite_mapping` generate the `TryFromSbe` / `TryToSbe` impls
+(exhaustive, with renames) and register the domain type in one call. The
+accessors look exactly like Option B's. See
+[App Types on Composites](../recipes/app-types-composites.md#generated-mappings).

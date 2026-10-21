@@ -75,7 +75,7 @@ pub mod var_data_encoding_codec;
 pub mod vote_codec;
 
 pub const SBE_SCHEMA_ID: u16 = 111;
-pub const SBE_SCHEMA_VERSION: u16 = 16;
+pub const SBE_SCHEMA_VERSION: u16 = 17;
 pub const SBE_SEMANTIC_VERSION: &str = "5.4";
 
 pub type SbeResult<T> = core::result::Result<T, SbeErr>;

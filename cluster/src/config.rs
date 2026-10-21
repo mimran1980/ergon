@@ -10,10 +10,14 @@ use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rusteron_client::IdleStrategy;
+use rusteron_client::{Aeron, IdleStrategy};
 
+use crate::protocol::DEFAULT_CLIENT_NAME;
 use crate::uri;
 use crate::{ClusterError, CredentialsSupplier};
+
+/// Invoked from the Aeron client conductor when the driver reports an error.
+pub(crate) type ErrorHandler = Arc<dyn Fn(i32, &str) + Send + Sync>;
 
 /// Builds and connects an [`crate::AeronCluster`].
 ///
@@ -44,20 +48,27 @@ pub struct SessionBuilder {
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
     /// Deadline (ms) for awaiting a NewLeaderEvent before the session is
-    /// deemed dead. Mirrors Java `Context.newLeaderTimeoutNs` (default 5s).
-    pub(crate) new_leader_timeout_ms: u64,
+    /// deemed dead. `None` is Java's NULL: connect uses twice the leader
+    /// heartbeat, or 20s when the cluster does not send one.
+    pub(crate) new_leader_timeout_ms: Option<u64>,
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
     /// Ingress publication mode — always exclusive (`true`); shared
     /// ingress is deferred (Java default: exclusive). See the parity matrix.
     pub(crate) is_ingress_exclusive: bool,
-    /// Owns the Aeron client — always `true`; external-Aeron injection is
-    /// deferred (Java default: `true`). See the parity matrix.
+    /// `false` when [`Self::aeron`] supplied the client. Connect then clones
+    /// it and does not install an error handler or client name.
     pub(crate) owns_aeron: bool,
+    /// An existing Aeron client. Connect clones it and does not call `start`.
+    pub(crate) shared_aeron: Option<Aeron>,
+    /// Aeron client name. `None` uses [`DEFAULT_CLIENT_NAME`] when this
+    /// builder creates the client.
+    pub(crate) client_name: Option<CString>,
+    /// Error handler installed only when this builder creates the client.
+    pub(crate) error_handler: Option<ErrorHandler>,
     /// Idle strategy for the sync-connect retry loop (Java
-    /// `Context.idleStrategy`). `None` = default `thread::sleep(50ms)`;
-    /// `Some` = adaptive backoff-on-idle during offer/poll retry.
+    /// `Context.idleStrategy`). `None` spins briefly then sleeps 1µs.
     pub(crate) idle: Option<Arc<Mutex<dyn IdleStrategy + Send + Sync>>>,
 }
 
@@ -85,11 +96,14 @@ impl Default for SessionBuilder {
             ingress_stream_id: 101,
             egress_stream_id: 102,
             message_timeout_ms: 5_000,
-            new_leader_timeout_ms: 5_000,
+            new_leader_timeout_ms: None,
             credentials: None,
             ingress_endpoints: None,
             is_ingress_exclusive: true,
             owns_aeron: true,
+            shared_aeron: None,
+            client_name: None,
+            error_handler: None,
             idle: None,
         }
     }
@@ -121,6 +135,30 @@ impl core::fmt::Debug for SessionBuilder {
             .field("ingress_endpoints", &self.ingress_endpoints)
             .field("is_ingress_exclusive", &self.is_ingress_exclusive)
             .field("owns_aeron", &self.owns_aeron)
+            .field(
+                "client_name",
+                &self
+                    .client_name
+                    .as_ref()
+                    .and_then(|name| name.to_str().ok())
+                    .unwrap_or(DEFAULT_CLIENT_NAME),
+            )
+            .field(
+                "aeron",
+                &if self.shared_aeron.is_some() {
+                    "<shared>"
+                } else {
+                    "<owned>"
+                },
+            )
+            .field(
+                "error_handler",
+                &if self.error_handler.is_some() {
+                    "<configured>"
+                } else {
+                    "<default>"
+                },
+            )
             .field(
                 "credentials",
                 &if self.credentials.is_some() {
@@ -175,8 +213,9 @@ impl SessionBuilder {
         self
     }
 
-    /// Deadline for the connect sequence, keep-alives, and re-offers.
-    /// Default: 5 seconds.
+    /// Deadline for the connect sequence, keep-alives, and re-offers, and for
+    /// a new leader's ingress publication to connect after its
+    /// `NewLeaderEvent`. Default: 5 seconds.
     ///
     /// # Errors
     ///
@@ -187,21 +226,65 @@ impl SessionBuilder {
     }
 
     /// Deadline for awaiting a `NewLeaderEvent` after the current leader is
-    /// lost (mirrors Java `Context.newLeaderTimeoutNs`; default 5s). When it
-    /// elapses, [`crate::AeronCluster::poll_state_changes`] transitions the
-    /// session to [`crate::ClusterError::Disconnected`].
+    /// lost (Java `Context.newLeaderTimeoutNs`). Unset, connect uses twice
+    /// the leader heartbeat from the OK `SessionEvent`, or 20 seconds when
+    /// that field is absent. A value set here wins. When it elapses,
+    /// [`crate::AeronCluster::poll_state_changes`] transitions the session to
+    /// [`crate::ClusterError::Disconnected`]. Once the event has come, the
+    /// message timeout bounds the wait instead.
     ///
     /// # Errors
     ///
     /// Zero, sub-millisecond, or overflow durations fail immediately.
     pub fn new_leader_timeout(mut self, timeout: Duration) -> Result<Self, ClusterError> {
-        self.new_leader_timeout_ms = checked_timeout_ms(timeout, "new_leader_timeout")?;
+        self.new_leader_timeout_ms = Some(checked_timeout_ms(timeout, "new_leader_timeout")?);
         Ok(self)
     }
 
+    /// Use an existing Aeron client instead of creating one.
+    ///
+    /// Connect clones `aeron` and does not call `start`, `set_client_name`,
+    /// or `set_error_handler`. `aeron_dir` passed to connect is ignored.
+    /// The caller's clone keeps the client open after this session drops.
+    pub fn aeron(mut self, aeron: Aeron) -> Self {
+        self.shared_aeron = Some(aeron);
+        self.owns_aeron = false;
+        self
+    }
+
+    /// Aeron client name, included in the connect request's `clientInfo`.
+    ///
+    /// The default is `cluster-client`. Names longer than 100 bytes, or
+    /// containing an interior NUL, are rejected. Applied only when this
+    /// builder creates the Aeron client.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClusterError::ConnectFailed`] when `name` is longer than
+    /// 100 bytes or contains a NUL.
+    pub fn client_name(mut self, name: impl AsRef<str>) -> Result<Self, ClusterError> {
+        let name = name.as_ref();
+        if name.len() > 100 {
+            return Err(ClusterError::connect("client name length must be <= 100"));
+        }
+        self.client_name =
+            Some(CString::new(name).map_err(|_| ClusterError::connect("client name must not contain NUL"))?);
+        Ok(self)
+    }
+
+    /// Error handler for the Aeron client this builder creates.
+    ///
+    /// The handler runs on Aeron's conductor and must not panic; a panic is
+    /// caught and written to stderr. Ignored when [`Self::aeron`] supplied
+    /// the client, which already has its own handler. The default writes
+    /// `ERROR: ({code}): {message}` to stderr.
+    pub fn error_handler(mut self, handler: impl Fn(i32, &str) + Send + Sync + 'static) -> Self {
+        self.error_handler = Some(Arc::new(handler));
+        self
+    }
+
     /// Idle strategy for the connect retry loop (Java `Context.idleStrategy`).
-    /// Replaces the default `thread::sleep(50ms)` with adaptive backoff during
-    /// the sync handshake's offer/poll retry logic.
+    /// Replaces the default spin-then-1µs backoff during the sync handshake.
     pub fn idle_strategy(mut self, strategy: impl IdleStrategy + Send + Sync + 'static) -> Self {
         self.idle = Some(Arc::new(Mutex::new(strategy)));
         self
@@ -242,13 +325,6 @@ impl SessionBuilder {
         self.egress_c.as_deref()
     }
 
-    /// Egress channel bytes without trailing NUL (for SBE var-data fields).
-    /// Zero-cost slice of the cached `CString`.
-    #[inline]
-    pub(crate) fn egress_channel_bytes(&self) -> &[u8] {
-        self.egress_c.as_ref().map(|c| c.as_bytes()).unwrap_or(b"")
-    }
-
     /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
     pub fn connect(self, aeron_dir: &str) -> Result<crate::AeronCluster, ClusterError> {
         crate::AeronCluster::connect(&self, aeron_dir)
@@ -273,6 +349,15 @@ impl SessionBuilder {
         }
         if has_endpoints {
             let _ = crate::endpoints::parse_ingress_endpoints(self.ingress_endpoints.as_deref().unwrap_or(""))?;
+            if self
+                .ingress_c
+                .as_ref()
+                .is_some_and(|channel| channel.as_bytes().starts_with(b"aeron:ipc"))
+            {
+                return Err(ClusterError::connect(
+                    "IPC plus ingress endpoints is a configuration error",
+                ));
+            }
         }
         Ok(())
     }
@@ -309,7 +394,7 @@ mod tests {
         assert_eq!(b.ingress_stream_id, 101);
         assert_eq!(b.egress_stream_id, 102);
         assert_eq!(b.message_timeout_ms, 5_000);
-        assert_eq!(b.new_leader_timeout_ms, 5_000);
+        assert!(b.new_leader_timeout_ms.is_none());
         Ok(())
     }
 
@@ -433,7 +518,7 @@ mod tests {
             .new_leader_timeout(Duration::from_millis(1))?;
         b.validate()?;
         assert_eq!(b.message_timeout_ms, 1);
-        assert_eq!(b.new_leader_timeout_ms, 1);
+        assert_eq!(b.new_leader_timeout_ms, Some(1));
         Ok(())
     }
 
@@ -496,6 +581,28 @@ mod tests {
             ),
             "got {err:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ipc_plus_ingress_endpoints_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let err = SessionBuilder::default()
+            .ingress_channel(uri::AERON_IPC_STREAM.to_str()?)?
+            .ingress_endpoints("0=localhost:9002")?
+            .egress_channel("aeron:udp?endpoint=localhost:19002")?
+            .validate()
+            .expect_err("IPC plus endpoints");
+        assert!(err.to_string().contains("IPC"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn client_name_rejects_a_long_name_and_a_nul() -> Result<(), Box<dyn std::error::Error>> {
+        let long = "n".repeat(101);
+        assert!(SessionBuilder::default().client_name(long).is_err());
+        assert!(SessionBuilder::default().client_name("bad\0name").is_err());
+        let b = SessionBuilder::default().client_name("desk")?;
+        assert_eq!(b.client_name.as_deref().and_then(|n| n.to_str().ok()), Some("desk"));
         Ok(())
     }
 

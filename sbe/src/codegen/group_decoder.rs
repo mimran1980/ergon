@@ -11,13 +11,15 @@ use crate::structured_ir::{
 };
 
 use super::conversion_helpers::{
-    acting_accessors, enum_uses_null_as_option, field_has_conversion_free, find_domain_type,
-    fixed_array_from_bulk_bytes, owner_accessor_names, tail_accessor_ident,
+    FixedArrayTextKind, acting_accessors, domain_accessor_ident, enum_uses_null_as_option,
+    field_has_conversion_free, find_domain_type, fixed_array_from_bulk_bytes,
+    fixed_array_text_kind, named_accessor_ident, owner_accessor_names, tail_accessor_ident,
 };
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
 use super::runtime::{
-    constant_value_expr, doc_attr_tokens, emit_field_consts, to_pascal_case, to_snake_case,
+    constant_value_expr, doc_attr_tokens, emit_field_consts, float_null_check, to_pascal_case,
+    to_snake_case,
 };
 
 /// Pure flyweight observers — discarding the return is almost always a mistake.
@@ -69,6 +71,7 @@ pub(crate) fn generate_group_decoder(
     let taken_entry_accessors = owner_accessor_names(
         &g.fields,
         conversions,
+        domain_types,
         &[],
         g.groups
             .iter()
@@ -105,6 +108,22 @@ pub(crate) fn generate_group_decoder(
         }
     } else {
         quote::quote! {}
+    };
+    // One decision for every constructor. `wrap_with_parent` and
+    // `wrap_trusted` both used to decide "is this stride readable?" on their
+    // own, and the trusted path dropped the check. A parent entry's warm
+    // extent proves the nested dimension header is in-bounds; it does not
+    // prove this group's wire block length can hold the fields its getters
+    // then read unchecked. `min_fixed` stays in scope for the dynamic-extent
+    // store below.
+    let dimensions = quote::quote! {
+        let min_fixed = #decoder_ident::min_readable_fixed_extent(acting_version);
+        let (count, block_length) = sbe_rt::checked_group_dimensions(
+            #g_name_lit,
+            header.#count_field_ident() as u64,
+            header.#bl_field_ident() as u64,
+            min_fixed,
+        )?;
     };
 
     // Dynamic groups have no constant stride, so the whole region cannot be
@@ -252,27 +271,8 @@ pub(crate) fn generate_group_decoder(
                 }
                 let bytes: [u8; #dim_size_lit] = read_bytes::<#dim_size_lit>(buf, offset);
                 let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_length = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
+                #dimensions
                 let entries_start = offset + #dim_size_lit;
-                // SBE acting-version rule at the flyweight trust boundary: an
-                // entry whose wire block length cannot hold the required fixed
-                // fields active at this version is malformed, and a required
-                // getter would otherwise perform an unchecked read past it.
-                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
-                if count > 0 && block_length < min_fixed {
-                    return Err(sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: min_fixed,
-                        available: block_length,
-                    });
-                }
                 #dyn_extent_decl
                 #fixed_extent_validation
                 Ok(#decoder_ident {
@@ -412,9 +412,9 @@ pub(crate) fn generate_group_decoder(
                 self.remaining_entries()
             }
 
-            /// Dimension wrap after the caller has proven
-            /// the dimension header (and, for fixed groups, the full entry
-            /// region) is in-bounds. Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
+            /// Wrap a proven dimension header and fixed-stride entry region.
+            /// Still rejects strides too short for the acting-version fields.
+            /// Prefer [`Self::wrap`] / [`Self::wrap_with_parent`].
             ///
             /// # Safety
             /// `offset + dimension_header_size` must not overflow and must be
@@ -428,15 +428,7 @@ pub(crate) fn generate_group_decoder(
             ) -> Result<Self, sbe_rt::DecodeError> {
                 let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, offset) };
                 let header = #dim_name_ident(bytes);
-                let count = sbe_rt::checked_group_count(
-                    "numInGroup",
-                    header.#count_field_ident() as u64,
-                )?;
-                let block_length = sbe_rt::checked_header_usize(
-                    "blockLength",
-                    header.#bl_field_ident() as u64,
-                )?;
-                let min_fixed = <#decoder_ident<'_, sbe_rt::Detached>>::min_readable_fixed_extent(acting_version);
+                #dimensions
                 #dyn_extent_decl
                 Ok(Self {
                     buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,
@@ -1021,12 +1013,47 @@ pub(crate) fn generate_group_decoder(
                             #elements
                         }
                     });
+                    if prim_size == 1
+                        && let Some(kind) =
+                            fixed_array_text_kind(*prim, f.character_encoding.as_deref())
+                        && let Some(as_str) = named_accessor_ident(
+                            &format!("{}_as_str", to_snake_case(&f.name)),
+                            &taken_entry_accessors,
+                        )
+                    {
+                        let field_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
+                        let ascii = matches!(kind, FixedArrayTextKind::Ascii);
+                        let since_check = if f.since_version > 0 {
+                            quote::quote! {
+                                if self.acting_version < #since_lit
+                                    || #offset_end_lit > self.acting_block_length
+                                {
+                                    return Ok("");
+                                }
+                            }
+                        } else {
+                            quote::quote! {
+                                if #offset_end_lit > self.acting_block_length {
+                                    return Ok("");
+                                }
+                            }
+                        };
+                        entry_body.extend(quote::quote! {
+                            /// This fixed text field with trailing NUL padding removed.
+                            #[inline]
+                            pub fn #as_str(&self) -> Result<&str, sbe_rt::DecodeError> {
+                                #since_check
+                                let offset = self.offset + #offset_lit;
+                                let bytes = &self.buf[offset..offset + #len_lit];
+                                sbe_rt::decode_fixed_text(#field_lit, bytes, #ascii)
+                            }
+                        });
+                    }
                 } else if f.presence == Presence::Optional {
                     let null_val = f.null_value.unwrap_or(0);
                     let null_check =
                         if *prim == PrimitiveType::Float || *prim == PrimitiveType::Double {
-                            let _ = null_val;
-                            "val.is_nan()".to_string()
+                            float_null_check(*prim, f.null_value)
                         } else {
                             format!("val == {}_u64 as {}", null_val, r_type)
                         };
@@ -1211,7 +1238,24 @@ pub(crate) fn generate_group_decoder(
                 );
                 let since_lit =
                     syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
-                if f.since_version > 0 {
+                // A constant takes no wire space: return the schema value, as
+                // message level does, never a read past the entry block.
+                if f.presence == Presence::Constant {
+                    if let Some(ref val) = f.constant_value {
+                        let variant = val.rsplit('.').next().unwrap_or(val);
+                        let variant_ident = syn::Ident::new(
+                            &to_pascal_case(variant),
+                            proc_macro2::Span::call_site(),
+                        );
+                        entry_body.extend(quote::quote! {
+                            #mu
+                            #[inline]
+                            pub const fn #f_name_ident(&self) -> #target_ident {
+                                #target_ident::#variant_ident
+                            }
+                        });
+                    }
+                } else if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
                         #mu
                         #[inline]
@@ -1278,12 +1322,14 @@ pub(crate) fn generate_group_decoder(
                     }
                 }
 
-                if crate::structured_ir::is_bool_enum(elements, enum_name) {
-                    // Group entries name every boolean accessor `try_*`, unlike
-                    // message level where an `Option`-returning one drops the
-                    // prefix. Consumers depend on these names, so the domain
-                    // DTO adapts to the location rather than the names moving.
-                    let bool_ident = quote::format_ident!("try_{}_bool", f_name);
+                // A constant has no wire discriminant to reject, so no `*_bool`
+                // (message level emits none either).
+                if f.presence != Presence::Constant
+                    && crate::structured_ir::is_bool_enum(elements, enum_name)
+                {
+                    // Same name as the message-level getter and the entry's
+                    // `{field}_bool` setter; only the return type varies.
+                    let bool_ident = quote::format_ident!("{}_bool", f_name);
                     let f_name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                     // `null_as_option` makes the raw enum accessor return
                     // `Option<T>`; `.as_bool()` cannot be called on that
@@ -1472,17 +1518,19 @@ pub(crate) fn generate_group_decoder(
         } else {
             proc_macro2::TokenStream::new()
         };
-        // A warm entry cache proves the whole entry extent was validated, so
-        // the nested dim header is known in-bounds and `wrap_trusted` is sound
-        // here. The two modes spell "warm" differently; both are one load.
+        // A warm entry cache proves the nested dimension header is in-bounds,
+        // which is what makes `wrap_trusted`'s unchecked header read sound.
+        // It does not prove the nested stride. `wrap_trusted` applies the
+        // same short-block rejection as `wrap_with_parent`.
         let entry_extent_known = quote::quote! { self.tail_end.get().is_some() };
         let cached_first_tail = if ng_idx == 0 {
             quote::quote! {
-                // `Iterator::next` cached the complete validated entry extent,
-                // so this first-tail offset cannot overflow or exceed `buf`.
+                // `Iterator::next` cached the entry extent, so this first-tail
+                // offset cannot overflow or exceed `buf`.
                 if #entry_extent_known {
                     let offset = self.offset + self.acting_block_length;
-                    // SAFETY: a warm entry cache proves the nested dim is in-bounds.
+                    // SAFETY: a warm entry cache proves the nested dimension
+                    // header is in-bounds. Short strides are rejected inside.
                     return unsafe {
                         #ng_decoder_ident::wrap_trusted(
                             self.buf, offset, self.acting_version, 0, 0,
@@ -1495,7 +1543,8 @@ pub(crate) fn generate_group_decoder(
         };
         let trusted_ng_wrap = quote::quote! {
             if #entry_extent_known {
-                // SAFETY: tail_offset_* validated the nested dim header region.
+                // SAFETY: tail_offset_* validated the nested dimension header.
+                // Short strides are rejected inside `wrap_trusted`.
                 return unsafe {
                     #ng_decoder_ident::wrap_trusted(
                         self.buf, offset, self.acting_version, 0, 0,
@@ -1756,12 +1805,12 @@ pub(crate) fn generate_group_decoder(
         });
     }
 
-    // A domain-typed primitive/enum/set field uses the fallible `try_*`
-    // accessor for Display — the plain accessor is renamed to `*_wire` (or
+    // A domain-typed primitive/enum/set field uses the fallible domain
+    // getter for Display — the plain accessor is renamed to `*_wire` (or
     // removed) once a domain type is registered, so it no longer exists
     // under that name. Shared by the Primitive, Enum, and Set branches.
     fn domain_display_write(f_name: &str, field_name: &str, sep: &str) -> proc_macro2::TokenStream {
-        let try_ident = syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+        let try_ident = domain_accessor_ident(f_name, &[]);
         let fmt_str = format!("{sep}{field_name}: {{:?}}");
         quote::quote! {
             { if let Ok(v) = self.#try_ident() { write!(f, #fmt_str, v)?; } }
@@ -1779,7 +1828,7 @@ pub(crate) fn generate_group_decoder(
                 if f.presence == Presence::Constant || length.is_some() {
                     continue;
                 }
-                // Domain-converted primitives use the fallible try_* accessor
+                // Domain-converted primitives use the fallible domain getter
                 // (the plain accessor is renamed to *_wire and no longer
                 // exists under that name once a domain type is registered —
                 // matches the message-level Primitive branch's handling).
@@ -1807,7 +1856,7 @@ pub(crate) fn generate_group_decoder(
                     continue;
                 }
                 // Same rationale as the Primitive branch above: a domain
-                // enum (e.g. bool) uses the fallible try_* accessor; the
+                // enum (e.g. bool) uses the fallible domain getter; the
                 // plain accessor no longer exists under that name.
                 if find_domain_type(f, domain_types).is_some() {
                     entry_display_body.extend(domain_display_write(&f_name, &f.name, sep));
@@ -1853,13 +1902,12 @@ pub(crate) fn generate_group_decoder(
                     // `Debug` — never assume `Display`.
                     let fmt_str = format!("{sep}{}: {{:?}}", f.name);
                     let err_fmt = format!("{sep}{}: <?>", f.name);
-                    // Go through the generated `try_*` accessor rather than
+                    // Go through the generated domain getter rather than
                     // re-deriving the conversion here. Re-deriving fed it the
                     // raw `*_value()`, which is `Option<T>` for a
                     // `sinceVersion > 0` composite — no `TryFromSbe<Option<T>>`
                     // impl exists and the entry would not compile.
-                    let try_ident =
-                        syn::Ident::new(&format!("try_{f_name}"), proc_macro2::Span::call_site());
+                    let try_ident = domain_accessor_ident(&f_name, &[]);
                     if f.since_version > 0 {
                         entry_display_body.extend(quote::quote! {
                             match self.#try_ident() {
@@ -2022,6 +2070,7 @@ pub(crate) fn generate_group_decoder(
         byte_order,
         enable_dispatch,
         conversions,
+        domain_types,
     ));
 
     ts

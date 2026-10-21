@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Build the ergon-shared-cpus image. NOT A RELEASE PIPELINE.
+#
+# The module is still under test (see k8s/nri-shared-cpus/RELEASE.md). This
+# workflow exists so the multi-arch build and the chart can be proven without
+# touching a registry: it builds both platforms, uploads an OCI tarball
+# artifact, and lints and templates the chart. Nothing is pushed. The push is
+# nri-shared-cpus-publish.yml, a separate dispatch that has to be asked for.
+#
+# Triggers on workflow_dispatch only. Never on push or pull_request.
+
+name: nri-shared-cpus image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (also used as appVersion for the chart)"
+        required: true
+        default: "0.1.0-dev"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ergon-shared-cpus
+
+jobs:
+  checks:
+    name: unit, vet and static build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: k8s/nri-shared-cpus
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: k8s/nri-shared-cpus/go.mod
+          cache-dependency-path: k8s/nri-shared-cpus/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt: these files need formatting:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race -count=1 ./...
+
+      - name: static build, amd64 and arm64
+        env:
+          GOFLAGS: -buildvcs=false
+        run: |
+          out=$(mktemp -d)
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o "$out/$arch/" ./cmd/...
+          done
+          rm -rf "$out"
+
+  chart:
+    name: lint and template the chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint k8s/nri-shared-cpus/charts/ergon-shared-cpus
+
+      - name: helm template
+        run: |
+          helm template ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus \
+            --set config.sharedCpus=2 \
+            --set 'config.namespaces={trading}' \
+            > /tmp/rendered.yaml
+          grep -q 'kind: DaemonSet' /tmp/rendered.yaml
+          grep -q 'kind: ConfigMap' /tmp/rendered.yaml
+          grep -q 'kind: Namespace' /tmp/rendered.yaml
+
+  build:
+    name: build the image (${{ matrix.platform }})
+    needs: [checks, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build for ${{ matrix.platform }}
+        uses: docker/build-push-action@v6
+        with:
+          context: k8s/nri-shared-cpus
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: false
+          outputs: type=oci,dest=/tmp/image-${{ strategy.job-index }}.tar
+          build-args: |
+            VERSION=${{ github.event.inputs.tag }}
+            GIT_DESCRIBE=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload the image tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ergon-shared-cpus-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/image-${{ strategy.job-index }}.tar
+          retention-days: 7
+

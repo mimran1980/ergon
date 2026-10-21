@@ -121,6 +121,40 @@ mod fills {
 }
 ```
 
+`AnyMessage` is generated once per schema module. Template ids are not unique
+across schemas. Generate an opt-in `AnySchemaMessage` over every configured
+schema with `Generator::generate_schema_dispatch`:
+
+```rust,no_run
+use ergo_sbe::{GenerateError, GeneratedModule, GenerationConfig, Generator, Schema};
+
+fn dispatcher(market: &Schema, trading: &Schema) -> Result<GeneratedModule, GenerateError> {
+    Generator::new(GenerationConfig::new("market")).generate_schema_dispatch(
+        &[(market, "market"), (trading, "trading")],
+        "any_schema",
+    )
+}
+```
+
+Write the returned `source` to its `path` beside the codec modules, then include
+`any_schema.rs` in a sibling module. This also works when the codecs were
+generated separately with different conversion settings. Each codec must have
+`AnyMessage` dispatch enabled. The combined enum wraps it in a variant named
+from the module, such as `Market` and `Trading`, and reads `schemaId` before
+`templateId`. Decode errors retain the originating schema's error type.
+
+Schema ids and module names must be unique. Headers must declare the same wire
+layout and byte order, with a required, encoded `schemaId`. Custom layouts and
+big-endian headers work; mixed layouts or byte orders are rejected as ambiguous.
+Single-schema generation and the ordinary codec hot paths are unchanged.
+
+Pass a slice bounded to one transport frame to `AnySchemaMessage::decode`.
+An unknown schema id returns `Other { schema_id, template_id, frame }`. An
+unknown template in a known schema remains that module's `AnyMessage::Unknown`.
+Both retain the supplied header and body. `as_bytes()` borrows the complete
+frame without allocating, including future-version fields and unknown frames,
+for persistence or forwarding.
+
 See also:
 [sbe-codegen-examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples)
 (reusable generator setup),

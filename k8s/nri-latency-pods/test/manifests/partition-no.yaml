@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 2, refused: the annotation value is not "isolated". The only accepted
+# value is the one that matches the cgroup knob. The create fails closed and
+# the message names the fix.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: partition-no
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    cpu-partition.ergon.io/app: "root"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }

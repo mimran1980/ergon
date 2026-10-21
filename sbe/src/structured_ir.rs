@@ -239,6 +239,17 @@ pub(crate) struct MessageGroup {
     pub(crate) block_length: usize,
 }
 
+/// End of the last fixed field that takes wire space. A constant field takes
+/// none, even when its type (not the field) declares the constant.
+pub(crate) fn fixed_extent(fields: &[MessageField]) -> usize {
+    fields
+        .iter()
+        .filter(|f| f.presence != Presence::Constant)
+        .map(|f| f.offset + f.field_type.size())
+        .max()
+        .unwrap_or(0)
+}
+
 /// Block length for an encoder projected to an older acting version.
 ///
 /// The retained fields' tight extent plus whatever trailing padding the schema
@@ -250,19 +261,12 @@ fn projected_block_length(
     retained: &[MessageField],
     declared: usize,
 ) -> usize {
-    let extent = |fs: &[MessageField]| {
-        fs.iter()
-            .filter(|f| f.presence != Presence::Constant)
-            .map(|f| f.offset + f.field_type.size())
-            .max()
-            .unwrap_or(0)
-    };
-    let full = extent(all);
-    if full == extent(retained) {
+    let full = fixed_extent(all);
+    if full == fixed_extent(retained) {
         // Nothing fixed was dropped: keep the schema's own blockLength.
         return declared.max(full);
     }
-    extent(retained) + declared.saturating_sub(full)
+    fixed_extent(retained) + declared.saturating_sub(full)
 }
 
 impl MessageGroup {
@@ -301,11 +305,7 @@ impl MessageGroup {
     /// Block length effective at runtime: the max of the schema-declared
     /// `blockLength` and the tight span of the group's fixed fields.
     pub(crate) fn effective_block_length(&self) -> usize {
-        let computed = self.fields.iter().fold(0, |acc, f| {
-            let size = f.field_type.size();
-            acc.max(f.offset + size)
-        });
-        self.block_length.max(computed)
+        self.block_length.max(fixed_extent(&self.fields))
     }
 
     /// Entries have nested groups or var-data — no constant stride, so
@@ -1041,6 +1041,16 @@ mod tests {
         // No declared padding: the retained fields' tight extent, which is what
         // the genuine v1 schema declares.
         assert_eq!(projected_block_length(&all, &retained, 12), 8);
+    }
+
+    #[test]
+    fn constant_fields_take_no_block_space() {
+        // group-with-constant-fields.xml: two 1-byte fields, then a uint16
+        // constant resolved at offset 2. sbe-tool's entry blockLength is 2.
+        let mut constant = fixed_field(2, 2, 0);
+        constant.presence = Presence::Constant;
+        let fields = vec![fixed_field(0, 1, 0), fixed_field(1, 1, 0), constant];
+        assert_eq!(fixed_extent(&fields), 2);
     }
 
     #[test]

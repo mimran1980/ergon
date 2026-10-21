@@ -1,0 +1,7 @@
+# The Aeron release the `aeron` submodule gitlink points at, as
+# "<version> <commit>". scripts/check-aeron-version.sh compares the gitlink
+# with this commit (git cannot read the version without the checkout) and this
+# version with the Aeron in each rusteron crate and, when aeron/ is checked
+# out, its version.txt and built jars. Bump it together with the gitlink and
+# rusteron.
+1.53.3 377943bcb8256fa5279fc4e5c6d9f2a076294222

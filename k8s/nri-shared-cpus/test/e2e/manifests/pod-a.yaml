@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pod A: the main opted-in Guaranteed pod. cpu: 2 = 2 isolated CPUs,
+# ergon.io/shared-millicpus: 250 = 1 shared CPU.
+#
+# The command is pin-test hold: it prints what the OCI hook gave PID 1, then
+# pins the hot thread to isolated:0 and keeps a helper on the shared CPUs.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: a
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["pin-test", "hold"]
+      resources:
+        requests:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"

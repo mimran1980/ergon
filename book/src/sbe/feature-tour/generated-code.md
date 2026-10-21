@@ -91,10 +91,11 @@ Reserved decoder names (`ordered`, `memoized`, `acting_version`,
 entry field is `actingVersion`, it keeps `acting_version()` and the metadata
 getter is omitted.
 
-Convenience accessors (`<group>_count`, `<field>_len`, ordered `fixed` /
-`try_fixed`) yield to a same-named tail — the primary getter wins. `fixed`
-and `try_fixed` yield independently: `fixed` as first tail takes both names;
-`tryFixed` takes only `try_fixed()`. `reserved_name_clash_test`, `ordered_lane_test`.
+Convenience accessors (`<group>_count`, `<field>_len`, ordered `fixed`) yield
+to a same-named tail or field — the primary getter wins. A domain-typed field
+counts: its getter takes the plain field name (renamed against the same
+reserved list), so `orders_count` beside a group `orders` stays the field.
+`reserved_name_clash_test`, `ordered_lane_test`.
 
 ### What does `remaining()` mean?
 

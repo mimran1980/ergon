@@ -7,7 +7,7 @@ pub use super::SBE_SCHEMA_ID;
 pub use super::SBE_SCHEMA_VERSION;
 pub use super::SBE_SEMANTIC_VERSION;
 
-pub const SBE_BLOCK_LENGTH: u16 = 8;
+pub const SBE_BLOCK_LENGTH: u16 = 12;
 pub const SBE_TEMPLATE_ID: u16 = 42;
 
 pub mod encoder {
@@ -79,6 +79,17 @@ pub mod encoder {
         pub fn log_position(&mut self, value: i64) -> &mut Self {
             let offset = self.offset;
             self.get_buf_mut().put_i64_at(offset, value);
+            self
+        }
+
+        /// REQUIRED enum
+        /// - encodedOffset: 8
+        /// - encodedLength: 4
+        /// - version: 17
+        #[inline]
+        pub fn ack_required(&mut self, value: boolean_type::BooleanType) -> &mut Self {
+            let offset = self.offset + 8;
+            self.get_buf_mut().put_i32_at(offset, value as i32);
             self
         }
     }
@@ -159,6 +170,16 @@ pub mod decoder {
         #[inline]
         pub fn log_position(&self) -> i64 {
             self.get_buf().get_i64_at(self.offset)
+        }
+
+        /// REQUIRED enum
+        #[inline]
+        pub fn ack_required(&self) -> boolean_type::BooleanType {
+            if self.acting_version() < 17 {
+                return boolean_type::BooleanType::default();
+            }
+
+            self.get_buf().get_i32_at(self.offset + 8).into()
         }
     }
 } // end decoder

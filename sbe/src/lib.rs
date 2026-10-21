@@ -151,7 +151,7 @@
 //! | Config | Generated decode | Generated encode |
 //! |--------|------------------|------------------|
 //! | [`GenerationConfig::with_conversion`] | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
+//! | [`GenerationConfig::with_domain_type`] | `dec.price()? -> path::Type` | `enc.price(value)?` |
 //!
 //! ```rust
 //! use ergo_sbe::{ConversionSelector, GenerationConfig};
@@ -359,8 +359,9 @@ pub use build::{
 };
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
-    ConversionSelector, DomainImpl, DomainVarData, EnumVariantInfo, FieldInfo, FieldKind,
-    GenerationConfig, GenerationProfile, ItemContext, ItemKind, SetChoiceInfo,
+    CompositeMapping, ConversionSelector, DomainImpl, DomainVarData, EnumMapping, EnumVariantInfo,
+    FieldInfo, FieldKind, GenerationConfig, GenerationProfile, ItemContext, ItemKind,
+    SetChoiceInfo,
 };
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
@@ -375,7 +376,7 @@ pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
 ///
 /// Use [`GenerationConfig::with_domain_type`] with
 /// `"chrono::DateTime<chrono::Utc>"` or `"chrono::NaiveDateTime"` to
-/// generate `try_*` / `try_set_*` methods that convert between SBE `i64`
+/// generate fallible domain getters and setters that convert between SBE `i64`
 /// wire values and chrono datetime types.
 #[cfg(feature = "chrono")]
 pub mod chrono_converters;

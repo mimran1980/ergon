@@ -90,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // poll for the echo
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
+            let _ = client.send_keep_alive();
             let _ = client.poll_egress(&mut adapter, 10);
             if adapter.listener().count > n as usize {
                 break;

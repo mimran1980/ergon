@@ -65,7 +65,7 @@ has no `asks` method. See
 |---------|----------|----------|
 | Body length after encode | `encoded_length()` | body region only via stage `encoded_length` where exposed |
 | Header + body | compute yourself (`8 + …`) | `encoded_length_with_header()` / `as_bytes_with_header()` |
-| Pre-size buffer | often oversize scratch | **Exact:** `Encoder::compute_length()` / staged `*EncodedLength` builder; stack `[0u8; N]` when `N` is const |
+| Pre-size buffer | often oversize scratch | **Exact:** const `Encoder::compute_length_with_header()` (stack `[0u8; N]`), or `Encoder::compute_length()` / staged `*EncodedLength` when the length depends on groups or var-data |
 
 Do **not** default to `vec![0u8; 4096]` or `Vec::with_capacity(MAX)` then
 truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
@@ -196,7 +196,7 @@ accessors are branch-free. Full detail:
 
 ## Further reading
 
-- [Type-state is zero-cost](../design-notes/type-state.md)
+- [Type-state and runtime cost](../design-notes/type-state.md)
 - [API freeze decisions](../design-notes/api-freeze.md)
 - [Feature matrix](../design-notes/feature-matrix.md)
 - Sample: [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)

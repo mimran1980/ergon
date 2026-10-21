@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 5, PM QoS granted (x86 only): cpuqos.ergon.io: "1" asks for a 1 µs
+# C-state cap. The plugin hands the pod /dev/cpu_dma_latency writable (the
+# app opens it, writes the µs value and keeps the fd; the kernel aggregates
+# the min of all open requests and the request dies with the pod). On arm64
+# the annotation is ignored and no device is granted — Graviton has no deep
+# C-state to cap. Honest status: a busy-spin loop never idles, so this cannot
+# help the loop; it is plumbing for interrupt-taking cores. Keep it off by
+# default.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpuqos-yes
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    cpuqos.ergon.io/app: "1"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

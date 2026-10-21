@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 5, PHC not asked for: no ptp annotation. No /dev/ptp* in the container,
+# no ERGON_PTP_DEVICE, no node-facts mount. (An unrelated rlimits annotation
+# keeps the plugin's grant path on so the negative is meaningful.)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ptp-no
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    rlimits.ergon.io/app: "memlock"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

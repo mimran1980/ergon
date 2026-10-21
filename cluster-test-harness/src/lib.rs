@@ -8,4 +8,4 @@
 
 pub mod test_support;
 
-pub use test_support::{EmbeddedArchiveDriver, TestCluster, jar};
+pub use test_support::{EmbeddedArchiveDriver, TestCluster, jar, jvm};

@@ -347,7 +347,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         let encoded = car.as_bytes_with_header();
 
         let dec = CarDecoder::try_decode(encoded, 0).unwrap();
-        assert!(dec.try_available_bool().unwrap(), "expected true from try_available_bool()");
+        assert!(dec.available_bool().unwrap(), "expected true from available_bool()");
         assert_eq!(dec.available(), BooleanType::T, "enum getter should also be T");
 
         let mut buf2 = [0u8; 256];
@@ -372,7 +372,7 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
         let encoded2 = car2.as_bytes_with_header();
 
         let dec2 = CarDecoder::try_decode(encoded2, 0).unwrap();
-        assert!(!dec2.try_available_bool().unwrap(), "expected false from try_available_bool()");
+        assert!(!dec2.available_bool().unwrap(), "expected false from available_bool()");
         assert_eq!(dec2.available(), BooleanType::F, "enum getter should also be F");
     "#,
     );
@@ -386,8 +386,8 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::bool_semantic_schema(), "bool_semantic");
     // Source assertions: YesNo gets _bool methods, Status does not
     assert!(
-        src.contains("fn try_enabled_bool"),
-        "YesNo (semanticType=Boolean) should have try_<field>_bool getter on decoder: {src}"
+        src.contains("fn enabled_bool"),
+        "YesNo (semanticType=Boolean) should have <field>_bool getter on decoder: {src}"
     );
     assert!(
         src.contains("fn enabled_bool"),
@@ -414,14 +414,14 @@ fn boolean_semantic_type_gating() -> Result<(), Box<dyn std::error::Error>> {
         let mut enc = ToggleEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
         enc.enabled_bool(true).status(Status::Active);
         let dec = ToggleDecoder::try_decode(&buf, 0).unwrap();
-        assert!(dec.try_enabled_bool().unwrap(), "try_enabled_bool should return true");
+        assert!(dec.enabled_bool().unwrap(), "enabled_bool should return true");
         assert_eq!(dec.status(), Status::Active);
 
         let mut buf2 = [0u8; 256];
         let mut enc2 = ToggleEncoder::try_wrap_and_apply_header(&mut buf2, 0).unwrap();
         enc2.enabled_bool(false).status(Status::Inactive);
         let dec2 = ToggleDecoder::try_decode(&buf2, 0).unwrap();
-        assert!(!dec2.try_enabled_bool().unwrap(), "try_enabled_bool should return false");
+        assert!(!dec2.enabled_bool().unwrap(), "enabled_bool should return false");
 
         // ToggleGroup: group entry _bool (source assertions already verified
         // that `fn flag_bool` exists in both encoder and decoder; runtime
@@ -463,8 +463,8 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
 
         let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         assert_eq!(dec.available(), BooleanType::NullVal);
-        // try_available_bool() must reject NullVal — it is not a valid bool
-        assert!(dec.try_available_bool().is_err(), "NullVal must be rejected by try_available_bool");
+        // available_bool() must reject NullVal — it is not a valid bool
+        assert!(dec.available_bool().is_err(), "NullVal must be rejected by available_bool");
     "#,
     );
     Ok(())
